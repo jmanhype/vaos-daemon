@@ -272,8 +272,10 @@ func (m Model) Update(rawMsg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.forceOnboarding {
 				// /setup explicitly requested — show error instead of silently skipping
 				m.forceOnboarding = false
+				m.state = StateIdle
+				m.recomputeLayout()
 				m.chat.AddSystemMessage("Setup wizard unavailable — backend not reachable")
-				return m, nil
+				return m, m.input.Focus()
 			}
 			// Fail-open: backend unreachable, skip onboarding with notice
 			m.state = StateIdle
@@ -861,7 +863,8 @@ func (m Model) handleKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case StateModels:
 		return m.handleModelsKey(k)
 	case StateOnboarding:
-		cmd := m.onboarding.Update(k)
+		var cmd tea.Cmd
+		m.onboarding, cmd = m.onboarding.Update(k)
 		return m, cmd
 	case StateBanner:
 		m.state = StateIdle
@@ -1091,6 +1094,9 @@ func (m Model) submitInput(text string) (Model, tea.Cmd) {
 		return m, nil
 
 	case text == "/setup":
+		if m.state == StateOnboarding {
+			return m, nil
+		}
 		m.forceOnboarding = true
 		m.toasts.Add("Opening setup wizard...", toast.ToastInfo)
 		return m, tea.Batch(m.checkOnboarding(), m.tickCmd())

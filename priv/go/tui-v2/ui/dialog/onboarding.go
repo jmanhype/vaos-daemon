@@ -144,10 +144,10 @@ func (m *OnboardingModel) SetError(err string) {
 	m.confirmFocused = 0
 }
 
-// Update processes a key press and returns an optional tea.Cmd.
-func (m *OnboardingModel) Update(k tea.KeyPressMsg) tea.Cmd {
+// Update processes a key press and returns the updated model and optional cmd.
+func (m OnboardingModel) Update(k tea.KeyPressMsg) (OnboardingModel, tea.Cmd) {
 	if key.Matches[tea.KeyPressMsg](k, key.NewBinding(key.WithKeys("ctrl+c"))) {
-		return tea.Quit
+		return m, tea.Quit
 	}
 
 	switch m.step {
@@ -168,12 +168,12 @@ func (m *OnboardingModel) Update(k tea.KeyPressMsg) tea.Cmd {
 	case stepConfirm:
 		return m.updateConfirm(k)
 	}
-	return nil
+	return m, nil
 }
 
 // ── Step 1: Welcome ─────────────────────────────────────────
 
-func (m *OnboardingModel) updateWelcome(k tea.KeyPressMsg) tea.Cmd {
+func (m OnboardingModel) updateWelcome(k tea.KeyPressMsg) (OnboardingModel, tea.Cmd) {
 	switch {
 	case key.Matches[tea.KeyPressMsg](k, key.NewBinding(key.WithKeys("enter"))):
 		if strings.TrimSpace(m.nameInput.Value) == "" {
@@ -182,23 +182,23 @@ func (m *OnboardingModel) updateWelcome(k tea.KeyPressMsg) tea.Cmd {
 		m.step = stepProfile
 		m.nameInput.Focused = false
 		m.userNameInput.Focused = true
-		return nil
+		return m, nil
 	case key.Matches[tea.KeyPressMsg](k, key.NewBinding(key.WithKeys("backspace"))):
 		m.nameInput.Backspace()
-		return nil
+		return m, nil
 	default:
 		if k.Text != "" {
 			for _, r := range k.Text {
 				m.nameInput.Insert(r)
 			}
 		}
-		return nil
+		return m, nil
 	}
 }
 
 // ── Step 2: User Profile ─────────────────────────────────────
 
-func (m *OnboardingModel) updateProfile(k tea.KeyPressMsg) tea.Cmd {
+func (m OnboardingModel) updateProfile(k tea.KeyPressMsg) (OnboardingModel, tea.Cmd) {
 	switch {
 	case key.Matches[tea.KeyPressMsg](k, key.NewBinding(key.WithKeys("enter"))):
 		if m.profileFocus == 0 {
@@ -206,12 +206,12 @@ func (m *OnboardingModel) updateProfile(k tea.KeyPressMsg) tea.Cmd {
 			m.profileFocus = 1
 			m.userNameInput.Focused = false
 			m.userContextInput.Focused = true
-			return nil
+			return m, nil
 		}
 		// Both fields done, move to template
 		m.step = stepTemplate
 		m.userContextInput.Focused = false
-		return nil
+		return m, nil
 	case key.Matches[tea.KeyPressMsg](k, key.NewBinding(key.WithKeys("tab"))):
 		// Toggle between name and context
 		if m.profileFocus == 0 {
@@ -223,21 +223,21 @@ func (m *OnboardingModel) updateProfile(k tea.KeyPressMsg) tea.Cmd {
 			m.userNameInput.Focused = true
 			m.userContextInput.Focused = false
 		}
-		return nil
+		return m, nil
 	case key.Matches[tea.KeyPressMsg](k, key.NewBinding(key.WithKeys("escape"))):
 		m.step = stepWelcome
 		m.nameInput.Focused = true
 		m.userNameInput.Focused = false
 		m.userContextInput.Focused = false
 		m.profileFocus = 0
-		return nil
+		return m, nil
 	case key.Matches[tea.KeyPressMsg](k, key.NewBinding(key.WithKeys("backspace"))):
 		if m.profileFocus == 0 {
 			m.userNameInput.Backspace()
 		} else {
 			m.userContextInput.Backspace()
 		}
-		return nil
+		return m, nil
 	default:
 		if k.Text != "" {
 			for _, r := range k.Text {
@@ -248,40 +248,40 @@ func (m *OnboardingModel) updateProfile(k tea.KeyPressMsg) tea.Cmd {
 				}
 			}
 		}
-		return nil
+		return m, nil
 	}
 }
 
 // ── Step 3: OS Template ─────────────────────────────────────
 
-func (m *OnboardingModel) updateTemplate(k tea.KeyPressMsg) tea.Cmd {
-	maxIdx := len(m.templates) // 0=Blank, 1..N = templates
+func (m OnboardingModel) updateTemplate(k tea.KeyPressMsg) (OnboardingModel, tea.Cmd) {
+	maxCursor := len(m.templates) // 0=Blank, 1..N = templates
 	switch {
 	case key.Matches[tea.KeyPressMsg](k, key.NewBinding(key.WithKeys("up", "k"))):
 		if m.templateCursor > 0 {
 			m.templateCursor--
 		}
-		return nil
+		return m, nil
 	case key.Matches[tea.KeyPressMsg](k, key.NewBinding(key.WithKeys("down", "j"))):
-		if m.templateCursor < maxIdx {
+		if m.templateCursor < maxCursor {
 			m.templateCursor++
 		}
-		return nil
+		return m, nil
 	case key.Matches[tea.KeyPressMsg](k, key.NewBinding(key.WithKeys("enter"))):
 		m.step = stepProvider
-		return nil
+		return m, nil
 	case key.Matches[tea.KeyPressMsg](k, key.NewBinding(key.WithKeys("escape"))):
 		m.step = stepProfile
 		m.userContextInput.Focused = true
 		m.profileFocus = 1
-		return nil
+		return m, nil
 	}
-	return nil
+	return m, nil
 }
 
 // ── Step 4: Provider ─────────────────────────────────────────
 
-func (m *OnboardingModel) updateProvider(k tea.KeyPressMsg) tea.Cmd {
+func (m OnboardingModel) updateProvider(k tea.KeyPressMsg) (OnboardingModel, tea.Cmd) {
 	maxIdx := len(m.providers) - 1
 	if maxIdx < 0 {
 		maxIdx = 0
@@ -291,118 +291,118 @@ func (m *OnboardingModel) updateProvider(k tea.KeyPressMsg) tea.Cmd {
 		if m.providerCursor > 0 {
 			m.providerCursor--
 		}
-		return nil
+		return m, nil
 	case key.Matches[tea.KeyPressMsg](k, key.NewBinding(key.WithKeys("down", "j"))):
 		if m.providerCursor < maxIdx {
 			m.providerCursor++
 		}
-		return nil
+		return m, nil
 	case key.Matches[tea.KeyPressMsg](k, key.NewBinding(key.WithKeys("enter"))):
-		selected := m.selectedProvider() // safe fallback if providers is empty
+		selected := m.selectedProvider()
 		if selected.EnvVar == "" {
 			m.step = stepMachines
 		} else {
 			m.step = stepAPIKey
 			m.keyInput = InputCursor{Focused: true}
 		}
-		return nil
+		return m, nil
 	case key.Matches[tea.KeyPressMsg](k, key.NewBinding(key.WithKeys("escape"))):
 		m.step = stepTemplate
-		return nil
+		return m, nil
 	}
-	return nil
+	return m, nil
 }
 
 // ── Step 5: API Key ─────────────────────────────────────────
 
-func (m *OnboardingModel) updateAPIKey(k tea.KeyPressMsg) tea.Cmd {
+func (m OnboardingModel) updateAPIKey(k tea.KeyPressMsg) (OnboardingModel, tea.Cmd) {
 	switch {
 	case key.Matches[tea.KeyPressMsg](k, key.NewBinding(key.WithKeys("enter"))):
 		m.step = stepMachines
 		m.keyInput.Focused = false
-		return nil
+		return m, nil
 	case key.Matches[tea.KeyPressMsg](k, key.NewBinding(key.WithKeys("escape"))):
 		m.step = stepProvider
 		m.keyInput.Focused = false
-		return nil
+		return m, nil
 	case key.Matches[tea.KeyPressMsg](k, key.NewBinding(key.WithKeys("backspace"))):
 		m.keyInput.Backspace()
-		return nil
+		return m, nil
 	default:
 		if k.Text != "" {
 			for _, r := range k.Text {
 				m.keyInput.Insert(r)
 			}
 		}
-		return nil
+		return m, nil
 	}
 }
 
 // ── Step 6: Machines ─────────────────────────────────────────
 
-func (m *OnboardingModel) updateMachines(k tea.KeyPressMsg) tea.Cmd {
+func (m OnboardingModel) updateMachines(k tea.KeyPressMsg) (OnboardingModel, tea.Cmd) {
 	switch {
 	case key.Matches[tea.KeyPressMsg](k, key.NewBinding(key.WithKeys("enter"))):
 		m.step = stepChannels
-		return nil
+		return m, nil
 	case key.Matches[tea.KeyPressMsg](k, key.NewBinding(key.WithKeys("escape"))):
 		selected := m.selectedProvider()
 		if selected.EnvVar == "" {
 			m.step = stepProvider
 		} else {
 			m.step = stepAPIKey
-			m.keyInput.Focused = true // preserve existing key value
+			m.keyInput.Focused = true
 		}
-		return nil
+		return m, nil
 	default:
 		// Number keys toggle machines: 1=first, 2=second, etc.
 		if k.Text != "" {
 			for i, mach := range m.machines {
 				if k.Text == fmt.Sprintf("%d", i+1) {
 					m.machineToggles[mach.Key] = !m.machineToggles[mach.Key]
-					return nil
+					return m, nil
 				}
 			}
 		}
-		return nil
+		return m, nil
 	}
 }
 
 // ── Step 7: Channels ─────────────────────────────────────────
 
-func (m *OnboardingModel) updateChannels(k tea.KeyPressMsg) tea.Cmd {
+func (m OnboardingModel) updateChannels(k tea.KeyPressMsg) (OnboardingModel, tea.Cmd) {
 	switch {
 	case key.Matches[tea.KeyPressMsg](k, key.NewBinding(key.WithKeys("enter"))):
 		m.step = stepConfirm
 		m.confirmFocused = 0
-		return nil
+		return m, nil
 	case key.Matches[tea.KeyPressMsg](k, key.NewBinding(key.WithKeys("escape"))):
 		m.step = stepMachines
-		return nil
+		return m, nil
 	default:
 		if k.Text != "" {
 			for i, ch := range m.channels {
 				if k.Text == fmt.Sprintf("%d", i+1) {
 					m.channelToggles[ch.Key] = !m.channelToggles[ch.Key]
-					return nil
+					return m, nil
 				}
 			}
 		}
-		return nil
+		return m, nil
 	}
 }
 
 // ── Step 8: Confirm ─────────────────────────────────────────
 
-func (m *OnboardingModel) updateConfirm(k tea.KeyPressMsg) tea.Cmd {
+func (m OnboardingModel) updateConfirm(k tea.KeyPressMsg) (OnboardingModel, tea.Cmd) {
 	switch {
 	case key.Matches[tea.KeyPressMsg](k, key.NewBinding(key.WithKeys("tab", "shift+tab", "left", "right"))):
 		m.confirmFocused = 1 - m.confirmFocused
-		return nil
+		return m, nil
 	case key.Matches[tea.KeyPressMsg](k, key.NewBinding(key.WithKeys("enter"))):
 		if m.confirmFocused == 1 {
 			m.step = stepChannels
-			return nil
+			return m, nil
 		}
 		selected := m.selectedProvider()
 
@@ -421,7 +421,13 @@ func (m *OnboardingModel) updateConfirm(k tea.KeyPressMsg) tea.Cmd {
 			osTemplate = map[string]string{"name": t.Name, "path": t.Path}
 		}
 
-		return func() tea.Msg {
+		// Copy machineToggles so the closure captures a snapshot
+		toggles := make(map[string]bool, len(m.machineToggles))
+		for k, v := range m.machineToggles {
+			toggles[k] = v
+		}
+
+		return m, func() tea.Msg {
 			return OnboardingDone{
 				Provider:    selected.Key,
 				Model:       selected.DefaultModel,
@@ -430,16 +436,16 @@ func (m *OnboardingModel) updateConfirm(k tea.KeyPressMsg) tea.Cmd {
 				AgentName:   m.nameInput.Value,
 				UserName:    m.userNameInput.Value,
 				UserContext: m.userContextInput.Value,
-				Machines:    m.machineToggles,
+				Machines:    toggles,
 				Channels:    selChannels,
 				OSTemplate:  osTemplate,
 			}
 		}
 	case key.Matches[tea.KeyPressMsg](k, key.NewBinding(key.WithKeys("escape"))):
 		m.step = stepChannels
-		return nil
+		return m, nil
 	}
-	return nil
+	return m, nil
 }
 
 // ── Views ───────────────────────────────────────────────────
