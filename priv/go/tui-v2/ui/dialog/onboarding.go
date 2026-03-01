@@ -67,19 +67,42 @@ type OnboardingModel struct {
 	err string
 }
 
-// NewOnboarding creates a new onboarding wizard model.
+// NewOnboarding creates a new onboarding wizard model (placeholder for init).
 func NewOnboarding() OnboardingModel {
-	name := InputCursor{Value: "OSA", Cursor: 3, Focused: true}
 	return OnboardingModel{
+		step:           stepWelcome,
+		nameInput:      InputCursor{Value: "OSA", Cursor: 3, Focused: true},
+		width:          80,
+		height:         24,
+		machineToggles: make(map[string]bool),
+		channelToggles: make(map[string]bool),
+	}
+}
+
+// NewOnboardingFromStatus creates a fresh wizard pre-loaded with backend data.
+func NewOnboardingFromStatus(status msg.OnboardingStatusResult) OnboardingModel {
+	m := OnboardingModel{
 		step:             stepWelcome,
-		nameInput:        name,
+		nameInput:        InputCursor{Value: "OSA", Cursor: 3, Focused: true},
 		userNameInput:    InputCursor{Focused: false},
 		userContextInput: InputCursor{Focused: false},
 		width:            80,
 		height:           24,
+		providers:        status.Providers,
+		templates:        status.Templates,
+		machines:         status.Machines,
+		channels:         status.Channels,
+		systemInfo:       status.SystemInfo,
 		machineToggles:   make(map[string]bool),
 		channelToggles:   make(map[string]bool),
 	}
+	for _, mach := range status.Machines {
+		m.machineToggles[mach.Key] = false
+	}
+	for _, ch := range status.Channels {
+		m.channelToggles[ch.Key] = false
+	}
+	return m
 }
 
 // SetSize updates the dialog dimensions.

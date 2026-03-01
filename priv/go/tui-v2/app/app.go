@@ -130,6 +130,7 @@ type Model struct {
 	cancelled        bool            // true when user cancelled the current request
 
 	pendingProviderFilter string // set by "/model <provider>" to filter picker
+	forceOnboarding       bool   // true when /setup forces wizard regardless of config
 	config                config.Config
 	refreshToken          string
 }
@@ -268,23 +269,28 @@ func (m Model) Update(rawMsg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case msg.OnboardingStatusResult:
 		if v.Err != nil {
+			if m.forceOnboarding {
+				// /setup explicitly requested — show error instead of silently skipping
+				m.forceOnboarding = false
+				m.chat.AddSystemMessage("Setup wizard unavailable — backend not reachable")
+				return m, nil
+			}
 			// Fail-open: backend unreachable, skip onboarding with notice
 			m.state = StateIdle
 			m.recomputeLayout()
 			m.chat.AddSystemMessage("Could not check setup status — run /doctor to verify configuration")
 			return m, m.input.Focus()
 		}
-		if !v.NeedsOnboarding {
+		if !v.NeedsOnboarding && !m.forceOnboarding {
 			m.state = StateIdle
 			m.recomputeLayout()
 			return m, m.input.Focus()
 		}
-		m.onboarding.SetProviders(v.Providers, v.SystemInfo)
-		m.onboarding.SetTemplates(v.Templates)
-		m.onboarding.SetMachines(v.Machines)
-		m.onboarding.SetChannels(v.Channels)
+		m.forceOnboarding = false
+		m.onboarding = dialog.NewOnboardingFromStatus(v)
 		m.onboarding.SetSize(m.width, m.height)
 		m.state = StateOnboarding
+		m.input.Blur()
 		return m, nil
 
 	case dialog.OnboardingDone:
@@ -1031,6 +1037,7 @@ func (m Model) openPalette() (Model, tea.Cmd) {
 	// Local-only commands first.
 	localCmds := []dialog.PaletteItem{
 		{Name: "/help", Description: "Show available commands", Category: "system"},
+		{Name: "/setup", Description: "Open setup wizard", Category: "config"},
 		{Name: "/clear", Description: "Clear chat history", Category: "system"},
 		{Name: "/theme", Description: "List or switch themes", Category: "system"},
 		{Name: "/models", Description: "Browse & switch models", Category: "config"},
@@ -1082,6 +1089,11 @@ func (m Model) submitInput(text string) (Model, tea.Cmd) {
 		m.chat = chat.New(m.layout.ChatWidth, m.layout.ChatHeight)
 		m.chat.SetWelcomeData(m.header.Version(), m.header.WelcomeLine(), m.header.Workspace())
 		return m, nil
+
+	case text == "/setup":
+		m.forceOnboarding = true
+		m.toasts.Add("Opening setup wizard...", toast.ToastInfo)
+		return m, tea.Batch(m.checkOnboarding(), m.tickCmd())
 
 	case strings.HasPrefix(text, "/login"):
 		m.toasts.Add("Authenticating...", toast.ToastInfo)
@@ -2149,6 +2161,7 @@ func staticHelpText() string {
   /session <id>  Switch to session
   /bg            List background tasks
   /theme         List or switch themes
+  /setup         Open setup wizard (re-configure provider, agent name, etc.)
   /clear         Clear chat history
   /exit          Exit OSA
 ` + keybindingsHelp()
