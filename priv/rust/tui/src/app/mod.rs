@@ -24,6 +24,10 @@ use crate::components::tasks::Tasks;
 use crate::components::toast::Toasts;
 use crate::config::cli::Cli;
 use crate::config::Config;
+use crate::dialogs::command_palette::CommandPalette;
+use crate::dialogs::model_picker::ModelPicker;
+use crate::dialogs::quit_confirm::QuitConfirm;
+use crate::dialogs::sessions::SessionBrowser;
 use crate::event::Event;
 
 use self::focus::FocusStack;
@@ -47,6 +51,12 @@ pub struct App {
     pub tasks: Tasks,
     pub agents: Agents,
     pub toasts: Toasts,
+
+    // Dialogs
+    pub quit_dialog: QuitConfirm,
+    pub palette: CommandPalette,
+    pub model_picker: Option<ModelPicker>,
+    pub session_browser: Option<SessionBrowser>,
 
     // State
     pub state: AppState,
@@ -83,6 +93,9 @@ pub struct App {
 
     // Background tasks
     pub bg_tasks: Vec<String>,
+
+    // Backend auto-start
+    pub backend_spawn_attempted: bool,
 
     // Commands from backend
     pub command_entries: Vec<crate::client::types::CommandEntry>,
@@ -121,6 +134,11 @@ impl App {
             agents: Agents::new(),
             toasts: Toasts::new(),
 
+            quit_dialog: QuitConfirm::new(),
+            palette: CommandPalette::new(),
+            model_picker: None,
+            session_browser: None,
+
             state: AppState::Connecting,
             prev_state: None,
             focus: FocusStack::new(),
@@ -148,6 +166,7 @@ impl App {
             sse_reconnecting: false,
 
             bg_tasks: Vec::new(),
+            backend_spawn_attempted: false,
             command_entries: Vec::new(),
         })
     }

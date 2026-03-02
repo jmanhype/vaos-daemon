@@ -18,8 +18,8 @@ mod render;
 mod style;
 mod view;
 mod dialogs;
-// These will be added in later phases:
-// mod tools;
+#[allow(dead_code)]
+mod tools;
 
 fn main() -> Result<()> {
     // Parse CLI args

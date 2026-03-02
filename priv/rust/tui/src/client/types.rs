@@ -7,6 +7,7 @@ use std::collections::HashMap;
 pub struct HealthResponse {
     pub status: String,
     pub version: String,
+    #[serde(default)]
     pub uptime_seconds: i64,
     pub provider: String,
     pub model: String,

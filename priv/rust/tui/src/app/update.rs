@@ -4,6 +4,8 @@ use tracing::{debug, error, info, warn};
 use super::App;
 use crate::app::state::AppState;
 use crate::components::{AppAction, Component, ComponentAction};
+use crate::dialogs::command_palette::PaletteItem;
+use crate::dialogs::DialogAction;
 use crate::event::backend::BackendEvent;
 use crate::event::Event;
 
@@ -43,6 +45,10 @@ impl App {
 
     fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
         match self.state {
+            AppState::Quit => self.handle_quit_dialog_key(key),
+            AppState::Palette => self.handle_palette_key(key),
+            AppState::ModelPicker => self.handle_model_picker_key(key),
+            AppState::Sessions => self.handle_session_browser_key(key),
             AppState::Idle => self.handle_idle_key(key),
             AppState::Processing => self.handle_processing_key(key),
             AppState::Banner => {
@@ -50,7 +56,6 @@ impl App {
                 self.transition(AppState::Idle);
                 false
             }
-            AppState::Quit => self.handle_quit_key(key),
             _ => false,
         }
     }
@@ -90,7 +95,7 @@ impl App {
             }
             // Ctrl+K -> command palette
             (KeyCode::Char('k'), KeyModifiers::CONTROL) => {
-                // TODO: open palette (Phase 4)
+                self.open_command_palette();
                 false
             }
             // Scroll keys (only when input is empty)
@@ -172,15 +177,110 @@ impl App {
         }
     }
 
-    fn handle_quit_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
-        match key.code {
-            KeyCode::Char('q') | KeyCode::Enter => true,
-            KeyCode::Esc | KeyCode::Char('n') => {
-                self.transition(AppState::Idle);
-                false
+    fn handle_quit_dialog_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        self.quit_dialog.reset();
+        if let Some(action) = self.quit_dialog.handle_key(key) {
+            match action {
+                DialogAction::QuitConfirmed => return true,
+                DialogAction::Dismissed => self.transition(AppState::Idle),
+                _ => {}
             }
-            _ => false,
         }
+        false
+    }
+
+    fn handle_palette_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        if let Some(action) = self.palette.handle_key(key) {
+            match action {
+                DialogAction::PaletteExecute(name) => {
+                    self.transition(AppState::Idle);
+                    self.handle_command(&format!("/{}", name));
+                }
+                DialogAction::Dismissed => {
+                    self.transition(AppState::Idle);
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    fn handle_model_picker_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        if let Some(ref mut picker) = self.model_picker {
+            if let Some(action) = picker.handle_key(key) {
+                match action {
+                    crate::dialogs::model_picker::ModelPickerAction::Select { provider, model } => {
+                        self.transition(AppState::Idle);
+                        self.switch_model(&provider, &model);
+                    }
+                    crate::dialogs::model_picker::ModelPickerAction::Cancel => {
+                        self.transition(AppState::Idle);
+                    }
+                }
+                self.model_picker = None;
+            }
+        }
+        false
+    }
+
+    fn handle_session_browser_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        if let Some(ref mut browser) = self.session_browser {
+            if let Some(action) = browser.handle_key(key) {
+                match action {
+                    crate::dialogs::sessions::SessionAction::Switch(id) => {
+                        self.transition(AppState::Idle);
+                        self.session_id = id;
+                        self.chat.clear();
+                        self.tasks.clear();
+                        self.stream_buf.clear();
+                        self.thinking_buf.clear();
+                        self.toasts.push(
+                            "Session switched".into(),
+                            crate::components::toast::ToastLevel::Info,
+                        );
+                    }
+                    crate::dialogs::sessions::SessionAction::Create => {
+                        self.transition(AppState::Idle);
+                        self.create_session();
+                    }
+                    crate::dialogs::sessions::SessionAction::Cancel => {
+                        self.transition(AppState::Idle);
+                    }
+                    _ => {
+                        // Rename/Delete stay in the dialog
+                        return false;
+                    }
+                }
+                self.session_browser = None;
+            }
+        }
+        false
+    }
+
+    fn open_command_palette(&mut self) {
+        let items: Vec<PaletteItem> = self
+            .command_entries
+            .iter()
+            .map(|c| PaletteItem {
+                name: c.name.clone(),
+                description: c.description.clone(),
+                category: c.category.clone().unwrap_or_default(),
+            })
+            .collect();
+
+        // Add built-in commands
+        let mut all_items = vec![
+            PaletteItem { name: "help".into(), description: "Show help".into(), category: "system".into() },
+            PaletteItem { name: "clear".into(), description: "Clear chat".into(), category: "system".into() },
+            PaletteItem { name: "models".into(), description: "Browse models".into(), category: "system".into() },
+            PaletteItem { name: "sessions".into(), description: "Browse sessions".into(), category: "system".into() },
+            PaletteItem { name: "theme".into(), description: "Switch theme".into(), category: "system".into() },
+            PaletteItem { name: "exit".into(), description: "Quit".into(), category: "system".into() },
+        ];
+        all_items.extend(items);
+
+        self.palette.open(all_items);
+        self.transition(AppState::Palette);
     }
 
     fn handle_mouse(&mut self, mouse: crossterm::event::MouseEvent) {
@@ -375,6 +475,89 @@ impl App {
                     );
                 }
             },
+            // === Models/Sessions loaded (dialog triggers) ===
+            BackendEvent::ModelsLoaded(result) => match result {
+                Ok(resp) => {
+                    let picker = crate::dialogs::model_picker::ModelPicker::new(
+                        resp.models,
+                        Vec::new(),
+                    );
+                    self.model_picker = Some(picker);
+                    self.transition(AppState::ModelPicker);
+                }
+                Err(e) => {
+                    self.toasts.push(
+                        format!("Failed to load models: {}", e),
+                        crate::components::toast::ToastLevel::Error,
+                    );
+                }
+            },
+            BackendEvent::SessionsLoaded(result) => match result {
+                Ok(sessions) => {
+                    let browser = crate::dialogs::sessions::SessionBrowser::new(
+                        sessions,
+                        self.session_id.clone(),
+                    );
+                    self.session_browser = Some(browser);
+                    self.transition(AppState::Sessions);
+                }
+                Err(e) => {
+                    self.toasts.push(
+                        format!("Failed to load sessions: {}", e),
+                        crate::components::toast::ToastLevel::Error,
+                    );
+                }
+            },
+
+            // === Orchestrator events → Agents component ===
+            BackendEvent::OrchestratorTaskStarted { task_id } => {
+                self.agents.task_started(&task_id);
+                self.recompute_layout();
+            }
+            BackendEvent::OrchestratorAgentStarted { agent_name, role, model } => {
+                self.agents.agent_started(&agent_name, &role, &model);
+                self.recompute_layout();
+            }
+            BackendEvent::OrchestratorAgentProgress { agent_name, current_action, tool_uses, tokens_used } => {
+                self.agents.agent_progress(&agent_name, &current_action, tool_uses, tokens_used);
+            }
+            BackendEvent::OrchestratorAgentCompleted { agent_name, tool_uses, tokens_used, .. } => {
+                self.agents.agent_completed(&agent_name, tool_uses, tokens_used);
+            }
+            BackendEvent::OrchestratorAgentFailed { agent_name, error, tool_uses, tokens_used } => {
+                self.agents.agent_failed(&agent_name, &error, tool_uses, tokens_used);
+            }
+            BackendEvent::OrchestratorWaveStarted { wave_number, total_waves } => {
+                self.agents.wave_started(wave_number, total_waves);
+                self.recompute_layout();
+            }
+            BackendEvent::OrchestratorTaskCompleted { .. } => {
+                self.agents.task_completed();
+                self.recompute_layout();
+            }
+
+            // === Swarm events → Agents component ===
+            BackendEvent::SwarmStarted { swarm_id, pattern, agent_count, .. } => {
+                self.agents.swarm_started(&swarm_id, &pattern, agent_count);
+                self.recompute_layout();
+            }
+            BackendEvent::SwarmCompleted { swarm_id, .. } => {
+                self.agents.swarm_completed(&swarm_id);
+                self.recompute_layout();
+            }
+            BackendEvent::SwarmFailed { swarm_id, reason } => {
+                self.agents.swarm_failed(&swarm_id, &reason);
+                self.recompute_layout();
+            }
+            BackendEvent::SwarmCancelled { swarm_id } => {
+                self.agents.swarm_failed(&swarm_id, "cancelled");
+                self.recompute_layout();
+            }
+            BackendEvent::SwarmTimeout { swarm_id } => {
+                self.agents.swarm_failed(&swarm_id, "timeout");
+                self.recompute_layout();
+            }
+
             // Handle remaining events as they are implemented
             _ => {
                 debug!("Unhandled backend event");
@@ -426,6 +609,13 @@ impl App {
             }
             Err(e) => {
                 warn!("Health check failed: {}", e);
+
+                // Auto-start backend on first failure
+                if !self.backend_spawn_attempted {
+                    self.backend_spawn_attempted = true;
+                    self.try_spawn_backend();
+                }
+
                 // Retry after delay
                 let tx = self.event_tx.clone();
                 tokio::spawn(async move {
@@ -675,6 +865,32 @@ impl App {
         });
     }
 
+    pub(crate) fn load_models(&self) {
+        let client = self.client.clone();
+        let tx = self.event_tx.clone();
+        tokio::spawn(async move {
+            let result = client.list_models().await;
+            let event = match result {
+                Ok(resp) => BackendEvent::ModelsLoaded(Ok(resp)),
+                Err(e) => BackendEvent::ModelsLoaded(Err(e.to_string())),
+            };
+            let _ = tx.send(Event::Backend(event));
+        });
+    }
+
+    pub(crate) fn load_sessions(&self) {
+        let client = self.client.clone();
+        let tx = self.event_tx.clone();
+        tokio::spawn(async move {
+            let result = client.list_sessions().await;
+            let event = match result {
+                Ok(sessions) => BackendEvent::SessionsLoaded(Ok(sessions)),
+                Err(e) => BackendEvent::SessionsLoaded(Err(e.to_string())),
+            };
+            let _ = tx.send(Event::Backend(event));
+        });
+    }
+
     fn load_tools(&self) {
         let client = self.client.clone();
         let tx = self.event_tx.clone();
@@ -686,6 +902,67 @@ impl App {
             };
             let _ = tx.send(Event::Backend(event));
         });
+    }
+
+    fn try_spawn_backend(&self) {
+        // Discover project root by searching upward from known locations.
+        // Priority:
+        //   1. Binary path: priv/rust/tui/target/release/osagent → walk up 5 levels
+        //   2. ~/.osa/project_root file (written by `bin/install`)
+        //   3. Current working directory (if it contains mix.exs)
+        let candidates: Vec<Option<std::path::PathBuf>> = vec![
+            // From binary location: target/release/osagent → ../../.. = priv/rust/tui → ../../../ = root
+            std::env::current_exe()
+                .ok()
+                .and_then(|p| {
+                    // osagent → release → target → tui → rust → priv → ROOT
+                    p.parent()?.parent()?.parent()?.parent()?.parent()?.parent()
+                        .map(|p| p.to_path_buf())
+                }),
+            // Stored project root
+            std::fs::read_to_string(
+                std::path::PathBuf::from(
+                        std::env::var("HOME").unwrap_or_default()
+                    ).join(".osa/project_root"),
+            )
+            .ok()
+            .map(|s| std::path::PathBuf::from(s.trim())),
+            // CWD
+            std::env::current_dir().ok(),
+        ];
+
+        for candidate in candidates.into_iter().flatten() {
+            if candidate.join("mix.exs").exists() {
+                info!("Auto-starting backend from: {}", candidate.display());
+                let project_dir = candidate;
+                let log_dir = std::path::PathBuf::from(
+                        std::env::var("HOME").unwrap_or_default()
+                    ).join(".osa/logs/backend.log");
+                std::thread::spawn(move || {
+                    let log_file = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&log_dir)
+                        .ok();
+                    let stdout = log_file
+                        .as_ref()
+                        .map(|f| std::process::Stdio::from(f.try_clone().unwrap()))
+                        .unwrap_or_else(std::process::Stdio::null);
+                    let stderr = log_file
+                        .map(|f| std::process::Stdio::from(f))
+                        .unwrap_or_else(std::process::Stdio::null);
+                    let _ = std::process::Command::new("mix")
+                        .arg("osa.serve")
+                        .current_dir(&project_dir)
+                        .stdout(stdout)
+                        .stderr(stderr)
+                        .spawn();
+                });
+                return;
+            }
+        }
+        warn!("Could not find project root to auto-start backend. \
+               Run from the project directory or create ~/.osa/project_root");
     }
 
     fn start_sse(&mut self) {

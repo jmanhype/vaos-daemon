@@ -121,6 +121,29 @@ impl App {
                 if self.toasts.has_toasts() {
                     self.toasts.draw(frame, areas.toast);
                 }
+
+                // Dialog overlays (drawn last = on top)
+                if self.state.is_overlay() {
+                    match self.state {
+                        crate::app::state::AppState::Quit => {
+                            self.quit_dialog.draw(frame, area);
+                        }
+                        crate::app::state::AppState::Palette => {
+                            self.palette.draw(frame, area);
+                        }
+                        crate::app::state::AppState::ModelPicker => {
+                            if let Some(ref picker) = self.model_picker {
+                                picker.draw(frame, area);
+                            }
+                        }
+                        crate::app::state::AppState::Sessions => {
+                            if let Some(ref browser) = self.session_browser {
+                                browser.draw(frame, area);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
             }
         }
     }

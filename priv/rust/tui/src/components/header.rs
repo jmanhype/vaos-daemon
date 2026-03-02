@@ -96,29 +96,9 @@ impl Header {
         let theme = style::theme();
 
         let mut lines = vec![
-            style::gradient::theme_gradient(
-                "  \u{2554}\u{2550}\u{2550}\u{2550}\u{2557} \u{2554}\u{2550}\u{2550}\u{2550}\u{2557} \u{2554}\u{2550}\u{2550}\u{2550}\u{2557}  ",
-                true,
-            ),
-            style::gradient::theme_gradient(
-                "  \u{2551}   \u{2551} \u{2551}     \u{2551}   \u{2551}  ",
-                true,
-            ),
-            style::gradient::theme_gradient(
-                "  \u{2551}   \u{2551}  \u{2550}\u{2550}\u{2550}\u{2557} \u{2560}\u{2550}\u{2550}\u{2550}\u{2563}  ",
-                true,
-            ),
-            style::gradient::theme_gradient(
-                "  \u{2551}   \u{2551}     \u{2551} \u{2551}   \u{2551}  ",
-                true,
-            ),
-            style::gradient::theme_gradient(
-                "  \u{255a}\u{2550}\u{2550}\u{2550}\u{255d} \u{255a}\u{2550}\u{2550}\u{2550}\u{255d} \u{2551}   \u{2551}  ",
-                true,
-            ),
             Line::from(""),
             Line::from(vec![
-                Span::styled("\u{25c8} ", theme.banner_title()),
+                Span::styled("◈ ", theme.banner_title()),
                 Span::styled("OSA Agent  ", theme.banner_title()),
                 Span::styled(format!("v{}", self.version), theme.header_version()),
             ]),

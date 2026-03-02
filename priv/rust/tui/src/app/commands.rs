@@ -78,11 +78,7 @@ impl App {
                 }
             }
             "/models" => {
-                // TODO: fetch models + open browser (Phase 4)
-                self.toasts.push(
-                    "Model browser coming in Phase 4".into(),
-                    crate::components::toast::ToastLevel::Info,
-                );
+                self.load_models();
             }
             "/model" => {
                 if arg.is_empty() {
@@ -94,20 +90,15 @@ impl App {
                     let parts: Vec<&str> = arg.splitn(2, '/').collect();
                     self.switch_model(parts[0], parts[1]);
                 } else if KNOWN_PROVIDERS.contains(&arg) {
-                    self.toasts.push(
-                        format!("Model picker for {} coming in Phase 4", arg),
-                        crate::components::toast::ToastLevel::Info,
-                    );
+                    // Open model picker (will show all models, user can filter by provider)
+                    self.load_models();
                 } else {
                     // Default to ollama/<name>
                     self.switch_model("ollama", arg);
                 }
             }
             "/sessions" => {
-                self.toasts.push(
-                    "Session browser coming in Phase 4".into(),
-                    crate::components::toast::ToastLevel::Info,
-                );
+                self.load_sessions();
             }
             "/session" => {
                 if arg.is_empty() {
@@ -200,7 +191,7 @@ impl App {
         }
     }
 
-    fn switch_model(&self, provider: &str, model: &str) {
+    pub(crate) fn switch_model(&self, provider: &str, model: &str) {
         let client = self.client.clone();
         let tx = self.event_tx.clone();
         let provider = provider.to_string();
