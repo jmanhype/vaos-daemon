@@ -11,9 +11,9 @@ pub fn draw_connecting(frame: &mut Frame, area: Rect) {
     let bg = Block::default().style(Style::default().bg(theme.colors.dialog_bg));
     frame.render_widget(bg, area);
 
-    // Centered card: 44w x 12h
-    let card_w: u16 = 44;
-    let card_h: u16 = 12;
+    // Centered card: 40w x 9h
+    let card_w: u16 = 40;
+    let card_h: u16 = 9;
     let x = area.x + area.width.saturating_sub(card_w) / 2;
     let y = area.y + area.height.saturating_sub(card_h) / 2;
     let card = Rect::new(x, y, card_w.min(area.width), card_h.min(area.height));
@@ -32,43 +32,40 @@ pub fn draw_connecting(frame: &mut Frame, area: Rect) {
         card.width.saturating_sub(4),
         card.height.saturating_sub(2),
     );
-    if inner.height < 6 {
+    if inner.height < 5 {
         return;
     }
 
     let mut cy = inner.y;
 
-    // Blank line
+    // Blank
     cy += 1;
 
-    // Logo: clean block letters
-    let logo_lines = [
-        " ██████╗ ███████╗ █████╗ ",
-        "██╔═══██╗██╔════╝██╔══██╗",
-        "██║   ██║███████╗███████║",
-        "██║   ██║╚════██║██╔══██║",
-        "╚██████╔╝███████║██║  ██║",
-        " ╚═════╝ ╚══════╝╚═╝  ╚═╝",
-    ];
-
-    for line_str in &logo_lines {
-        if cy >= inner.y + inner.height {
-            break;
-        }
-        let line = style::gradient::theme_gradient(line_str, true);
-        frame.render_widget(
-            Paragraph::new(line).alignment(Alignment::Center),
-            Rect::new(inner.x, cy, inner.width, 1),
-        );
-        cy += 1;
-    }
-
-    // Spacer
+    // Clean text logo
+    let title = Line::from(vec![
+        Span::styled("◈ ", Style::default().fg(theme.colors.secondary)),
+        Span::styled("OSA", Style::default().fg(theme.colors.primary).add_modifier(Modifier::BOLD)),
+        Span::styled(" Agent", Style::default().fg(theme.colors.secondary).add_modifier(Modifier::BOLD)),
+    ]);
+    frame.render_widget(
+        Paragraph::new(title).alignment(Alignment::Center),
+        Rect::new(inner.x, cy, inner.width, 1),
+    );
     cy += 1;
 
-    // Spinner + status text
+    // Tagline
+    let tagline = Line::from(Span::styled(
+        "Your OS, Supercharged",
+        Style::default().fg(theme.colors.muted),
+    ));
+    frame.render_widget(
+        Paragraph::new(tagline).alignment(Alignment::Center),
+        Rect::new(inner.x, cy, inner.width, 1),
+    );
+    cy += 2;
+
+    // Spinner + status
     if cy < inner.y + inner.height {
-        // Animated dots based on frame time
         let dots = match (std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()

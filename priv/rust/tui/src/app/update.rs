@@ -24,7 +24,13 @@ impl App {
                 self.handle_mouse(mouse);
                 false
             }
-            Event::Terminal(_) => false, // FocusGained, FocusLost, Paste
+            Event::Terminal(CrosstermEvent::Paste(text)) => {
+                if self.state == AppState::Idle || self.state == AppState::Processing {
+                    self.input.insert_str(&text);
+                }
+                false
+            }
+            Event::Terminal(_) => false, // FocusGained, FocusLost
             Event::Backend(backend_event) => self.handle_backend_event(backend_event),
             Event::Tick => {
                 self.handle_tick();
@@ -565,6 +571,34 @@ impl App {
                 self.recompute_layout();
             }
 
+            BackendEvent::SseAuthFailed => {
+                error!("SSE auth failed — token may be expired");
+                self.toasts.push(
+                    "SSE auth failed. Try /login to re-authenticate.".into(),
+                    crate::components::toast::ToastLevel::Error,
+                );
+            }
+            BackendEvent::ParseWarning { message } => {
+                warn!("SSE parse warning: {}", message);
+            }
+            BackendEvent::HookBlocked { hook_name, reason } => {
+                self.toasts.push(
+                    format!("Blocked by {}: {}", hook_name, reason),
+                    crate::components::toast::ToastLevel::Warning,
+                );
+            }
+            BackendEvent::BudgetWarning { utilization, message } => {
+                self.toasts.push(
+                    format!("Budget {}%: {}", (utilization * 100.0) as u32, message),
+                    crate::components::toast::ToastLevel::Warning,
+                );
+            }
+            BackendEvent::BudgetExceeded { message } => {
+                self.toasts.push(
+                    format!("Budget exceeded: {}", message),
+                    crate::components::toast::ToastLevel::Error,
+                );
+            }
             BackendEvent::OnboardingStatus(result) => match result {
                 Ok(resp) => {
                     if resp.needs_onboarding {
@@ -596,6 +630,50 @@ impl App {
                     debug!("Onboarding check failed: {}", e);
                 }
             },
+
+            // === Session messages (history load) ===
+            BackendEvent::SessionMessages(result) => match result {
+                Ok(messages) => {
+                    for msg in &messages {
+                        match msg.role.as_str() {
+                            "user" => self.chat.add_user_message(&msg.content),
+                            "assistant" | "agent" => {
+                                self.chat.add_agent_message(&msg.content, None);
+                            }
+                            "system" => {
+                                self.chat.add_system_message(&msg.content, "info");
+                            }
+                            _ => {
+                                self.chat.add_system_message(&msg.content, "info");
+                            }
+                        }
+                    }
+                    if !messages.is_empty() {
+                        self.chat.scroll_to_bottom();
+                        self.toasts.push(
+                            format!("Loaded {} messages", messages.len()),
+                            crate::components::toast::ToastLevel::Info,
+                        );
+                    }
+                }
+                Err(e) => {
+                    debug!("Failed to load session messages: {}", e);
+                }
+            },
+
+            // === Swarm Intelligence events ===
+            BackendEvent::SwarmIntelligenceStarted { swarm_id, intelligence_type, .. } => {
+                debug!("Swarm intelligence started: {} ({})", swarm_id, intelligence_type);
+            }
+            BackendEvent::SwarmIntelligenceRound { swarm_id, round } => {
+                debug!("Swarm intelligence round {}: {}", round, swarm_id);
+            }
+            BackendEvent::SwarmIntelligenceConverged { swarm_id, round } => {
+                debug!("Swarm intelligence converged at round {}: {}", round, swarm_id);
+            }
+            BackendEvent::SwarmIntelligenceCompleted { swarm_id, converged, rounds } => {
+                debug!("Swarm intelligence completed: {} (converged={}, rounds={})", swarm_id, converged, rounds);
+            }
 
             // Handle remaining events as they are implemented
             _ => {
@@ -1078,6 +1156,49 @@ Shortcuts:
   j/k              Scroll (when input empty)
   PgUp/PgDn        Page scroll";
         self.chat.add_system_message(help, "info");
+    }
+
+    pub(crate) fn switch_session(&mut self, session_id: &str) {
+        // Cancel any active SSE connection
+        if let Some(cancel) = self.sse_cancel.take() {
+            cancel.cancel();
+        }
+
+        // Update session and clear state
+        self.session_id = session_id.to_string();
+        self.chat.clear();
+        self.tasks.clear();
+        self.stream_buf.clear();
+        self.thinking_buf.clear();
+        self.activity.stop();
+        self.status.set_active(false);
+
+        if self.state == AppState::Processing {
+            self.transition(AppState::Idle);
+        }
+
+        // Load session history
+        let client = self.client.clone();
+        let tx = self.event_tx.clone();
+        let sid = session_id.to_string();
+        tokio::spawn(async move {
+            match client.get_session_messages(&sid).await {
+                Ok(messages) => {
+                    let _ = tx.send(Event::Backend(BackendEvent::SessionMessages(Ok(messages))));
+                }
+                Err(e) => {
+                    let _ = tx.send(Event::Backend(BackendEvent::SessionMessages(Err(e.to_string()))));
+                }
+            }
+        });
+
+        // Reconnect SSE with new session
+        self.start_sse();
+
+        self.toasts.push(
+            format!("Switched to session {}", &session_id[..session_id.len().min(16)]),
+            crate::components::toast::ToastLevel::Info,
+        );
     }
 
     pub(crate) fn create_session(&mut self) {

@@ -92,6 +92,12 @@ impl InputComponent {
         self.tab_matches.clear();
     }
 
+    pub fn insert_str(&mut self, s: &str) {
+        self.content.insert_str(self.cursor, s);
+        self.cursor += s.len();
+        self.tab_matches.clear();
+    }
+
     fn delete_char(&mut self) {
         if self.cursor > 0 {
             let prev = self.content[..self.cursor]
