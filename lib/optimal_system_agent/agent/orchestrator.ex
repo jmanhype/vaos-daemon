@@ -1276,6 +1276,13 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
     - Report your results clearly when done
     - If you encounter a blocker, state it clearly and do what you can
     - Match existing codebase patterns and conventions
+
+    ## Code Quality (applies when writing or modifying code)
+    - Include ALL required imports and package declarations — never omit them
+    - After writing or editing a file, ALWAYS verify: compile it or run a syntax check
+    - Run the relevant tests (`mix test`, `go test ./...`, `npm test`, etc.) and report pass/fail
+    - If a build or test fails, fix it before reporting done — do not declare success with broken code
+    - Read any files created by predecessor agents before building on them
     """
   end
 

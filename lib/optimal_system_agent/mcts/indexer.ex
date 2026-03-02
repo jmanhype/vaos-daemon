@@ -40,6 +40,13 @@ defmodule OptimalSystemAgent.MCTS.Indexer do
   alias OptimalSystemAgent.MCTS.Node
   require Logger
 
+  # Sensitive path patterns mirrored from FileRead — must be kept in sync.
+  @sensitive_paths [
+    ".ssh/id_rsa", ".ssh/id_ed25519", ".ssh/id_ecdsa", ".ssh/id_dsa",
+    ".gnupg/", ".aws/credentials", ".env", "/etc/shadow", "/etc/sudoers",
+    "/etc/master.passwd", ".netrc", ".npmrc", ".pypirc"
+  ]
+
   @default_max_iterations 50
   @default_max_depth 6
   @default_max_results 20
@@ -178,15 +185,20 @@ defmodule OptimalSystemAgent.MCTS.Indexer do
   # Expand a directory: list children, initialize nodes with filename pre-score
   defp expand_dir(tree, dir_path, keywords) do
     children =
-      case File.ls(dir_path) do
-        {:ok, entries} ->
-          entries
-          |> Enum.reject(&skip_entry?/1)
-          |> Enum.map(&Path.join(dir_path, &1))
-          |> Enum.filter(&File.exists?/1)
+      if not safe_path?(dir_path) do
+        []
+      else
+        case File.ls(dir_path) do
+          {:ok, entries} ->
+            entries
+            |> Enum.reject(&skip_entry?/1)
+            |> Enum.map(&Path.join(dir_path, &1))
+            |> Enum.filter(&File.exists?/1)
+            |> Enum.filter(&safe_path?/1)
 
-        _ ->
-          []
+          _ ->
+            []
+        end
       end
 
     tree =
@@ -220,7 +232,7 @@ defmodule OptimalSystemAgent.MCTS.Indexer do
   # Read a file on first visit; populate content_summary for reward calculation
   defp read_file_node(tree, path, keywords) do
     summary =
-      case File.read(path) do
+      case (if safe_path?(path), do: File.read(path), else: {:error, :blocked}) do
         {:ok, content} ->
           preview = String.slice(content, 0, 600)
           symbols = count_symbols(content, Path.extname(path))
@@ -363,5 +375,10 @@ defmodule OptimalSystemAgent.MCTS.Indexer do
     |> Enum.reject(&(String.length(&1) < 3))
     |> Enum.reject(&(&1 in stop_words))
     |> Enum.uniq()
+  end
+
+  defp safe_path?(path) do
+    expanded = Path.expand(path)
+    not Enum.any?(@sensitive_paths, &String.contains?(expanded, &1))
   end
 end

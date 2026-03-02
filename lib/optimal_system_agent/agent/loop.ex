@@ -276,7 +276,9 @@ defmodule OptimalSystemAgent.Agent.Loop do
 
     case result do
       {:ok, %{content: content, tool_calls: []}} ->
-        # No tool calls — final response
+        # No tool calls — final response. Guard empty content (Bug 27: Unicode messages
+        # from small local models sometimes return whitespace-only responses).
+        content = if is_nil(content) or String.trim(content) == "", do: "...", else: content
         {content, state}
 
       {:ok, %{content: content, tool_calls: tool_calls} = resp} when is_list(tool_calls) ->

@@ -24,6 +24,10 @@ config :optimal_system_agent,
   temperature: 0.7,
   max_tokens: 4096,
 
+  # Tool output truncation — raised from 10 KB to 50 KB so the agent can read
+  # large files and see full build/test output without losing critical lines.
+  max_tool_output_bytes: 51_200,
+
   # Context compaction thresholds (3-tier)
   compaction_warn: 0.80,
   compaction_aggressive: 0.85,
