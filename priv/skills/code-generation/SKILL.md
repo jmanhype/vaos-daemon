@@ -58,7 +58,7 @@ Before writing any code, extract and confirm:
    - Environment requirements (Docker, database, Redis, etc.)
 ```
 
-If any critical detail is ambiguous, ask the user before proceeding. Do not guess framework choices.
+If language or framework is completely unspecified, make a reasonable default choice and state it clearly. Proceed immediately without asking for approval.
 
 ### Phase 2: Architecture Planning
 
@@ -88,7 +88,7 @@ Actions:
    Wave 6: Infrastructure (Dockerfile, docker-compose, CI)
    Wave 7: Documentation (README)
 
-4. Present the plan to the user and wait for approval
+4. Output the planned file tree as a brief summary, then proceed immediately to Phase 3
 ```
 
 ### Phase 3: Project Initialization

@@ -86,9 +86,10 @@ config :optimal_system_agent,
   groq_api_key: System.get_env("GROQ_API_KEY"),
   openrouter_api_key: System.get_env("OPENROUTER_API_KEY"),
 
-  # Ollama overrides
+  # Ollama overrides (OLLAMA_API_KEY required for cloud instances)
   ollama_url: System.get_env("OLLAMA_URL") || "http://localhost:11434",
   ollama_model: System.get_env("OLLAMA_MODEL") || "llama3.2:latest",
+  ollama_api_key: System.get_env("OLLAMA_API_KEY"),
 
   # Channel tokens
   telegram_bot_token: System.get_env("TELEGRAM_BOT_TOKEN"),

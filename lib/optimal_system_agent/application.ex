@@ -37,6 +37,7 @@ defmodule OptimalSystemAgent.Application do
 
   @impl true
   def start(_type, _args) do
+    Application.put_env(:optimal_system_agent, :start_time, System.monotonic_time(:second))
     children =
       [
         # Process registry for agent sessions

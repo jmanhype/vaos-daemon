@@ -23,8 +23,9 @@ defmodule OptimalSystemAgent.Onboarding do
 
   # {number, provider_key, display_name, default_model, env_var | nil}
   @providers [
-    {1, "ollama", "Ollama", "llama3.2:latest", nil},
-    {2, "anthropic", "Anthropic", "claude-sonnet-4-6", "ANTHROPIC_API_KEY"},
+    {1, "ollama", "Ollama (local)", "llama3.2:latest", nil},
+    {2, "ollama", "Ollama Cloud", "llama3.2:latest", "OLLAMA_API_KEY"},
+    {3, "anthropic", "Anthropic", "claude-sonnet-4-6", "ANTHROPIC_API_KEY"},
     {3, "openai", "OpenAI", "gpt-4o", "OPENAI_API_KEY"},
     {4, "groq", "Groq", "llama-3.3-70b-versatile", "GROQ_API_KEY"},
     {5, "openrouter", "OpenRouter", "meta-llama/llama-3.3-70b-instruct", "OPENROUTER_API_KEY"},
@@ -46,11 +47,64 @@ defmodule OptimalSystemAgent.Onboarding do
 
   # ── Public API ──────────────────────────────────────────────────
 
-  @doc "Returns true if no config.json exists or it's missing a provider."
+  @doc """
+  Returns true if onboarding is needed:
+  - no config.json exists, OR
+  - config exists but has no provider set, OR
+  - configured provider is not usable (Ollama not running, cloud key missing)
+  """
   @spec first_run?() :: boolean()
   def first_run? do
     config_path = Path.join(config_dir(), "config.json")
-    not File.exists?(config_path) or not config_has_provider?(config_path)
+    not File.exists?(config_path) or
+      not config_has_provider?(config_path) or
+      not provider_ready?()
+  end
+
+  # Check if the currently configured provider is actually usable.
+  # Ollama local: TCP probe. Ollama cloud: API key must be set.
+  # Cloud providers: API key must be set.
+  defp provider_ready? do
+    provider =
+      Application.get_env(:optimal_system_agent, :default_provider, :ollama)
+      |> to_string()
+
+    case provider do
+      "ollama" ->
+        url = Application.get_env(:optimal_system_agent, :ollama_url, "http://localhost:11434")
+        api_key = Application.get_env(:optimal_system_agent, :ollama_api_key)
+        is_local = String.contains?(url, "localhost") or String.contains?(url, "127.0.0.1")
+
+        cond do
+          # Cloud Ollama: just need the API key configured
+          not is_local ->
+            is_binary(api_key) and api_key != ""
+
+          # Local Ollama: TCP probe
+          true ->
+            uri = URI.parse(url)
+            host = String.to_charlist(uri.host || "localhost")
+            port = uri.port || 11434
+
+            case :gen_tcp.connect(host, port, [], 1_000) do
+              {:ok, sock} ->
+                :gen_tcp.close(sock)
+                true
+
+              {:error, _} ->
+                false
+            end
+        end
+
+      p when p != "" ->
+        # Cloud provider: needs an API key
+        provider_api_key(p) not in [nil, ""]
+
+      _ ->
+        false
+    end
+  rescue
+    _ -> false
   end
 
   @doc "Run the full onboarding wizard. Writes all bootstrap files."
@@ -965,7 +1019,9 @@ defmodule OptimalSystemAgent.Onboarding do
     end
   end
 
-  defp provider_api_key("ollama"), do: nil
+  defp provider_api_key("ollama") do
+    Application.get_env(:optimal_system_agent, :ollama_api_key)
+  end
 
   defp provider_api_key(provider) do
     key_atom =

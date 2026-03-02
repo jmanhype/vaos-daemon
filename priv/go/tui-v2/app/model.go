@@ -20,6 +20,7 @@ import (
 	"github.com/miosa/osa-tui/ui/status"
 	"github.com/miosa/osa-tui/ui/toast"
 )
+
 // ProfileDir is set by main to the user's profile directory path.
 var ProfileDir string
 
@@ -102,10 +103,10 @@ type Model struct {
 	confirmQuit    bool
 
 	processingStart time.Time
-	streamBuf       strings.Builder
-	thinkingBuf     strings.Builder // accumulates ThinkingDelta text for the chat ThinkingBox
-	sseReconnecting bool            // true while a ReconnectListenCmd goroutine is in-flight
-	cancelled       bool            // true when user cancelled the current request
+	streamBuf       *strings.Builder
+	thinkingBuf     *strings.Builder // accumulates ThinkingDelta text for the chat ThinkingBox
+	sseReconnecting bool             // true while a ReconnectListenCmd goroutine is in-flight
+	cancelled       bool             // true when user cancelled the current request
 
 	pendingProviderFilter string // set by "/model <provider>" to filter picker
 	forceOnboarding       bool   // true when /setup forces wizard regardless of config
@@ -156,6 +157,8 @@ func New(c *client.Client) Model {
 		width:       80,
 		height:      24,
 		config:      cfg,
+		streamBuf:   &strings.Builder{},
+		thinkingBuf: &strings.Builder{},
 	}
 }
 
@@ -185,4 +188,3 @@ func countLines(s string) int {
 	}
 	return strings.Count(s, "\n") + 1
 }
-
