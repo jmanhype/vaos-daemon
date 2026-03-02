@@ -63,6 +63,7 @@ impl AppState {
             self,
             AppState::Palette
                 | AppState::Permissions
+                | AppState::PlanReview
                 | AppState::Quit
                 | AppState::Sessions
                 | AppState::Models

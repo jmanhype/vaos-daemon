@@ -106,6 +106,7 @@ impl Verbosity {
 /// Activity panel showing processing spinner, tool feed, and thinking
 pub struct Activity {
     active: bool,
+    thinking: bool,
     tool_feed: Vec<ToolEntry>,
     last_tool_name: String,
     input_tokens: u64,
@@ -121,6 +122,7 @@ impl Activity {
     pub fn new() -> Self {
         Self {
             active: false,
+            thinking: false,
             tool_feed: Vec::new(),
             last_tool_name: String::new(),
             input_tokens: 0,
@@ -135,6 +137,7 @@ impl Activity {
 
     pub fn start(&mut self) {
         self.active = true;
+        self.thinking = false;
         self.tool_feed.clear();
         self.last_tool_name.clear();
         self.input_tokens = 0;
@@ -146,7 +149,21 @@ impl Activity {
 
     pub fn stop(&mut self) {
         self.active = false;
+        self.thinking = false;
         self.start_time = None;
+    }
+
+    /// Enable thinking indicator (model is reasoning before responding)
+    pub fn set_thinking(&mut self, thinking: bool) {
+        self.thinking = thinking;
+        if thinking && !self.active {
+            self.active = true;
+            self.start_time = Some(std::time::Instant::now());
+        }
+    }
+
+    pub fn is_thinking(&self) -> bool {
+        self.thinking
     }
 
     pub fn is_active(&self) -> bool {
@@ -266,11 +283,20 @@ impl Component for Activity {
         let spinner_frames = ["\u{25cb}", "\u{25d4}", "\u{25d1}", "\u{25d5}", "\u{25cf}"];
         let spinner_char = spinner_frames[(self.phrase_tick as usize / 2) % spinner_frames.len()];
 
-        let mut spinner_spans = vec![
-            Span::styled(format!("{} ", spinner_char), theme.spinner()),
-            Span::styled(self.current_phrase(), theme.prefix_active()),
-            Span::styled(format!(" ({}s)", elapsed), theme.faint()),
-        ];
+        let mut spinner_spans = if self.thinking {
+            // Thinking mode: brain icon + rotating thinking verb
+            vec![
+                Span::styled(format!("\u{1f9e0} {} ", spinner_char), theme.spinner()),
+                Span::styled(self.current_phrase(), theme.prefix_active()),
+                Span::styled(format!(" ({}s)", elapsed), theme.faint()),
+            ]
+        } else {
+            vec![
+                Span::styled(format!("{} ", spinner_char), theme.spinner()),
+                Span::styled(self.current_phrase(), theme.prefix_active()),
+                Span::styled(format!(" ({}s)", elapsed), theme.faint()),
+            ]
+        };
 
         if self.input_tokens > 0 || self.output_tokens > 0 {
             spinner_spans.push(Span::styled(

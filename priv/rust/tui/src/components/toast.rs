@@ -9,6 +9,7 @@ use super::{Component, ComponentAction};
 
 pub enum ToastLevel {
     Info,
+    Success,
     Warning,
     Error,
 }
@@ -62,6 +63,7 @@ impl Component for Toasts {
             let row = Rect::new(area.x, area.y + i as u16, area.width, 1);
             let (icon, style) = match toast.level {
                 ToastLevel::Info => ("\u{2713}", theme.task_done()),
+                ToastLevel::Success => ("\u{2713}", theme.task_done()),
                 ToastLevel::Warning => ("\u{26a0}", theme.prefix_thinking()),
                 ToastLevel::Error => ("\u{2718}", theme.error_text()),
             };

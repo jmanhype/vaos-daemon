@@ -83,6 +83,14 @@ impl Chat {
         self.scroll_to_bottom();
     }
 
+    /// Add an inline tool-call summary to the chat (compact one-liner).
+    pub fn add_tool_message(&mut self, content: &str) {
+        self.messages
+            .push(Message::new(MessageType::ToolCall, content.to_string(), None));
+        self.has_messages = true;
+        self.scroll_to_bottom();
+    }
+
     pub fn update_streaming(&mut self, content: &str) {
         self.streaming_content = Some(content.to_string());
         self.scroll_to_bottom();

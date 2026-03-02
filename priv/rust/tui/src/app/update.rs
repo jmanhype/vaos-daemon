@@ -55,6 +55,9 @@ impl App {
             AppState::Palette => self.handle_palette_key(key),
             AppState::ModelPicker => self.handle_model_picker_key(key),
             AppState::Sessions => self.handle_session_browser_key(key),
+            AppState::Onboarding => self.handle_onboarding_key(key),
+            AppState::PlanReview => self.handle_plan_review_key(key),
+            AppState::Permissions => self.handle_permissions_key(key),
             AppState::Idle => self.handle_idle_key(key),
             AppState::Processing => self.handle_processing_key(key),
             AppState::Banner => {
@@ -263,6 +266,124 @@ impl App {
         false
     }
 
+    fn handle_onboarding_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        if let Some(ref mut wizard) = self.onboarding {
+            if let Some(action) = wizard.handle_key(key) {
+                match action {
+                    crate::dialogs::onboarding::OnboardingAction::Complete(result) => {
+                        self.transition(AppState::Idle);
+                        self.toasts.push(
+                            "Setup complete!".into(),
+                            crate::components::toast::ToastLevel::Success,
+                        );
+                        // Send onboarding result to backend
+                        let client = self.client.clone();
+                        let tx = self.event_tx.clone();
+                        tokio::spawn(async move {
+                            let mut machines_map = std::collections::HashMap::new();
+                            for m in &result.machines {
+                                machines_map.insert(m.clone(), true);
+                            }
+                            let req = crate::client::types::OnboardingSetupRequest {
+                                provider: result.provider,
+                                model: result.model,
+                                api_key: result.api_key,
+                                env_var: result.env_var,
+                                agent_name: result.agent_name,
+                                user_name: result.user_name,
+                                user_context: result.user_context,
+                                machines: if machines_map.is_empty() { None } else { Some(machines_map) },
+                                channels: None,
+                                os_template: None,
+                            };
+                            let event = match client.onboarding_setup(&req).await {
+                                Ok(resp) => BackendEvent::OnboardingComplete(Ok(resp)),
+                                Err(e) => BackendEvent::OnboardingComplete(Err(e.to_string())),
+                            };
+                            let _ = tx.send(Event::Backend(event));
+                        });
+                        self.onboarding = None;
+                    }
+                    crate::dialogs::onboarding::OnboardingAction::Cancel => {
+                        self.transition(AppState::Idle);
+                        self.onboarding = None;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    fn handle_plan_review_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        if let Some(ref mut review) = self.plan_review {
+            if let Some(action) = review.handle_key(key) {
+                match action {
+                    DialogAction::PlanApprove => {
+                        self.transition(AppState::Idle);
+                        self.toasts.push(
+                            "Plan approved".into(),
+                            crate::components::toast::ToastLevel::Info,
+                        );
+                        self.plan_review = None;
+                    }
+                    DialogAction::PlanReject => {
+                        self.transition(AppState::Idle);
+                        self.toasts.push(
+                            "Plan rejected".into(),
+                            crate::components::toast::ToastLevel::Info,
+                        );
+                        self.plan_review = None;
+                    }
+                    DialogAction::PlanEdit => {
+                        self.transition(AppState::Idle);
+                        self.toasts.push(
+                            "Plan edit requested".into(),
+                            crate::components::toast::ToastLevel::Info,
+                        );
+                        self.plan_review = None;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        false
+    }
+
+    fn handle_permissions_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        if let Some(ref mut dialog) = self.permissions {
+            if let Some(action) = dialog.handle_key(key) {
+                match action {
+                    DialogAction::PermissionAllow => {
+                        self.transition(AppState::Idle);
+                        self.toasts.push(
+                            "Permission granted".into(),
+                            crate::components::toast::ToastLevel::Info,
+                        );
+                        self.permissions = None;
+                    }
+                    DialogAction::PermissionAllowSession => {
+                        self.transition(AppState::Idle);
+                        self.toasts.push(
+                            "Permission granted for session".into(),
+                            crate::components::toast::ToastLevel::Info,
+                        );
+                        self.permissions = None;
+                    }
+                    DialogAction::PermissionDeny => {
+                        self.transition(AppState::Idle);
+                        self.toasts.push(
+                            "Permission denied".into(),
+                            crate::components::toast::ToastLevel::Warning,
+                        );
+                        self.permissions = None;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        false
+    }
+
     fn open_command_palette(&mut self) {
         let items: Vec<PaletteItem> = self
             .command_entries
@@ -312,6 +433,7 @@ impl App {
             BackendEvent::SseConnected { session_id } => {
                 info!("SSE connected: {}", session_id);
                 self.sse_reconnecting = false;
+                self.sidebar.set_session(&self.session_id);
                 // Load commands and tools after SSE connection
                 self.load_commands();
                 self.load_tools();
@@ -332,6 +454,11 @@ impl App {
             }
             BackendEvent::ThinkingDelta { text } => {
                 self.thinking_buf.push_str(&text);
+                self.thinking_box.update(&text);
+                // Activate thinking indicator in the activity panel
+                if !self.activity.is_thinking() {
+                    self.activity.set_thinking(true);
+                }
             }
             BackendEvent::AgentResponse {
                 response,
@@ -345,6 +472,8 @@ impl App {
                     self.activity.start();
                 }
                 self.activity.tool_start(&name, &args);
+                // Stash args so ToolCallEnd can build a rich summary
+                self.pending_tool_args.insert(name.clone(), args);
                 self.recompute_layout();
                 debug!("Tool call start: {}", name);
             }
@@ -354,6 +483,42 @@ impl App {
                 success,
             } => {
                 self.activity.tool_end(&name, duration_ms, success);
+
+                // Build compact inline tool summary for the chat
+                let args = self
+                    .pending_tool_args
+                    .remove(&name)
+                    .unwrap_or_default();
+                let status = if success {
+                    crate::tools::ToolStatus::Success
+                } else {
+                    crate::tools::ToolStatus::Error
+                };
+                let opts = crate::tools::RenderOpts {
+                    status,
+                    width: self.width,
+                    expanded: false,
+                    compact: true,
+                    spinner_frame: None,
+                    duration_ms,
+                    truncated: false,
+                };
+                let lines = crate::tools::render_tool(&name, &args, "", &opts);
+                // Extract plain text from styled Line spans
+                let summary: String = lines
+                    .iter()
+                    .map(|line| {
+                        line.spans
+                            .iter()
+                            .map(|span| span.content.as_ref())
+                            .collect::<String>()
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                if !summary.trim().is_empty() {
+                    self.chat.add_tool_message(summary.trim());
+                }
+
                 debug!(
                     "Tool call end: {} ({}ms, success={})",
                     name, duration_ms, success
@@ -386,6 +551,7 @@ impl App {
             } => {
                 self.status
                     .set_context(utilization, estimated_tokens, max_tokens);
+                self.sidebar.set_context(utilization);
             }
             BackendEvent::TaskCreated {
                 task_id,
@@ -410,6 +576,7 @@ impl App {
             BackendEvent::ToolsLoaded(result) => match result {
                 Ok(tools) => {
                     self.header.set_tool_count(tools.len());
+                    self.sidebar.set_tool_count(tools.len());
                     // Update welcome screen tool inventory
                     self.chat.set_welcome_info(
                         self.header.provider(),
@@ -603,27 +770,19 @@ impl App {
                 Ok(resp) => {
                     if resp.needs_onboarding {
                         info!("Onboarding needed — showing setup wizard");
-                        self.chat.add_system_message(
-                            "Welcome to OSA Agent! Let's get you set up.\n\
-                             \n\
-                             Quick setup:\n\
-                             \n\
-                             1. Local (Ollama):\n\
-                               Already detected! Use /model to switch models.\n\
-                             \n\
-                             2. Cloud providers:\n\
-                               Set API keys in ~/.osa/.env:\n\
-                               ANTHROPIC_API_KEY=sk-ant-...\n\
-                               OPENAI_API_KEY=sk-...\n\
-                               Then restart: osa\n\
-                             \n\
-                             3. Switch model now:\n\
-                               /models        — browse all available\n\
-                               /model <name>  — switch directly\n\
-                             \n\
-                             Type a message to start chatting!",
-                            "info",
+                        let data = crate::dialogs::onboarding::OnboardingData {
+                            providers: resp.providers,
+                            templates: resp.templates,
+                            machines: resp.machines,
+                            channels: resp.channels,
+                            system_info: resp.system_info,
+                        };
+                        self.onboarding = Some(
+                            crate::dialogs::onboarding::OnboardingWizard::new(data),
                         );
+                        if self.state.can_transition_to(AppState::Onboarding) {
+                            self.transition(AppState::Onboarding);
+                        }
                     }
                 }
                 Err(e) => {
@@ -675,10 +834,231 @@ impl App {
                 debug!("Swarm intelligence completed: {} (converged={}, rounds={})", swarm_id, converged, rounds);
             }
 
-            // Handle remaining events as they are implemented
-            _ => {
-                debug!("Unhandled backend event");
-            }
+            // === Phase 2+ HTTP Response Results ===
+            BackendEvent::SkillsLoaded(result) => match result {
+                Ok(skills) => {
+                    debug!("Skills loaded: {} skills", skills.len());
+                }
+                Err(e) => {
+                    self.toasts.push(
+                        format!("Failed to load skills: {}", e),
+                        crate::components::toast::ToastLevel::Error,
+                    );
+                }
+            },
+            BackendEvent::SkillCreated(result) => match result {
+                Ok(_resp) => {
+                    self.toasts.push(
+                        "Skill created".into(),
+                        crate::components::toast::ToastLevel::Success,
+                    );
+                }
+                Err(e) => {
+                    self.toasts.push(
+                        format!("Skill creation failed: {}", e),
+                        crate::components::toast::ToastLevel::Error,
+                    );
+                }
+            },
+            BackendEvent::ClassifyResult(result) => match result {
+                Ok(resp) => {
+                    debug!("Classify result: mode={}, genre={}", resp.signal.mode, resp.signal.genre);
+                }
+                Err(e) => {
+                    self.toasts.push(
+                        format!("Classification failed: {}", e),
+                        crate::components::toast::ToastLevel::Error,
+                    );
+                }
+            },
+            BackendEvent::ComplexTaskResult(result) => match result {
+                Ok(resp) => {
+                    if let Some(synthesis) = &resp.synthesis {
+                        self.chat.add_agent_message(synthesis, None);
+                    }
+                    if self.state == AppState::Processing {
+                        self.activity.stop();
+                        self.status.set_active(false);
+                        self.transition(AppState::Idle);
+                    }
+                }
+                Err(e) => {
+                    self.toasts.push(
+                        format!("Complex task failed: {}", e),
+                        crate::components::toast::ToastLevel::Error,
+                    );
+                    if self.state == AppState::Processing {
+                        self.activity.stop();
+                        self.status.set_active(false);
+                        self.transition(AppState::Idle);
+                    }
+                }
+            },
+            BackendEvent::TaskProgressResult(result) => match result {
+                Ok(progress) => {
+                    debug!("Task progress: {} status={}", progress.task_id, progress.status);
+                    self.tasks.update(&progress.task_id, &progress.status);
+                }
+                Err(e) => {
+                    self.toasts.push(
+                        format!("Task progress failed: {}", e),
+                        crate::components::toast::ToastLevel::Error,
+                    );
+                }
+            },
+            BackendEvent::TasksLoaded(result) => match result {
+                Ok(tasks) => {
+                    debug!("Tasks loaded: {} tasks", tasks.len());
+                }
+                Err(e) => {
+                    self.toasts.push(
+                        format!("Failed to load tasks: {}", e),
+                        crate::components::toast::ToastLevel::Error,
+                    );
+                }
+            },
+            BackendEvent::SwarmLaunched(result) => match result {
+                Ok(resp) => {
+                    self.toasts.push(
+                        format!("Swarm launched: {}", resp.pattern),
+                        crate::components::toast::ToastLevel::Success,
+                    );
+                }
+                Err(e) => {
+                    self.toasts.push(
+                        format!("Swarm launch failed: {}", e),
+                        crate::components::toast::ToastLevel::Error,
+                    );
+                }
+            },
+            BackendEvent::SwarmsLoaded(result) => match result {
+                Ok(resp) => {
+                    debug!("Swarms loaded: {} swarms ({} active)", resp.count, resp.active_count);
+                }
+                Err(e) => {
+                    self.toasts.push(
+                        format!("Failed to load swarms: {}", e),
+                        crate::components::toast::ToastLevel::Error,
+                    );
+                }
+            },
+            BackendEvent::SwarmStatusResult(result) => match result {
+                Ok(status) => {
+                    debug!("Swarm status: {} pattern={} status={}", status.id, status.pattern, status.status);
+                }
+                Err(e) => {
+                    self.toasts.push(
+                        format!("Swarm status failed: {}", e),
+                        crate::components::toast::ToastLevel::Error,
+                    );
+                }
+            },
+            BackendEvent::SwarmCancelResult(result) => match result {
+                Ok(()) => {
+                    self.toasts.push(
+                        "Swarm cancelled".into(),
+                        crate::components::toast::ToastLevel::Info,
+                    );
+                }
+                Err(e) => {
+                    self.toasts.push(
+                        format!("Swarm cancel failed: {}", e),
+                        crate::components::toast::ToastLevel::Error,
+                    );
+                }
+            },
+            BackendEvent::MemorySaved(result) => match result {
+                Ok(_resp) => {
+                    self.toasts.push(
+                        "Memory saved".into(),
+                        crate::components::toast::ToastLevel::Success,
+                    );
+                }
+                Err(e) => {
+                    self.toasts.push(
+                        format!("Memory save failed: {}", e),
+                        crate::components::toast::ToastLevel::Error,
+                    );
+                }
+            },
+            BackendEvent::MemoryRecalled(result) => match result {
+                Ok(resp) => {
+                    self.chat.add_system_message(&resp.content, "info");
+                }
+                Err(e) => {
+                    self.toasts.push(
+                        format!("Memory recall failed: {}", e),
+                        crate::components::toast::ToastLevel::Error,
+                    );
+                }
+            },
+            BackendEvent::AnalyticsResult(result) => match result {
+                Ok(_resp) => {
+                    debug!("Analytics result received");
+                }
+                Err(e) => {
+                    self.toasts.push(
+                        format!("Analytics failed: {}", e),
+                        crate::components::toast::ToastLevel::Error,
+                    );
+                }
+            },
+            BackendEvent::SchedulerJobs(result) => match result {
+                Ok(jobs) => {
+                    debug!("Scheduler jobs loaded: {} jobs", jobs.len());
+                }
+                Err(e) => {
+                    self.toasts.push(
+                        format!("Failed to load scheduler jobs: {}", e),
+                        crate::components::toast::ToastLevel::Error,
+                    );
+                }
+            },
+            BackendEvent::SchedulerReloaded(result) => match result {
+                Ok(()) => {
+                    self.toasts.push(
+                        "Scheduler reloaded".into(),
+                        crate::components::toast::ToastLevel::Info,
+                    );
+                }
+                Err(e) => {
+                    self.toasts.push(
+                        format!("Scheduler reload failed: {}", e),
+                        crate::components::toast::ToastLevel::Error,
+                    );
+                }
+            },
+            BackendEvent::MachinesLoaded(result) => match result {
+                Ok(machines) => {
+                    debug!("Machines loaded: {} machines", machines.len());
+                }
+                Err(e) => {
+                    self.toasts.push(
+                        format!("Failed to load machines: {}", e),
+                        crate::components::toast::ToastLevel::Error,
+                    );
+                }
+            },
+            BackendEvent::OnboardingComplete(result) => match result {
+                Ok(resp) => {
+                    self.toasts.push(
+                        "Setup complete!".into(),
+                        crate::components::toast::ToastLevel::Success,
+                    );
+                    self.header.set_provider_info(&resp.provider, &resp.model);
+                    self.status.set_provider_info(&resp.provider, &resp.model);
+                    self.onboarding = None;
+                    if self.state == AppState::Onboarding {
+                        self.transition(AppState::Idle);
+                    }
+                }
+                Err(e) => {
+                    self.toasts.push(
+                        format!("Onboarding failed: {}", e),
+                        crate::components::toast::ToastLevel::Error,
+                    );
+                }
+            },
         }
         false
     }
@@ -728,6 +1108,8 @@ impl App {
                 self.header
                     .set_provider_info(&health.provider, &health.model);
                 self.status
+                    .set_provider_info(&health.provider, &health.model);
+                self.sidebar
                     .set_provider_info(&health.provider, &health.model);
                 self.chat.set_welcome_info(
                     &health.provider,
@@ -823,6 +1205,7 @@ impl App {
         // Clear streaming state
         self.stream_buf.clear();
         self.thinking_buf.clear();
+        self.thinking_box.clear();
         self.activity.stop();
         self.status.set_active(false);
         self.cancelled = false;

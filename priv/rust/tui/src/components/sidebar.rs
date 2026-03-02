@@ -23,7 +23,6 @@ struct SidebarSection {
 ///   ...
 ///
 /// A dim left-border character is drawn at x=0 of the area on each row.
-#[allow(dead_code)]
 pub struct Sidebar {
     provider: String,
     model: String,
@@ -56,26 +55,22 @@ impl Sidebar {
         self.width = w;
     }
 
-    #[allow(dead_code)]
     pub fn set_provider_info(&mut self, provider: impl Into<String>, model: impl Into<String>) {
         self.provider = provider.into();
         self.model = model.into();
         self.rebuild_sections();
     }
 
-    #[allow(dead_code)]
     pub fn set_session(&mut self, id: impl Into<String>) {
         self.session_id = id.into();
         self.rebuild_sections();
     }
 
-    #[allow(dead_code)]
     pub fn set_tool_count(&mut self, n: usize) {
         self.tool_count = n;
         self.rebuild_sections();
     }
 
-    #[allow(dead_code)]
     pub fn set_context(&mut self, pct: f64) {
         self.context_pct = pct.clamp(0.0, 1.0);
         self.rebuild_sections();

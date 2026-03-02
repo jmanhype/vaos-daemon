@@ -90,6 +90,11 @@ impl App {
                 // Chat
                 self.chat.draw(frame, areas.chat);
 
+                // Sidebar
+                if let Some(sidebar_area) = areas.sidebar {
+                    self.sidebar.draw(frame, sidebar_area);
+                }
+
                 // Tasks
                 if let Some(task_area) = areas.tasks {
                     self.tasks.draw(frame, task_area);
@@ -109,6 +114,19 @@ impl App {
                         2,
                     );
                     self.activity.draw(frame, activity_area);
+                }
+
+                // Thinking box (collapsed indicator above status when thinking)
+                if !self.thinking_box.is_empty() {
+                    let tb_height = self.thinking_box.height(areas.chat.width).min(2);
+                    let tb_y = areas.status.y.saturating_sub(tb_height);
+                    let thinking_area = Rect::new(
+                        areas.chat.x,
+                        tb_y,
+                        areas.chat.width,
+                        tb_height,
+                    );
+                    self.thinking_box.draw(frame, thinking_area);
                 }
 
                 // Status bar
@@ -139,6 +157,21 @@ impl App {
                         crate::app::state::AppState::Sessions => {
                             if let Some(ref browser) = self.session_browser {
                                 browser.draw(frame, area);
+                            }
+                        }
+                        crate::app::state::AppState::Onboarding => {
+                            if let Some(ref wizard) = self.onboarding {
+                                wizard.draw(frame, area);
+                            }
+                        }
+                        crate::app::state::AppState::Permissions => {
+                            if let Some(ref dialog) = self.permissions {
+                                dialog.draw(frame, area);
+                            }
+                        }
+                        crate::app::state::AppState::PlanReview => {
+                            if let Some(ref review) = self.plan_review {
+                                review.draw(frame, area);
                             }
                         }
                         _ => {}

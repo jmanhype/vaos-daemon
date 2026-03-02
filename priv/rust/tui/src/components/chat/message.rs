@@ -11,6 +11,7 @@ pub enum MessageType {
     SystemInfo,
     SystemWarning,
     SystemError,
+    ToolCall,
 }
 
 /// A chat message
@@ -86,6 +87,9 @@ impl Message {
             }
             MessageType::SystemError => {
                 self.draw_system(frame, area, &theme, theme.colors.msg_border_error)
+            }
+            MessageType::ToolCall => {
+                self.draw_tool_call(frame, area, &theme)
             }
         }
     }
@@ -174,6 +178,26 @@ impl Message {
         let paragraph = Paragraph::new(Span::styled(self.content.as_str(), style))
             .block(block)
             .wrap(Wrap { trim: false });
+        frame.render_widget(paragraph, area);
+    }
+
+    fn draw_tool_call(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        theme: &style::Theme,
+    ) {
+        let block = Block::default()
+            .borders(Borders::LEFT)
+            .border_type(BorderType::Plain)
+            .border_style(Style::default().fg(theme.colors.border));
+
+        let paragraph = Paragraph::new(Span::styled(
+            self.content.as_str(),
+            theme.faint(),
+        ))
+        .block(block)
+        .wrap(Wrap { trim: false });
         frame.render_widget(paragraph, area);
     }
 }

@@ -7,6 +7,7 @@ pub mod state;
 pub mod update;
 
 use anyhow::Result;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
@@ -16,17 +17,24 @@ use tracing::info;
 use crate::client::http::ApiClient;
 use crate::components::activity::Activity;
 use crate::components::agents::Agents;
+use crate::components::chat::thinking_box::ThinkingBox;
 use crate::components::chat::Chat;
 use crate::components::header::Header;
 use crate::components::input::InputComponent;
+use crate::components::sidebar::Sidebar;
 use crate::components::status_bar::StatusBar;
 use crate::components::tasks::Tasks;
 use crate::components::toast::Toasts;
 use crate::config::cli::Cli;
 use crate::config::Config;
 use crate::dialogs::command_palette::CommandPalette;
+use crate::dialogs::file_picker::FilePicker;
 use crate::dialogs::model_picker::ModelPicker;
+use crate::dialogs::onboarding::OnboardingWizard;
+use crate::dialogs::permissions::Permissions;
+use crate::dialogs::plan_review::PlanReview;
 use crate::dialogs::quit_confirm::QuitConfirm;
+use crate::dialogs::reasoning::ReasoningSelector;
 use crate::dialogs::sessions::SessionBrowser;
 use crate::event::Event;
 
@@ -48,6 +56,8 @@ pub struct App {
     pub input: InputComponent,
     pub status: StatusBar,
     pub activity: Activity,
+    pub sidebar: Sidebar,
+    pub thinking_box: ThinkingBox,
     pub tasks: Tasks,
     pub agents: Agents,
     pub toasts: Toasts,
@@ -57,6 +67,11 @@ pub struct App {
     pub palette: CommandPalette,
     pub model_picker: Option<ModelPicker>,
     pub session_browser: Option<SessionBrowser>,
+    pub onboarding: Option<OnboardingWizard>,
+    pub plan_review: Option<PlanReview>,
+    pub permissions: Option<Permissions>,
+    pub reasoning_selector: Option<ReasoningSelector>,
+    pub file_picker: Option<FilePicker>,
 
     // State
     pub state: AppState,
@@ -90,6 +105,9 @@ pub struct App {
     pub banner_start: Option<Instant>,
     pub cancelled: bool,
     pub sse_reconnecting: bool,
+
+    // Pending tool call args (tool_name -> args JSON), used to pair with ToolCallEnd
+    pub pending_tool_args: HashMap<String, String>,
 
     // Background tasks
     pub bg_tasks: Vec<String>,
@@ -130,6 +148,8 @@ impl App {
             input: InputComponent::new(),
             status: StatusBar::new(),
             activity: Activity::new(),
+            sidebar: Sidebar::new(),
+            thinking_box: ThinkingBox::new(),
             tasks: Tasks::new(),
             agents: Agents::new(),
             toasts: Toasts::new(),
@@ -138,6 +158,11 @@ impl App {
             palette: CommandPalette::new(),
             model_picker: None,
             session_browser: None,
+            onboarding: None,
+            plan_review: None,
+            permissions: None,
+            reasoning_selector: None,
+            file_picker: None,
 
             state: AppState::Connecting,
             prev_state: None,
@@ -164,6 +189,8 @@ impl App {
             banner_start: None,
             cancelled: false,
             sse_reconnecting: false,
+
+            pending_tool_args: HashMap::new(),
 
             bg_tasks: Vec::new(),
             backend_spawn_attempted: false,

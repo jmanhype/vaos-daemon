@@ -8,7 +8,6 @@ use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 /// Collapsed (default):  ▶ Thinking... (N chars)
 /// Expanded:             Dashed-border block with dim-italic wrapped content,
 ///                       capped at 20 visible lines with overflow indicator.
-#[allow(dead_code)]
 pub struct ThinkingBox {
     content: String,
     expanded: bool,
@@ -26,12 +25,10 @@ impl ThinkingBox {
 
     // ─── Mutation ──────────────────────────────────────────────────────────
 
-    #[allow(dead_code)]
     pub fn update(&mut self, text: &str) {
         self.content.push_str(text);
     }
 
-    #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.content.clear();
     }
@@ -41,7 +38,6 @@ impl ThinkingBox {
         self.expanded = !self.expanded;
     }
 
-    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.content.is_empty()
     }
