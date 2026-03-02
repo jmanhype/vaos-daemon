@@ -63,11 +63,10 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.AgentRoutes do
         end
 
       _ ->
-        if user_id == "anonymous" do
-          :ok
-        else
-          {:error, :not_found}
-        end
+        # Session not in registry yet (not started or stored-only).
+        # Allow any authenticated user to connect — they'll receive
+        # events once the session starts processing.
+        :ok
     end
   end
 
@@ -76,7 +75,14 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.AgentRoutes do
   defp sse_loop(conn, session_id) do
     receive do
       {:osa_event, event} ->
-        event_type = Map.get(event, :type, "unknown") |> to_string()
+        # system_event wraps sub-events (streaming_token, thinking_delta, etc.)
+        # — unwrap so the SSE event type matches what the TUI parser expects.
+        event_type =
+          case event do
+            %{type: :system_event, event: sub} -> to_string(sub)
+            %{type: t} -> to_string(t)
+            _ -> "unknown"
+          end
 
         case Jason.encode(event) do
           {:ok, data} ->

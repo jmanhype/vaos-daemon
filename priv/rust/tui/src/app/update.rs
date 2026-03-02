@@ -419,6 +419,13 @@ impl App {
                         "Orchestrate response: session={}, status={}",
                         resp.session_id, resp.status
                     );
+                    // "processing" means response will come via SSE. Anything
+                    // else (like "error" or "rejected") means we're done.
+                    if resp.status != "processing" && self.state == AppState::Processing {
+                        self.activity.stop();
+                        self.status.set_active(false);
+                        self.transition(AppState::Idle);
+                    }
                 }
                 Err(e) => {
                     error!("Orchestrate failed: {}", e);
@@ -575,6 +582,22 @@ impl App {
             if let Some(start) = self.banner_start {
                 if start.elapsed() >= super::BANNER_DURATION {
                     self.transition(AppState::Idle);
+                }
+            }
+        }
+
+        // Processing timeout — if no response after 90s, bail to Idle
+        if self.state == AppState::Processing {
+            if let Some(start) = self.processing_start {
+                if start.elapsed() >= std::time::Duration::from_secs(90) {
+                    warn!("Processing timed out after 90s");
+                    self.activity.stop();
+                    self.status.set_active(false);
+                    self.transition(AppState::Idle);
+                    self.toasts.push(
+                        "Request timed out".into(),
+                        crate::components::toast::ToastLevel::Error,
+                    );
                 }
             }
         }
@@ -987,23 +1010,24 @@ impl App {
     }
 
     pub(crate) fn show_help(&mut self) {
-        let help = "OSA Agent - Available Commands:\n\
-            /help - Show this help\n\
-            /clear - Clear chat\n\
-            /models - Browse models\n\
-            /model <name> - Switch model\n\
-            /sessions - Browse sessions\n\
-            /session new - Create new session\n\
-            /theme <name> - Switch theme\n\
-            /exit - Quit\n\
-            \n\
-            Keyboard Shortcuts:\n\
-            Ctrl+K - Command palette\n\
-            Ctrl+N - New session\n\
-            Ctrl+L - Toggle sidebar\n\
-            Ctrl+C - Cancel/Quit\n\
-            j/k - Scroll (when input empty)\n\
-            PgUp/PgDn - Page scroll";
+        let help = "\
+Commands:
+  /help            Show this help
+  /clear           Clear chat
+  /models          Browse models
+  /model <name>    Switch model
+  /sessions        Browse sessions
+  /session new     Create new session
+  /theme <name>    Switch theme
+  /exit            Quit
+
+Shortcuts:
+  Ctrl+K           Command palette
+  Ctrl+N           New session
+  Ctrl+L           Toggle sidebar
+  Ctrl+C           Cancel / Quit
+  j/k              Scroll (when input empty)
+  PgUp/PgDn        Page scroll";
         self.chat.add_system_message(help, "info");
     }
 
