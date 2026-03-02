@@ -126,6 +126,7 @@ impl SseClient {
         );
 
         let http = HttpClient::builder()
+            .timeout(Duration::from_secs(0)) // no timeout for SSE long-polling
             .build()
             .map_err(|e| SseError::Disconnected(e.into()))?;
 
