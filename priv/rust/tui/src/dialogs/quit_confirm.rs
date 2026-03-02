@@ -41,8 +41,12 @@ impl QuitConfirm {
 
     /// Handle a key event. Returns `Some(action)` when the dialog should close.
     pub fn handle_key(&mut self, key: KeyEvent) -> Option<DialogAction> {
-        // Ignore key events that carry ctrl/alt modifiers so we don't shadow
-        // global shortcuts that happen to share the same base key.
+        // Ctrl+C in the quit dialog = confirm quit (double Ctrl+C pattern)
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            return Some(DialogAction::QuitConfirmed);
+        }
+
+        // Ignore other ctrl/alt modified keys
         if key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) {
             return None;
         }
