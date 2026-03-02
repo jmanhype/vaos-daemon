@@ -663,8 +663,8 @@ defmodule OptimalSystemAgent.Agent.Loop do
   # Catches common injection patterns before the LLM processes them,
   # protecting weaker local models (Ollama) that may not follow system instructions.
   @injection_patterns [
-    ~r/what\s+(is|are|was)\s+(your\s+)?(system\s+prompt|instructions?|rules?|configuration|directives?)/i,
-    ~r/(show|print|display|reveal|repeat|output|tell me|give me)\s+(your\s+)?(system\s+prompt|instructions?|full\s+prompt|prompt|initial\s+prompt)/i,
+    ~r/what\s+(is|are|was)\s+((your|the)\s+)?(system\s+prompt|instructions?|rules?|configuration|directives?)/i,
+    ~r/(show(\s+me)?|print|display|reveal|repeat|output|tell me|give me)\s+(your\s+)?(system\s+prompt|instructions?|full\s+prompt|prompt|initial\s+prompt)/i,
     ~r/ignore\s+(all\s+)?(previous|prior|above)\s+(instructions?|prompt|context|rules?)/i,
     ~r/repeat\s+everything\s+(above|before|prior)/i,
     ~r/what\s+(were\s+)?(you\s+)?(told|instructed|programmed|trained|configured)\s+to/i,
