@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,13 +65,27 @@ func main() {
 	}
 	os.MkdirAll(app.ProfileDir, 0755)
 
+	// Debug log for diagnosing silent exits.
+	logDir := filepath.Join(home, ".osa", "logs")
+	os.MkdirAll(logDir, 0755)
+	logFile, logErr := os.OpenFile(filepath.Join(logDir, "tui.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if logErr == nil {
+		log.SetOutput(logFile)
+		defer logFile.Close()
+	}
+	log.Printf("osagent starting: baseURL=%s profile=%q profileDir=%s", baseURL, profile, app.ProfileDir)
+
 	token, refreshToken = loadTokens(app.ProfileDir, token)
+	log.Printf("tokens loaded: hasToken=%v hasRefresh=%v", token != "", refreshToken != "")
 
 	// Auto-detect terminal background and set theme before any rendering.
+	log.Printf("detecting terminal background...")
 	if lipgloss.HasDarkBackground(os.Stdin, os.Stdout) {
 		style.SetTheme("dark")
+		log.Printf("theme: dark")
 	} else {
 		style.SetTheme("light")
+		log.Printf("theme: light")
 	}
 
 	c := client.New(baseURL)
@@ -86,16 +101,20 @@ func main() {
 		m.SetForceOnboarding(true)
 	}
 
+	log.Printf("creating tea.Program...")
 	p := tea.NewProgram(m)
 
 	go func() {
 		p.Send(app.ProgramReady{Program: p})
 	}()
 
+	log.Printf("calling p.Run()...")
 	if _, err := p.Run(); err != nil {
+		log.Printf("p.Run() error: %v", err)
 		fmt.Fprintf(os.Stderr, "osa: %v\n", err)
 		os.Exit(1)
 	}
+	log.Printf("p.Run() returned cleanly")
 }
 
 // loadTokens reads token and refresh_token files from the profile directory.

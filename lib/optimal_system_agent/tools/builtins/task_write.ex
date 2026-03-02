@@ -26,7 +26,19 @@ defmodule OptimalSystemAgent.Tools.Builtins.TaskWrite do
       "properties" => %{
         "action" => %{
           "type" => "string",
-          "enum" => ["add", "add_multiple", "start", "complete", "fail", "list", "clear"],
+          "enum" => [
+            "add",
+            "add_multiple",
+            "start",
+            "complete",
+            "fail",
+            "list",
+            "clear",
+            "update",
+            "add_dependency",
+            "remove_dependency",
+            "next"
+          ],
           "description" => "Operation to perform"
         },
         "session_id" => %{
@@ -35,7 +47,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.TaskWrite do
         },
         "task_id" => %{
           "type" => "string",
-          "description" => "Task ID (for start/complete/fail)"
+          "description" => "Task ID (for start/complete/fail/update/add_dependency/remove_dependency)"
         },
         "title" => %{
           "type" => "string",
@@ -49,6 +61,27 @@ defmodule OptimalSystemAgent.Tools.Builtins.TaskWrite do
         "reason" => %{
           "type" => "string",
           "description" => "Failure reason (for fail)"
+        },
+        "description" => %{
+          "type" => "string",
+          "description" => "Detailed task description"
+        },
+        "blocked_by" => %{
+          "type" => "array",
+          "items" => %{"type" => "string"},
+          "description" => "Task IDs that block this task"
+        },
+        "owner" => %{
+          "type" => "string",
+          "description" => "Agent/role that owns this task"
+        },
+        "metadata" => %{
+          "type" => "object",
+          "description" => "Arbitrary metadata key-value pairs"
+        },
+        "blocker_id" => %{
+          "type" => "string",
+          "description" => "Blocking task ID (for add_dependency/remove_dependency)"
         }
       },
       "required" => ["action"]
@@ -67,8 +100,15 @@ defmodule OptimalSystemAgent.Tools.Builtins.TaskWrite do
 
   # ── Actions ──────────────────────────────────────────────────────
 
-  defp do_action("add", session_id, %{"title" => title}) when is_binary(title) do
-    case TaskTracker.add_task(session_id, title) do
+  defp do_action("add", session_id, %{"title" => title} = args) when is_binary(title) do
+    opts =
+      %{}
+      |> maybe_put(:description, args["description"])
+      |> maybe_put(:owner, args["owner"])
+      |> maybe_put(:blocked_by, args["blocked_by"])
+      |> maybe_put(:metadata, args["metadata"])
+
+    case TaskTracker.add_task(session_id, title, opts) do
       {:ok, id} -> {:ok, "Created task #{id}: #{title}"}
       {:error, reason} -> {:error, "Failed to add task: #{inspect(reason)}"}
     end
@@ -133,8 +173,57 @@ defmodule OptimalSystemAgent.Tools.Builtins.TaskWrite do
     {:ok, "Cleared all tasks"}
   end
 
+  defp do_action("update", session_id, %{"task_id" => task_id} = args) do
+    updates =
+      %{}
+      |> maybe_put(:description, args["description"])
+      |> maybe_put(:owner, args["owner"])
+      |> maybe_put(:metadata, args["metadata"])
+
+    case TaskTracker.update_task_fields(session_id, task_id, updates) do
+      :ok -> {:ok, "Updated task #{task_id}"}
+      {:error, :not_found} -> {:error, "Task #{task_id} not found"}
+      {:error, reason} -> {:error, "Failed to update: #{inspect(reason)}"}
+    end
+  end
+
+  defp do_action("update", _session_id, _args),
+    do: {:error, "Missing required parameter: task_id"}
+
+  defp do_action("add_dependency", session_id, %{"task_id" => task_id, "blocker_id" => blocker_id}) do
+    case TaskTracker.add_dependency(session_id, task_id, blocker_id) do
+      :ok -> {:ok, "Added dependency: #{task_id} blocked by #{blocker_id}"}
+      {:error, :not_found} -> {:error, "Task #{task_id} not found"}
+      {:error, :blocker_not_found} -> {:error, "Blocker task #{blocker_id} not found"}
+      {:error, reason} -> {:error, "Failed to add dependency: #{inspect(reason)}"}
+    end
+  end
+
+  defp do_action("add_dependency", _session_id, _args),
+    do: {:error, "Missing required parameters: task_id, blocker_id"}
+
+  defp do_action("remove_dependency", session_id, %{"task_id" => task_id, "blocker_id" => blocker_id}) do
+    case TaskTracker.remove_dependency(session_id, task_id, blocker_id) do
+      :ok -> {:ok, "Removed dependency: #{task_id} no longer blocked by #{blocker_id}"}
+      {:error, :not_found} -> {:error, "Task #{task_id} not found"}
+      {:error, reason} -> {:error, "Failed to remove dependency: #{inspect(reason)}"}
+    end
+  end
+
+  defp do_action("remove_dependency", _session_id, _args),
+    do: {:error, "Missing required parameters: task_id, blocker_id"}
+
+  defp do_action("next", session_id, _args) do
+    case TaskTracker.get_next_task(session_id) do
+      {:ok, nil} -> {:ok, "No unblocked pending tasks."}
+      {:ok, task} -> {:ok, "Next task: #{task.id} — #{task.title}"}
+    end
+  end
+
   defp do_action(action, _session_id, _args),
-    do: {:error, "Unknown action: #{action}. Valid: add, add_multiple, start, complete, fail, list, clear"}
+    do:
+      {:error,
+       "Unknown action: #{action}. Valid: add, add_multiple, start, complete, fail, list, clear, update, add_dependency, remove_dependency, next"}
 
   # ── Formatting ───────────────────────────────────────────────────
 
@@ -149,7 +238,10 @@ defmodule OptimalSystemAgent.Tools.Builtins.TaskWrite do
       Enum.map(tasks, fn task ->
         icon = status_icon(task.status)
         suffix = status_suffix(task)
-        "  #{icon} #{task.id}: #{task.title}#{suffix}"
+        owner_tag = if Map.get(task, :owner), do: " @#{task.owner}", else: ""
+        blocked_tag = format_blocked_tag(task)
+        desc_tag = format_desc_preview(task)
+        "  #{icon} #{task.id}: #{task.title}#{owner_tag}#{blocked_tag}#{suffix}#{desc_tag}"
       end)
 
     "Tasks (#{completed}/#{total} completed):\n#{Enum.join(lines, "\n")}"
@@ -164,4 +256,31 @@ defmodule OptimalSystemAgent.Tools.Builtins.TaskWrite do
   defp status_suffix(%{status: :failed, reason: nil}), do: "  [failed]"
   defp status_suffix(%{status: :failed, reason: reason}), do: "  [failed: #{reason}]"
   defp status_suffix(_), do: ""
+
+  defp format_blocked_tag(task) do
+    blocked_by = Map.get(task, :blocked_by) || []
+
+    if blocked_by != [] do
+      "  [blocked by: #{Enum.join(blocked_by, ", ")}]"
+    else
+      ""
+    end
+  end
+
+  defp format_desc_preview(task) do
+    desc = Map.get(task, :description)
+
+    if is_binary(desc) and desc != "" do
+      preview = String.slice(desc, 0, 60)
+      ellipsis = if String.length(desc) > 60, do: "...", else: ""
+      "\n      #{preview}#{ellipsis}"
+    else
+      ""
+    end
+  end
+
+  # ── Helpers ─────────────────────────────────────────────────────
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 end

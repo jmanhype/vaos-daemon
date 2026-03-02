@@ -54,4 +54,14 @@ defmodule OptimalSystemAgent.Tools.Behaviour do
   @callback description() :: String.t()
   @callback parameters() :: map()
   @callback execute(args :: map()) :: {:ok, String.t()} | {:error, String.t()}
+
+  @doc """
+  Optional callback — return false to hide this tool from the LLM tool list.
+
+  Use for tools that depend on external config (API keys, feature flags).
+  When not implemented, the tool is always available.
+  """
+  @callback available?() :: boolean()
+
+  @optional_callbacks [available?: 0]
 end

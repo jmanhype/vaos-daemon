@@ -30,7 +30,6 @@ defmodule OptimalSystemAgent.Agent.Compactor do
   message resists compression:
 
       Tool calls present   → +50% retention bonus
-      High signal weight   → +30% retention bonus
       Long/substantive     → up to +30% retention bonus (length / 500, capped)
       Pure acknowledgment  → -50% retention (compressed first)
 
@@ -453,14 +452,7 @@ defmodule OptimalSystemAgent.Agent.Compactor do
     ack_penalty =
       if Regex.match?(@ack_patterns, content), do: -0.5, else: 0.0
 
-    # Signal weight bonus (if attached to the message metadata)
-    weight_bonus =
-      case Map.get(msg, :signal_weight) do
-        w when is_number(w) and w > 0.7 -> 0.3
-        _ -> 0.0
-      end
-
-    max(base + tool_bonus + tool_result_bonus + length_bonus + ack_penalty + weight_bonus, 0.1)
+    max(base + tool_bonus + tool_result_bonus + length_bonus + ack_penalty, 0.1)
   end
 
   @doc false

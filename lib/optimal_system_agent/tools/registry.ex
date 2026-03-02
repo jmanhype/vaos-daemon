@@ -42,7 +42,18 @@ defmodule OptimalSystemAgent.Tools.Registry do
   GenServer callbacks (e.g., during orchestration) without deadlocking.
   """
   def list_tools_direct do
-    :persistent_term.get({__MODULE__, :tools}, [])
+    # Re-filter at read time in case availability changed (e.g., env var set after boot)
+    builtin_tools = :persistent_term.get({__MODULE__, :builtin_tools}, %{})
+
+    builtin_tools
+    |> Enum.filter(fn {_name, mod} -> tool_available?(mod) end)
+    |> Enum.map(fn {_name, mod} ->
+      %{
+        name: mod.name(),
+        description: mod.description(),
+        parameters: mod.parameters()
+      }
+    end)
   end
 
   @doc """
@@ -80,6 +91,46 @@ defmodule OptimalSystemAgent.Tools.Registry do
     tool_docs = Enum.map(builtin_tools, fn {name, mod} -> {name, mod.description()} end)
     skill_docs = Enum.map(skills, fn {name, skill} -> {name, skill.description} end)
     tool_docs ++ skill_docs
+  end
+
+  @doc "Reload skills from disk (~/.osa/skills/) and recompile the dispatcher."
+  def reload_skills do
+    GenServer.call(__MODULE__, :reload_skills)
+  end
+
+  @doc """
+  Returns a formatted string of all active custom skills for prompt injection.
+
+  Used by Context.build to inform the LLM about available custom skills.
+  Returns nil if no custom skills are loaded.
+  """
+  @spec active_skills_context() :: String.t() | nil
+  def active_skills_context do
+    skills = :persistent_term.get({__MODULE__, :skills}, %{})
+
+    if map_size(skills) == 0 do
+      nil
+    else
+      skills_dir = Path.expand(Application.get_env(:optimal_system_agent, :skills_dir, "~/.osa/skills"))
+
+      active =
+        Enum.reject(skills, fn {name, _skill} ->
+          File.exists?(Path.join([skills_dir, name, ".disabled"]))
+        end)
+
+      if active == [] do
+        nil
+      else
+        lines =
+          Enum.map_join(active, "\n", fn {name, skill} ->
+            "- **#{name}**: #{skill.description}"
+          end)
+
+        "## Custom Skills\n\nThe following user-created skills are available:\n#{lines}"
+      end
+    end
+  rescue
+    _ -> nil
   end
 
   @doc "Search existing tools and skills by keyword matching against names and descriptions."
@@ -343,6 +394,18 @@ defmodule OptimalSystemAgent.Tools.Registry do
     {:reply, state.tools, state}
   end
 
+  def handle_call(:reload_skills, _from, state) do
+    skills = load_skills()
+    tools = build_tool_list(state.builtin_tools, skills)
+    compile_dispatcher(state.builtin_tools, skills)
+
+    :persistent_term.put({__MODULE__, :skills}, skills)
+    :persistent_term.put({__MODULE__, :tools}, tools)
+
+    Logger.info("Tools registry reloaded: #{map_size(skills)} skills")
+    {:reply, :ok, %{state | skills: skills, tools: tools}}
+  end
+
   def handle_call(:list_docs, _from, state) do
     tool_docs = Enum.map(state.builtin_tools, fn {name, mod} -> {name, mod.description()} end)
     skill_docs = Enum.map(state.skills, fn {name, skill} -> {name, skill.description} end)
@@ -364,6 +427,7 @@ defmodule OptimalSystemAgent.Tools.Registry do
     {:reply, result, state}
   end
 
+
   # --- Built-in Tools ---
 
   defp load_builtin_tools do
@@ -384,7 +448,11 @@ defmodule OptimalSystemAgent.Tools.Registry do
       "dir_list" => OptimalSystemAgent.Tools.Builtins.DirList,
       "web_fetch" => OptimalSystemAgent.Tools.Builtins.WebFetch,
       "task_write" => OptimalSystemAgent.Tools.Builtins.TaskWrite,
-      "mcts_index" => OptimalSystemAgent.Tools.Builtins.MCTSIndex
+      "mcts_index" => OptimalSystemAgent.Tools.Builtins.MCTSIndex,
+      "session_search" => OptimalSystemAgent.Tools.Builtins.SessionSearch,
+      "skill_manager" => OptimalSystemAgent.Tools.Builtins.SkillManager,
+      "ask_user" => OptimalSystemAgent.Tools.Builtins.AskUser,
+      "delegate" => OptimalSystemAgent.Tools.Builtins.Delegate
     }
   end
 
@@ -449,13 +517,20 @@ defmodule OptimalSystemAgent.Tools.Registry do
   # --- Tool List Building ---
 
   defp build_tool_list(builtin_tools, _skills) do
-    Enum.map(builtin_tools, fn {_name, mod} ->
+    builtin_tools
+    |> Enum.filter(fn {_name, mod} -> tool_available?(mod) end)
+    |> Enum.map(fn {_name, mod} ->
       %{
         name: mod.name(),
         description: mod.description(),
         parameters: mod.parameters()
       }
     end)
+  end
+
+  # Check the optional available?/0 callback — defaults to true when not implemented
+  defp tool_available?(mod) do
+    not function_exported?(mod, :available?, 0) or mod.available?()
   end
 
   # --- Goldrush Dispatcher Compilation ---

@@ -1002,8 +1002,6 @@ defmodule OptimalSystemAgent.Agent.Memory do
       content: ensure_utf8(Map.get(entry, :content, Map.get(entry, "content", ""))),
       tool_calls: Map.get(entry, :tool_calls, Map.get(entry, "tool_calls")),
       tool_call_id: Map.get(entry, :tool_call_id, Map.get(entry, "tool_call_id")),
-      signal_mode: Map.get(entry, :signal_mode, Map.get(entry, "signal_mode")),
-      signal_weight: parse_float(Map.get(entry, :signal_weight, Map.get(entry, "signal_weight"))),
       token_count: parse_int(Map.get(entry, :token_count, Map.get(entry, "token_count"))),
       channel: get_string(entry, :channel),
       metadata: Map.get(entry, :metadata, Map.get(entry, "metadata", %{}))
@@ -1041,8 +1039,6 @@ defmodule OptimalSystemAgent.Agent.Memory do
         base
         |> maybe_put("tool_calls", msg.tool_calls)
         |> maybe_put("tool_call_id", msg.tool_call_id)
-        |> maybe_put("signal_mode", msg.signal_mode)
-        |> maybe_put("signal_weight", msg.signal_weight)
         |> maybe_put("token_count", msg.token_count)
         |> maybe_put("channel", msg.channel)
       end)
@@ -1127,19 +1123,6 @@ defmodule OptimalSystemAgent.Agent.Memory do
   rescue
     _ -> %{count: 0, total_tokens: 0, roles: %{}}
   end
-
-  defp parse_float(nil), do: nil
-  defp parse_float(f) when is_float(f), do: f
-  defp parse_float(i) when is_integer(i), do: i / 1.0
-
-  defp parse_float(s) when is_binary(s) do
-    case Float.parse(s) do
-      {f, _} -> f
-      :error -> nil
-    end
-  end
-
-  defp parse_float(_), do: nil
 
   defp get_string(entry, key) do
     case Map.get(entry, key, Map.get(entry, to_string(key))) do

@@ -37,7 +37,6 @@ defmodule OptimalSystemAgent.Agent.Workflow do
               name: nil,
               description: nil,
               status: :pending,
-              signal_mode: nil,
               tools_needed: [],
               acceptance_criteria: nil,
               result: nil,
@@ -423,9 +422,8 @@ defmodule OptimalSystemAgent.Agent.Workflow do
   defp decompose_via_llm(description) do
     prompt = """
     You are a project planner. Decompose this task into clear, sequential steps.
-    Respond ONLY with a JSON array. Each step has: name, description, signal_mode, tools_needed, acceptance_criteria.
+    Respond ONLY with a JSON array. Each step has: name, description, tools_needed, acceptance_criteria.
 
-    signal_mode is one of: BUILD, EXECUTE, ANALYZE, ASSIST, MAINTAIN
     tools_needed is a list of: shell_execute, file_read, file_write, web_search, memory_save
 
     Keep it practical — between 3 and 12 steps. Each step should be completable in one focused session.
@@ -433,7 +431,7 @@ defmodule OptimalSystemAgent.Agent.Workflow do
     Task: "#{String.slice(description, 0, 500)}"
 
     Respond with ONLY the JSON array, no markdown fences:
-    [{"name": "...", "description": "...", "signal_mode": "BUILD", "tools_needed": ["file_write"], "acceptance_criteria": "..."}]
+    [{"name": "...", "description": "...", "tools_needed": ["file_write"], "acceptance_criteria": "..."}]
     """
 
     messages = [%{role: "user", content: prompt}]
@@ -469,7 +467,6 @@ defmodule OptimalSystemAgent.Agent.Workflow do
               name: Map.get(step_data, "name", "Step #{index + 1}"),
               description: Map.get(step_data, "description", ""),
               status: :pending,
-              signal_mode: parse_signal_mode(Map.get(step_data, "signal_mode", "BUILD")),
               tools_needed: Map.get(step_data, "tools_needed", []),
               acceptance_criteria: Map.get(step_data, "acceptance_criteria")
             }
@@ -504,7 +501,6 @@ defmodule OptimalSystemAgent.Agent.Workflow do
                 name: Map.get(step_data, "name", "Step #{index + 1}"),
                 description: Map.get(step_data, "description", ""),
                 status: :pending,
-                signal_mode: parse_signal_mode(Map.get(step_data, "signal_mode", "BUILD")),
                 tools_needed: Map.get(step_data, "tools_needed", []),
                 acceptance_criteria: Map.get(step_data, "acceptance_criteria")
               }
@@ -546,7 +542,6 @@ defmodule OptimalSystemAgent.Agent.Workflow do
 
       ### Current Step: #{current.name}
       #{current.description}
-      Expected mode: #{current.signal_mode || "BUILD"}
       Tools available: #{Enum.join(current.tools_needed || [], ", ")}
       #{if current.acceptance_criteria, do: "Acceptance criteria: #{current.acceptance_criteria}", else: ""}
 
@@ -687,7 +682,6 @@ defmodule OptimalSystemAgent.Agent.Workflow do
       "name" => step.name,
       "description" => step.description,
       "status" => to_string(step.status),
-      "signal_mode" => if(step.signal_mode, do: to_string(step.signal_mode), else: nil),
       "tools_needed" => step.tools_needed || [],
       "acceptance_criteria" => step.acceptance_criteria,
       "result" => step.result,
@@ -721,7 +715,6 @@ defmodule OptimalSystemAgent.Agent.Workflow do
       name: data["name"],
       description: data["description"],
       status: parse_status(data["status"]),
-      signal_mode: parse_signal_mode(data["signal_mode"]),
       tools_needed: data["tools_needed"] || [],
       acceptance_criteria: data["acceptance_criteria"],
       result: data["result"],
@@ -789,23 +782,4 @@ defmodule OptimalSystemAgent.Agent.Workflow do
   defp parse_status(atom) when is_atom(atom), do: atom
   defp parse_status(_), do: :pending
 
-  defp parse_signal_mode(nil), do: nil
-  defp parse_signal_mode("BUILD"), do: :build
-  defp parse_signal_mode("EXECUTE"), do: :execute
-  defp parse_signal_mode("ANALYZE"), do: :analyze
-  defp parse_signal_mode("ASSIST"), do: :assist
-  defp parse_signal_mode("MAINTAIN"), do: :maintain
-
-  defp parse_signal_mode(mode) when is_binary(mode) do
-    downcased = String.downcase(mode)
-
-    try do
-      String.to_existing_atom(downcased)
-    rescue
-      ArgumentError -> :unknown
-    end
-  end
-
-  defp parse_signal_mode(atom) when is_atom(atom), do: atom
-  defp parse_signal_mode(_), do: nil
 end

@@ -17,8 +17,6 @@ defmodule OptimalSystemAgent.Store.Message do
     field(:content, :string)
     field(:tool_calls, :map)
     field(:tool_call_id, :string)
-    field(:signal_mode, :string)
-    field(:signal_weight, :float)
     field(:token_count, :integer)
     field(:channel, :string)
     field(:metadata, :map, default: %{})
@@ -30,8 +28,6 @@ defmodule OptimalSystemAgent.Store.Message do
     :content,
     :tool_calls,
     :tool_call_id,
-    :signal_mode,
-    :signal_weight,
     :token_count,
     :channel,
     :metadata

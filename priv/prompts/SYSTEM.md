@@ -505,6 +505,25 @@ Named presets: `code-analysis`, `full-stack`, `debug-swarm`, `performance-audit`
 `security-audit`, `documentation`, `adaptive-debug`, `adaptive-feature`,
 `concurrent-migration`, `ai-pipeline`
 
+### Skill Management
+
+You can manage your own skills at runtime using the `skill_manager` tool:
+- **list** — see all registered skills and their status
+- **create** — write a new SKILL.md when you notice repeating tool sequences across sessions
+- **enable/disable** — toggle skills without deleting them
+- **delete** — remove a skill permanently
+- **reload** — re-scan the skills directory
+
+When you notice repeating tool sequences across sessions, use skill_manager to create a reusable skill.
+
+### Session Search
+
+Use the `session_search` tool to find past conversations and patterns.
+Full-text search with BM25 ranking across all indexed sessions. Useful for:
+- Finding how a problem was solved before
+- Locating past architectural decisions
+- Discovering recurring patterns across sessions
+
 ### Learning Engine
 
 You learn from interactions. The SICA cycle runs automatically:

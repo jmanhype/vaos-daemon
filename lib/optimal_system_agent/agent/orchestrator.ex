@@ -1060,6 +1060,10 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
         Tools.list_tools_direct()
       end
 
+    # Strip recursive tools — sub-agents must not spawn further orchestrations
+    restricted = ~w(orchestrate create_skill)
+    tools = Enum.reject(tools, fn tool -> tool.name in restricted end)
+
     # Filter tools to only what this agent needs (if specified)
     tools =
       if sub_task.tools_needed != [] do

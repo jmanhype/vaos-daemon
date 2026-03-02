@@ -17,6 +17,7 @@ defmodule OptimalSystemAgent.Providers.Ollama do
 
   require Logger
 
+  alias OptimalSystemAgent.Providers.ToolCallParsers
   alias OptimalSystemAgent.Utils.Text
 
   # Models known to handle tool calling well (name prefix → min size in GB)
@@ -120,7 +121,7 @@ defmodule OptimalSystemAgent.Providers.Ollama do
     try do
       case Req.post("#{url}/api/chat", json: body, receive_timeout: 120_000) do
         {:ok, %{status: 200, body: %{"message" => %{"content" => content} = msg}}} ->
-          tool_calls = parse_tool_calls(msg)
+          tool_calls = parse_tool_calls(msg, model)
           {:ok, %{content: Text.strip_thinking_tokens(content || ""), tool_calls: tool_calls}}
 
         {:ok, %{status: status, body: resp_body}} ->
@@ -222,7 +223,7 @@ defmodule OptimalSystemAgent.Providers.Ollama do
     end)
   end
 
-  defp parse_tool_calls(%{"tool_calls" => calls}) when is_list(calls) do
+  defp parse_tool_calls(%{"tool_calls" => calls}, _model) when is_list(calls) do
     Enum.map(calls, fn call ->
       %{
         id: call["id"] || generate_id(),
@@ -232,7 +233,11 @@ defmodule OptimalSystemAgent.Providers.Ollama do
     end)
   end
 
-  defp parse_tool_calls(_), do: []
+  defp parse_tool_calls(%{"content" => content}, model) when is_binary(content) do
+    ToolCallParsers.parse(content, model)
+  end
+
+  defp parse_tool_calls(_, _model), do: []
 
   defp generate_id,
     do: OptimalSystemAgent.Utils.ID.generate()

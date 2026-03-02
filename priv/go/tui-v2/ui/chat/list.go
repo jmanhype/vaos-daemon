@@ -66,6 +66,8 @@ type ToolCallDisplay struct {
 	DurationMs int64
 	Done       bool
 	Success    bool
+	Expanded   bool // toggle with ctrl+o
+	Truncated  bool // result was truncated on backend
 }
 
 // ToolStatus describes the lifecycle state of a tool call.
@@ -358,8 +360,9 @@ func (a *assistantMessageItem) Render(cw int) string {
 				tools.RenderOpts{
 					Status:     tools.ToolStatus(status),
 					Width:      cw - 2,
-					Expanded:   false,
+					Expanded:   tc.Expanded,
 					DurationMs: tc.DurationMs,
+					Truncated:  tc.Truncated,
 				},
 			))
 		}
@@ -860,8 +863,9 @@ func renderFocusedAssistant(a *assistantMessageItem, cw int) string {
 				tools.RenderOpts{
 					Status:     tools.ToolStatus(status),
 					Width:      cw - 2,
-					Expanded:   false,
+					Expanded:   tc.Expanded,
 					DurationMs: tc.DurationMs,
+					Truncated:  tc.Truncated,
 				},
 			))
 		}

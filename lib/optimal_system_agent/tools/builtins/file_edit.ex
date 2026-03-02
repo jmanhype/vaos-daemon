@@ -13,7 +13,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.FileEdit do
   def name, do: "file_edit"
 
   @impl true
-  def description, do: "Make surgical string replacements in a file. old_string must be unique in the file."
+  def description, do: "Make surgical string replacements in a file. old_string must be unique unless replace_all is true."
 
   @impl true
   def parameters do
@@ -21,16 +21,18 @@ defmodule OptimalSystemAgent.Tools.Builtins.FileEdit do
       "type" => "object",
       "properties" => %{
         "path" => %{"type" => "string", "description" => "Absolute path to the file"},
-        "old_string" => %{"type" => "string", "description" => "Exact text to find (must be unique in file)"},
-        "new_string" => %{"type" => "string", "description" => "Text to replace it with"}
+        "old_string" => %{"type" => "string", "description" => "Exact text to find (must be unique unless replace_all is true)"},
+        "new_string" => %{"type" => "string", "description" => "Text to replace it with"},
+        "replace_all" => %{"type" => "boolean", "description" => "Replace all occurrences (default: false)"}
       },
       "required" => ["path", "old_string", "new_string"]
     }
   end
 
   @impl true
-  def execute(%{"path" => path, "old_string" => old, "new_string" => new}) do
+  def execute(%{"path" => path, "old_string" => old, "new_string" => new} = params) do
     expanded = Path.expand(path)
+    replace_all = params["replace_all"] == true
 
     cond do
       not read_allowed?(expanded) ->
@@ -42,25 +44,29 @@ defmodule OptimalSystemAgent.Tools.Builtins.FileEdit do
       old == "" ->
         {:error, "old_string cannot be empty"}
       true ->
-        do_edit(expanded, path, old, new)
+        do_edit(expanded, path, old, new, replace_all)
     end
   end
   def execute(_), do: {:error, "Missing required parameters: path, old_string, new_string"}
 
-  defp do_edit(expanded, display_path, old, new) do
+  defp do_edit(expanded, display_path, old, new, replace_all) do
     case File.read(expanded) do
       {:ok, content} ->
         occurrences = count_occurrences(content, old)
         cond do
           occurrences == 0 ->
             {:error, "old_string not found in #{display_path}"}
-          occurrences > 1 ->
-            {:error, "old_string found #{occurrences} times — must be unique. Add more surrounding context."}
+          occurrences > 1 and not replace_all ->
+            {:error, "old_string found #{occurrences} times — must be unique. Add more surrounding context or use replace_all."}
           true ->
-            new_content = String.replace(content, old, new, global: false)
+            new_content = String.replace(content, old, new, global: replace_all)
             File.write!(expanded, new_content)
-            diff = format_diff(old, new, content, display_path)
-            {:ok, "Replaced in #{display_path}\n#{diff}"}
+            if replace_all and occurrences > 1 do
+              {:ok, "Replaced #{occurrences} occurrences in #{display_path}"}
+            else
+              diff = format_diff(old, new, content, display_path)
+              {:ok, "Replaced in #{display_path}\n#{diff}"}
+            end
         end
       {:error, :enoent} -> {:error, "File not found: #{display_path}"}
       {:error, reason} -> {:error, "Cannot read #{display_path}: #{reason}"}

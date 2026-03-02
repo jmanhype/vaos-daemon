@@ -27,7 +27,7 @@ defmodule OptimalSystemAgent.Events.Bus do
   use GenServer
   require Logger
 
-  @event_types ~w(user_message llm_request llm_response tool_call tool_result agent_response system_event signal_classified channel_connected channel_disconnected channel_error)a
+  @event_types ~w(user_message llm_request llm_response tool_call tool_result agent_response system_event channel_connected channel_disconnected channel_error)a
 
   def start_link(_opts) do
     GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
@@ -81,8 +81,11 @@ defmodule OptimalSystemAgent.Events.Bus do
   @impl true
   def handle_call({:register, event_type, ref, handler_fn}, _from, state) do
     :ets.insert(:osa_event_handlers, {event_type, ref, handler_fn})
-    # Recompile the goldrush router — hot code reload
-    compile_router()
+    # No recompile needed — dispatch_event/1 reads handlers from ETS at call time.
+    # The compiled goldrush module only does type-filtering (static @event_types).
+    # Recompiling here caused a TOCTOU race: gr_param:transform/1 wipes the ETS
+    # table mid-recompile while in-flight Task workers still hold references to
+    # the old compiled bytecode → ets:lookup_element crash.
     {:reply, :ok, state}
   end
 
@@ -92,14 +95,13 @@ defmodule OptimalSystemAgent.Events.Bus do
     {:reply, :ok, state}
   end
 
-  # Compile the goldrush event router module.
+  # Compile the goldrush event router module ONCE at init.
   # Creates a real .beam module loaded into the VM at BEAM instruction speed.
   #
-  # Architecture:
-  #   1. Type-specific filters (glc:eq per event type)
-  #   2. Combined via glc:any (OR)
-  #   3. Wrapped with glc:with for dispatch handler
-  #   4. Compiled to :osa_event_router via glc:compile
+  # The compiled module handles type-filtering only (static @event_types).
+  # Handler dispatch is dynamic via ETS lookup in dispatch_event/1.
+  # Never recompile after init — doing so causes a TOCTOU race with
+  # gr_param's ETS table while in-flight tasks hold old bytecode refs.
   defp compile_router do
     # Build type filter — only known event types pass through
     type_filters = Enum.map(@event_types, &:glc.eq(:type, &1))

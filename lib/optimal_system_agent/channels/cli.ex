@@ -3,7 +3,7 @@ defmodule OptimalSystemAgent.Channels.CLI do
   Interactive CLI REPL — clean, colored, responsive.
   Supports streaming responses, animated spinner with elapsed time/token count,
   readline-style line editing with arrow keys and history,
-  markdown rendering, and signal classification indicators.
+  and markdown rendering.
   Start with: mix osa.chat
   """
   require Logger
@@ -32,7 +32,6 @@ defmodule OptimalSystemAgent.Channels.CLI do
     {:ok, _pid} = Loop.start_link(session_id: session_id, channel: :cli)
 
     # Register event handlers for CLI feedback
-    register_signal_handler()
     register_orchestrator_handler()
     register_task_tracker_handler()
 
@@ -134,34 +133,14 @@ defmodule OptimalSystemAgent.Channels.CLI do
 
   # ── Event Handlers ──────────────────────────────────────────────────
 
-  defp register_signal_handler do
-    # Capture the latest signal from agent_response events into an ETS table
-    # so the CLI can display it after the synchronous call returns.
-    table =
-      try do
-        :ets.new(:cli_signal_cache, [:set, :public, :named_table])
-      rescue
-        ArgumentError -> :cli_signal_cache
-      end
-
-    Bus.register_handler(:agent_response, fn payload ->
-      case payload do
-        %{session_id: sid, signal: signal} when not is_nil(signal) ->
-          try do
-            :ets.insert(table, {sid, signal})
-          rescue
-            _ -> :ok
-          end
-
-        _ ->
-          :ok
-      end
-    end)
-  rescue
-    _ -> :ok
-  end
-
   defp register_orchestrator_handler do
+    # ETS table for caching context pressure and orchestrator state
+    try do
+      :ets.new(:cli_signal_cache, [:set, :public, :named_table])
+    rescue
+      ArgumentError -> :cli_signal_cache
+    end
+
     Bus.register_handler(:system_event, fn payload ->
       case payload do
         %{event: :orchestrator_task_started, task_id: task_id} ->
@@ -287,19 +266,6 @@ defmodule OptimalSystemAgent.Channels.CLI do
     end)
   rescue
     _ -> :ok
-  end
-
-  defp get_cached_signal(session_id) do
-    case :ets.lookup(:cli_signal_cache, session_id) do
-      [{^session_id, signal}] ->
-        :ets.delete(:cli_signal_cache, session_id)
-        signal
-
-      _ ->
-        nil
-    end
-  rescue
-    _ -> nil
   end
 
   # ── Command Handling ─────────────────────────────────────────────────
@@ -461,14 +427,13 @@ defmodule OptimalSystemAgent.Channels.CLI do
     case result do
       {:ok, response} ->
         {elapsed_ms, tool_count, total_tokens} = Spinner.stop(spinner)
-        signal = get_cached_signal(session_id)
-        show_status_line(elapsed_ms, tool_count, total_tokens, signal)
+        show_status_line(elapsed_ms, tool_count, total_tokens)
         print_response(response)
         print_separator()
 
       {:plan, plan_text} ->
         {elapsed_ms, _tool_count, total_tokens} = Spinner.stop(spinner)
-        show_status_line(elapsed_ms, 0, total_tokens, nil)
+        show_status_line(elapsed_ms, 0, total_tokens)
         handle_plan_review(plan_text, input, session_id, 0)
 
       {:error, reason} ->
@@ -560,13 +525,12 @@ defmodule OptimalSystemAgent.Channels.CLI do
     case result do
       {:plan, plan_text} ->
         {elapsed_ms, _tool_count, total_tokens} = Spinner.stop(spinner)
-        show_status_line(elapsed_ms, 0, total_tokens, nil)
+        show_status_line(elapsed_ms, 0, total_tokens)
         {:plan, plan_text}
 
       {:ok, response} ->
         {elapsed_ms, tool_count, total_tokens} = Spinner.stop(spinner)
-        signal = get_cached_signal(session_id)
-        show_status_line(elapsed_ms, tool_count, total_tokens, signal)
+        show_status_line(elapsed_ms, tool_count, total_tokens)
         print_response(response)
         print_separator()
         :executed
@@ -578,19 +542,10 @@ defmodule OptimalSystemAgent.Channels.CLI do
     end
   end
 
-  defp show_status_line(elapsed_ms, tool_count, total_tokens, signal) do
+  defp show_status_line(elapsed_ms, tool_count, total_tokens) do
     parts = ["#{@green}✓#{@dim} " <> format_elapsed(elapsed_ms)]
     parts = if tool_count > 0, do: parts ++ ["#{tool_count} tools"], else: parts
     parts = if total_tokens > 0, do: parts ++ [format_tokens(total_tokens)], else: parts
-
-    parts =
-      case signal do
-        %{mode: mode, genre: genre, weight: weight} ->
-          parts ++ ["#{mode} · #{genre} · w#{Float.round(weight, 1)}"]
-
-        _ ->
-          parts
-      end
 
     # Append compact context utilization hint from the latest pressure event
     parts =
@@ -702,14 +657,13 @@ defmodule OptimalSystemAgent.Channels.CLI do
         case result do
           {:ok, response} ->
             {elapsed_ms, tool_count, total_tokens} = Spinner.stop(spinner)
-            signal = get_cached_signal(session_id)
-            show_status_line(elapsed_ms, tool_count, total_tokens, signal)
+            show_status_line(elapsed_ms, tool_count, total_tokens)
             print_response(response)
             print_separator()
 
           {:plan, plan_text} ->
             {elapsed_ms, _tool_count, total_tokens} = Spinner.stop(spinner)
-            show_status_line(elapsed_ms, 0, total_tokens, nil)
+            show_status_line(elapsed_ms, 0, total_tokens)
             :ets.insert(:cli_active_request, {:pending_plan, session_id, plan_text, original_input})
 
           {:error, reason} ->

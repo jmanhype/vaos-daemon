@@ -52,7 +52,7 @@ config :optimal_system_agent,
 
   # HTTP channel (SDK API surface)
   http_port: 8089,
-  require_auth: true,
+  require_auth: false,
 
   # ---------------------------------------------------------------------------
   # Sandbox — Docker container isolation for skill execution

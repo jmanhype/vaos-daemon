@@ -8,8 +8,6 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
   Agent endpoints:
     POST   /orchestrate                    — Process message through agent loop
     GET    /stream/:session_id             — SSE event stream for a session
-    POST   /classify                       — Signal classification only
-
   Tool & skill endpoints:
     GET    /tools                          — List executable tools
     POST   /tools/:name/execute            — Execute a tool by name
@@ -108,7 +106,6 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
   alias OptimalSystemAgent.Agent.Memory
   alias OptimalSystemAgent.Providers
   alias OptimalSystemAgent.Agent.Scheduler
-  alias OptimalSystemAgent.Signal.Classifier
   alias OptimalSystemAgent.Tools.Registry, as: Tools
   alias OptimalSystemAgent.Commands
   alias OptimalSystemAgent.Machines
@@ -131,23 +128,6 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
   alias OptimalSystemAgent.Protocol.OSCP
   alias OptimalSystemAgent.Fleet.Registry, as: Fleet
   alias OptimalSystemAgent.Agent.TaskQueue
-
-  @known_channels %{
-    "cli" => :cli,
-    "http" => :http,
-    "telegram" => :telegram,
-    "discord" => :discord,
-    "slack" => :slack,
-    "whatsapp" => :whatsapp,
-    "signal" => :signal,
-    "matrix" => :matrix,
-    "email" => :email,
-    "qq" => :qq,
-    "dingtalk" => :dingtalk,
-    "feishu" => :feishu,
-    "webhook" => :webhook,
-    "filesystem" => :filesystem
-  }
 
   plug(:authenticate)
   plug(OptimalSystemAgent.Channels.HTTP.Integrity)
@@ -218,23 +198,6 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
 
       {:error, :not_found} ->
         json_error(conn, 404, "not_found", "Session not found")
-    end
-  end
-
-  # ── POST /classify ──────────────────────────────────────────────────
-
-  post "/classify" do
-    with %{"message" => message} <- conn.body_params do
-      channel = parse_channel(conn.body_params["channel"])
-      signal = Classifier.classify_fast(message, channel)
-
-      body = Jason.encode!(%{signal: signal_to_map(signal)})
-
-      conn
-      |> put_resp_content_type("application/json")
-      |> send_resp(200, body)
-    else
-      _ -> json_error(conn, 400, "invalid_request", "Missing required field: message")
     end
   end
 
@@ -1654,24 +1617,6 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
   end
 
   # ── Helpers ─────────────────────────────────────────────────────────
-
-  defp signal_to_map(%Classifier{} = signal) do
-    %{
-      mode: signal.mode,
-      genre: signal.genre,
-      type: signal.type,
-      format: signal.format,
-      weight: signal.weight,
-      channel: signal.channel,
-      timestamp: signal.timestamp |> DateTime.to_iso8601()
-    }
-  end
-
-  defp parse_channel(nil), do: :http
-
-  defp parse_channel(name) when is_binary(name) do
-    Map.get(@known_channels, String.downcase(name), :http)
-  end
 
   defp generate_session_id do
     "http_" <> (:crypto.strong_rand_bytes(12) |> Base.url_encode64(padding: false))

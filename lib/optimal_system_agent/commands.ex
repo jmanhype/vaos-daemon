@@ -431,7 +431,7 @@ defmodule OptimalSystemAgent.Commands do
         /cortex             Cortex bulletin & topics
 
       Configuration:
-        /verbose            Toggle verbose output (signal indicators)
+        /verbose            Toggle verbose output
         /think <level>      Set reasoning depth (fast/normal/deep)
         /plan               Toggle autonomous plan mode
         /config             Show runtime configuration
@@ -503,24 +503,69 @@ defmodule OptimalSystemAgent.Commands do
     {:command, output}
   end
 
-  defp cmd_skills(_arg, _session_id) do
-    skills = OptimalSystemAgent.Tools.Registry.list_tools_direct()
+  defp cmd_skills(arg, _session_id) do
+    trimmed = String.trim(arg)
 
-    output =
-      if skills == [] do
-        "No tools loaded."
-      else
-        header = "Available tools (#{length(skills)}):\n"
+    case trimmed do
+      "" ->
+        # Default: list all tools (existing behavior)
+        skills = OptimalSystemAgent.Tools.Registry.list_tools_direct()
 
-        body =
-          Enum.map_join(skills, "\n", fn skill ->
-            "  #{String.pad_trailing(skill.name, 18)} #{String.slice(skill.description, 0, 60)}"
-          end)
+        output =
+          if skills == [] do
+            "No tools loaded."
+          else
+            header = "Available tools (#{length(skills)}):\n"
 
-        header <> body
-      end
+            body =
+              Enum.map_join(skills, "\n", fn skill ->
+                "  #{String.pad_trailing(skill.name, 18)} #{String.slice(skill.description, 0, 60)}"
+              end)
 
-    {:command, output}
+            header <> body
+          end
+
+        {:command, output}
+
+      "list" ->
+        case OptimalSystemAgent.Tools.Builtins.SkillManager.execute(%{"action" => "list"}) do
+          {:ok, result} -> {:command, result}
+          {:error, reason} -> {:command, "Error: #{reason}"}
+        end
+
+      "reload" ->
+        case OptimalSystemAgent.Tools.Builtins.SkillManager.execute(%{"action" => "reload"}) do
+          {:ok, result} -> {:command, result}
+          {:error, reason} -> {:command, "Error: #{reason}"}
+        end
+
+      "search " <> query ->
+        case OptimalSystemAgent.Tools.Builtins.SkillManager.execute(%{"action" => "search", "query" => query}) do
+          {:ok, result} -> {:command, result}
+          {:error, reason} -> {:command, "Error: #{reason}"}
+        end
+
+      "enable " <> name ->
+        case OptimalSystemAgent.Tools.Builtins.SkillManager.execute(%{"action" => "enable", "name" => String.trim(name)}) do
+          {:ok, result} -> {:command, result}
+          {:error, reason} -> {:command, "Error: #{reason}"}
+        end
+
+      "disable " <> name ->
+        case OptimalSystemAgent.Tools.Builtins.SkillManager.execute(%{"action" => "disable", "name" => String.trim(name)}) do
+          {:ok, result} -> {:command, result}
+          {:error, reason} -> {:command, "Error: #{reason}"}
+        end
+
+      "delete " <> name ->
+        case OptimalSystemAgent.Tools.Builtins.SkillManager.execute(%{"action" => "delete", "name" => String.trim(name)}) do
+          {:ok, result} -> {:command, result}
+          {:error, reason} -> {:command, "Error: #{reason}"}
+        end
+
+      _ ->
+        {:command, "Unknown /skills subcommand: #{trimmed}\n\nUsage:\n  /skills              List all tools\n  /skills list         List custom skills with status\n  /skills search <q>   Search past sessions\n  /skills enable <n>   Enable a skill\n  /skills disable <n>  Disable a skill\n  /skills delete <n>   Delete a skill\n  /skills reload       Reload skills from disk"}
+    end
   end
 
   defp cmd_memory(_arg, _session_id) do
@@ -2548,7 +2593,6 @@ defmodule OptimalSystemAgent.Commands do
         /docs agents    — Agent roster, tiers, and dispatch
         /docs swarms    — Multi-agent swarm patterns
         /docs memory    — Episodic memory system
-        /docs signals   — Signal Theory framework
         /docs security  — Security scanning and hardening
         /docs commands  — Command system and custom commands
         /docs config    — Configuration and providers
@@ -2573,22 +2617,6 @@ defmodule OptimalSystemAgent.Commands do
 
       Agents are auto-dispatched by keyword matching:
         bug → debugger, test → test-automator, .go → backend-go
-      """,
-      "signals" => """
-      ## Signal Theory
-
-      Every output is a Signal: S = (M, G, T, F, W)
-        M = Mode (Linguistic, Visual, Code)
-        G = Genre (Spec, Report, PR, ADR)
-        T = Type (Direct, Inform, Commit)
-        F = Format (Markdown, code, CLI output)
-        W = Structure (genre-specific template)
-
-      4 Governing Constraints: Shannon, Ashby, Beer, Wiener
-      6 Encoding Principles: Mode-message, Genre-receiver, Structure,
-        Redundancy, Entropy, Bandwidth
-
-      The /verbose command shows signal metadata on each response.
       """,
       "config" => """
       ## Configuration
@@ -2620,8 +2648,6 @@ defmodule OptimalSystemAgent.Commands do
       Core:
         POST /orchestrate        — Process message
         GET  /stream/:session_id — SSE event stream
-        POST /classify           — Signal classification
-
       Tools & Commands:
         GET  /tools              — List tools
         GET  /commands           — List commands

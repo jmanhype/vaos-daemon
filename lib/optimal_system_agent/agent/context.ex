@@ -31,8 +31,8 @@ defmodule OptimalSystemAgent.Agent.Context do
 
   ## Public API
 
-      build(state)        — returns %{messages: [system_msg | conversation]}
-      token_budget(state) — returns token usage breakdown map
+      build(state)         — returns %{messages: [system_msg | conversation]}
+      token_budget(state)  — returns token usage breakdown map
   """
 
   require Logger
@@ -55,8 +55,8 @@ defmodule OptimalSystemAgent.Agent.Context do
 
   Returns `%{messages: [system_msg | conversation_messages]}`.
   """
-  @spec build(map(), any()) :: %{messages: [map()]}
-  def build(state, signal \\ nil) do
+  @spec build(map()) :: %{messages: [map()]}
+  def build(state) do
     conversation = state.messages || []
     conversation_tokens = estimate_tokens_messages(conversation)
 
@@ -68,7 +68,7 @@ defmodule OptimalSystemAgent.Agent.Context do
 
     # Tier 2: Dynamic context
     dynamic_budget = max(max_tok - @response_reserve - conversation_tokens - static_tokens, 1_000)
-    dynamic_context = assemble_dynamic_context(state, signal, dynamic_budget)
+    dynamic_context = assemble_dynamic_context(state, dynamic_budget)
 
     dynamic_tokens = estimate_tokens(dynamic_context)
     total_tokens = static_tokens + dynamic_tokens + conversation_tokens + @response_reserve
@@ -86,8 +86,8 @@ defmodule OptimalSystemAgent.Agent.Context do
   @doc """
   Returns a token usage breakdown for debugging purposes.
   """
-  @spec token_budget(map(), any()) :: map()
-  def token_budget(state, signal \\ nil) do
+  @spec token_budget(map()) :: map()
+  def token_budget(state) do
     conversation = state.messages || []
     conversation_tokens = estimate_tokens_messages(conversation)
 
@@ -95,7 +95,7 @@ defmodule OptimalSystemAgent.Agent.Context do
     static_tokens = Soul.static_token_count()
 
     # Gather dynamic blocks for individual cost breakdown
-    blocks = gather_dynamic_blocks(state, signal)
+    blocks = gather_dynamic_blocks(state)
 
     block_details =
       Enum.map(blocks, fn {content, priority, label} ->
@@ -107,7 +107,7 @@ defmodule OptimalSystemAgent.Agent.Context do
       end)
 
     dynamic_budget = max(max_tok - @response_reserve - conversation_tokens - static_tokens, 1_000)
-    dynamic_context = assemble_dynamic_context(state, signal, dynamic_budget)
+    dynamic_context = assemble_dynamic_context(state, dynamic_budget)
     dynamic_tokens = estimate_tokens(dynamic_context)
     total_tokens = static_tokens + dynamic_tokens + conversation_tokens + @response_reserve
 
@@ -160,8 +160,8 @@ defmodule OptimalSystemAgent.Agent.Context do
   # Dynamic context assembly
   # ---------------------------------------------------------------------------
 
-  defp assemble_dynamic_context(state, signal, budget) do
-    blocks = gather_dynamic_blocks(state, signal)
+  defp assemble_dynamic_context(state, budget) do
+    blocks = gather_dynamic_blocks(state)
 
     # All blocks are tier 1 (always included) — just fit within budget
     {parts, _used} = fit_blocks(blocks, budget)
@@ -175,14 +175,15 @@ defmodule OptimalSystemAgent.Agent.Context do
   # Dynamic block gathering — each returns {content, priority, label}
   # ---------------------------------------------------------------------------
 
-  defp gather_dynamic_blocks(state, _signal) do
+  defp gather_dynamic_blocks(state) do
     [
       {runtime_block(state), 1, "runtime"},
       {environment_block(state), 1, "environment"},
       {plan_mode_block(state), 1, "plan_mode"},
       {memory_block_relevant(state), 1, "memory"},
       {task_state_block(state), 1, "task_state"},
-      {workflow_block(state), 1, "workflow"}
+      {workflow_block(state), 1, "workflow"},
+      {skills_block(state), 2, "skills"}
     ]
     |> Enum.reject(fn {content, _, _} -> is_nil(content) or content == "" end)
   end
@@ -554,5 +555,15 @@ defmodule OptimalSystemAgent.Agent.Context do
     - Channel: #{state.channel}
     - Session: #{state.session_id}
     """
+  end
+
+  defp skills_block(_state) do
+    try do
+      OptimalSystemAgent.Tools.Registry.active_skills_context()
+    rescue
+      _ -> nil
+    catch
+      :exit, _ -> nil
+    end
   end
 end
