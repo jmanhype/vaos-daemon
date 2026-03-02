@@ -177,11 +177,15 @@ defmodule OptimalSystemAgent.Commands do
 
   @impl true
   def init(:ok) do
-    # Create ETS table for command lookup
-    :ets.new(@ets_table, [:set, :public, :named_table, read_concurrency: true])
+    # Create ETS table for command lookup (guard against re-creation on restart)
+    if :ets.whereis(@ets_table) == :undefined do
+      :ets.new(@ets_table, [:set, :public, :named_table, read_concurrency: true])
+    end
 
-    # Create ETS table for per-session runtime settings
-    :ets.new(@settings_table, [:set, :public, :named_table, read_concurrency: true])
+    # Create ETS table for per-session runtime settings (guard against re-creation on restart)
+    if :ets.whereis(@settings_table) == :undefined do
+      :ets.new(@settings_table, [:set, :public, :named_table, read_concurrency: true])
+    end
 
     # Load custom commands from disk
     load_custom_commands()
@@ -219,9 +223,13 @@ defmodule OptimalSystemAgent.Commands do
 
       nil ->
         # Check ETS for custom commands
-        case :ets.lookup(@ets_table, cmd) do
-          [{^cmd, template, _desc}] -> {:custom, template}
-          [] -> :not_found
+        try do
+          case :ets.lookup(@ets_table, cmd) do
+            [{^cmd, template, _desc}] -> {:custom, template}
+            [] -> :not_found
+          end
+        rescue
+          ArgumentError -> :not_found
         end
     end
   end

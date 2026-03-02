@@ -9,15 +9,31 @@ defmodule OptimalSystemAgent.Signal.Classifier do
   - F (Format): Container format (message, document, notification, etc.)
   - W (Weight): Informational value [0.0, 1.0] — Shannon information content
 
-  Classification is purely deterministic — pattern matching on keywords,
-  punctuation, and structure. No LLM calls, no cache, no async enrichment.
-  Sub-millisecond latency on every call.
+  Architecture:
+  - PRIMARY: LLM classification — understands intent, context, nuance
+  - FALLBACK: Deterministic pattern matching — used only when LLM is unavailable
+
+  The LLM is the primary classifier because understanding intent requires
+  intelligence. "Help me build a rocket" is BUILD mode, not ASSIST — only
+  an LLM understands that. Keyword matching produces false classifications.
+
+  The deterministic path exists for:
+  - Test environments (classifier_llm_enabled: false)
+  - Offline/disconnected mode
+  - LLM provider failures
+
+  Classification results are cached in ETS (SHA256 key, 10-minute TTL)
+  so repeated messages don't hit the LLM every time.
 
   Reference: Luna, R. (2026). Signal Theory: The Architecture of Optimal
   Intent Encoding in Communication Systems. https://zenodo.org/records/18774174
   """
 
   require Logger
+
+  alias OptimalSystemAgent.Providers.Registry, as: Providers
+  alias OptimalSystemAgent.PromptLoader
+  alias OptimalSystemAgent.Events.Bus
 
   defstruct [
     :mode,
@@ -45,15 +61,337 @@ defmodule OptimalSystemAgent.Signal.Classifier do
           confidence: confidence()
         }
 
+  @cache_table :osa_classifier_cache
+  @cache_ttl 600
+  @max_cache_size 500
+
   @doc """
-  Fast deterministic classification — always <1ms, returns full 5-tuple.
+  Fast deterministic classification — always <1ms, returns full 5-tuple
+  with `confidence: :low`. Sufficient for routing (plan mode, soul overlay).
   """
   def classify_fast(message, channel \\ :cli) do
     classify_deterministic(message, channel)
   end
 
+  @doc """
+  Async LLM enrichment — spawns a supervised Task that:
+  1. Calls cached LLM classifier (ETS cache hit = instant)
+  2. Emits `Bus.emit(:signal_classified, enriched_signal)` for learning/analytics
+  3. Writes result to ETS cache for future `classify/2` calls
+
+  Fire-and-forget. Does not block the caller.
+  """
+  def classify_async(message, channel \\ :cli, session_id \\ nil) do
+    if llm_enabled?() do
+      Task.Supervisor.start_child(
+        OptimalSystemAgent.Events.TaskSupervisor,
+        fn ->
+          case cached_classify_llm(message, channel) do
+            {:ok, enriched} ->
+              Bus.emit(:signal_classified, %{
+                signal: enriched,
+                session_id: session_id,
+                source: :llm
+              })
+
+            {:error, reason} ->
+              Logger.debug("[Classifier] Async enrichment failed: #{inspect(reason)}")
+          end
+        end
+      )
+    end
+
+    :ok
+  end
+
+  @doc """
+  Classify a raw message into a Signal 5-tuple.
+
+  When LLM is enabled (production): LLM classifies with full understanding.
+  When LLM is disabled (tests/offline): Deterministic pattern matching.
+  """
+  def classify(message, channel \\ :cli) do
+    if llm_enabled?() do
+      # LLM-primary: use intelligence to understand intent
+      case cached_classify_llm(message, channel) do
+        {:ok, signal} ->
+          signal
+
+        {:error, _} ->
+          # Fallback to deterministic ONLY when LLM is unavailable
+          Logger.warning(
+            "[Classifier] LLM unavailable, falling back to deterministic classification"
+          )
+
+          classify_deterministic(message, channel)
+      end
+    else
+      # Test / offline mode: deterministic classification
+      classify_deterministic(message, channel)
+    end
+  end
+
   # ---------------------------------------------------------------------------
-  # Deterministic Classification
+  # LLM Classification (Primary)
+  # ---------------------------------------------------------------------------
+
+  @classification_prompt_fallback """
+  You are a Signal Theory classifier. Classify this message into exactly 4 fields.
+  Respond ONLY with a JSON object. No explanation, no markdown, no wrapping.
+
+  ## Signal Theory Dimensions
+
+  **mode** — What operational action does this message require?
+  - EXECUTE: The user wants something done NOW (run, send, deploy, delete, trigger, sync, import, export)
+  - BUILD: The user wants something CREATED (create, generate, write, scaffold, design, develop, implement, make something new)
+  - ANALYZE: The user wants INSIGHT (analyze, report, compare, metrics, trend, dashboard, kpi, review data)
+  - MAINTAIN: The user wants something FIXED or UPDATED (fix, update, migrate, backup, restore, rollback, patch, upgrade, debug)
+  - ASSIST: The user wants HELP or GUIDANCE (explain, how do I, what is, help me understand, teach, clarify)
+
+  Important: Classify by the PRIMARY INTENT, not by individual words.
+  "Help me build a rocket" = BUILD (they want to build something)
+  "Can you run the tests?" = EXECUTE (they want tests run)
+  "What caused the crash?" = ANALYZE (they want analysis)
+  "I need to fix the login" = MAINTAIN (they want a fix)
+
+  **genre** — What is the communicative purpose?
+  - DIRECT: A command or instruction — the user is telling you to do something
+  - INFORM: Sharing information — the user is giving you facts or status
+  - COMMIT: Making a promise — "I will", "let me", "I'll handle it"
+  - DECIDE: Making or requesting a decision — approve, reject, confirm, cancel, choose
+  - EXPRESS: Emotional expression — gratitude, frustration, praise, complaint
+
+  **type** — Domain category:
+  - question: Asking for information (contains ?, or starts with who/what/when/where/why/how)
+  - request: Asking for an action to be performed
+  - issue: Reporting a problem (error, bug, broken, crash, fail)
+  - scheduling: Time-related (remind, schedule, later, tomorrow, next week)
+  - summary: Asking for condensed information (summarize, recap, brief, overview)
+  - report: Providing status or results
+  - general: None of the above
+
+  **weight** — Informational density (0.0 to 1.0):
+  - 0.0-0.2: Noise (greetings, filler, single words)
+  - 0.3-0.5: Low information (simple acknowledgments, short responses)
+  - 0.5-0.7: Medium (standard questions, simple requests)
+  - 0.7-0.9: High (complex tasks, multi-part requests, technical content)
+  - 0.9-1.0: Critical (urgent issues, emergencies, production problems)
+
+  ## Message to classify
+
+  Channel: %CHANNEL%
+  Message: "%MESSAGE%"
+
+  Respond with ONLY: {"mode":"...","genre":"...","type":"...","weight":0.0}
+  """
+
+  defp classification_prompt do
+    PromptLoader.get(:classifier, @classification_prompt_fallback)
+  end
+
+  defp classify_llm(message, channel) do
+    # Truncate to prevent prompt injection via extremely long messages
+    safe_message =
+      message
+      |> String.slice(0, 1000)
+      |> String.replace("\"", "'")
+      |> String.replace("\n", " ")
+
+    prompt =
+      classification_prompt()
+      |> String.replace("%MESSAGE%", safe_message)
+      |> String.replace("%CHANNEL%", to_string(channel))
+
+    messages = [%{role: "user", content: prompt}]
+
+    case Providers.chat(messages, temperature: 0.0, max_tokens: 80) do
+      {:ok, %{content: content}} ->
+        parse_llm_result(content, message, channel)
+
+      {:error, _} = err ->
+        err
+    end
+  rescue
+    e ->
+      Logger.warning("[Classifier] LLM classification error: #{Exception.message(e)}")
+      {:error, :llm_exception}
+  end
+
+  defp parse_llm_result(content, message, channel) do
+    json_str =
+      content
+      |> String.trim()
+      |> OptimalSystemAgent.Utils.Text.strip_markdown_fences()
+      |> String.trim()
+
+    case Jason.decode(json_str) do
+      {:ok, data} when is_map(data) ->
+        mode = parse_mode(data["mode"])
+        genre = parse_genre(data["genre"])
+        type = parse_type(data["type"])
+        weight = parse_weight(data["weight"])
+
+        {:ok,
+         %__MODULE__{
+           mode: mode || :assist,
+           genre: genre || :inform,
+           type: type || "general",
+           format: classify_format(message, channel),
+           weight: weight || calculate_weight(message),
+           raw: message,
+           channel: channel,
+           timestamp: DateTime.utc_now(),
+           confidence: :high
+         }}
+
+      {:error, _} ->
+        # Try to extract JSON from prose response
+        case Regex.run(~r/\{[^}]+\}/, json_str) do
+          [json_match] ->
+            case Jason.decode(json_match) do
+              {:ok, data} -> parse_llm_result_from_data(data, message, channel)
+              _ -> {:error, :parse_failed}
+            end
+
+          _ ->
+            {:error, :parse_failed}
+        end
+    end
+  end
+
+  defp parse_llm_result_from_data(data, message, channel) do
+    {:ok,
+     %__MODULE__{
+       mode: parse_mode(data["mode"]) || :assist,
+       genre: parse_genre(data["genre"]) || :inform,
+       type: parse_type(data["type"]) || "general",
+       format: classify_format(message, channel),
+       weight: parse_weight(data["weight"]) || calculate_weight(message),
+       raw: message,
+       channel: channel,
+       timestamp: DateTime.utc_now(),
+       confidence: :high
+     }}
+  end
+
+  # ---------------------------------------------------------------------------
+  # LLM Cache (ETS-backed, 10-minute TTL)
+  # ---------------------------------------------------------------------------
+
+  defp cached_classify_llm(message, channel) do
+    ensure_cache()
+    key = :crypto.hash(:sha256, "#{channel}:#{message}")
+    now = System.system_time(:second)
+
+    try do
+      case :ets.lookup(@cache_table, key) do
+        [{^key, {:ok, cached_signal}, ts}] when now - ts < @cache_ttl ->
+          # Return cached result with fresh timestamp
+          {:ok, %{cached_signal | timestamp: DateTime.utc_now()}}
+
+        _ ->
+          result = classify_llm(message, channel)
+
+          case result do
+            {:ok, _} = ok ->
+              try do
+                :ets.insert(@cache_table, {key, ok, now})
+                maybe_prune_cache(now)
+              rescue
+                ArgumentError -> :ok
+              end
+              ok
+
+            error ->
+              error
+          end
+      end
+    rescue
+      ArgumentError ->
+        # Table was destroyed between ensure_cache() and lookup (race condition)
+        classify_llm(message, channel)
+    end
+  end
+
+  defp ensure_cache do
+    if :ets.whereis(@cache_table) == :undefined do
+      :ets.new(@cache_table, [:set, :public, :named_table])
+    end
+  end
+
+  # Prune cache when it exceeds @max_cache_size:
+  # 1. Delete expired entries (TTL elapsed)
+  # 2. If still over limit, evict the oldest half by insertion timestamp
+  defp maybe_prune_cache(now) do
+    if :ets.info(@cache_table, :size) > @max_cache_size do
+      expired_before = now - @cache_ttl
+
+      :ets.select_delete(@cache_table, [
+        {{:_, :_, :"$1"}, [{:"=<", :"$1", expired_before}], [true]}
+      ])
+
+      if :ets.info(@cache_table, :size) > @max_cache_size do
+        @cache_table
+        |> :ets.tab2list()
+        |> Enum.sort_by(fn {_k, _v, ts} -> ts end)
+        |> Enum.take(div(@max_cache_size, 2))
+        |> Enum.each(fn {key, _v, _ts} -> :ets.delete(@cache_table, key) end)
+      end
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # LLM Response Parsers
+  # ---------------------------------------------------------------------------
+
+  defp parse_mode(str) when is_binary(str) do
+    case String.downcase(String.trim(str)) do
+      "execute" -> :execute
+      "assist" -> :assist
+      "analyze" -> :analyze
+      "build" -> :build
+      "maintain" -> :maintain
+      _ -> nil
+    end
+  end
+
+  defp parse_mode(_), do: nil
+
+  defp parse_genre(str) when is_binary(str) do
+    case String.downcase(String.trim(str)) do
+      "direct" -> :direct
+      "inform" -> :inform
+      "commit" -> :commit
+      "decide" -> :decide
+      "express" -> :express
+      _ -> nil
+    end
+  end
+
+  defp parse_genre(_), do: nil
+
+  defp parse_type(str) when is_binary(str) do
+    valid = ~w(question request issue scheduling summary report general)
+    cleaned = String.downcase(String.trim(str))
+    if cleaned in valid, do: cleaned, else: nil
+  end
+
+  defp parse_type(_), do: nil
+
+  defp parse_weight(val) when is_float(val), do: max(0.0, min(1.0, val))
+  defp parse_weight(val) when is_integer(val), do: max(0.0, min(1.0, val * 1.0))
+  defp parse_weight(_), do: nil
+
+  # ---------------------------------------------------------------------------
+  # Config Guard
+  # ---------------------------------------------------------------------------
+
+  defp llm_enabled? do
+    Application.get_env(:optimal_system_agent, :classifier_llm_enabled, true)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Deterministic Classification (Fallback)
   # ---------------------------------------------------------------------------
 
   @doc false

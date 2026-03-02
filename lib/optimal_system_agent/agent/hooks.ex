@@ -92,8 +92,10 @@ defmodule OptimalSystemAgent.Agent.Hooks do
   def init(_opts) do
     state = %__MODULE__{hooks: %{}, metrics: %{}}
 
-    # ETS table for hot-path counters (replaces persistent_term.put on write-heavy paths)
-    :ets.new(:osa_hooks_counters, [:named_table, :public, :set])
+    # ETS table for hot-path counters (guard against re-creation on restart)
+    if :ets.whereis(:osa_hooks_counters) == :undefined do
+      :ets.new(:osa_hooks_counters, [:named_table, :public, :set])
+    end
 
     # Register built-in hooks
     state = register_builtins(state)

@@ -384,9 +384,13 @@ defmodule OptimalSystemAgent.Agent.Memory do
       entry_ids =
         keywords
         |> Enum.flat_map(fn keyword ->
-          case :ets.lookup(@index_table, keyword) do
-            [{^keyword, ids}] -> ids
-            [] -> []
+          try do
+            case :ets.lookup(@index_table, keyword) do
+              [{^keyword, ids}] -> ids
+              [] -> []
+            end
+          rescue
+            ArgumentError -> []
           end
         end)
         |> Enum.frequencies()
@@ -398,13 +402,17 @@ defmodule OptimalSystemAgent.Agent.Memory do
         scored =
           entry_ids
           |> Enum.map(fn {entry_id, keyword_hits} ->
-            case :ets.lookup(@entry_table, entry_id) do
-              [{^entry_id, entry}] ->
-                score = compute_relevance_score(entry, keyword_hits, length(keywords))
-                {score, entry}
+            try do
+              case :ets.lookup(@entry_table, entry_id) do
+                [{^entry_id, entry}] ->
+                  score = compute_relevance_score(entry, keyword_hits, length(keywords))
+                  {score, entry}
 
-              [] ->
-                nil
+                [] ->
+                  nil
+              end
+            rescue
+              ArgumentError -> nil
             end
           end)
           |> Enum.reject(&is_nil/1)
