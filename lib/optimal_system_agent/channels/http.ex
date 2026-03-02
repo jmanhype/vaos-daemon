@@ -91,10 +91,13 @@ defmodule OptimalSystemAgent.Channels.HTTP do
         vsn -> to_string(vsn)
       end
 
+    uptime = System.monotonic_time(:second) - Application.get_env(:optimal_system_agent, :start_time, System.monotonic_time(:second))
+
     body =
       Jason.encode!(%{
         status: "ok",
         version: version,
+        uptime_seconds: uptime,
         provider: provider,
         model: model_name
       })

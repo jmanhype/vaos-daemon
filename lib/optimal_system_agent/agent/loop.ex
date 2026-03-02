@@ -296,7 +296,9 @@ defmodule OptimalSystemAgent.Agent.Loop do
 
     case result do
       {:ok, %{content: content, tool_calls: []}} ->
-        # No tool calls — final response
+        # No tool calls — final response. Guard empty content (Bug 27: Unicode messages
+        # from small local models sometimes return whitespace-only responses).
+        content = if is_nil(content) or String.trim(content) == "", do: "...", else: content
         {content, state}
 
       {:ok, %{content: content, tool_calls: tool_calls} = resp} when is_list(tool_calls) ->
@@ -735,7 +737,8 @@ defmodule OptimalSystemAgent.Agent.Loop do
   # protecting weaker local models (Ollama) that may not follow system instructions.
   @injection_patterns [
     ~r/what\s+(is|are|was)\s+(your\s+)?(system\s+prompt|instructions?|rules?|configuration|directives?)/i,
-    ~r/(show|print|display|reveal|repeat|output|tell me|give me)\s+(your\s+)?(system\s+prompt|instructions?|full\s+prompt|prompt|initial\s+prompt)/i,
+    ~r/what\s+(is|are|was)\s+the\s+(system\s+prompt|instructions?|configuration|directives?)/i,
+    ~r/(show(\s+me)?|print|display|reveal|repeat|output|tell me|give me)\s+(your\s+)?(system\s+prompt|instructions?|full\s+prompt|prompt|initial\s+prompt)/i,
     ~r/ignore\s+(all\s+)?(previous|prior|above)\s+(instructions?|prompt|context|rules?)/i,
     ~r/repeat\s+everything\s+(above|before|prior)/i,
     ~r/what\s+(were\s+)?(you\s+)?(told|instructed|programmed|trained|configured)\s+to/i,

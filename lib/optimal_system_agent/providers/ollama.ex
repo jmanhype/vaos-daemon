@@ -22,7 +22,7 @@ defmodule OptimalSystemAgent.Providers.Ollama do
 
   # Models known to handle tool calling well (name prefix → min size in GB)
   # Include both hyphenated and non-hyphenated variants (glm-4 AND glm4)
-  @tool_capable_prefixes ~w(qwen3 qwen2.5 llama3.3 llama3.1 gemma3 glm-4 glm4 mistral mixtral deepseek command-r)
+  @tool_capable_prefixes ~w(qwen3 qwen2.5 llama3.3 llama3.1 gemma3 glm-4 glm4 mistral mixtral deepseek command-r kimi minimax)
 
   # Minimum model size (in bytes) to enable tool calling — ~14B params ≈ 8GB on disk
   @tool_min_size 7_000_000_000
@@ -81,7 +81,7 @@ defmodule OptimalSystemAgent.Providers.Ollama do
   def list_models(url \\ nil) do
     url = url || Application.get_env(:optimal_system_agent, :ollama_url, "http://localhost:11434")
 
-    case Req.get("#{url}/api/tags", receive_timeout: 5_000) do
+    case Req.get("#{url}/api/tags", [{:receive_timeout, 5_000}] ++ auth_headers()) do
       {:ok, %{status: 200, body: %{"models" => models}}} ->
         parsed =
           Enum.map(models, fn m ->
@@ -118,8 +118,10 @@ defmodule OptimalSystemAgent.Providers.Ollama do
       }
       |> maybe_add_tools(model, opts)
 
+    req_opts = [json: body, receive_timeout: 120_000] ++ auth_headers()
+
     try do
-      case Req.post("#{url}/api/chat", json: body, receive_timeout: 120_000) do
+      case Req.post("#{url}/api/chat", req_opts) do
         {:ok, %{status: 200, body: %{"message" => %{"content" => content} = msg}}} ->
           tool_calls = parse_tool_calls(msg, model)
           {:ok, %{content: Text.strip_thinking_tokens(content || ""), tool_calls: tool_calls}}
@@ -241,4 +243,16 @@ defmodule OptimalSystemAgent.Providers.Ollama do
 
   defp generate_id,
     do: OptimalSystemAgent.Utils.ID.generate()
+
+  # Returns `[headers: [{"authorization", "Bearer <key>"}]]` when
+  # OLLAMA_API_KEY is set (Ollama Cloud), empty list otherwise.
+  defp auth_headers do
+    case Application.get_env(:optimal_system_agent, :ollama_api_key) do
+      key when is_binary(key) and key != "" ->
+        [headers: [{"authorization", "Bearer #{key}"}]]
+
+      _ ->
+        []
+    end
+  end
 end

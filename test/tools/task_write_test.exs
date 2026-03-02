@@ -16,7 +16,15 @@ defmodule OptimalSystemAgent.Tools.Builtins.TaskWriteTest do
 
     # Clear any leftover tasks for our test session
     TaskTracker.clear_tasks(@session)
-    on_exit(fn -> TaskTracker.clear_tasks(@session) end)
+
+    on_exit(fn ->
+      # Guard: TaskTracker may have been shut down by ExUnit's supervisor
+      # before on_exit callbacks run (e.g., when started via start_supervised!/2).
+      case GenServer.whereis(TaskTracker) do
+        nil -> :ok
+        _pid -> TaskTracker.clear_tasks(@session)
+      end
+    end)
     :ok
   end
 
