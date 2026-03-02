@@ -31,14 +31,9 @@ type HealthResult struct {
 
 // OrchestrateResult from POST /orchestrate.
 type OrchestrateResult struct {
-	SessionID      string
-	ResponseType   string // "plan" or "response"
-	Output         string
-	Signal         *Signal
-	ToolsUsed      []string
-	IterationCount int
-	ExecutionMs    int64
-	Err            error
+	SessionID string
+	Status    string
+	Err       error
 }
 
 // CommandResult from POST /commands/execute.

@@ -27,7 +27,7 @@ defmodule OptimalSystemAgent.SDK.Signal do
   """
   @spec classify(String.t(), atom()) :: Classifier.t()
   def classify(message, channel \\ :sdk) do
-    Classifier.classify(message, channel)
+    Classifier.classify_fast(message, channel)
   end
 
   @doc """

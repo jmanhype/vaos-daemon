@@ -1,5 +1,6 @@
 # Build artifacts
 osa
+osagent
 *.test
 *.out
 *.prof

@@ -20,6 +20,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/miosa/osa-tui/style"
 	"github.com/miosa/osa-tui/ui/tools"
 )
@@ -679,6 +680,17 @@ func (m *Model) ScrollToTop() {
 // ScrollToBottom scrolls the viewport to the very bottom.
 func (m *Model) ScrollToBottom() {
 	_ = m.vp.GotoBottom()
+}
+
+// PlainTextLines returns the currently visible viewport content as plain-text
+// lines (ANSI escape sequences stripped). Used by the selection model to
+// extract highlighted text.
+func (m Model) PlainTextLines() []string {
+	raw := m.vp.View()
+	if raw == "" {
+		return nil
+	}
+	return strings.Split(ansi.Strip(raw), "\n")
 }
 
 // CopyLastMessage returns the raw text of the most recent agent message.

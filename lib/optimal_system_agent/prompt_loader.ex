@@ -21,16 +21,12 @@ defmodule OptimalSystemAgent.PromptLoader do
   @prompts_dir "~/.osa/prompts"
 
   @known_keys ~w(
-    classifier
     SYSTEM
     IDENTITY
     SOUL
-    mode_behaviors
-    genre_behaviors
     compactor_summary
     compactor_key_facts
     cortex_synthesis
-    noise_filter
   )a
 
   # ── Public API ─────────────────────────────────────────────────

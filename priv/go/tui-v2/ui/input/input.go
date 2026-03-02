@@ -97,6 +97,9 @@ func (m *Model) Blur() { m.ta.Blur() }
 // IsFocused reports whether the textarea currently has keyboard focus.
 func (m Model) IsFocused() bool { return m.ta.Focused() }
 
+// CompletionsVisible reports whether the completions popup is currently shown.
+func (m Model) CompletionsVisible() bool { return m.completions.IsVisible() }
+
 // Value returns the current textarea content.
 func (m Model) Value() string { return m.ta.Value() }
 
@@ -172,17 +175,17 @@ func (m Model) Attachments() []string { return m.attachs.Paths() }
 
 // Update handles messages. Key events are tea.KeyPressMsg in bubbletea v2.
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
-	// ── Route to completions popup first when visible ──────────────────────
+	// ── Route navigation/action keys to completions popup when visible ─────
 	if m.completions.IsVisible() {
-		var popupCmd tea.Cmd
-		m.completions, popupCmd = m.completions.Update(msg)
-		if popupCmd != nil {
-			// Completions consumed the event (selection or dismiss).
-			return m, popupCmd
-		}
-		// Completions handled cursor movement (Up/Down) — don't double-process.
-		if _, isKey := msg.(tea.KeyPressMsg); isKey {
-			return m, nil
+		if kp, isKey := msg.(tea.KeyPressMsg); isKey {
+			if m.completions.HandlesKey(kp) {
+				// Up/Down/Enter/Tab/Esc/Shift+Up/Shift+Down → popup exclusively.
+				var popupCmd tea.Cmd
+				m.completions, popupCmd = m.completions.Update(msg)
+				return m, popupCmd
+			}
+			// All other keys (printable chars, backspace, delete, etc.)
+			// fall through to the textarea below so the user can keep typing.
 		}
 	}
 
@@ -197,7 +200,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		k := msg.Code
 		switch {
-		// History navigation — only in single-line mode.
+		// History navigation — only in single-line mode and no completions.
 		case k == tea.KeyUp && !m.multiline && !m.completions.IsVisible():
 			m = m.navigateHistory(-1)
 			return m, nil
@@ -206,16 +209,16 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m = m.navigateHistory(+1)
 			return m, nil
 
-		// Tab-cycle completion.
-		case k == tea.KeyTab:
+		// Tab-cycle completion (only when completions popup is not visible;
+		// when visible, Tab is handled by the popup via HandlesKey above).
+		case k == tea.KeyTab && !m.completions.IsVisible():
 			m = m.cycleComplete()
 			return m, nil
 
-		// Auto-show completions popup when user types a printable character
-		// or deletes, so the popup tracks the current "/" prefix.
+		// Printable characters, backspace, delete — forward to textarea,
+		// then update the completions filter to track the "/" prefix.
 		case k >= ' ' || k == tea.KeyBackspace || k == tea.KeyDelete:
 			m.resetTab()
-			// Let the textarea handle the key first, then re-evaluate.
 			var cmd tea.Cmd
 			m.ta, cmd = m.ta.Update(msg)
 			m.updateHeight()
@@ -240,7 +243,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	// Attachments: file removed.
 	case attachments.RemovedMsg:
-		// No extra action needed; attachments model already updated.
 		return m, nil
 	}
 

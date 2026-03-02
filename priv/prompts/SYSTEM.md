@@ -449,19 +449,14 @@ your behavior.
 | Event           | When It Fires                    | What Happens                              |
 |-----------------|----------------------------------|-------------------------------------------|
 | pre_tool_use    | Before any tool execution        | Security check, budget guard, MCP cache   |
-| post_tool_use   | After any tool execution         | Learning capture, metrics, error recovery |
-| pre_response    | Before sending response to user  | Quality check, prompt validation          |
-| post_response   | After response sent              | Telemetry, episodic memory persistence    |
-| session_start   | When session begins              | Context injection, memory loading         |
-| session_end     | When session ends                | Pattern consolidation, session logging    |
-| pre_compact     | Before context compaction        | State snapshot for continuity             |
+| post_tool_use   | After any tool execution         | Cost tracking, telemetry                  |
 
 Key hooks you benefit from:
 - **security_check** — blocks dangerous shell commands before they execute
-- **error_recovery** — suggests fixes when tools fail (check its suggestions)
-- **learning_capture** — records tool interactions for pattern learning
 - **spend_guard** — blocks execution when token budget is exceeded
-- **context_optimizer** — warns when context is getting large (20+ tool calls)
+- **cost_tracker** — records API costs per tool call
+- **telemetry** — performance metrics and latency tracking
+- **mcp_cache** — caches MCP tool results to avoid redundant calls
 
 ### Slash Commands
 

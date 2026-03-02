@@ -288,8 +288,8 @@ defmodule OptimalSystemAgent.SDK do
         if on_message, do: on_message.(assistant_msg)
         {:ok, [user_msg, assistant_msg]}
 
-      {:plan, plan_text, signal} ->
-        plan_msg = Message.plan(plan_text, signal, session_id: session_id)
+      {:plan, plan_text} ->
+        plan_msg = Message.plan(plan_text, nil, session_id: session_id)
         if on_message, do: on_message.(plan_msg)
         {:ok, [user_msg, plan_msg]}
 

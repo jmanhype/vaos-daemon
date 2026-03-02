@@ -466,7 +466,7 @@ defmodule OptimalSystemAgent.Channels.CLI do
         print_response(response)
         print_separator()
 
-      {:plan, plan_text, _signal} ->
+      {:plan, plan_text} ->
         {elapsed_ms, _tool_count, total_tokens} = Spinner.stop(spinner)
         show_status_line(elapsed_ms, 0, total_tokens, nil)
         handle_plan_review(plan_text, input, session_id, 0)
@@ -558,7 +558,7 @@ defmodule OptimalSystemAgent.Channels.CLI do
     Bus.unregister_handler(:llm_response, llm_ref)
 
     case result do
-      {:plan, plan_text, _signal} ->
+      {:plan, plan_text} ->
         {elapsed_ms, _tool_count, total_tokens} = Spinner.stop(spinner)
         show_status_line(elapsed_ms, 0, total_tokens, nil)
         {:plan, plan_text}
@@ -707,7 +707,7 @@ defmodule OptimalSystemAgent.Channels.CLI do
             print_response(response)
             print_separator()
 
-          {:plan, plan_text, _signal} ->
+          {:plan, plan_text} ->
             {elapsed_ms, _tool_count, total_tokens} = Spinner.stop(spinner)
             show_status_line(elapsed_ms, 0, total_tokens, nil)
             :ets.insert(:cli_active_request, {:pending_plan, session_id, plan_text, original_input})

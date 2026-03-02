@@ -50,7 +50,7 @@ func (c *Client) Orchestrate(req OrchestrateRequest) (*OrchestrateResponse, erro
 		return nil, fmt.Errorf("orchestrate: %w", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 		return nil, c.parseError(resp)
 	}
 	var result OrchestrateResponse

@@ -2,7 +2,7 @@ defmodule OptimalSystemAgent.Channels.CLI.PlanReview do
   @moduledoc """
   Plan review UI — renders a plan in a bordered box with an approval selector.
 
-  Used by the CLI channel when the agent loop returns `{:plan, text, signal}`
+  Used by the CLI channel when the agent loop returns `{:plan, text}`
   instead of executing immediately. The user can approve, reject, or provide
   feedback to refine the plan.
   """

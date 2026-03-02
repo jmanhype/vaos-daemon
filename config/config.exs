@@ -24,17 +24,10 @@ config :optimal_system_agent,
   temperature: 0.7,
   max_tokens: 4096,
 
-  # Signal Theory — noise filter confidence threshold
-  noise_filter_threshold: 0.6,
-
   # Context compaction thresholds (3-tier)
   compaction_warn: 0.80,
   compaction_aggressive: 0.85,
   compaction_emergency: 0.95,
-
-  # Context builder tier budget percentages (of system prompt budget)
-  tier2_budget_pct: 0.40,
-  tier3_budget_pct: 0.30,
 
   # Proactive monitor interval (milliseconds)
   proactive_interval: 30 * 60 * 1000,

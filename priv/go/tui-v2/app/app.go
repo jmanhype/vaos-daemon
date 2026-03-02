@@ -122,12 +122,11 @@ type Model struct {
 	commandEntries []client.CommandEntry
 	confirmQuit    bool
 
-	processingStart  time.Time
-	streamBuf        strings.Builder
-	thinkingBuf      strings.Builder // accumulates ThinkingDelta text for the chat ThinkingBox
-	sseReconnecting  bool            // true while a ReconnectListenCmd goroutine is in-flight
-	responseReceived bool            // true once SSE agent_response rendered for current req
-	cancelled        bool            // true when user cancelled the current request
+	processingStart time.Time
+	streamBuf       strings.Builder
+	thinkingBuf     strings.Builder // accumulates ThinkingDelta text for the chat ThinkingBox
+	sseReconnecting bool            // true while a ReconnectListenCmd goroutine is in-flight
+	cancelled       bool            // true when user cancelled the current request
 
 	pendingProviderFilter string // set by "/model <provider>" to filter picker
 	forceOnboarding       bool   // true when /setup forces wizard regardless of config
@@ -223,6 +222,7 @@ func (m Model) Update(rawMsg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseClickMsg:
 		switch m.state {
 		case StateIdle, StateProcessing, StatePlanReview:
+			m.selection.HandleMouseDown(v.X, v.Y, time.Now().UnixMilli())
 			var cmd tea.Cmd
 			m.chat, cmd = m.chat.Update(v)
 			return m, cmd
@@ -233,9 +233,35 @@ func (m Model) Update(rawMsg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case tea.MouseMotionMsg:
+		switch m.state {
+		case StateIdle, StateProcessing, StatePlanReview:
+			m.selection.HandleMouseMotion(v.X, v.Y)
+		}
+		return m, nil
+
+	case tea.MouseReleaseMsg:
+		switch m.state {
+		case StateIdle, StateProcessing, StatePlanReview:
+			m.selection.HandleMouseUp(v.X, v.Y)
+			if m.selection.HasSelection() {
+				// Auto-copy selection to clipboard.
+				if text := m.chat.PlainTextLines(); len(text) > 0 {
+					selected := m.selection.SelectedText(text)
+					if selected != "" {
+						_ = clipboard.Copy(selected)
+						m.toasts.Add("Copied selection", toast.ToastInfo)
+						return m, m.tickCmd()
+					}
+				}
+			}
+		}
+		return m, nil
+
 	case tea.MouseWheelMsg:
 		switch m.state {
 		case StateIdle, StateProcessing, StatePlanReview:
+			m.selection.Clear()
 			var cmd tea.Cmd
 			m.chat, cmd = m.chat.Update(v)
 			return m, cmd
@@ -875,6 +901,18 @@ func (m Model) handleKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleIdleKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	// When the completions popup is open, route Enter/Escape/Tab to the
+	// input so the popup can handle selection and dismissal instead of
+	// the app-level bindings stealing them.
+	if m.input.CompletionsVisible() {
+		if key.Matches[tea.KeyPressMsg](k, m.keys.Submit) ||
+			key.Matches[tea.KeyPressMsg](k, m.keys.Escape) {
+			var cmd tea.Cmd
+			m.input, cmd = m.input.Update(k)
+			return m, cmd
+		}
+	}
+
 	switch {
 	case key.Matches[tea.KeyPressMsg](k, m.keys.Escape):
 		m.input.Reset()
@@ -1228,7 +1266,6 @@ func (m Model) submitPrompt(text string) (Model, tea.Cmd) {
 	m.tasks.Reset()
 	m.streamBuf.Reset()
 	m.thinkingBuf.Reset()
-	m.responseReceived = false
 	m.cancelled = false
 	m.state = StateProcessing
 	m.processingStart = time.Now()
@@ -1281,101 +1318,32 @@ func (m Model) handleHealth(h msg.HealthResult) (Model, tea.Cmd) {
 // -- Orchestration ------------------------------------------------------------
 
 func (m Model) handleOrchestrate(r msg.OrchestrateResult) (Model, tea.Cmd) {
-	// If user cancelled, silently drop the late-arriving response.
-	if m.cancelled {
-		if r.Err == nil && r.SessionID != "" && m.sessionID != r.SessionID {
-			m.sessionID = r.SessionID
-		}
-		if m.sse == nil && m.program != nil && m.sessionID != "" {
-			if cmd := m.startSSE(); cmd != nil {
-				return m, cmd
-			}
-		}
-		return m, nil
-	}
-
-	// If SSE already rendered this response, skip duplicate.
-	if m.responseReceived {
-		if r.SessionID != "" && m.sessionID != r.SessionID {
-			m.sessionID = r.SessionID
-		}
-		if m.sse == nil && m.program != nil && m.sessionID != "" {
-			if cmd := m.startSSE(); cmd != nil {
-				return m, cmd
-			}
-		}
-		return m, nil
-	}
-
-	// Plan responses go to the plan review UI.
-	if r.ResponseType == "plan" {
+	if r.Err != nil {
 		m.activity.Stop()
 		m.chat.ClearProcessingView()
 		m.status.SetActive(false)
-		m.plan.SetPlan(r.Output)
-		m.state = StatePlanReview
-		if r.SessionID != "" && m.sessionID != r.SessionID {
-			m.sessionID = r.SessionID
-		}
-		if m.sse == nil && m.program != nil && m.sessionID != "" {
-			if cmd := m.startSSE(); cmd != nil {
-				return m, cmd
-			}
-		}
-		return m, nil
-	}
-
-	wasBackground := (m.state == StateIdle)
-	m.activity.Stop()
-	m.chat.ClearProcessingView()
-	m.status.SetActive(false)
-	m.state = StateIdle
-	var cmds []tea.Cmd
-	cmds = append(cmds, m.input.Focus())
-
-	if r.Err != nil {
+		m.state = StateIdle
 		m.chat.AddSystemError(fmt.Sprintf("Error: %v", r.Err))
-		return m, tea.Batch(cmds...)
+		return m, m.input.Focus()
 	}
 
-	if wasBackground {
-		m.chat.AddSystemMessage("Background task completed")
-		if len(m.bgTasks) > 0 {
-			m.bgTasks = m.bgTasks[1:]
-		}
-		m.status.SetBackgroundCount(len(m.bgTasks))
-	}
-
-	m.responseReceived = true
-	output := truncateResponse(r.Output)
-	if output == "" {
-		output = "(no response)"
-	}
-
-	sig := msgSignalToChat(r.Signal)
-	m.chat.AddAgentMessage(output, sig, r.ExecutionMs, m.header.ModelName())
-	if sig != nil {
-		m.status.SetSignal(&status.Signal{
-			Mode:  sig.Mode,
-			Genre: sig.Genre,
-			Type:  sig.Type,
-		})
-	}
-
+	// Extract session_id from the 202 accepted response.
 	if r.SessionID != "" && m.sessionID != r.SessionID {
 		m.sessionID = r.SessionID
 	}
+
+	// Ensure SSE is connected — all real output arrives via SSE.
 	if m.sse == nil && m.program != nil && m.sessionID != "" {
 		if cmd := m.startSSE(); cmd != nil {
-			cmds = append(cmds, cmd)
+			return m, cmd
 		}
 	}
-	return m, tea.Batch(cmds...)
+	return m, nil
 }
 
 func (m Model) handleClientAgentResponse(r client.AgentResponseEvent) (Model, tea.Cmd) {
-	// Drop if cancelled or REST already rendered.
-	if m.cancelled || m.responseReceived {
+	// Drop if cancelled.
+	if m.cancelled {
 		return m, nil
 	}
 
@@ -1385,7 +1353,6 @@ func (m Model) handleClientAgentResponse(r client.AgentResponseEvent) (Model, te
 		return m, nil
 	}
 
-	m.responseReceived = true
 	wasBackground := (m.state == StateIdle)
 	m.activity.Stop()
 	m.chat.ClearProcessingView()
@@ -1521,7 +1488,6 @@ func (m Model) handlePlanDecision(d dialog.PlanDecision) (Model, tea.Cmd) {
 		m.activity.Reset()
 		m.activity.Start()
 		m.streamBuf.Reset()
-		m.responseReceived = false
 		m.cancelled = false
 		m.state = StateProcessing
 		m.processingStart = time.Now()
@@ -1761,25 +1727,10 @@ func (m Model) orchestrateWithOpts(inputText string, skipPlan bool) tea.Cmd {
 		if err != nil {
 			return msg.OrchestrateResult{Err: err}
 		}
-		r := msg.OrchestrateResult{
-			SessionID:      resp.SessionID,
-			ResponseType:   resp.ResponseType,
-			Output:         resp.Output,
-			ToolsUsed:      resp.ToolsUsed,
-			IterationCount: resp.IterationCount,
-			ExecutionMs:    resp.ExecutionMs,
+		return msg.OrchestrateResult{
+			SessionID: resp.SessionID,
+			Status:    resp.Status,
 		}
-		if resp.Signal != nil {
-			r.Signal = &msg.Signal{
-				Mode:    resp.Signal.Mode,
-				Genre:   resp.Signal.Genre,
-				Type:    resp.Signal.Type,
-				Format:  resp.Signal.Format,
-				Weight:  resp.Signal.Weight,
-				Channel: resp.Signal.Channel,
-			}
-		}
-		return r
 	}
 }
 
@@ -2282,21 +2233,6 @@ func (m Model) handleModelsChoice(c dialog.ModelChoice) (Model, tea.Cmd) {
 }
 
 // -- Signal conversion helpers ------------------------------------------------
-
-// msgSignalToChat converts a msg.Signal (from REST) to a *chat.Signal.
-func msgSignalToChat(s *msg.Signal) *chat.Signal {
-	if s == nil {
-		return nil
-	}
-	return &chat.Signal{
-		Mode:    s.Mode,
-		Genre:   s.Genre,
-		Type:    s.Type,
-		Format:  s.Format,
-		Weight:  s.Weight,
-		Channel: s.Channel,
-	}
-}
 
 // clientSignalToChat converts a *client.Signal (from SSE) to a *chat.Signal.
 func clientSignalToChat(s *client.Signal) *chat.Signal {

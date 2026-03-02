@@ -1,7 +1,7 @@
 defmodule OptimalSystemAgent.Integration.ConversationTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Signal.{Classifier, NoiseFilter}
+  alias OptimalSystemAgent.Signal.Classifier
   alias OptimalSystemAgent.Agent.{Context, Compactor, Workflow}
 
   # ---------------------------------------------------------------------------
@@ -11,17 +11,16 @@ defmodule OptimalSystemAgent.Integration.ConversationTest do
   describe "building an app — full conversation flow" do
     test "user request to build a REST API is classified correctly" do
       message = "Build me a REST API for a todo app with CRUD endpoints"
-      signal = Classifier.classify(message, :cli)
+      signal = Classifier.classify_fast(message, :cli)
 
       assert signal.mode == :build
       assert signal.weight >= 0.5
       assert signal.format == :command
-      assert {:signal, _} = NoiseFilter.filter(message)
     end
 
     test "follow-up technical question during build is classified as question type" do
       message = "Should I use PostgreSQL or SQLite for the database?"
-      signal = Classifier.classify(message, :cli)
+      signal = Classifier.classify_fast(message, :cli)
 
       assert signal.type == "question"
       assert signal.weight >= 0.5
@@ -29,7 +28,7 @@ defmodule OptimalSystemAgent.Integration.ConversationTest do
 
     test "fix command is MAINTAIN mode" do
       message = "Fix the authentication bug — users cant log in after the migration"
-      signal = Classifier.classify(message, :cli)
+      signal = Classifier.classify_fast(message, :cli)
 
       assert signal.mode == :maintain
       assert signal.type == "issue"
@@ -37,14 +36,14 @@ defmodule OptimalSystemAgent.Integration.ConversationTest do
 
     test "performance analysis request is ANALYZE mode" do
       message = "Analyze the API response times and show me which endpoints are slowest"
-      signal = Classifier.classify(message, :cli)
+      signal = Classifier.classify_fast(message, :cli)
 
       assert signal.mode == :analyze
     end
 
     test "run command is EXECUTE mode" do
       message = "run the deployment script now"
-      signal = Classifier.classify(message, :cli)
+      signal = Classifier.classify_fast(message, :cli)
 
       assert signal.mode == :execute
     end
@@ -53,21 +52,21 @@ defmodule OptimalSystemAgent.Integration.ConversationTest do
       # Note: 'update' triggers :maintain, but keywords like 'run' fire :execute first
       # in the classify_mode cond. Use a message with only the maintain keyword.
       message = "update the configuration file for the deployment"
-      signal = Classifier.classify(message, :cli)
+      signal = Classifier.classify_fast(message, :cli)
 
       assert signal.mode == :maintain
     end
 
     test "create command is BUILD mode" do
       message = "create a new database migration for the users table"
-      signal = Classifier.classify(message, :cli)
+      signal = Classifier.classify_fast(message, :cli)
 
       assert signal.mode == :build
     end
 
     test "multi-step request produces a valid 5-tuple signal" do
       message = "Build me a complete REST API from scratch with authentication and deployment"
-      signal = Classifier.classify(message, :cli)
+      signal = Classifier.classify_fast(message, :cli)
 
       assert %Classifier{} = signal
       assert signal.mode in [:build, :execute, :analyze, :assist, :maintain]
@@ -76,75 +75,6 @@ defmodule OptimalSystemAgent.Integration.ConversationTest do
       assert signal.format in [:command, :message, :notification, :document, :transcript]
       assert is_float(signal.weight)
       assert signal.weight >= 0.0 and signal.weight <= 1.0
-    end
-  end
-
-  # ---------------------------------------------------------------------------
-  # Noise filtering — real conversations
-  # ---------------------------------------------------------------------------
-
-  describe "noise filtering — real conversations" do
-    test "casual greetings are filtered as noise" do
-      assert {:noise, _} = NoiseFilter.filter("hey")
-      assert {:noise, _} = NoiseFilter.filter("hello")
-      assert {:noise, _} = NoiseFilter.filter("good morning")
-    end
-
-    test "short greetings under 3 chars are filtered as noise (:too_short)" do
-      assert {:noise, :too_short} = NoiseFilter.filter("hi")
-    end
-
-    test "acknowledgments are filtered as noise" do
-      assert {:noise, _} = NoiseFilter.filter("sure")
-      assert {:noise, _} = NoiseFilter.filter("thanks")
-      assert {:noise, _} = NoiseFilter.filter("yeah")
-    end
-
-    test "short acknowledgments under 3 chars are filtered as noise (:too_short)" do
-      assert {:noise, :too_short} = NoiseFilter.filter("ok")
-    end
-
-    test "substantive messages pass through" do
-      assert {:signal, w1} =
-               NoiseFilter.filter("Create a new user authentication system with JWT tokens")
-
-      assert w1 >= 0.5
-
-      assert {:signal, w2} =
-               NoiseFilter.filter(
-                 "What is the best approach for handling file uploads in Elixir?"
-               )
-
-      assert w2 >= 0.5
-
-      assert {:signal, w3} =
-               NoiseFilter.filter("The production database is running out of disk space")
-
-      assert w3 >= 0.5
-    end
-
-    test "urgent messages get high weight" do
-      assert {:signal, weight} =
-               NoiseFilter.filter("URGENT: Production is down, all services returning 500 errors")
-
-      assert weight >= 0.7
-    end
-
-    test "technical question passes through as signal" do
-      assert {:signal, _} = NoiseFilter.filter("how do I configure the database connection pool?")
-    end
-
-    test "empty string is noise with :empty reason" do
-      assert {:noise, :empty} = NoiseFilter.filter("")
-    end
-
-    test "noise filter always returns a tagged two-tuple" do
-      for msg <- ["", "hi", "hello", "build me an API", "urgent fix needed"] do
-        result = NoiseFilter.filter(msg)
-
-        assert match?({tag, _} when tag in [:noise, :signal], result),
-               "Expected tagged tuple for #{inspect(msg)}, got #{inspect(result)}"
-      end
     end
   end
 
@@ -163,7 +93,7 @@ defmodule OptimalSystemAgent.Integration.ConversationTest do
         ]
       }
 
-      signal = Classifier.classify("Build me a REST API", :cli)
+      signal = Classifier.classify_fast("Build me a REST API", :cli)
       context = Context.build(state, signal)
 
       assert is_map(context)
@@ -278,20 +208,23 @@ defmodule OptimalSystemAgent.Integration.ConversationTest do
       refute String.contains?(system_msg.content, "Active Signal:")
     end
 
-    test "build with signal injects signal classification block" do
+    test "build without signal overlay — LLM self-classifies via SYSTEM.md" do
       state = %{
-        session_id: "test-with-signal",
+        session_id: "test-no-overlay",
         user_id: nil,
         channel: :cli,
         messages: []
       }
 
-      signal = Classifier.classify("analyze the logs", :cli)
+      # Even with a signal struct passed, no signal overlay is injected —
+      # Signal Theory instructions are in the static SYSTEM.md prompt
+      signal = Classifier.classify_fast("analyze the logs", :cli)
       context = Context.build(state, signal)
       [system_msg | _] = context.messages
 
-      # Signal overlay injected by Soul module (format: "Active Signal: MODE × GENRE")
-      assert String.contains?(system_msg.content, "Active Signal:")
+      refute String.contains?(system_msg.content, "Active Signal:")
+      # Signal Theory tables are in the static base (SYSTEM.md sections 2-3)
+      assert String.contains?(system_msg.content, "SIGNAL SYSTEM")
     end
   end
 
@@ -463,9 +396,9 @@ defmodule OptimalSystemAgent.Integration.ConversationTest do
     test "same message produces consistent mode across cli, telegram, and discord" do
       message = "fix the login bug — users cannot authenticate"
 
-      cli_signal = Classifier.classify(message, :cli)
-      telegram_signal = Classifier.classify(message, :telegram)
-      discord_signal = Classifier.classify(message, :discord)
+      cli_signal = Classifier.classify_fast(message, :cli)
+      telegram_signal = Classifier.classify_fast(message, :telegram)
+      discord_signal = Classifier.classify_fast(message, :discord)
 
       assert cli_signal.mode == telegram_signal.mode
       assert cli_signal.mode == discord_signal.mode
@@ -474,8 +407,8 @@ defmodule OptimalSystemAgent.Integration.ConversationTest do
     test "same message produces consistent genre across channels" do
       message = "fix the login bug — users cannot authenticate"
 
-      cli_signal = Classifier.classify(message, :cli)
-      telegram_signal = Classifier.classify(message, :telegram)
+      cli_signal = Classifier.classify_fast(message, :cli)
+      telegram_signal = Classifier.classify_fast(message, :telegram)
 
       assert cli_signal.genre == telegram_signal.genre
     end
@@ -483,8 +416,8 @@ defmodule OptimalSystemAgent.Integration.ConversationTest do
     test "same message produces consistent type across channels" do
       message = "fix the login bug — users cannot authenticate"
 
-      cli_signal = Classifier.classify(message, :cli)
-      discord_signal = Classifier.classify(message, :discord)
+      cli_signal = Classifier.classify_fast(message, :cli)
+      discord_signal = Classifier.classify_fast(message, :discord)
 
       assert cli_signal.type == discord_signal.type
     end
@@ -492,15 +425,15 @@ defmodule OptimalSystemAgent.Integration.ConversationTest do
     test "format differs by channel: cli is :command, telegram is :message" do
       message = "analyze the performance metrics"
 
-      cli_signal = Classifier.classify(message, :cli)
-      telegram_signal = Classifier.classify(message, :telegram)
+      cli_signal = Classifier.classify_fast(message, :cli)
+      telegram_signal = Classifier.classify_fast(message, :telegram)
 
       assert cli_signal.format == :command
       assert telegram_signal.format == :message
     end
 
     test "format for webhook channel is :notification" do
-      signal = Classifier.classify("incoming event payload", :webhook)
+      signal = Classifier.classify_fast("incoming event payload", :webhook)
       assert signal.format == :notification
     end
 
@@ -521,7 +454,7 @@ defmodule OptimalSystemAgent.Integration.ConversationTest do
       ]
 
       Enum.each(channels, fn channel ->
-        signal = Classifier.classify("test message for channel", channel)
+        signal = Classifier.classify_fast("test message for channel", channel)
 
         assert signal.format in [:command, :message, :notification, :document, :transcript],
                "Unexpected format #{signal.format} for channel #{channel}"
@@ -532,7 +465,7 @@ defmodule OptimalSystemAgent.Integration.ConversationTest do
     end
 
     test "channel is stored on the signal struct" do
-      signal = Classifier.classify("run the tests", :slack)
+      signal = Classifier.classify_fast("run the tests", :slack)
       assert signal.channel == :slack
     end
   end
@@ -616,28 +549,28 @@ defmodule OptimalSystemAgent.Integration.ConversationTest do
     test "'help me build this feature' — 'build' keyword fires BUILD mode" do
       # Deterministic path: 'build' is checked before 'help' in mode classification.
       # In the classify_mode cond, BUILD keywords are checked first.
-      signal = Classifier.classify("help me build this feature")
+      signal = Classifier.classify_fast("help me build this feature")
       assert signal.mode == :build
     end
 
     test "'help me understand this' without build keywords falls through to :assist" do
-      signal = Classifier.classify("help me understand this")
+      signal = Classifier.classify_fast("help me understand this")
       assert signal.mode == :assist
     end
 
     test "question mark in message produces type 'question'" do
-      signal = Classifier.classify("Can you run the test suite?")
+      signal = Classifier.classify_fast("Can you run the test suite?")
       assert signal.type == "question"
     end
 
     test "run keyword triggers :execute mode" do
-      signal = Classifier.classify("Can you run the test suite?")
+      signal = Classifier.classify_fast("Can you run the test suite?")
       assert signal.mode == :execute
     end
 
     test "emotional + technical message with fix keyword resolves to :maintain" do
       signal =
-        Classifier.classify(
+        Classifier.classify_fast(
           "This is terrible — the login page has been broken for 3 days, fix it immediately!"
         )
 
@@ -646,7 +579,7 @@ defmodule OptimalSystemAgent.Integration.ConversationTest do
 
     test "emotional message with exclamation resolves to :direct genre" do
       signal =
-        Classifier.classify(
+        Classifier.classify_fast(
           "This is terrible — the login page has been broken for 3 days, fix it immediately!"
         )
 
@@ -656,7 +589,7 @@ defmodule OptimalSystemAgent.Integration.ConversationTest do
 
     test "issue keywords in message produce 'issue' type" do
       signal =
-        Classifier.classify(
+        Classifier.classify_fast(
           "This is terrible — the login page has been broken for 3 days, fix it immediately!"
         )
 
@@ -665,17 +598,17 @@ defmodule OptimalSystemAgent.Integration.ConversationTest do
 
     test "mode classification is prioritized in cond order: build > execute > analyze > maintain > assist" do
       # 'build' fires before 'update' in the cond
-      signal = Classifier.classify("build and update the schema")
+      signal = Classifier.classify_fast("build and update the schema")
       assert signal.mode == :build
     end
 
     test "analyze keyword produces :analyze mode" do
-      signal = Classifier.classify("analyze the API response times")
+      signal = Classifier.classify_fast("analyze the API response times")
       assert signal.mode == :analyze
     end
 
     test "sync keyword produces :execute mode" do
-      signal = Classifier.classify("sync the database now")
+      signal = Classifier.classify_fast("sync the database now")
       assert signal.mode == :execute
     end
   end

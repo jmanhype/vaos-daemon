@@ -31,13 +31,8 @@ type Signal struct {
 
 // OrchestrateResponse from POST /api/v1/orchestrate.
 type OrchestrateResponse struct {
-	SessionID      string   `json:"session_id"`
-	ResponseType   string   `json:"response_type"`
-	Output         string   `json:"output"`
-	Signal         *Signal  `json:"signal,omitempty"`
-	ToolsUsed      []string `json:"tools_used"`
-	IterationCount int      `json:"iteration_count"`
-	ExecutionMs    int64    `json:"execution_ms"`
+	SessionID string `json:"session_id"`
+	Status    string `json:"status"`
 }
 
 // CommandEntry from GET /api/v1/commands.

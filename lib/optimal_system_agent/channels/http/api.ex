@@ -168,54 +168,21 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
     with %{"input" => input} <- conn.body_params do
       user_id = conn.body_params["user_id"] || conn.assigns[:user_id]
       session_id = conn.body_params["session_id"] || generate_session_id()
-      _workspace_id = conn.body_params["workspace_id"]
 
-      start_time = System.monotonic_time(:millisecond)
-
-      # Ensure an agent loop exists for this session (with retry on failure)
       case Session.ensure_loop(session_id, user_id, :http) do
         {:error, reason} ->
           json_error(conn, 503, "session_unavailable", "Could not start session: #{inspect(reason)}")
 
         _ ->
-          # Process through the agent loop (same pipeline as CLI)
-          case Loop.process_message(session_id, input) do
-            {:ok, response} ->
-              execution_ms = System.monotonic_time(:millisecond) - start_time
-              signal = Classifier.classify(input, :http)
-              meta = Loop.get_metadata(session_id)
+          skip_plan = conn.body_params["skip_plan"] == true
+          # Fire-and-forget — response streams via SSE
+          Task.start(fn -> Loop.process_message(session_id, input, skip_plan: skip_plan) end)
 
-              body =
-                Jason.encode!(%{
-                  session_id: session_id,
-                  output: response,
-                  signal: signal_to_map(signal),
-                  tools_used: Map.get(meta, :tools_used, []),
-                  iteration_count: Map.get(meta, :iteration_count, 0),
-                  execution_ms: execution_ms,
-                  metadata: %{}
-                })
+          body = Jason.encode!(%{session_id: session_id, status: "processing"})
 
-              conn
-              |> put_resp_content_type("application/json")
-              |> send_resp(200, body)
-
-            {:filtered, signal} ->
-              body =
-                Jason.encode!(%{
-                  error: "signal_filtered",
-                  code: "SIGNAL_BELOW_THRESHOLD",
-                  details: "Signal weight #{signal.weight} below threshold",
-                  signal: signal_to_map(signal)
-                })
-
-              conn
-              |> put_resp_content_type("application/json")
-              |> send_resp(422, body)
-
-            {:error, reason} ->
-              json_error(conn, 500, "agent_error", to_string(reason))
-          end
+          conn
+          |> put_resp_content_type("application/json")
+          |> send_resp(202, body)
       end
     else
       _ -> json_error(conn, 400, "invalid_request", "Missing required field: input")
@@ -259,7 +226,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
   post "/classify" do
     with %{"message" => message} <- conn.body_params do
       channel = parse_channel(conn.body_params["channel"])
-      signal = Classifier.classify(message, channel)
+      signal = Classifier.classify_fast(message, channel)
 
       body = Jason.encode!(%{signal: signal_to_map(signal)})
 

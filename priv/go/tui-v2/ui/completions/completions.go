@@ -127,6 +127,18 @@ func (m *Model) setFilter(filter string) {
 // IsVisible reports whether the popup is currently shown.
 func (m Model) IsVisible() bool { return m.visible }
 
+// HandlesKey reports whether the completions popup has a binding for the given
+// key press. When true, the key should be routed exclusively to the popup
+// rather than passing through to the textarea.
+func (m Model) HandlesKey(kp tea.KeyPressMsg) bool {
+	return key.Matches(kp, m.keyMap.Up) ||
+		key.Matches(kp, m.keyMap.Down) ||
+		key.Matches(kp, m.keyMap.Select) ||
+		key.Matches(kp, m.keyMap.Dismiss) ||
+		key.Matches(kp, m.keyMap.UpInsert) ||
+		key.Matches(kp, m.keyMap.DownInsert)
+}
+
 // Selected returns a pointer to the currently highlighted item, or nil when
 // the list is empty.
 func (m Model) Selected() *CompletionItem {
