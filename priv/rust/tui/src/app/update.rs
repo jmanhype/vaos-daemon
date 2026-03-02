@@ -565,6 +565,38 @@ impl App {
                 self.recompute_layout();
             }
 
+            BackendEvent::OnboardingStatus(result) => match result {
+                Ok(resp) => {
+                    if resp.needs_onboarding {
+                        info!("Onboarding needed — showing setup wizard");
+                        self.chat.add_system_message(
+                            "Welcome to OSA Agent! Let's get you set up.\n\
+                             \n\
+                             Quick setup:\n\
+                             \n\
+                             1. Local (Ollama):\n\
+                               Already detected! Use /model to switch models.\n\
+                             \n\
+                             2. Cloud providers:\n\
+                               Set API keys in ~/.osa/.env:\n\
+                               ANTHROPIC_API_KEY=sk-ant-...\n\
+                               OPENAI_API_KEY=sk-...\n\
+                               Then restart: osa\n\
+                             \n\
+                             3. Switch model now:\n\
+                               /models        — browse all available\n\
+                               /model <name>  — switch directly\n\
+                             \n\
+                             Type a message to start chatting!",
+                            "info",
+                        );
+                    }
+                }
+                Err(e) => {
+                    debug!("Onboarding check failed: {}", e);
+                }
+            },
+
             // Handle remaining events as they are implemented
             _ => {
                 debug!("Unhandled backend event");
@@ -661,6 +693,8 @@ impl App {
                 self.load_tools();
                 // Start SSE
                 self.start_sse();
+                // Check if onboarding is needed
+                self.check_onboarding();
             }
             Err(e) => {
                 warn!("Login failed: {}", e);
@@ -670,6 +704,21 @@ impl App {
                 );
             }
         }
+    }
+
+    fn check_onboarding(&self) {
+        let client = self.client.clone();
+        let tx = self.event_tx.clone();
+        tokio::spawn(async move {
+            match client.onboarding_status().await {
+                Ok(resp) => {
+                    let _ = tx.send(Event::Backend(BackendEvent::OnboardingStatus(Ok(resp))));
+                }
+                Err(e) => {
+                    let _ = tx.send(Event::Backend(BackendEvent::OnboardingStatus(Err(e.to_string()))));
+                }
+            }
+        });
     }
 
     fn handle_agent_response(
