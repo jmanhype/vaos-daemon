@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# bin/install — Local installer for OSA Agent (run from repo checkout).
+#
+# If you cloned the repo, run this from the project root:
+#   bin/install
+#
+# For a fresh install from scratch, use the one-liner instead:
+#   curl -fsSL https://raw.githubusercontent.com/Miosa-osa/OptimalSystemAgent/main/scripts/install.sh | bash
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# Delegate to the full install script with local checkout detection
+exec bash "$ROOT/scripts/install.sh"

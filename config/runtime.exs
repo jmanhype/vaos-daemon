@@ -131,7 +131,7 @@ config :optimal_system_agent,
        else
          "osa-dev-secret-#{:crypto.strong_rand_bytes(16) |> Base.url_encode64()}"
        end),
-  require_auth: System.get_env("OSA_REQUIRE_AUTH", "true") == "true",
+  require_auth: System.get_env("OSA_REQUIRE_AUTH", "false") == "true",
 
   # Budget limits (USD)
   daily_budget_usd: parse_float.(System.get_env("OSA_DAILY_BUDGET_USD"), 50.0),

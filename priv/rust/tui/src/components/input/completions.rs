@@ -1,0 +1,265 @@
+use crossterm::event::{KeyCode, KeyEvent};
+use ratatui::prelude::*;
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
+
+pub struct Completions {
+    items: Vec<CompletionItem>,
+    filtered: Vec<usize>,
+    selected: usize,
+    visible: bool,
+    filter: String,
+    max_visible: usize,
+    scroll_offset: usize,
+}
+
+pub struct CompletionItem {
+    pub name: String,
+    pub description: String,
+    pub category: Option<String>,
+}
+
+pub enum CompletionAction {
+    Select(String),
+    Dismiss,
+}
+
+impl Completions {
+    pub fn new() -> Self {
+        Self {
+            items: Vec::new(),
+            filtered: Vec::new(),
+            selected: 0,
+            visible: false,
+            filter: String::new(),
+            max_visible: 8,
+            scroll_offset: 0,
+        }
+    }
+
+    pub fn set_items(&mut self, items: Vec<CompletionItem>) {
+        self.items = items;
+        self.apply_filter();
+    }
+
+    pub fn show(&mut self, filter: &str) {
+        self.filter = filter.to_string();
+        self.apply_filter();
+        if !self.filtered.is_empty() {
+            self.visible = true;
+            self.selected = 0;
+            self.scroll_offset = 0;
+        }
+    }
+
+    pub fn hide(&mut self) {
+        self.visible = false;
+    }
+
+    pub fn is_visible(&self) -> bool {
+        self.visible
+    }
+
+    pub fn update_filter(&mut self, filter: &str) {
+        self.filter = filter.to_string();
+        self.apply_filter();
+        if self.filtered.is_empty() {
+            self.visible = false;
+        } else {
+            if self.selected >= self.filtered.len() {
+                self.selected = self.filtered.len().saturating_sub(1);
+            }
+            self.clamp_scroll();
+        }
+    }
+
+    pub fn selected_name(&self) -> Option<&str> {
+        self.filtered
+            .get(self.selected)
+            .and_then(|&idx| self.items.get(idx))
+            .map(|item| item.name.as_str())
+    }
+
+    pub fn handle_key(&mut self, key: KeyEvent) -> Option<CompletionAction> {
+        if !self.visible {
+            return None;
+        }
+        match key.code {
+            KeyCode::Up => {
+                let len = self.filtered.len();
+                if len == 0 {
+                    return None;
+                }
+                self.selected = if self.selected == 0 {
+                    len - 1
+                } else {
+                    self.selected - 1
+                };
+                self.clamp_scroll();
+                None
+            }
+            KeyCode::Down => {
+                let len = self.filtered.len();
+                if len == 0 {
+                    return None;
+                }
+                self.selected = (self.selected + 1) % len;
+                self.clamp_scroll();
+                None
+            }
+            KeyCode::Tab | KeyCode::Enter => {
+                let name = self.selected_name().map(|s| s.to_string());
+                if let Some(n) = name {
+                    self.visible = false;
+                    Some(CompletionAction::Select(n))
+                } else {
+                    None
+                }
+            }
+            KeyCode::Esc => {
+                self.visible = false;
+                Some(CompletionAction::Dismiss)
+            }
+            _ => None,
+        }
+    }
+
+    pub fn draw(&self, frame: &mut Frame, area: Rect) {
+        if !self.visible || self.filtered.is_empty() {
+            return;
+        }
+
+        let theme = crate::style::theme();
+
+        // Compute popup dimensions
+        let longest = self
+            .filtered
+            .iter()
+            .filter_map(|&i| self.items.get(i))
+            .map(|item| item.name.len() + 2 + item.description.len() + 4)
+            .max()
+            .unwrap_or(20);
+        let popup_width = (longest as u16).max(20).min(60).min(area.width);
+
+        let visible_count = self.filtered.len().min(self.max_visible) as u16;
+        let popup_height = visible_count + 2; // border top + bottom
+
+        // Popup appears above the input area
+        let popup_y = area.y.saturating_sub(popup_height);
+        let popup_x = area.x;
+
+        let popup_rect = Rect {
+            x: popup_x,
+            y: popup_y,
+            width: popup_width,
+            height: popup_height,
+        };
+
+        // Clear background
+        frame.render_widget(Clear, popup_rect);
+
+        // Bordered container
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(theme.colors.border));
+        frame.render_widget(block, popup_rect);
+
+        // Inner area (inside the border)
+        let inner = Rect {
+            x: popup_rect.x + 1,
+            y: popup_rect.y + 1,
+            width: popup_rect.width.saturating_sub(2),
+            height: popup_rect.height.saturating_sub(2),
+        };
+
+        let show_scroll_up = self.scroll_offset > 0;
+        let show_scroll_down = self.scroll_offset + self.max_visible < self.filtered.len();
+
+        for row in 0..visible_count {
+            let list_idx = self.scroll_offset + row as usize;
+            let item_idx = match self.filtered.get(list_idx) {
+                Some(&i) => i,
+                None => break,
+            };
+            let item = match self.items.get(item_idx) {
+                Some(i) => i,
+                None => break,
+            };
+
+            let is_selected = list_idx == self.selected;
+            let is_first = row == 0;
+            let is_last = row == visible_count - 1;
+
+            let row_rect = Rect {
+                x: inner.x,
+                y: inner.y + row,
+                width: inner.width,
+                height: 1,
+            };
+
+            // Scroll indicator rows
+            if is_first && show_scroll_up {
+                frame.render_widget(
+                    Paragraph::new("  \u{25b2}").style(theme.completion_normal()),
+                    row_rect,
+                );
+                continue;
+            }
+            if is_last && show_scroll_down {
+                frame.render_widget(
+                    Paragraph::new("  \u{25bc}").style(theme.completion_normal()),
+                    row_rect,
+                );
+                continue;
+            }
+
+            // Row background + content
+            let (row_style, name_style, desc_style) = if is_selected {
+                let sel = theme.completion_selected();
+                (sel, sel.add_modifier(Modifier::BOLD), sel)
+            } else {
+                (
+                    theme.completion_normal(),
+                    theme.completion_match(),
+                    theme.completion_normal(),
+                )
+            };
+
+            // Fill background for the whole row
+            frame.render_widget(Paragraph::new("").style(row_style), row_rect);
+
+            let line = Line::from(vec![
+                Span::raw("  "),
+                Span::styled(item.name.clone(), name_style),
+                Span::raw("  "),
+                Span::styled(item.description.clone(), desc_style),
+            ]);
+
+            frame.render_widget(Paragraph::new(line).style(row_style), row_rect);
+        }
+    }
+
+    // --- private ---
+
+    fn apply_filter(&mut self) {
+        let f = self.filter.to_lowercase();
+        self.filtered = self
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| f.is_empty() || item.name.to_lowercase().contains(&f))
+            .map(|(i, _)| i)
+            .collect();
+        self.selected = 0;
+        self.scroll_offset = 0;
+    }
+
+    fn clamp_scroll(&mut self) {
+        if self.selected >= self.scroll_offset + self.max_visible {
+            self.scroll_offset = self.selected + 1 - self.max_visible;
+        }
+        if self.selected < self.scroll_offset {
+            self.scroll_offset = self.selected;
+        }
+    }
+}

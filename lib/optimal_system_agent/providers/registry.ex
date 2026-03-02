@@ -44,33 +44,36 @@ defmodule OptimalSystemAgent.Providers.Registry do
 
   alias OptimalSystemAgent.Providers
 
-  # Canonical provider registry — maps atom → module
+  # Consolidated compat provider — one module handles 13 OpenAI-compatible APIs
+  @compat Providers.OpenAICompatProvider
+
+  # Canonical provider registry — maps atom → module | {:compat, atom}
   @providers %{
     # Local
     ollama: Providers.Ollama,
 
-    # OpenAI and OpenAI-compatible
-    openai: Providers.OpenAI,
-    groq: Providers.Groq,
-    together: Providers.Together,
-    fireworks: Providers.Fireworks,
-    deepseek: Providers.DeepSeek,
-    perplexity: Providers.Perplexity,
-    mistral: Providers.Mistral,
-    replicate: Providers.Replicate,
-    openrouter: Providers.OpenRouter,
+    # OpenAI-compatible (consolidated through OpenAICompatProvider)
+    openai: {:compat, :openai},
+    groq: {:compat, :groq},
+    together: {:compat, :together},
+    fireworks: {:compat, :fireworks},
+    deepseek: {:compat, :deepseek},
+    perplexity: {:compat, :perplexity},
+    mistral: {:compat, :mistral},
+    openrouter: {:compat, :openrouter},
 
-    # Native API providers
+    # Native API providers (custom protocol, not OpenAI-compatible)
     anthropic: Providers.Anthropic,
     google: Providers.Google,
     cohere: Providers.Cohere,
+    replicate: Providers.Replicate,
 
-    # Chinese providers (OpenAI-compatible)
-    qwen: Providers.Qwen,
-    moonshot: Providers.Moonshot,
-    zhipu: Providers.Zhipu,
-    volcengine: Providers.Volcengine,
-    baichuan: Providers.Baichuan
+    # Chinese providers (OpenAI-compatible, consolidated)
+    qwen: {:compat, :qwen},
+    moonshot: {:compat, :moonshot},
+    zhipu: {:compat, :zhipu},
+    volcengine: {:compat, :volcengine},
+    baichuan: {:compat, :baichuan}
   }
 
   # --- Public API ---
@@ -121,7 +124,16 @@ defmodule OptimalSystemAgent.Providers.Registry do
       nil ->
         {:error, "Unknown provider: #{provider}"}
 
-      module ->
+      {:compat, prov} ->
+        {:ok, %{
+          name: provider,
+          module: @compat,
+          default_model: @compat.default_model(prov),
+          available_models: @compat.available_models(prov),
+          configured?: provider_configured?(provider)
+        }}
+
+      module when is_atom(module) ->
         models =
           if function_exported?(module, :available_models, 0) do
             module.available_models()
@@ -129,15 +141,13 @@ defmodule OptimalSystemAgent.Providers.Registry do
             [module.default_model()]
           end
 
-        info = %{
+        {:ok, %{
           name: provider,
           module: module,
           default_model: module.default_model(),
           available_models: models,
           configured?: provider_configured?(provider)
-        }
-
-        {:ok, info}
+        }}
     end
   end
 
@@ -319,7 +329,12 @@ defmodule OptimalSystemAgent.Providers.Registry do
     end
   end
 
-  defp try_stream_provider(module, messages, callback, opts) do
+  defp try_stream_provider({:compat, _} = entry, messages, callback, opts) do
+    # Compat providers don't implement chat_stream — always use sync fallback
+    fallback_sync_stream(entry, messages, callback, opts)
+  end
+
+  defp try_stream_provider(module, messages, callback, opts) when is_atom(module) do
     if function_exported?(module, :chat_stream, 3) do
       try do
         module.chat_stream(messages, callback, opts)
@@ -333,7 +348,17 @@ defmodule OptimalSystemAgent.Providers.Registry do
     end
   end
 
-  defp apply_provider(module, messages, opts) do
+  defp apply_provider({:compat, provider}, messages, opts) do
+    try do
+      @compat.chat(provider, messages, opts)
+    rescue
+      e ->
+        Logger.error("Provider #{provider} raised: #{Exception.message(e)}")
+        {:error, "Provider error: #{Exception.message(e)}"}
+    end
+  end
+
+  defp apply_provider(module, messages, opts) when is_atom(module) do
     try do
       module.chat(messages, opts)
     rescue

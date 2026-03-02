@@ -6,6 +6,11 @@ defmodule OptimalSystemAgent.Tools.Builtins.WalletOps do
   alias OptimalSystemAgent.Integrations.Wallet
 
   @impl true
+  def available? do
+    Application.get_env(:optimal_system_agent, :wallet_enabled, false) == true
+  end
+
+  @impl true
   def name, do: "wallet_ops"
 
   @impl true

@@ -13,6 +13,7 @@ defmodule OptimalSystemAgent.Providers.OpenAICompat do
 
   require Logger
 
+  alias OptimalSystemAgent.Providers.ToolCallParsers
   alias OptimalSystemAgent.Utils.Text
 
   @doc """
@@ -150,14 +151,27 @@ defmodule OptimalSystemAgent.Providers.OpenAICompat do
 
   def parse_tool_calls(_), do: []
 
+  @doc """
+  Model-aware variant — tries model-specific parsers before the generic fallback.
+  """
+  def parse_tool_calls(%{"tool_calls" => calls}, _model) when is_list(calls) do
+    parse_tool_calls(%{"tool_calls" => calls})
+  end
+
+  def parse_tool_calls(%{"content" => content} = _msg, model) when is_binary(content) do
+    case ToolCallParsers.parse(content, model) do
+      [] -> parse_tool_calls_from_content(content)
+      calls -> calls
+    end
+  end
+
+  def parse_tool_calls(msg, _model), do: parse_tool_calls(msg)
+
   @doc false
   def parse_tool_calls_from_content(content) when is_binary(content) do
     cond do
-      # Format 1: <function name="tool_name" parameters={...}></function>
-      String.contains?(content, "<function") ->
-        extract_xml_function_calls(content)
-
       # Format 2: <function_call>{"name": "...", "arguments": {...}}</function_call>
+      # Must be checked BEFORE Format 1 — "<function_call>" contains "<function"
       String.contains?(content, "<function_call>") ->
         ~r/<function_call>\s*/s
         |> Regex.split(content, include_captures: false)
@@ -182,6 +196,10 @@ defmodule OptimalSystemAgent.Providers.OpenAICompat do
             _ -> []
           end
         end)
+
+      # Format 1: <function name="tool_name" parameters={...}></function>
+      String.contains?(content, "<function") ->
+        extract_xml_function_calls(content)
 
       # Format 3: raw JSON tool call object {"name": "...", "arguments": {...}}
       String.contains?(content, "\"name\"") and String.contains?(content, "\"arguments\"") ->

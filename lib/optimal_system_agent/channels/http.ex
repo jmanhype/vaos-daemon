@@ -4,12 +4,11 @@ defmodule OptimalSystemAgent.Channels.HTTP do
 
   This is the API surface that MIOSA SDK clients consume. Symmetrical with
   CLI, Telegram, and other channel adapters — all signals go through the
-  same Agent.Loop and Signal.Classifier pipeline.
+  same Agent.Loop pipeline.
 
   Endpoints (v1):
     POST /api/v1/orchestrate           Full ReAct agent loop
     GET  /api/v1/stream/:session_id    SSE event stream
-    POST /api/v1/classify              Signal classification
     GET  /api/v1/tools                 List executable tools
     POST /api/v1/tools/:name/execute   Execute a tool by name
     GET  /api/v1/skills                List SKILL.md prompt definitions

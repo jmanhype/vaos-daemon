@@ -10,7 +10,7 @@ defmodule OptimalSystemAgent.Integration.MemoryTest do
 
   describe "session management" do
     test "append and load_session roundtrips correctly" do
-      session_id = "test-session-#{System.unique_integer([:positive])}"
+      session_id = "test-roundtrip-#{System.unique_integer([:positive])}"
 
       Memory.append(session_id, %{role: "user", content: "Hello agent"})
       Memory.append(session_id, %{role: "assistant", content: "Hi! How can I help?"})
@@ -23,7 +23,7 @@ defmodule OptimalSystemAgent.Integration.MemoryTest do
       assert Enum.at(messages, 0)["content"] == "Hello agent"
       assert Enum.at(messages, 1)["content"] == "Hi! How can I help?"
     after
-      cleanup_session("test-session-#{System.unique_integer([:positive])}")
+      cleanup_sessions_with_prefix("test-roundtrip-")
     end
 
     test "load_session returns empty list for non-existent session" do

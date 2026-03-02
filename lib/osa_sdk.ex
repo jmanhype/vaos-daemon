@@ -203,14 +203,6 @@ defmodule OSA.SDK do
   @doc "Set monthly budget limit in USD."
   defdelegate set_monthly_limit(usd), to: OptimalSystemAgent.SDK.Budget
 
-  # ── Signal Theory ────────────────────────────────────────────────
-
-  @doc "Classify a message into its Signal Theory 5-tuple."
-  defdelegate classify_signal(message, channel \\ :sdk), to: OptimalSystemAgent.SDK.Signal, as: :classify
-
-  @doc "Calculate Shannon weight of a message (0.0-1.0)."
-  defdelegate signal_weight(message), to: OptimalSystemAgent.SDK.Signal, as: :weight
-
   # ── Tiers & Models ──────────────────────────────────────────────
 
   @doc "Get model name for a tier on a given provider."

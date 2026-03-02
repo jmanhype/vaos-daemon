@@ -37,12 +37,14 @@ defmodule OptimalSystemAgent.Agent.Loop do
     :model,
     messages: [],
     iteration: 0,
+    overflow_retries: 0,
     consecutive_failures: 0,
     last_tool_signature: nil,
     status: :idle,
     tools: [],
     plan_mode: false,
     plan_mode_enabled: false,
+    turn_count: 0,
     last_meta: %{iteration_count: 0, tools_used: []}
   ]
 
@@ -97,8 +99,15 @@ defmodule OptimalSystemAgent.Agent.Loop do
     # Apply per-call provider/model overrides (SDK passthrough)
     state = apply_overrides(state, opts)
 
+    # Increment turn counter for memory/skill nudges (Phase 6)
+    state = %{state | turn_count: state.turn_count + 1}
+
     # 0. Clear per-message caches (git info runs once per message, not per iteration)
     Process.delete(:osa_git_info_cache)
+
+    # Clear system message cache at start of each process call (Phase 4)
+    Process.delete(:osa_system_msg_cache)
+    Process.put(:osa_memory_version, 0)
 
     # 0.5. Application-layer prompt injection guard — block before LLM ever sees it.
     # This catches weak local models (Ollama) that ignore system prompt instructions.
@@ -117,10 +126,21 @@ defmodule OptimalSystemAgent.Agent.Loop do
     compacted = OptimalSystemAgent.Agent.Compactor.maybe_compact(state.messages)
     state = %{state | messages: compacted}
 
+    # Memory nudge every 10 turns (Phase 6)
+    message_with_nudge =
+      if rem(state.turn_count, 10) == 0 and state.turn_count > 0 do
+        message <>
+          "\n\n[System: You've had #{state.turn_count} exchanges. " <>
+          "Consider saving important context with memory_save if you haven't recently.]"
+      else
+        message
+      end
+
     state = %{
       state
-      | messages: state.messages ++ [%{role: "user", content: message}],
+      | messages: state.messages ++ [%{role: "user", content: message_with_nudge}],
         iteration: 0,
+        overflow_retries: 0,
         status: :thinking
     }
 
@@ -245,8 +265,8 @@ defmodule OptimalSystemAgent.Agent.Loop do
   end
 
   defp do_run_loop(state) do
-    # Build context (system prompt + conversation history)
-    context = Context.build(state)
+    # Build context (system prompt + conversation history), using cached system message (Phase 4)
+    context = cached_context(state)
 
     # Emit timing event before LLM call
     Bus.emit(:llm_request, %{session_id: state.session_id, iteration: state.iteration})
@@ -320,6 +340,29 @@ defmodule OptimalSystemAgent.Agent.Loop do
         tool_messages = Enum.map(results, fn {_tc, {tool_msg, _result_str}} -> tool_msg end)
         state = %{state | messages: state.messages ++ tool_messages}
 
+        # If memory_save ran successfully in this batch, invalidate system message cache (Phase 4)
+        if Enum.any?(tool_calls, fn tc -> tc.name == "memory_save" end) and
+             Enum.any?(results, fn {tc, {_msg, result_str}} ->
+               tc.name == "memory_save" and not String.starts_with?(result_str, "Error:")
+             end) do
+          Process.put(:osa_memory_version, Process.get(:osa_memory_version, 0) + 1)
+        end
+
+        # Skill creation nudge — 5+ tool calls in single turn suggests a reusable pattern (Phase 6)
+        state =
+          if length(tool_calls) >= 5 and state.iteration == 1 do
+            nudge_msg = %{
+              role: "system",
+              content:
+                "[System: You've used 5+ tools this turn. " <>
+                  "If this is a reusable pattern, consider create_skill.]"
+            }
+
+            %{state | messages: state.messages ++ [nudge_msg]}
+          else
+            state
+          end
+
         # Doom loop detection — if the same tools fail 3x consecutively, halt
         tool_signature = tool_calls |> Enum.map(& &1.name) |> Enum.sort()
 
@@ -364,20 +407,50 @@ defmodule OptimalSystemAgent.Agent.Loop do
       {:error, reason} ->
         reason_str = if is_binary(reason), do: reason, else: inspect(reason)
 
-        if context_overflow?(reason_str) and state.iteration < 3 do
-          Logger.warning("Context overflow — compacting and retrying (attempt #{state.iteration + 1})")
+        if context_overflow?(reason_str) and state.overflow_retries < 3 do
+          Logger.warning("Context overflow — compacting and retrying (overflow_retry #{state.overflow_retries + 1}/3, iteration #{state.iteration})")
           compacted = OptimalSystemAgent.Agent.Compactor.maybe_compact(state.messages)
-          state = %{state | messages: compacted, iteration: state.iteration + 1}
+          state = %{state | messages: compacted, overflow_retries: state.overflow_retries + 1}
           run_loop(state)
         else
           if context_overflow?(reason_str) do
-            Logger.error("Context overflow after 3 compaction attempts")
+            Logger.error("Context overflow after 3 compaction attempts (iteration #{state.iteration})")
             {"I've exceeded the context window. Try breaking your request into smaller parts.", state}
           else
             Logger.error("LLM call failed: #{reason_str}")
             {"I encountered an error processing your request. Please try again.", state}
           end
         end
+    end
+  end
+
+  # Frozen system prompt cache (Phase 4) — avoids rebuilding the system message
+  # on every iteration within a single process_message call. The cache key includes
+  # plan_mode, session_id, memory version, and channel so it auto-invalidates when
+  # any of those change (e.g. memory_save bumps the version).
+  defp cached_context(state) do
+    cache_key =
+      {state.plan_mode, state.session_id, Process.get(:osa_memory_version, 0), state.channel}
+
+    case Process.get(:osa_system_msg_cache) do
+      {^cache_key, cached_system_msg} ->
+        # Rebuild with cached system message but fresh conversation history
+        full = Context.build(state)
+
+        case full.messages do
+          [_system | rest] -> %{full | messages: [cached_system_msg | rest]}
+          _ -> full
+        end
+
+      _ ->
+        full = Context.build(state)
+        system_msg = List.first(full.messages)
+
+        if system_msg do
+          Process.put(:osa_system_msg_cache, {cache_key, system_msg})
+        end
+
+        full
     end
   end
 
@@ -625,7 +698,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
       utilization: utilization
     })
   rescue
-    _ -> :ok
+    e -> Logger.debug("emit_context_pressure failed: #{inspect(e)}")
   end
 
   # Run hooks with fault isolation — never crash the loop if hooks are down

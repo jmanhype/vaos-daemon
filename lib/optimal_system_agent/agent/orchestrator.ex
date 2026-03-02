@@ -21,10 +21,10 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
   use GenServer
   require Logger
 
-  alias OptimalSystemAgent.Agent.{Appraiser, Roster, Tier, TaskQueue}
+  alias OptimalSystemAgent.Agent.{Appraiser, Roster, TaskQueue}
+  alias OptimalSystemAgent.Agent.Orchestrator.{SkillManager, Decomposer, AgentRunner}
   alias OptimalSystemAgent.Events.Bus
   alias OptimalSystemAgent.Providers.Registry, as: Providers
-  alias OptimalSystemAgent.Tools.Registry, as: Tools
 
   defstruct tasks: %{},
             agent_pool: %{},
@@ -176,7 +176,7 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
     })
 
     # Decompose is sync (needs LLM), but execution is async via handle_continue
-    case decompose_task(message) do
+    case Decomposer.decompose_task(message) do
       {:ok, sub_tasks} when is_list(sub_tasks) and length(sub_tasks) > 0 ->
         sub_tasks = Enum.take(sub_tasks, Roster.max_agents())
 
@@ -502,7 +502,7 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
         {:noreply, state}
 
       task_state ->
-        waves = build_execution_waves(task_state.sub_tasks)
+        waves = Decomposer.build_execution_waves(task_state.sub_tasks)
         task_state = %{task_state | pending_waves: waves, current_wave: 0}
         state = %{state | tasks: Map.put(state.tasks, task_id, task_state)}
         {:noreply, state, {:continue, {:execute_wave, task_id}}}
@@ -536,11 +536,11 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
         # Spawn all agents in this wave, collecting refs and agent states
         spawn_results =
           Enum.map(wave, fn sub_task ->
-            dep_context = build_dependency_context(sub_task.depends_on, task_state.results)
+            dep_context = Decomposer.build_dependency_context(sub_task.depends_on, task_state.results)
             sub_task_with_context = %{sub_task | context: dep_context}
 
             {agent_id, agent_state, task_ref} =
-              spawn_agent(sub_task_with_context, task_id, session_id, cached_tools)
+              AgentRunner.spawn_agent(sub_task_with_context, task_id, session_id, cached_tools)
 
             subtask_id = "#{task_id}_#{sub_task.name}"
             {agent_id, agent_state, task_ref, sub_task.name, subtask_id}
@@ -657,203 +657,6 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
     end
   end
 
-  # ── Complexity Analysis ─────────────────────────────────────────────
-
-  defp analyze_complexity(message) do
-    prompt = """
-    Analyze this task's complexity. Respond ONLY with valid JSON, no markdown fences.
-
-    Task: "#{String.slice(message, 0, 500)}"
-
-    Determine:
-    1. complexity: "simple" (one agent can handle) or "complex" (needs multiple parallel agents)
-    2. If complex, decompose into parallel sub-tasks (max #{Roster.max_agents()})
-    3. For each sub-task, specify:
-       - name: short identifier (snake_case)
-       - description: what this agent should do
-       - role: one of the 9 specialist roles below
-       - tools_needed: which skills this agent needs (file_read, file_write, shell_execute, web_search, memory_save)
-       - depends_on: list of other sub-task names it depends on (empty array for parallel tasks)
-
-    Available roles (assign the most appropriate for each sub-task):
-      "lead"     — orchestrator/synthesizer, merges results, makes ship decisions
-      "backend"  — server-side code: APIs, handlers, services, business logic
-      "frontend" — client-side code: components, pages, state, styling
-      "data"     — database schemas, migrations, models, queries, data integrity
-      "design"   — design specs, tokens, accessibility audits, visual consistency
-      "infra"    — Dockerfiles, CI/CD, deployment, build systems, monitoring
-      "qa"       — tests (unit/integration/e2e), test infra, security audit
-      "red_team" — adversarial review: security vulns, edge cases, findings report
-      "services" — external integrations: APIs, workers, background jobs, AI/ML
-
-    Execution waves (sub-tasks are grouped into dependency waves):
-      Wave 1 (foundation): data, qa, infra, design — no dependencies
-      Wave 2 (logic):      backend, services — depends on Wave 1
-      Wave 3 (presentation): frontend — depends on Wave 2
-      Wave 4 (review):     red_team — depends on all prior waves
-      Wave 5 (synthesis):  lead — depends on everything
-
-    JSON format:
-    {"complexity":"simple","reasoning":"This is a straightforward task"}
-    OR
-    {"complexity":"complex","reasoning":"This task requires...","sub_tasks":[{"name":"schema_design","description":"...","role":"data","tools_needed":["file_read"],"depends_on":[]},{"name":"api_handlers","description":"...","role":"backend","tools_needed":["file_read","file_write"],"depends_on":["schema_design"]}]}
-    """
-
-    messages = [%{role: "user", content: prompt}]
-
-    case Providers.chat(messages, temperature: 0.2, max_tokens: 1500) do
-      {:ok, %{content: content}} when is_binary(content) and content != "" ->
-        parse_complexity_response(content)
-
-      {:ok, _} ->
-        Logger.warning("[Orchestrator] Empty LLM response for complexity analysis")
-        :simple
-
-      {:error, reason} ->
-        Logger.error(
-          "[Orchestrator] LLM call failed during complexity analysis: #{inspect(reason)}"
-        )
-
-        :simple
-    end
-  end
-
-  defp parse_complexity_response(content) do
-    cleaned =
-      content
-      |> String.trim()
-      |> OptimalSystemAgent.Utils.Text.strip_markdown_fences()
-      |> String.trim()
-
-    case Jason.decode(cleaned) do
-      {:ok, %{"complexity" => "simple"}} ->
-        :simple
-
-      {:ok, %{"complexity" => "complex", "sub_tasks" => sub_tasks}} when is_list(sub_tasks) ->
-        parsed =
-          Enum.map(sub_tasks, fn st ->
-            %SubTask{
-              name: st["name"] || "unnamed",
-              description: st["description"] || "",
-              role: parse_role(st["role"]),
-              tools_needed: st["tools_needed"] || [],
-              depends_on: st["depends_on"] || []
-            }
-          end)
-
-        {:complex, parsed}
-
-      {:ok, _} ->
-        Logger.warning("[Orchestrator] Unexpected complexity response format")
-        :simple
-
-      {:error, reason} ->
-        Logger.warning("[Orchestrator] Failed to parse complexity JSON: #{inspect(reason)}")
-        :simple
-    end
-  end
-
-  # Agent-Dispatch 9-role system + legacy aliases
-  defp parse_role("lead"), do: :lead
-  defp parse_role("backend"), do: :backend
-  defp parse_role("frontend"), do: :frontend
-  defp parse_role("data"), do: :data
-  defp parse_role("design"), do: :design
-  defp parse_role("infra"), do: :infra
-  defp parse_role("qa"), do: :qa
-  defp parse_role("red_team"), do: :red_team
-  defp parse_role("red-team"), do: :red_team
-  defp parse_role("services"), do: :services
-  # Legacy aliases
-  defp parse_role("researcher"), do: :data
-  defp parse_role("builder"), do: :backend
-  defp parse_role("tester"), do: :qa
-  defp parse_role("reviewer"), do: :red_team
-  defp parse_role("writer"), do: :lead
-  defp parse_role(_), do: :backend
-
-  # ── Task Decomposition ──────────────────────────────────────────────
-
-  defp decompose_task(message) do
-    try do
-      case analyze_complexity(message) do
-        :simple ->
-          # Create a single "do everything" sub-task
-          {:ok,
-           [
-             %SubTask{
-               name: "execute",
-               description: message,
-               role: :builder,
-               tools_needed: ["file_read", "file_write", "shell_execute"],
-               depends_on: []
-             }
-           ]}
-
-        {:complex, sub_tasks} ->
-          {:ok, sub_tasks}
-      end
-    rescue
-      e ->
-        {:error, "Task decomposition failed: #{Exception.message(e)}"}
-    end
-  end
-
-  defp build_execution_waves(sub_tasks) do
-    # Topological sort: group tasks by dependency level
-    # Wave 0: no dependencies
-    # Wave 1: depends only on wave 0 tasks
-    # etc.
-    resolved = MapSet.new()
-    remaining = sub_tasks
-    waves = []
-
-    build_waves(remaining, resolved, waves)
-  end
-
-  defp build_waves([], _resolved, waves), do: Enum.reverse(waves)
-
-  defp build_waves(remaining, resolved, waves) do
-    # Find all tasks whose dependencies are satisfied
-    {ready, not_ready} =
-      Enum.split_with(remaining, fn st ->
-        Enum.all?(st.depends_on, fn dep -> MapSet.member?(resolved, dep) end)
-      end)
-
-    if ready == [] and not_ready != [] do
-      # Circular dependency or unresolvable — force everything into one wave
-      Logger.warning(
-        "[Orchestrator] Unresolvable dependencies detected, forcing parallel execution"
-      )
-
-      Enum.reverse([not_ready | waves])
-    else
-      new_resolved =
-        Enum.reduce(ready, resolved, fn st, acc -> MapSet.put(acc, st.name) end)
-
-      build_waves(not_ready, new_resolved, [ready | waves])
-    end
-  end
-
-  defp build_dependency_context([], _results), do: nil
-
-  defp build_dependency_context(depends_on, results) do
-    context_parts =
-      Enum.map(depends_on, fn dep_name ->
-        case Map.get(results, dep_name) do
-          nil -> nil
-          result -> "## Results from #{dep_name}:\n#{result}"
-        end
-      end)
-      |> Enum.reject(&is_nil/1)
-
-    if context_parts == [] do
-      nil
-    else
-      Enum.join(context_parts, "\n\n---\n\n")
-    end
-  end
-
   # ── Non-blocking execution helpers ──────────────────────────────────
 
   # Find which task owns a given Task.async ref
@@ -930,360 +733,6 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
     })
 
     %{state | tasks: Map.put(state.tasks, task_id, task_state)}
-  end
-
-  # ── Sub-Agent Spawning ──────────────────────────────────────────────
-
-  defp spawn_agent(sub_task, task_id, session_id, cached_tools) do
-    agent_id = generate_id("agent")
-
-    # Build specialized system prompt for this agent's role
-    system_prompt = build_agent_prompt(sub_task)
-
-    # Determine tier for this agent (from Roster match or role default)
-    agent_tier = resolve_agent_tier(sub_task)
-    provider = Application.get_env(:optimal_system_agent, :default_provider, :ollama)
-
-    tier_opts = %{
-      model: Tier.model_for(agent_tier, provider),
-      temperature: Tier.temperature(agent_tier),
-      max_iterations: Tier.max_iterations(agent_tier),
-      max_response_tokens: Tier.max_response_tokens(agent_tier),
-      tier: agent_tier
-    }
-
-    agent_state = %AgentState{
-      id: agent_id,
-      task_id: task_id,
-      name: sub_task.name,
-      role: sub_task.role,
-      status: :running,
-      tool_uses: 0,
-      tokens_used: 0,
-      started_at: DateTime.utc_now()
-    }
-
-    Bus.emit(:system_event, %{
-      event: :orchestrator_agent_started,
-      task_id: task_id,
-      session_id: session_id,
-      agent_id: agent_id,
-      agent_name: sub_task.name,
-      role: sub_task.role,
-      tier: agent_tier,
-      model: tier_opts.model
-    })
-
-    # Emit task_updated (in_progress) so the TUI marks this subtask active.
-    subtask_id = "#{task_id}_#{sub_task.name}"
-    Bus.emit(:system_event, %{
-      event: :task_updated,
-      task_id: subtask_id,
-      status: "in_progress",
-      session_id: session_id
-    })
-
-    # Run the agent asynchronously
-    orchestrator_pid = self()
-
-    task_ref =
-      Task.async(fn ->
-        run_agent_loop(
-          agent_id,
-          task_id,
-          system_prompt,
-          sub_task,
-          session_id,
-          orchestrator_pid,
-          cached_tools,
-          tier_opts
-        )
-      end)
-
-    {agent_id, agent_state, task_ref}
-  end
-
-  # Resolve which tier an agent should run at based on Roster or role defaults.
-  defp resolve_agent_tier(sub_task) do
-    case Roster.find_by_trigger(sub_task.description) do
-      %{tier: tier} ->
-        tier
-
-      nil ->
-        # Map roles to default tiers
-        case sub_task.role do
-          :lead -> :elite
-          :red_team -> :specialist
-          _ -> :specialist
-        end
-    end
-  end
-
-  # ── Agent Loop (runs inside Task.async) ─────────────────────────────
-
-  defp run_agent_loop(
-         agent_id,
-         task_id,
-         system_prompt,
-         sub_task,
-         _session_id,
-         orchestrator_pid,
-         cached_tools,
-         tier_opts
-       ) do
-    # Build the conversation for this sub-agent
-    user_message =
-      if sub_task.context do
-        """
-        ## Task
-        #{sub_task.description}
-
-        ## Context from Previous Agents
-        #{sub_task.context}
-        """
-      else
-        sub_task.description
-      end
-
-    messages = [
-      %{role: "system", content: system_prompt},
-      %{role: "user", content: user_message}
-    ]
-
-    # Use cached tools or read from persistent_term (lock-free).
-    # NEVER call Tools.list_tools() here — it goes through the GenServer
-    # which is blocked by the Tools.Registry.execute call that started us.
-    tools =
-      if cached_tools != [] do
-        cached_tools
-      else
-        Tools.list_tools_direct()
-      end
-
-    # Filter tools to only what this agent needs (if specified)
-    tools =
-      if sub_task.tools_needed != [] do
-        Enum.filter(tools, fn tool ->
-          tool.name in sub_task.tools_needed
-        end)
-      else
-        tools
-      end
-
-    # Run the agent's ReAct loop with tier-aware model and temperature
-    max_iters = tier_opts.max_iterations
-
-    run_sub_agent_iterations(
-      agent_id,
-      task_id,
-      messages,
-      tools,
-      orchestrator_pid,
-      0,
-      0,
-      0,
-      tier_opts,
-      max_iters
-    )
-  end
-
-  defp run_sub_agent_iterations(
-         agent_id,
-         task_id,
-         messages,
-         _tools,
-         orchestrator_pid,
-         iteration,
-         tool_uses,
-         tokens_used,
-         _tier_opts,
-         max_iters
-       )
-       when iteration >= max_iters do
-    Logger.warning("[Orchestrator] Sub-agent #{agent_id} hit max iterations (#{max_iters})")
-
-    # Report final progress
-    GenServer.cast(
-      orchestrator_pid,
-      {:agent_progress, task_id, agent_id,
-       %{
-         tool_uses: tool_uses,
-         tokens_used: tokens_used,
-         current_action: "Completed (max iterations)"
-       }}
-    )
-
-    # Extract the last assistant message as the result
-    last_assistant =
-      messages
-      |> Enum.reverse()
-      |> Enum.find(fn msg -> msg.role == "assistant" end)
-
-    {:ok,
-     (last_assistant && last_assistant.content) ||
-       "Agent reached iteration limit without producing a result."}
-  end
-
-  defp run_sub_agent_iterations(
-         agent_id,
-         task_id,
-         messages,
-         tools,
-         orchestrator_pid,
-         iteration,
-         tool_uses,
-         tokens_used,
-         tier_opts,
-         max_iters
-       ) do
-    # Emit progress update
-    GenServer.cast(
-      orchestrator_pid,
-      {:agent_progress, task_id, agent_id,
-       %{
-         tool_uses: tool_uses,
-         tokens_used: tokens_used,
-         current_action: "Thinking... (iteration #{iteration + 1}/#{max_iters})"
-       }}
-    )
-
-    # Tier-aware LLM options: model + temperature from the agent's tier
-    llm_opts = [
-      tools: tools,
-      temperature: tier_opts.temperature,
-      model: tier_opts.model,
-      max_tokens: tier_opts.max_response_tokens
-    ]
-
-    try do
-      case Providers.chat(messages, llm_opts) do
-        {:ok, %{content: content, tool_calls: []}} ->
-          # No tool calls — final response
-          estimated_tokens = tokens_used + estimate_tokens(content)
-
-          GenServer.cast(
-            orchestrator_pid,
-            {:agent_progress, task_id, agent_id,
-             %{
-               tool_uses: tool_uses,
-               tokens_used: estimated_tokens,
-               current_action: "Done"
-             }}
-          )
-
-          {:ok, content}
-
-        {:ok, %{content: content, tool_calls: tool_calls}}
-        when is_list(tool_calls) and tool_calls != [] ->
-          # Execute tool calls
-          new_tool_uses = tool_uses + length(tool_calls)
-          estimated_tokens = tokens_used + estimate_tokens(content)
-
-          messages = messages ++ [%{role: "assistant", content: content, tool_calls: tool_calls}]
-
-          # Execute each tool and collect results
-          {messages, new_tool_uses_final, estimated_tokens_final} =
-            Enum.reduce(tool_calls, {messages, new_tool_uses, estimated_tokens}, fn tool_call,
-                                                                                    {msgs, tu, et} ->
-              # Report what we're doing
-              GenServer.cast(
-                orchestrator_pid,
-                {:agent_progress, task_id, agent_id,
-                 %{
-                   tool_uses: tu,
-                   tokens_used: et,
-                   current_action: "Running #{tool_call.name}"
-                 }}
-              )
-
-              # Use execute_direct to bypass GenServer — Tools.Registry is blocked
-              # by the parent execute("orchestrate") call that spawned us.
-              result_str =
-                case Tools.execute_direct(tool_call.name, tool_call.arguments) do
-                  {:ok, output} -> output
-                  {:error, reason} -> "Error: #{reason}"
-                end
-
-              tool_msg = %{role: "tool", tool_call_id: tool_call.id, content: result_str}
-              {msgs ++ [tool_msg], tu, et + estimate_tokens(result_str)}
-            end)
-
-          # Re-prompt with same tier opts
-          run_sub_agent_iterations(
-            agent_id,
-            task_id,
-            messages,
-            tools,
-            orchestrator_pid,
-            iteration + 1,
-            new_tool_uses_final,
-            estimated_tokens_final,
-            tier_opts,
-            max_iters
-          )
-
-        {:ok, %{content: content}} when is_binary(content) and content != "" ->
-          # Response with content but no tool_calls key
-          {:ok, content}
-
-        {:error, reason} ->
-          Logger.error("[Orchestrator] Sub-agent #{agent_id} LLM call failed: #{inspect(reason)}")
-          {:error, "LLM call failed: #{inspect(reason)}"}
-      end
-    rescue
-      e ->
-        Logger.error("[Orchestrator] Sub-agent #{agent_id} crashed: #{Exception.message(e)}")
-        {:error, "Agent crashed: #{Exception.message(e)}"}
-    end
-  end
-
-  # ── Agent Role Prompts ──────────────────────────────────────────────
-
-  defp build_agent_prompt(sub_task) do
-    # First try the Roster for a named agent match, then fall back to role_prompts
-    role_prompt =
-      case Roster.find_by_trigger(sub_task.description) do
-        %{prompt: prompt} -> prompt
-        nil -> Roster.role_prompt(sub_task.role)
-      end
-
-    # Get tier-appropriate settings
-    agent_tier =
-      case Roster.find_by_trigger(sub_task.description) do
-        %{tier: tier} -> tier
-        nil -> :specialist
-      end
-
-    max_iters = Tier.max_iterations(agent_tier)
-
-    """
-    #{role_prompt}
-
-    ## Your Specific Task
-    #{sub_task.description}
-
-    ## Available Tools
-    #{Enum.join(sub_task.tools_needed || [], ", ")}
-
-    ## Execution Parameters
-    - Tier: #{agent_tier}
-    - Max iterations: #{max_iters}
-    - Token budget: #{Tier.total_budget(agent_tier)}
-
-    ## Rules
-    - Focus ONLY on your assigned task
-    - Be thorough but efficient
-    - Report your results clearly when done
-    - If you encounter a blocker, state it clearly and do what you can
-    - Match existing codebase patterns and conventions
-
-    ## Code Quality (applies when writing or modifying code)
-    - Include ALL required imports and package declarations — never omit them
-    - After writing or editing a file, ALWAYS verify: compile it or run a syntax check
-    - Run the relevant tests (`mix test`, `go test ./...`, `npm test`, etc.) and report pass/fail
-    - If a build or test fails, fix it before reporting done — do not declare success with broken code
-    - Read any files created by predecessor agents before building on them
-    """
   end
 
   # ── Result Synthesis ────────────────────────────────────────────────
@@ -1364,81 +813,17 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
     end
   end
 
-  # ── Dynamic Skill Creation ──────────────────────────────────────────
+  # ── Dynamic Skill Creation & Discovery ────────────────────────────────
+  # Delegated to Orchestrator.SkillManager
 
-  defp do_create_skill(name, description, instructions, tools) do
-    skill_dir = Path.expand("~/.osa/skills/#{name}")
+  defp do_create_skill(name, description, instructions, tools),
+    do: SkillManager.create(name, description, instructions, tools)
 
-    try do
-      File.mkdir_p!(skill_dir)
-
-      tools_yaml =
-        case tools do
-          [] -> ""
-          list -> Enum.map_join(list, "\n", fn t -> "  - #{t}" end)
-        end
-
-      skill_content = """
-      ---
-      name: #{name}
-      description: #{description}
-      tools:
-      #{tools_yaml}
-      ---
-
-      ## Instructions
-
-      #{instructions}
-      """
-
-      skill_path = Path.join(skill_dir, "SKILL.md")
-      File.write!(skill_path, skill_content)
-
-      Logger.info("[Orchestrator] Created new skill file: #{skill_path}")
-
-      Bus.emit(:system_event, %{
-        event: :orchestrator_skill_created,
-        name: name,
-        description: description,
-        path: skill_path
-      })
-
-      {:ok, name}
-    rescue
-      e ->
-        Logger.error("[Orchestrator] Failed to create skill #{name}: #{Exception.message(e)}")
-        {:error, Exception.message(e)}
-    end
-  end
-
-  # ── Skill Discovery ───────────────────────────────────────────────
-
-  defp do_find_matching_skills(task_description) do
-    search_results = Tools.search(task_description)
-
-    if search_results == [] do
-      :no_matches
-    else
-      matches =
-        Enum.map(search_results, fn {name, description, relevance} ->
-          %{name: name, description: description, relevance: relevance}
-        end)
-
-      {:matches, matches}
-    end
-  end
+  defp do_find_matching_skills(task_description),
+    do: SkillManager.find_matches(task_description)
 
   # ── Helpers ─────────────────────────────────────────────────────────
 
   defp generate_id(prefix),
     do: OptimalSystemAgent.Utils.ID.generate(prefix)
-
-  defp estimate_tokens(nil), do: 0
-
-  defp estimate_tokens(text) when is_binary(text) do
-    # Rough estimate: ~4 chars per token
-    div(String.length(text), 4)
-  end
-
-  defp estimate_tokens(_), do: 0
 end

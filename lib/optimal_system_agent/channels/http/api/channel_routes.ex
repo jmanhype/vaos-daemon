@@ -1,0 +1,292 @@
+defmodule OptimalSystemAgent.Channels.HTTP.API.ChannelRoutes do
+  @moduledoc """
+  Channel webhook routes — all 10 chat platforms plus GET /channels list.
+
+  This module is forwarded to from /channels in the parent router.
+  Routes below are relative to that stripped prefix.
+
+  These routes intentionally bypass JWT authentication. Each platform
+  provides its own verification mechanism (HMAC signatures, challenge
+  tokens, etc.) which is enforced inline here via WebhookVerify.
+
+  Effective endpoints (relative to /channels prefix):
+    GET  /                      — List active channel adapters
+    POST /telegram/webhook
+    POST /discord/webhook
+    POST /slack/events
+    GET  /whatsapp/webhook      (Meta verification challenge)
+    POST /whatsapp/webhook
+    POST /signal/webhook
+    POST /matrix/webhook
+    POST /email/inbound
+    POST /qq/webhook
+    POST /dingtalk/webhook
+    POST /feishu/events
+  """
+  use Plug.Router
+  import OptimalSystemAgent.Channels.HTTP.API.Shared
+  import OptimalSystemAgent.Channels.HTTP.API.WebhookVerify
+  require Logger
+
+  alias OptimalSystemAgent.Channels.Telegram
+  alias OptimalSystemAgent.Channels.Discord
+  alias OptimalSystemAgent.Channels.Slack
+  alias OptimalSystemAgent.Channels.WhatsApp
+  alias OptimalSystemAgent.Channels.Signal, as: SignalChannel
+  alias OptimalSystemAgent.Channels.Matrix
+  alias OptimalSystemAgent.Channels.Email, as: EmailChannel
+  alias OptimalSystemAgent.Channels.QQ
+  alias OptimalSystemAgent.Channels.DingTalk
+  alias OptimalSystemAgent.Channels.Feishu
+
+  plug :match
+  plug :dispatch
+
+  # ── GET / — list channels ──────────────────────────────────────────
+
+  get "/" do
+    alias OptimalSystemAgent.Channels.Manager
+
+    channels = Manager.list_channels()
+
+    body =
+      Jason.encode!(%{
+        channels:
+          Enum.map(channels, fn ch ->
+            %{name: ch.name, connected: ch.connected, module: inspect(ch.module)}
+          end),
+        count: length(channels),
+        active_count: Enum.count(channels, & &1.connected)
+      })
+
+    conn
+    |> put_resp_content_type("application/json")
+    |> send_resp(200, body)
+  end
+
+  # ── Telegram ───────────────────────────────────────────────────────
+
+  post "/telegram/webhook" do
+    secret = Application.get_env(:optimal_system_agent, :telegram_webhook_secret)
+
+    case verify_telegram(conn, secret) do
+      :ok ->
+        case Telegram.handle_update(conn.body_params) do
+          :ok ->
+            send_resp(conn, 200, "")
+
+          {:error, :not_started} ->
+            json_error(conn, 503, "channel_unavailable", "Telegram adapter not started")
+        end
+
+      {:error, :no_secret} ->
+        Logger.warning("Telegram webhook rejected: telegram_webhook_secret is not configured")
+        json_error(conn, 401, "unauthorized", "Webhook secret not configured")
+
+      {:error, :invalid_signature} ->
+        json_error(conn, 401, "unauthorized", "Invalid signature")
+    end
+  end
+
+  # ── Discord ────────────────────────────────────────────────────────
+
+  post "/discord/webhook" do
+    signature = get_req_header(conn, "x-signature-ed25519") |> List.first("")
+    timestamp = get_req_header(conn, "x-signature-timestamp") |> List.first("")
+    raw_body = conn.assigns[:raw_body] || Jason.encode!(conn.body_params)
+
+    case Discord.handle_interaction(raw_body, signature, timestamp) do
+      {:pong, response} ->
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(200, Jason.encode!(response))
+
+      {:ok, response} ->
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(200, Jason.encode!(response))
+
+      {:error, :invalid_signature} ->
+        json_error(conn, 401, "unauthorized", "Invalid request signature")
+
+      {:error, :not_started} ->
+        json_error(conn, 503, "channel_unavailable", "Discord adapter not started")
+    end
+  end
+
+  # ── Slack ──────────────────────────────────────────────────────────
+
+  post "/slack/events" do
+    timestamp = get_req_header(conn, "x-slack-request-timestamp") |> List.first("")
+    signature = get_req_header(conn, "x-slack-signature") |> List.first("")
+    raw_body = conn.assigns[:raw_body] || Jason.encode!(conn.body_params)
+
+    case Slack.handle_event(raw_body, timestamp, signature) do
+      {:challenge, challenge} ->
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(200, Jason.encode!(%{challenge: challenge}))
+
+      :ok ->
+        send_resp(conn, 200, "")
+
+      {:error, :invalid_signature} ->
+        json_error(conn, 401, "unauthorized", "Invalid request signature")
+
+      {:error, :not_started} ->
+        json_error(conn, 503, "channel_unavailable", "Slack adapter not started")
+    end
+  end
+
+  # ── WhatsApp ───────────────────────────────────────────────────────
+
+  get "/whatsapp/webhook" do
+    case WhatsApp.verify_challenge(conn.params) do
+      {:ok, challenge} ->
+        send_resp(conn, 200, challenge)
+
+      {:error, :forbidden} ->
+        send_resp(conn, 403, "Forbidden")
+
+      {:error, :not_started} ->
+        json_error(conn, 503, "channel_unavailable", "WhatsApp adapter not started")
+    end
+  end
+
+  post "/whatsapp/webhook" do
+    app_secret = Application.get_env(:optimal_system_agent, :whatsapp_app_secret)
+    raw_body = conn.assigns[:raw_body] || Jason.encode!(conn.body_params)
+
+    case verify_whatsapp(conn, raw_body, app_secret) do
+      :ok ->
+        WhatsApp.handle_webhook(conn.body_params)
+        send_resp(conn, 200, "")
+
+      {:error, :no_secret} ->
+        Logger.warning("WhatsApp webhook rejected: whatsapp_app_secret is not configured")
+        json_error(conn, 401, "unauthorized", "Webhook secret not configured")
+
+      {:error, :invalid_signature} ->
+        json_error(conn, 401, "unauthorized", "Invalid signature")
+    end
+  end
+
+  # ── Signal ─────────────────────────────────────────────────────────
+
+  post "/signal/webhook" do
+    case SignalChannel.handle_webhook(conn.body_params) do
+      :ok ->
+        send_resp(conn, 200, "")
+
+      {:error, :not_started} ->
+        json_error(conn, 503, "channel_unavailable", "Signal adapter not started")
+    end
+  end
+
+  # ── Matrix ─────────────────────────────────────────────────────────
+  # Placeholder — Matrix uses long-polling /sync internally.
+
+  post "/matrix/webhook" do
+    _ = Matrix
+    send_resp(conn, 200, "")
+  end
+
+  # ── Email ──────────────────────────────────────────────────────────
+
+  post "/email/inbound" do
+    secret = Application.get_env(:optimal_system_agent, :email_webhook_secret)
+
+    case verify_email(conn, secret) do
+      :ok ->
+        case EmailChannel.handle_inbound(conn.body_params) do
+          :ok ->
+            send_resp(conn, 200, "")
+
+          {:error, :not_started} ->
+            json_error(conn, 503, "channel_unavailable", "Email adapter not started")
+        end
+
+      {:error, :no_secret} ->
+        Logger.warning("Email inbound webhook rejected: email_webhook_secret is not configured")
+        json_error(conn, 401, "unauthorized", "Webhook secret not configured")
+
+      {:error, :invalid_signature} ->
+        json_error(conn, 401, "unauthorized", "Invalid signature")
+    end
+  end
+
+  # ── QQ ─────────────────────────────────────────────────────────────
+
+  post "/qq/webhook" do
+    signature = get_req_header(conn, "x-signature") |> List.first("")
+    timestamp = get_req_header(conn, "x-timestamp") |> List.first("")
+    nonce = get_req_header(conn, "x-nonce") |> List.first("")
+    raw_body = conn.assigns[:raw_body] || Jason.encode!(conn.body_params)
+
+    case QQ.handle_event(raw_body, signature, timestamp, nonce) do
+      {:challenge, response} ->
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(200, Jason.encode!(response))
+
+      :ok ->
+        send_resp(conn, 200, "")
+
+      {:error, :invalid_signature} ->
+        json_error(conn, 401, "unauthorized", "Invalid QQ signature")
+
+      {:error, :not_started} ->
+        json_error(conn, 503, "channel_unavailable", "QQ adapter not started")
+    end
+  end
+
+  # ── DingTalk ───────────────────────────────────────────────────────
+
+  post "/dingtalk/webhook" do
+    secret = Application.get_env(:optimal_system_agent, :dingtalk_secret)
+    timestamp = get_req_header(conn, "timestamp") |> List.first("")
+    sign = conn.params["sign"] || ""
+
+    case verify_dingtalk(timestamp, sign, secret) do
+      :ok ->
+        case DingTalk.handle_event(conn.body_params) do
+          :ok ->
+            send_resp(conn, 200, "")
+
+          {:error, :not_started} ->
+            json_error(conn, 503, "channel_unavailable", "DingTalk adapter not started")
+        end
+
+      {:error, :no_secret} ->
+        Logger.warning("DingTalk webhook rejected: dingtalk_secret is not configured")
+        json_error(conn, 401, "unauthorized", "Webhook secret not configured")
+
+      {:error, :invalid_signature} ->
+        json_error(conn, 401, "unauthorized", "Invalid signature")
+    end
+  end
+
+  # ── Feishu ─────────────────────────────────────────────────────────
+
+  post "/feishu/events" do
+    case Feishu.handle_event(conn.body_params) do
+      {:challenge, challenge} ->
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(200, Jason.encode!(%{challenge: challenge}))
+
+      :ok ->
+        send_resp(conn, 200, "")
+
+      {:error, :decryption_failed} ->
+        json_error(conn, 400, "decryption_failed", "Could not decrypt event payload")
+
+      {:error, :not_started} ->
+        json_error(conn, 503, "channel_unavailable", "Feishu adapter not started")
+    end
+  end
+
+  match _ do
+    json_error(conn, 404, "not_found", "Channel endpoint not found")
+  end
+end

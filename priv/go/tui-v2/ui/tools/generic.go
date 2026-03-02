@@ -33,7 +33,18 @@ func (r GenericRenderer) Render(name, args, result string, opts RenderOpts) stri
 
 	rendered := prettyResult(result)
 	preview := truncateLines(strings.TrimRight(rendered, "\n"), maxDisplayLines(opts.Expanded, genericMaxLines))
-	body := style.ToolOutput.Render(preview)
+
+	var body string
+	if opts.Status == ToolError {
+		body = style.ErrorText.Render(preview)
+	} else {
+		body = style.ToolOutput.Render(preview)
+	}
+
+	if opts.Truncated {
+		body += "\n" + style.Faint.Render("(output truncated)")
+	}
+
 	return renderToolBox(header+"\n"+body, opts.Width)
 }
 

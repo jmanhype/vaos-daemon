@@ -33,6 +33,7 @@ type RenderOpts struct {
 	DurationMs int64
 	ToolCall   string // raw tool call JSON for details
 	Filename   string // extracted filename for file tools
+	Truncated  bool   // result was truncated by backend
 }
 
 // ToolRenderer renders a specific tool type.
@@ -107,6 +108,16 @@ var Registry = map[string]ToolRenderer{
 
 	// References
 	"references": ReferencesRenderer{},
+
+	// Delegate / subagent
+	"delegate": DelegateRenderer{},
+
+	// OSA tools
+	"ask_user":      GenericRenderer{},
+	"task_write":    TodosRenderer{},
+	"orchestrate":   AgentRenderer{},
+	"memory_save":   GenericRenderer{},
+	"memory_recall": GenericRenderer{},
 
 	// MCP — mcp__ prefix tools are matched dynamically in RenderToolCall.
 	"mcp":      MCPRenderer{},

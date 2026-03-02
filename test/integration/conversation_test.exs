@@ -107,8 +107,12 @@ defmodule OptimalSystemAgent.Integration.ConversationTest do
       assert String.contains?(system_msg.content, "Optimal System Agent") or
                String.contains?(system_msg.content, "OSA")
 
-      # Signal classification block is injected for BUILD mode
-      assert String.contains?(system_msg.content, "BUILD")
+      # SYSTEM.md static content references Signal Theory modes including BUILD
+      # (no dynamic signal block is injected — signal classification was removed
+      # in the middleware-to-prompt migration; "BUILD" appears in the static base)
+      assert String.contains?(system_msg.content, "BUILD") or
+               String.contains?(system_msg.content, "EXECUTE") or
+               String.contains?(system_msg.content, "ANALYZE")
     end
 
     test "context includes the channel name in runtime block" do

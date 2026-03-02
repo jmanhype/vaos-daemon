@@ -19,6 +19,15 @@ defmodule OptimalSystemAgent.Tools.Builtins.WebSearch do
   end
 
   @impl true
+  def available? do
+    case Application.get_env(:optimal_system_agent, :brave_api_key) do
+      nil -> false
+      "" -> false
+      _ -> true
+    end
+  end
+
+  @impl true
   def execute(%{"query" => query}) do
     api_key = Application.get_env(:optimal_system_agent, :brave_api_key)
 

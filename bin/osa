@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# bin/osa — One command to start OSA with the Go TUI.
+# bin/osa — One command to start OSA.
 #
 # Starts the Elixir backend in the background, waits for it to be healthy,
-# launches the Go TUI, and tears down the backend when you quit.
+# launches the Rust TUI, and tears down the backend when you quit.
 #
 # Usage:
 #   bin/osa                    # default
@@ -11,9 +11,27 @@
 
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TUI_DIR="$ROOT/priv/go/tui-v2"
-TUI_BIN="$TUI_DIR/osa"
+# Resolve symlinks to find the real script location
+SCRIPT="$0"
+if [ -L "$SCRIPT" ]; then
+  # macOS readlink doesn't have -f, so resolve manually
+  SCRIPT="$(cd "$(dirname "$SCRIPT")" && perl -e 'use Cwd "abs_path"; print abs_path(shift)' "$SCRIPT")"
+fi
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT")" && pwd)"
+
+# Find project root: script parent, or ~/.osa/project_root fallback
+if [ -f "$SCRIPT_DIR/../mix.exs" ]; then
+  ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+elif [ -f "${HOME}/.osa/project_root" ]; then
+  ROOT="$(cat "${HOME}/.osa/project_root")"
+else
+  echo "Error: Cannot find OSA project root."
+  echo "Run 'bin/install' from the project directory first."
+  exit 1
+fi
+
+TUI_DIR="$ROOT/priv/rust/tui"
+TUI_BIN="$TUI_DIR/target/release/osagent"
 LOG_DIR="${HOME}/.osa/logs"
 BACKEND_PID=""
 
@@ -27,10 +45,10 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# ── Build Go TUI if needed ──────────────────────────────────────
+# ── Build Rust TUI if needed ────────────────────────────────────
 if [ ! -f "$TUI_BIN" ]; then
-  echo "Building Go TUI…"
-  (cd "$TUI_DIR" && make build)
+  echo "Building OSA TUI…"
+  (cd "$TUI_DIR" && cargo build --release)
   echo ""
 fi
 

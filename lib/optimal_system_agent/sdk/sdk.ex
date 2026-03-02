@@ -247,20 +247,7 @@ defmodule OptimalSystemAgent.SDK do
       end
     end)
 
-    response_ref = Bus.register_handler(:agent_response, fn payload ->
-      if Map.get(payload, :session_id) == session_id do
-        signal = Map.get(payload, :signal)
-        if signal do
-          on_message.(Message.system(
-            "Signal: #{signal.mode}/#{signal.genre} weight=#{signal.weight}",
-            session_id: session_id,
-            metadata: %{signal: signal}
-          ))
-        end
-      end
-    end)
-
-    [tool_call: tool_ref, llm_response: llm_ref, agent_response: response_ref]
+    [tool_call: tool_ref, llm_response: llm_ref]
   end
 
   defp subscribe_bus(_session_id, _), do: []
