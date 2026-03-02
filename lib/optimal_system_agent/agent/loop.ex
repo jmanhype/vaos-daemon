@@ -37,6 +37,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
     :model,
     messages: [],
     iteration: 0,
+    overflow_retries: 0,
     consecutive_failures: 0,
     overflow_retries: 0,
     last_tool_signature: nil,
@@ -696,7 +697,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
       utilization: utilization
     })
   rescue
-    _ -> :ok
+    e -> Logger.debug("emit_context_pressure failed: #{inspect(e)}")
   end
 
   # Run hooks with fault isolation — never crash the loop if hooks are down

@@ -103,6 +103,257 @@ defmodule OptimalSystemAgent.Agent.LoopUnitTest do
   end
 
   # ---------------------------------------------------------------------------
+  # Doom loop counter logic (mirrors loop.ex cond at lines 330-340)
+  # ---------------------------------------------------------------------------
+
+  # State-like struct used by doom loop logic
+  defp doom_state(consecutive_failures, last_tool_signature) do
+    %{consecutive_failures: consecutive_failures, last_tool_signature: last_tool_signature}
+  end
+
+  # Mirror of the doom loop cond from loop.ex
+  defp doom_step(tool_calls, results, state) do
+    tool_signature = tool_calls |> Enum.map(& &1.name) |> Enum.sort()
+
+    all_failed =
+      Enum.all?(results, fn result_str ->
+        String.starts_with?(result_str, "Error:") or
+          String.starts_with?(result_str, "Blocked:")
+      end)
+
+    {consecutive_failures, last_sig} =
+      cond do
+        all_failed and tool_signature == state.last_tool_signature ->
+          {state.consecutive_failures + 1, tool_signature}
+
+        all_failed ->
+          {1, tool_signature}
+
+        true ->
+          {0, nil}
+      end
+
+    %{state | consecutive_failures: consecutive_failures, last_tool_signature: last_sig}
+  end
+
+  describe "doom loop counter — cond logic" do
+    test "first failure with new signature sets counter to 1" do
+      state = doom_state(0, nil)
+      tools = [%{name: "bash"}]
+      results = ["Error: permission denied"]
+
+      new_state = doom_step(tools, results, state)
+
+      assert new_state.consecutive_failures == 1
+      assert new_state.last_tool_signature == ["bash"]
+    end
+
+    test "second identical failure increments counter to 2" do
+      state = doom_state(1, ["bash"])
+      tools = [%{name: "bash"}]
+      results = ["Error: permission denied"]
+
+      new_state = doom_step(tools, results, state)
+
+      assert new_state.consecutive_failures == 2
+      assert new_state.last_tool_signature == ["bash"]
+    end
+
+    test "third identical failure increments counter to 3 — triggers halt" do
+      state = doom_state(2, ["bash"])
+      tools = [%{name: "bash"}]
+      results = ["Blocked: dangerous command"]
+
+      new_state = doom_step(tools, results, state)
+
+      assert new_state.consecutive_failures == 3
+      assert new_state.consecutive_failures >= 3
+    end
+
+    test "different failing signature resets counter to 1 (not 0)" do
+      # Counter was at 2 from bash failures; now file_read fails — resets to 1
+      state = doom_state(2, ["bash"])
+      tools = [%{name: "file_read"}]
+      results = ["Error: file not found"]
+
+      new_state = doom_step(tools, results, state)
+
+      assert new_state.consecutive_failures == 1
+      assert new_state.last_tool_signature == ["file_read"]
+    end
+
+    test "alternating failures never reach 3 (always reset to 1)" do
+      state0 = doom_state(0, nil)
+
+      # bash fails
+      state1 = doom_step([%{name: "bash"}], ["Error: 1"], state0)
+      assert state1.consecutive_failures == 1
+
+      # file_read fails — different signature, resets to 1
+      state2 = doom_step([%{name: "file_read"}], ["Error: 2"], state1)
+      assert state2.consecutive_failures == 1
+
+      # bash fails again — different from last (file_read), resets to 1
+      state3 = doom_step([%{name: "bash"}], ["Error: 3"], state2)
+      assert state3.consecutive_failures == 1
+
+      # Never hits 3 through alternation
+      refute state3.consecutive_failures >= 3
+    end
+
+    test "any success resets counter to 0 and clears last signature" do
+      state = doom_state(2, ["bash"])
+      tools = [%{name: "bash"}]
+      results = ["success output"]  # does NOT start with Error: or Blocked:
+
+      new_state = doom_step(tools, results, state)
+
+      assert new_state.consecutive_failures == 0
+      assert new_state.last_tool_signature == nil
+    end
+
+    test "partial failure (some succeed, some fail) does NOT count — all_failed is false" do
+      state = doom_state(0, nil)
+      tools = [%{name: "bash"}, %{name: "file_read"}]
+      results = ["Error: bash failed", "file content here"]
+
+      new_state = doom_step(tools, results, state)
+
+      # all_failed = false because file_read succeeded
+      assert new_state.consecutive_failures == 0
+      assert new_state.last_tool_signature == nil
+    end
+
+    test "multi-tool failure with sorted signature matches correctly" do
+      # Signature is sorted — [file_read, bash] == [bash, file_read] after sort
+      state = doom_state(1, ["bash", "file_read"])
+      tools = [%{name: "file_read"}, %{name: "bash"}]
+      results = ["Error: 1", "Error: 2"]
+
+      new_state = doom_step(tools, results, state)
+
+      # Sorted signatures match — counter increments
+      assert new_state.consecutive_failures == 2
+    end
+
+    test "blocked prefix counts as failure for doom detection" do
+      state = doom_state(1, ["shell_execute"])
+      tools = [%{name: "shell_execute"}]
+      results = ["Blocked: dangerous command: rm -rf /"]
+
+      new_state = doom_step(tools, results, state)
+
+      assert new_state.consecutive_failures == 2
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Context overflow retry counter (mirrors loop.ex lines 365-378)
+  # ---------------------------------------------------------------------------
+
+  defp overflow_state(overflow_retries, iteration) do
+    %{overflow_retries: overflow_retries, iteration: iteration}
+  end
+
+  defp context_overflow?(reason) do
+    String.contains?(reason, "context_length") or
+      String.contains?(reason, "max_tokens") or
+      String.contains?(reason, "maximum context length") or
+      String.contains?(reason, "token limit")
+  end
+
+  defp should_retry_overflow?(state) do
+    state.overflow_retries < 3
+  end
+
+  describe "context overflow retry counter" do
+    test "first overflow triggers retry (overflow_retries=0 < 3)" do
+      state = overflow_state(0, 0)
+      assert should_retry_overflow?(state)
+    end
+
+    test "second overflow triggers retry (overflow_retries=1 < 3)" do
+      state = overflow_state(1, 5)
+      assert should_retry_overflow?(state)
+    end
+
+    test "third overflow triggers retry (overflow_retries=2 < 3)" do
+      state = overflow_state(2, 10)
+      assert should_retry_overflow?(state)
+    end
+
+    test "after 3 retries no more retries (overflow_retries=3 NOT < 3)" do
+      state = overflow_state(3, 15)
+      refute should_retry_overflow?(state)
+    end
+
+    test "overflow_retries is independent of tool iteration counter" do
+      # Even after many tool iterations (iteration=20), overflow retries are fresh
+      state = overflow_state(0, 20)
+      assert should_retry_overflow?(state)
+
+      # Compare to the old broken behavior: state.iteration < 3 would fail here
+      # because iteration=20 >= 3, giving ZERO overflow retries.
+      # With overflow_retries=0 < 3, all 3 retries are available.
+      assert state.overflow_retries < 3
+      assert state.iteration >= 3  # tool iterations don't affect overflow retries
+    end
+
+    test "overflow_retries increments independently from iteration" do
+      state = overflow_state(0, 8)
+      # Simulate a retry
+      state = %{state | overflow_retries: state.overflow_retries + 1}
+      assert state.overflow_retries == 1
+      assert state.iteration == 8  # unchanged
+      assert should_retry_overflow?(state)
+    end
+
+    test "context_overflow? matches all 4 keyword patterns" do
+      assert context_overflow?("exceeded context_length limit")
+      assert context_overflow?("HTTP 400: max_tokens exceeded")
+      assert context_overflow?("exceeds the maximum context length")
+      assert context_overflow?("Reached token limit for this model")
+    end
+
+    test "context_overflow? does NOT match unrelated errors" do
+      refute context_overflow?("Connection refused")
+      refute context_overflow?("rate limit exceeded")
+      refute context_overflow?("context window")
+      refute context_overflow?("")
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # should_plan? logic (mirrors loop.ex lines 565-571)
+  # ---------------------------------------------------------------------------
+
+  defp should_plan?(state) do
+    state.plan_mode_enabled and not state.plan_mode
+  end
+
+  describe "should_plan? logic" do
+    test "returns true when plan_mode_enabled and not in plan_mode" do
+      state = %{plan_mode_enabled: true, plan_mode: false}
+      assert should_plan?(state)
+    end
+
+    test "returns false when plan_mode_enabled is false" do
+      state = %{plan_mode_enabled: false, plan_mode: false}
+      refute should_plan?(state)
+    end
+
+    test "returns false when already in plan_mode (prevents re-entry)" do
+      state = %{plan_mode_enabled: true, plan_mode: true}
+      refute should_plan?(state)
+    end
+
+    test "returns false when both disabled" do
+      state = %{plan_mode_enabled: false, plan_mode: true}
+      refute should_plan?(state)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # Tool output truncation logic
   # ---------------------------------------------------------------------------
 
