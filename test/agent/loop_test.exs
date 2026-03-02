@@ -4,6 +4,24 @@ defmodule OptimalSystemAgent.Agent.LoopTest do
   alias OptimalSystemAgent.Agent.Loop
 
   # ---------------------------------------------------------------------------
+  # Setup — ensure SessionRegistry is running
+  # ---------------------------------------------------------------------------
+
+  setup do
+    case Process.whereis(OptimalSystemAgent.SessionRegistry) do
+      nil ->
+        start_supervised!(
+          {Registry, keys: :unique, name: OptimalSystemAgent.SessionRegistry}
+        )
+
+      _pid ->
+        :ok
+    end
+
+    :ok
+  end
+
+  # ---------------------------------------------------------------------------
   # Helpers
   # ---------------------------------------------------------------------------
 
