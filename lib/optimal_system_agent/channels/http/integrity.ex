@@ -16,6 +16,11 @@ defmodule OptimalSystemAgent.Channels.HTTP.Integrity do
 
   def init(opts), do: opts
 
+  # Auth and health routes must be reachable without HMAC signatures —
+  # the client can't sign before it has authenticated.
+  def call(%{path_info: ["api", "v1", "auth" | _]} = conn, _opts), do: conn
+  def call(%{path_info: ["health"]} = conn, _opts), do: conn
+
   def call(conn, _opts) do
     cond do
       Application.get_env(:optimal_system_agent, :require_auth, false) ->
