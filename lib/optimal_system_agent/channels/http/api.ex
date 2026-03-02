@@ -659,6 +659,55 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
     |> send_resp(200, body)
   end
 
+  # ── POST /orchestrator/complex — Bug 11 fix ───────────────────────────
+  # Alias for /orchestrate/complex matching the README path.
+  # Accepts "message" (README) or "task" (internal) field names.
+
+  post "/orchestrator/complex" do
+    task = conn.body_params["message"] || conn.body_params["task"]
+
+    with true <- is_binary(task) and task != "" do
+      strategy = conn.body_params["strategy"] || "auto"
+      session_id = conn.body_params["session_id"] || generate_session_id()
+      blocking = conn.body_params["blocking"] == true
+
+      case TaskOrchestrator.execute(task, session_id, strategy: strategy) do
+        {:ok, task_id} ->
+          if blocking do
+            case await_orchestration_http(task_id, 300_000) do
+              {:ok, synthesis} ->
+                conn
+                |> put_resp_content_type("application/json")
+                |> send_resp(
+                  200,
+                  Jason.encode!(%{
+                    task_id: task_id,
+                    status: "completed",
+                    synthesis: synthesis,
+                    session_id: session_id
+                  })
+                )
+
+              {:error, reason} ->
+                json_error(conn, 504, "orchestration_timeout", to_string(reason))
+            end
+          else
+            conn
+            |> put_resp_content_type("application/json")
+            |> send_resp(
+              202,
+              Jason.encode!(%{task_id: task_id, status: "running", session_id: session_id})
+            )
+          end
+
+        {:error, reason} ->
+          json_error(conn, 422, "orchestration_error", inspect(reason))
+      end
+    else
+      _ -> json_error(conn, 400, "invalid_request", "Missing required field: message")
+    end
+  end
+
   # ── POST /skills/create ─────────────────────────────────────────────
   #
   # Dynamically create a new skill at runtime.
@@ -835,6 +884,65 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
 
       {:error, reason} ->
         json_error(conn, 422, "swarm_error", to_string(reason))
+    end
+  end
+
+  # ── GET /swarm/status/:id ─────────────────────────────────────────────
+  # Alias for GET /swarm/:id — matches the path from TEST_REPORT (Bug 12).
+
+  get "/swarm/status/:swarm_id" do
+    swarm_id = conn.params["swarm_id"]
+
+    case Swarm.status(swarm_id) do
+      {:ok, swarm} ->
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(200, Jason.encode!(swarm_to_map(swarm)))
+
+      {:error, :not_found} ->
+        json_error(conn, 404, "not_found", "Swarm #{swarm_id} not found")
+
+      {:error, reason} ->
+        json_error(conn, 500, "swarm_error", to_string(reason))
+    end
+  end
+
+  # ── POST /swarm/execute ───────────────────────────────────────────────
+  # Alias for POST /swarm/launch (Bug 12 — missing direct REST endpoint).
+
+  post "/swarm/execute" do
+    with %{"task" => task} when is_binary(task) and task != "" <- conn.body_params,
+         {:ok, pattern_opts} <- parse_swarm_pattern_opts(conn.body_params["pattern"]) do
+      opts =
+        pattern_opts
+        |> maybe_put(:max_agents, conn.body_params["max_agents"])
+        |> maybe_put(:timeout_ms, conn.body_params["timeout_ms"])
+        |> maybe_put(:session_id, conn.body_params["session_id"])
+
+      case Swarm.launch(task, opts) do
+        {:ok, swarm_id} ->
+          {:ok, swarm} = Swarm.status(swarm_id)
+
+          body =
+            Jason.encode!(%{
+              swarm_id: swarm_id,
+              status: swarm.status,
+              pattern: swarm.pattern,
+              agent_count: swarm.agent_count,
+              agents: swarm.agents || [],
+              started_at: swarm.started_at
+            })
+
+          conn
+          |> put_resp_content_type("application/json")
+          |> send_resp(202, body)
+
+        {:error, reason} ->
+          json_error(conn, 422, "swarm_error", to_string(reason))
+      end
+    else
+      {:error, :invalid_pattern, msg} -> json_error(conn, 400, "invalid_pattern", msg)
+      _ -> json_error(conn, 400, "invalid_request", "Missing required field: task")
     end
   end
 

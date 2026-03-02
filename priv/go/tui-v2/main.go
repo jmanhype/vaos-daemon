@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -67,7 +68,12 @@ func main() {
 	token, refreshToken = loadTokens(app.ProfileDir, token)
 
 	// Auto-detect terminal background and set theme before any rendering.
-	if lipgloss.HasDarkBackground(os.Stdin, os.Stdout) {
+	// On Windows the OSC escape query sent by HasDarkBackground corrupts the
+	// raw-mode input stream, making the TUI completely unusable (Bug 26).
+	// Skip the query on Windows and default to the dark theme instead.
+	if runtime.GOOS == "windows" {
+		style.SetTheme("dark")
+	} else if lipgloss.HasDarkBackground(os.Stdin, os.Stdout) {
 		style.SetTheme("dark")
 	} else {
 		style.SetTheme("light")
