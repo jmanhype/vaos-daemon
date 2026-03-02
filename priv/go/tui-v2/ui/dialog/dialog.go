@@ -10,6 +10,8 @@
 package dialog
 
 import (
+	"strings"
+
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/miosa/osa-tui/style"
@@ -116,9 +118,6 @@ func (o Overlay) View(behindContent string) string {
 		return behindContent
 	}
 
-	// behindContent is kept for the signature; future callers may dim it.
-	_ = behindContent
-
 	d := o.Top()
 
 	// Inner content.
@@ -144,10 +143,16 @@ func (o Overlay) View(behindContent string) string {
 		Width(boxW).
 		Render(inner)
 
-	return lipgloss.Place(o.termW, o.termH,
+	// Dim the background content so the modal stands out.
+	dimmed := dimContent(behindContent, o.termW, o.termH)
+
+	// Center the dialog box and overlay it onto the dimmed background.
+	centered := lipgloss.Place(o.termW, o.termH,
 		lipgloss.Center, lipgloss.Center,
 		box,
 	)
+
+	return overlayStrings(dimmed, centered, o.termW, o.termH)
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -184,4 +189,41 @@ func RenderDialog(title, content string, width, termW, termH int) string {
 		Render(body)
 
 	return lipgloss.Place(termW, termH, lipgloss.Center, lipgloss.Center, box)
+}
+
+// dimContent applies faint styling to each line of the background content,
+// padded/truncated to exactly w×h cells.
+func dimContent(content string, w, h int) string {
+	dim := lipgloss.NewStyle().Faint(true)
+	lines := strings.Split(content, "\n")
+	out := make([]string, h)
+	for i := 0; i < h; i++ {
+		if i < len(lines) {
+			out[i] = dim.Render(lines[i])
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+// overlayStrings composites fg onto bg. Where fg has non-space content it wins;
+// space-only cells fall through to bg. Both must be w×h.
+func overlayStrings(bg, fg string, w, h int) string {
+	bgLines := strings.Split(bg, "\n")
+	fgLines := strings.Split(fg, "\n")
+	out := make([]string, h)
+	for i := 0; i < h; i++ {
+		var b, f string
+		if i < len(bgLines) {
+			b = bgLines[i]
+		}
+		if i < len(fgLines) {
+			f = fgLines[i]
+		}
+		if strings.TrimSpace(f) == "" {
+			out[i] = b
+		} else {
+			out[i] = f
+		}
+	}
+	return strings.Join(out, "\n")
 }

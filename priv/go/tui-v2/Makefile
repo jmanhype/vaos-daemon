@@ -1,4 +1,4 @@
-.PHONY: build clean vet
+.PHONY: build clean vet test all
 
 BIN := osa
 
@@ -11,4 +11,7 @@ clean:
 vet:
 	go vet ./...
 
-all: vet build
+test:
+	go test ./...
+
+all: vet test build

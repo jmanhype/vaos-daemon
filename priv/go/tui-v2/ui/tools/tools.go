@@ -265,8 +265,6 @@ func toolOutputCodeContent(result, filename string, width, maxLines int, expande
 // toolOutputDiffContent renders an inline diff between oldContent and newContent.
 // filename is used for syntax-aware highlighting.
 func toolOutputDiffContent(oldContent, newContent, filename string, width int) string {
-	from := strings.NewReplacer()
-	_ = from // silence unused hint
 	// Delegate to the diff package.
 	lines := strings.Split(strings.TrimRight(oldContent, "\n"), "\n")
 	newLines := strings.Split(strings.TrimRight(newContent, "\n"), "\n")

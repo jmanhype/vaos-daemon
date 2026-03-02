@@ -32,7 +32,6 @@ func main() {
 	}
 
 	if *noColor {
-		// Caller can set NO_COLOR=1 in the shell to disable colors.
 		os.Setenv("NO_COLOR", "1")
 	}
 
@@ -50,33 +49,22 @@ func main() {
 		}
 	}
 
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "osa: cannot determine home directory: %v\n", err)
+		os.Exit(1)
+	}
+
 	var refreshToken string
 
 	if profile != "" {
-		home, _ := os.UserHomeDir()
 		app.ProfileDir = filepath.Join(home, ".osa", "profiles", profile)
-		os.MkdirAll(app.ProfileDir, 0755)
-
-		if token == "" {
-			if data, err := os.ReadFile(filepath.Join(app.ProfileDir, "token")); err == nil {
-				token = strings.TrimSpace(string(data))
-			}
-		}
-		if data, err := os.ReadFile(filepath.Join(app.ProfileDir, "refresh_token")); err == nil {
-			refreshToken = strings.TrimSpace(string(data))
-		}
 	} else {
-		home, _ := os.UserHomeDir()
 		app.ProfileDir = filepath.Join(home, ".osa")
-		if token == "" {
-			if data, err := os.ReadFile(filepath.Join(app.ProfileDir, "token")); err == nil {
-				token = strings.TrimSpace(string(data))
-			}
-		}
-		if data, err := os.ReadFile(filepath.Join(app.ProfileDir, "refresh_token")); err == nil {
-			refreshToken = strings.TrimSpace(string(data))
-		}
 	}
+	os.MkdirAll(app.ProfileDir, 0755)
+
+	token, refreshToken = loadTokens(app.ProfileDir, token)
 
 	// Auto-detect terminal background and set theme before any rendering.
 	if lipgloss.HasDarkBackground(os.Stdin, os.Stdout) {
@@ -98,9 +86,6 @@ func main() {
 		m.SetForceOnboarding(true)
 	}
 
-	// In bubbletea v2, WithAltScreen and WithMouseCellMotion are no longer
-	// ProgramOptions. They are configured on the View struct returned by the
-	// model's View() method. Pass no options here.
 	p := tea.NewProgram(m)
 
 	go func() {
@@ -111,4 +96,19 @@ func main() {
 		fmt.Fprintf(os.Stderr, "osa: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// loadTokens reads token and refresh_token files from the profile directory.
+// If envToken is non-empty it takes precedence over the file-based token.
+func loadTokens(dir, envToken string) (token, refreshToken string) {
+	token = envToken
+	if token == "" {
+		if data, err := os.ReadFile(filepath.Join(dir, "token")); err == nil {
+			token = strings.TrimSpace(string(data))
+		}
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, "refresh_token")); err == nil {
+		refreshToken = strings.TrimSpace(string(data))
+	}
+	return
 }

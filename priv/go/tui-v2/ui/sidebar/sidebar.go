@@ -323,7 +323,6 @@ func (m Model) View() string {
 	sb.WriteByte('\n')
 
 	// Wrap in sidebar border style.
-	_ = lipgloss.NewStyle().Background(style.SidebarBg) // kept for future use
 	return style.SidebarStyle.
 		Width(m.width).
 		Height(m.height).
