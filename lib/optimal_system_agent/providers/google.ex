@@ -53,14 +53,16 @@ defmodule OptimalSystemAgent.Providers.Google do
     body =
       %{contents: contents}
       |> maybe_add_system_instruction(system_instruction)
-      |> maybe_add_generation_config(opts)
+      |> maybe_add_generation_config(model, opts)
       |> maybe_add_tools(opts)
 
     url = "#{base_url}/models/#{model}:generateContent?key=#{api_key}"
     headers = [{"Content-Type", "application/json"}]
+    # Gemini 2.5 thinking models can take 300+ s for complex reasoning
+    timeout = if thinking_model?(model), do: 600_000, else: 120_000
 
     try do
-      case Req.post(url, json: body, headers: headers, receive_timeout: 120_000) do
+      case Req.post(url, json: body, headers: headers, receive_timeout: timeout) do
         {:ok, %{status: 200, body: resp}} ->
           content = extract_content(resp)
           tool_calls = extract_tool_calls(resp)
@@ -133,17 +135,41 @@ defmodule OptimalSystemAgent.Providers.Google do
     })
   end
 
-  defp maybe_add_generation_config(body, opts) do
+  defp maybe_add_generation_config(body, model, opts) do
     config =
       %{}
       |> maybe_put(:temperature, Keyword.get(opts, :temperature))
       |> maybe_put(:maxOutputTokens, Keyword.get(opts, :max_tokens))
+      |> maybe_add_thinking_config(model, opts)
 
     if map_size(config) > 0 do
       Map.put(body, :generationConfig, config)
     else
       body
     end
+  end
+
+  # Gemini 2.5 Pro/Flash support thinkingConfig for extended reasoning.
+  # Default: enabled with 8192 token budget for thinking models.
+  # Override per-call: opts[:thinking_budget] = N (0 to disable).
+  defp maybe_add_thinking_config(config, model, opts) do
+    if thinking_model?(model) do
+      budget = Keyword.get(opts, :thinking_budget, 8192)
+
+      if budget > 0 do
+        Map.put(config, :thinkingConfig, %{thinkingBudget: budget})
+      else
+        config
+      end
+    else
+      config
+    end
+  end
+
+  # Gemini 2.5 models support extended thinking
+  defp thinking_model?(model_name) do
+    name = String.downcase(to_string(model_name))
+    String.contains?(name, "2.5")
   end
 
   defp maybe_put(map, _key, nil), do: map

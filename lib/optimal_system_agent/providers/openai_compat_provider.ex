@@ -101,6 +101,7 @@ defmodule OptimalSystemAgent.Providers.OpenAICompatProvider do
       opts
       |> Keyword.delete(:model)
       |> maybe_add_headers(config)
+      |> maybe_extend_timeout(model)
 
     case OpenAICompat.chat(url, api_key, model, messages, opts) do
       {:error, "API key not configured"} ->
@@ -113,6 +114,15 @@ defmodule OptimalSystemAgent.Providers.OpenAICompatProvider do
 
   defp maybe_add_headers(opts, %{extra_headers: headers}), do: Keyword.put(opts, :extra_headers, headers)
   defp maybe_add_headers(opts, _config), do: opts
+
+  # Reasoning models (o3, deepseek-reasoner, kimi) need 600s timeout
+  defp maybe_extend_timeout(opts, model) do
+    if OpenAICompat.reasoning_model?(model) and not Keyword.has_key?(opts, :receive_timeout) do
+      Keyword.put(opts, :receive_timeout, 600_000)
+    else
+      opts
+    end
+  end
 
   defp get_config!(provider) do
     case Map.get(@provider_configs, provider) do

@@ -92,11 +92,11 @@ config :optimal_system_agent,
   ollama_api_key: System.get_env("OLLAMA_API_KEY"),
   # OLLAMA_THINK: set to "true" to enable extended reasoning (kimi-k2, qwen3-thinking, etc.)
   # Default nil → ollama.ex disables thinking for known reasoning models to prevent timeouts.
-  ollama_think: case System.get_env("OLLAMA_THINK") do
+  ollama_think: (case System.get_env("OLLAMA_THINK") do
     "true" -> true
     "false" -> false
     _ -> nil
-  end,
+  end),
 
   # Channel tokens
   telegram_bot_token: System.get_env("TELEGRAM_BOT_TOKEN"),
