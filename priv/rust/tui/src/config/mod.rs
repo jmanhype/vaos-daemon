@@ -19,6 +19,8 @@ pub struct Config {
     pub theme: String,
     #[serde(default)]
     pub sidebar_enabled: bool,
+    #[serde(default = "default_request_timeout_secs")]
+    pub request_timeout_secs: u64,
     #[serde(skip)]
     pub profile_dir: PathBuf,
     #[serde(skip)]
@@ -32,10 +34,15 @@ fn default_theme() -> String {
     "dark".to_string()
 }
 
+fn default_request_timeout_secs() -> u64 {
+    900
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
             theme: default_theme(),
+            request_timeout_secs: default_request_timeout_secs(),
             sidebar_enabled: true,
             profile_dir: default_profile_dir(),
             base_url: default_base_url(),

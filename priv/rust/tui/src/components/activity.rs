@@ -5,22 +5,52 @@ use crate::event::Event;
 
 use super::{Component, ComponentAction};
 
-// Hermes-inspired contextual thinking verbs
-const THINKING_PHRASES: &[&str] = &[
-    "pondering",
-    "reasoning",
-    "analyzing",
-    "processing",
-    "synthesizing",
-    "contemplating",
-    "computing",
-    "formulating",
-    "deliberating",
-    "reflecting",
-    "brainstorming",
-    "mulling",
-    "cogitating",
-];
+/// Processing phase — drives the activity display with real backend state
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ProcessingPhase {
+    /// Submitted, waiting for first backend event
+    Waiting,
+    /// ThinkingDelta events arriving (model reasoning)
+    Thinking,
+    /// StreamingToken events arriving
+    Streaming,
+    /// Tool call in progress
+    ToolCall,
+    /// Post-processing / synthesizing final response
+    Synthesizing,
+}
+
+/// Format large counts compactly (e.g. 1234 → "1.2k")
+fn format_count(n: usize) -> String {
+    if n >= 1000 {
+        format!("{:.1}k", n as f64 / 1000.0)
+    } else {
+        format!("{}", n)
+    }
+}
+
+/// Format elapsed seconds into human-readable duration: 45s → 2m 15s → 1h 3m
+fn format_elapsed(secs: u64) -> String {
+    if secs < 60 {
+        format!("{}s", secs)
+    } else if secs < 3600 {
+        let m = secs / 60;
+        let s = secs % 60;
+        if s == 0 {
+            format!("{}m", m)
+        } else {
+            format!("{}m {}s", m, s)
+        }
+    } else {
+        let h = secs / 3600;
+        let m = (secs % 3600) / 60;
+        if m == 0 {
+            format!("{}h", h)
+        } else {
+            format!("{}h {}m", h, m)
+        }
+    }
+}
 
 /// Tool emoji + verb mapping (Hermes-inspired activity feed)
 fn tool_display(name: &str) -> (&'static str, &'static str) {
@@ -103,16 +133,19 @@ impl Verbosity {
     }
 }
 
-/// Activity panel showing processing spinner, tool feed, and thinking
+/// Activity panel showing real-time processing state, tool feed, and backend metrics
 pub struct Activity {
     active: bool,
-    thinking: bool,
+    phase: ProcessingPhase,
     tool_feed: Vec<ToolEntry>,
     last_tool_name: String,
     input_tokens: u64,
     output_tokens: u64,
+    stream_chars: usize,
+    thinking_chars: usize,
+    model_name: String,
+    llm_iteration: u32,
     expanded: bool,
-    phrase_index: usize,
     phrase_tick: u32,
     start_time: Option<std::time::Instant>,
     pub verbosity: Verbosity,
@@ -122,13 +155,16 @@ impl Activity {
     pub fn new() -> Self {
         Self {
             active: false,
-            thinking: false,
+            phase: ProcessingPhase::Waiting,
             tool_feed: Vec::new(),
             last_tool_name: String::new(),
             input_tokens: 0,
             output_tokens: 0,
+            stream_chars: 0,
+            thinking_chars: 0,
+            model_name: String::new(),
+            llm_iteration: 0,
             expanded: false,
-            phrase_index: 0,
             phrase_tick: 0,
             start_time: None,
             verbosity: Verbosity::All,
@@ -137,37 +173,66 @@ impl Activity {
 
     pub fn start(&mut self) {
         self.active = true;
-        self.thinking = false;
+        self.phase = ProcessingPhase::Waiting;
         self.tool_feed.clear();
         self.last_tool_name.clear();
         self.input_tokens = 0;
         self.output_tokens = 0;
-        self.phrase_index = 0;
+        self.stream_chars = 0;
+        self.thinking_chars = 0;
+        self.llm_iteration = 0;
         self.phrase_tick = 0;
         self.start_time = Some(std::time::Instant::now());
     }
 
     pub fn stop(&mut self) {
         self.active = false;
-        self.thinking = false;
+        self.phase = ProcessingPhase::Waiting;
         self.start_time = None;
     }
 
-    /// Enable thinking indicator (model is reasoning before responding)
-    pub fn set_thinking(&mut self, thinking: bool) {
-        self.thinking = thinking;
-        if thinking && !self.active {
+    /// Set processing phase (auto-activates if inactive)
+    pub fn set_phase(&mut self, phase: ProcessingPhase) {
+        self.phase = phase;
+        if !self.active {
             self.active = true;
             self.start_time = Some(std::time::Instant::now());
         }
     }
 
+    /// Legacy compat: enable thinking indicator via phase
+    pub fn set_thinking(&mut self, thinking: bool) {
+        if thinking {
+            self.phase = ProcessingPhase::Thinking;
+            if !self.active {
+                self.active = true;
+                self.start_time = Some(std::time::Instant::now());
+            }
+        }
+    }
+
     pub fn is_thinking(&self) -> bool {
-        self.thinking
+        self.phase == ProcessingPhase::Thinking
     }
 
     pub fn is_active(&self) -> bool {
         self.active
+    }
+
+    pub fn add_stream_chars(&mut self, n: usize) {
+        self.stream_chars += n;
+    }
+
+    pub fn add_thinking_chars(&mut self, n: usize) {
+        self.thinking_chars += n;
+    }
+
+    pub fn set_model_name(&mut self, name: &str) {
+        self.model_name = name.to_string();
+    }
+
+    pub fn set_iteration(&mut self, iteration: u32) {
+        self.llm_iteration = iteration;
     }
 
     /// Record a tool call start
@@ -214,14 +279,10 @@ impl Activity {
         self.output_tokens = output;
     }
 
-    /// Call on each tick to advance the thinking phrase
+    /// Advance spinner animation on each tick
     pub fn tick(&mut self) {
         if self.active {
             self.phrase_tick += 1;
-            // Rotate phrase every ~3 seconds (15 ticks at 200ms)
-            if self.phrase_tick % 15 == 0 {
-                self.phrase_index = (self.phrase_index + 1) % THINKING_PHRASES.len();
-            }
         }
     }
 
@@ -258,10 +319,6 @@ impl Activity {
             Verbosity::Verbose => self.tool_feed.len().min(8),
         }
     }
-
-    fn current_phrase(&self) -> &'static str {
-        THINKING_PHRASES[self.phrase_index % THINKING_PHRASES.len()]
-    }
 }
 
 impl Component for Activity {
@@ -279,25 +336,64 @@ impl Component for Activity {
             .map(|t| t.elapsed().as_secs())
             .unwrap_or(0);
 
-        // Spinner line with contextual phrase
+        // Spinner animation
         let spinner_frames = ["\u{25cb}", "\u{25d4}", "\u{25d1}", "\u{25d5}", "\u{25cf}"];
         let spinner_char = spinner_frames[(self.phrase_tick as usize / 2) % spinner_frames.len()];
 
-        let mut spinner_spans = if self.thinking {
-            // Thinking mode: brain icon + rotating thinking verb
-            vec![
-                Span::styled(format!("\u{1f9e0} {} ", spinner_char), theme.spinner()),
-                Span::styled(self.current_phrase(), theme.prefix_active()),
-                Span::styled(format!(" ({}s)", elapsed), theme.faint()),
-            ]
-        } else {
-            vec![
+        // Phase-driven spinner line — shows real backend state
+        let elapsed_str = format_elapsed(elapsed);
+        let mut spinner_spans: Vec<Span<'_>> = match self.phase {
+            ProcessingPhase::Waiting => vec![
                 Span::styled(format!("{} ", spinner_char), theme.spinner()),
-                Span::styled(self.current_phrase(), theme.prefix_active()),
-                Span::styled(format!(" ({}s)", elapsed), theme.faint()),
-            ]
+                Span::styled("waiting for response...", theme.prefix_active()),
+                Span::styled(format!(" ({})", elapsed_str), theme.faint()),
+            ],
+            ProcessingPhase::Thinking => {
+                let chars = format_count(self.thinking_chars);
+                vec![
+                    Span::styled(format!("\u{1f9e0} {} ", spinner_char), theme.spinner()),
+                    Span::styled("thinking", theme.prefix_active()),
+                    Span::styled(format!(" ({})", elapsed_str), theme.faint()),
+                    Span::styled(format!(" \u{00b7} {} chars", chars), theme.faint()),
+                ]
+            }
+            ProcessingPhase::Streaming => {
+                let chars = format_count(self.stream_chars);
+                vec![
+                    Span::styled(format!("{} ", spinner_char), theme.spinner()),
+                    Span::styled("streaming", theme.prefix_active()),
+                    Span::styled(format!(" ({}, {})", chars, elapsed_str), theme.faint()),
+                ]
+            }
+            ProcessingPhase::ToolCall => vec![
+                Span::styled(format!("{} ", spinner_char), theme.spinner()),
+                Span::styled(format!("tool: {}", self.last_tool_name), theme.prefix_active()),
+                Span::styled(format!(" ({})", elapsed_str), theme.faint()),
+            ],
+            ProcessingPhase::Synthesizing => vec![
+                Span::styled(format!("{} ", spinner_char), theme.spinner()),
+                Span::styled("synthesizing", theme.prefix_active()),
+                Span::styled(format!(" ({})", elapsed_str), theme.faint()),
+            ],
         };
 
+        // Model name prefix (e.g. "qwen3-coder:480b ∙ ")
+        if !self.model_name.is_empty() {
+            spinner_spans.insert(
+                0,
+                Span::styled(format!("{} \u{2219} ", self.model_name), theme.faint()),
+            );
+        }
+
+        // Iteration indicator (only shown for multi-iteration requests)
+        if self.llm_iteration > 1 {
+            spinner_spans.push(Span::styled(
+                format!(" \u{00b7} iter {}", self.llm_iteration),
+                theme.faint(),
+            ));
+        }
+
+        // Token counts from LlmResponse events
         if self.input_tokens > 0 || self.output_tokens > 0 {
             spinner_spans.push(Span::styled(
                 format!(
@@ -309,7 +405,10 @@ impl Component for Activity {
         }
 
         let spinner_line = Line::from(spinner_spans);
-        frame.render_widget(Paragraph::new(spinner_line), Rect::new(area.x, area.y, area.width, 1));
+        frame.render_widget(
+            Paragraph::new(spinner_line),
+            Rect::new(area.x, area.y, area.width, 1),
+        );
 
         if self.verbosity == Verbosity::Off || area.height < 2 {
             return;

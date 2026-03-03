@@ -258,6 +258,7 @@ impl App {
             self.transition(AppState::Processing);
         }
         self.activity.start();
+        self.activity.set_model_name(self.header.model_name());
         self.status.set_active(true);
         self.processing_start = Some(std::time::Instant::now());
         self.stream_buf.clear();

@@ -17,6 +17,7 @@ pub struct StatusBar {
     input_tokens: u64,
     output_tokens: u64,
     elapsed_ms: u64,
+    llm_iteration: u32,
     active: bool,
     bg_count: usize,
     width: u16,
@@ -34,6 +35,7 @@ impl StatusBar {
             input_tokens: 0,
             output_tokens: 0,
             elapsed_ms: 0,
+            llm_iteration: 0,
             active: false,
             bg_count: 0,
             width: 0,
@@ -63,6 +65,10 @@ impl StatusBar {
 
     pub fn set_active(&mut self, active: bool) {
         self.active = active;
+    }
+
+    pub fn set_iteration(&mut self, iteration: u32) {
+        self.llm_iteration = iteration;
     }
 
     pub fn set_background_count(&mut self, count: usize) {
@@ -95,21 +101,45 @@ impl Component for StatusBar {
         let theme = style::theme();
 
         if self.active {
-            // Active: show context bar only
-            let bar_width = area.width.saturating_sub(20).min(30);
-            let (bar, bar_style) = theme.render_context_bar(self.context_utilization, bar_width);
+            // Active: show model · iteration · tokens · context
+            let mut spans: Vec<Span<'_>> = Vec::new();
 
-            let pct = (self.context_utilization * 100.0) as u32;
-            let estimated_k = Self::format_tokens(self.context_estimated);
-            let max_k = Self::format_tokens(self.context_max);
+            if !self.provider.is_empty() {
+                spans.push(Span::styled(&self.provider, theme.header_provider()));
+                spans.push(Span::styled("/", theme.faint()));
+                spans.push(Span::styled(&self.model_name, theme.header_model()));
+            }
 
-            let line = Line::from(vec![
-                Span::styled(bar, bar_style),
-                Span::styled(
-                    format!(" ctx {}% ({}/{})", pct, estimated_k, max_k),
+            if self.llm_iteration > 1 {
+                spans.push(Span::styled(" \u{00b7} ", theme.faint()));
+                spans.push(Span::styled(
+                    format!("iter {}", self.llm_iteration),
                     theme.progress_label(),
-                ),
-            ]);
+                ));
+            }
+
+            if self.input_tokens > 0 || self.output_tokens > 0 {
+                spans.push(Span::styled(" \u{00b7} ", theme.faint()));
+                spans.push(Span::styled(
+                    format!(
+                        "{}/{} tokens",
+                        Self::format_tokens(self.input_tokens),
+                        Self::format_tokens(self.output_tokens),
+                    ),
+                    theme.progress_label(),
+                ));
+            }
+
+            if self.context_max > 0 {
+                let pct = (self.context_utilization * 100.0) as u32;
+                spans.push(Span::styled(" \u{00b7} ", theme.faint()));
+                spans.push(Span::styled(
+                    format!("ctx {}%", pct),
+                    theme.progress_label(),
+                ));
+            }
+
+            let line = Line::from(spans);
             frame.render_widget(Paragraph::new(line), area);
         } else {
             // Idle: provider/model + signal + bg count + context bar

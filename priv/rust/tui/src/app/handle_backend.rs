@@ -1,4 +1,5 @@
 use crate::app::state::AppState;
+use crate::components::activity::ProcessingPhase;
 use crate::event::backend::BackendEvent;
 use tracing::{debug, error, info, warn};
 
@@ -35,15 +36,15 @@ impl App {
                 if self.state.is_processing() {
                     self.stream_buf.push_str(&text);
                     self.chat.update_streaming(&self.stream_buf);
+                    self.activity.add_stream_chars(text.len());
+                    self.activity.set_phase(ProcessingPhase::Streaming);
                 }
             }
             BackendEvent::ThinkingDelta { text } => {
                 self.thinking_buf.push_str(&text);
                 self.thinking_box.update(&text);
-                // Activate thinking indicator in the activity panel
-                if !self.activity.is_thinking() {
-                    self.activity.set_thinking(true);
-                }
+                self.activity.add_thinking_chars(text.len());
+                self.activity.set_phase(ProcessingPhase::Thinking);
             }
             BackendEvent::AgentResponse {
                 response,
@@ -57,6 +58,7 @@ impl App {
                     self.activity.start();
                 }
                 self.activity.tool_start(&name, &args);
+                self.activity.set_phase(ProcessingPhase::ToolCall);
                 // Stash args so ToolCallEnd can build a rich summary
                 self.pending_tool_args.insert(name.clone(), args);
                 self.recompute_layout();
@@ -68,6 +70,7 @@ impl App {
                 success,
             } => {
                 self.activity.tool_end(&name, duration_ms, success);
+                self.activity.set_phase(ProcessingPhase::Waiting);
 
                 // Build rich styled tool summary for the chat
                 let args = self
@@ -116,6 +119,8 @@ impl App {
                 debug!("Tool result: {} (success={})", name, success);
             }
             BackendEvent::LlmRequest { iteration } => {
+                self.activity.set_iteration(iteration as u32);
+                self.status.set_iteration(iteration as u32);
                 debug!("LLM request iteration {}", iteration);
             }
             BackendEvent::LlmResponse {

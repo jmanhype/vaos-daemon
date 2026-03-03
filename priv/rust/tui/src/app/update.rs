@@ -275,8 +275,12 @@ impl App {
 
         if self.state.is_processing() {
             if let Some(start) = self.processing_start {
-                if start.elapsed() >= std::time::Duration::from_secs(300) {
-                    warn!("Processing timed out after 300s");
+                let elapsed = start.elapsed();
+                let timeout_secs = self.config.request_timeout_secs;
+                let warning_secs = (timeout_secs * 4) / 5; // 80% threshold
+
+                if elapsed >= std::time::Duration::from_secs(timeout_secs) {
+                    warn!("Processing timed out after {}s", timeout_secs);
                     if let Some(cancel) = self.sse_cancel.take() {
                         cancel.cancel();
                     }
@@ -287,10 +291,30 @@ impl App {
                     self.status.set_active(false);
                     self.transition(AppState::Idle);
                     self.toasts.push(
-                        "Request timed out (5 min)".into(),
+                        format!("Request timed out ({}m)", timeout_secs / 60),
                         crate::components::toast::ToastLevel::Error,
                     );
                     self.start_sse();
+                } else if elapsed >= std::time::Duration::from_secs(warning_secs) {
+                    // Fire warning once when crossing the 80% threshold
+                    let prev_elapsed =
+                        elapsed.saturating_sub(std::time::Duration::from_millis(200));
+                    if prev_elapsed < std::time::Duration::from_secs(warning_secs) {
+                        let remaining = timeout_secs.saturating_sub(elapsed.as_secs());
+                        let remaining_str = if remaining >= 60 {
+                            format!("{}m", remaining / 60)
+                        } else {
+                            format!("{}s", remaining)
+                        };
+                        self.toasts.push(
+                            format!(
+                                "Processing for {}m, timing out in {}",
+                                elapsed.as_secs() / 60,
+                                remaining_str,
+                            ),
+                            crate::components::toast::ToastLevel::Warning,
+                        );
+                    }
                 }
             }
         }
