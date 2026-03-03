@@ -200,6 +200,10 @@ defmodule OptimalSystemAgent.Providers.Anthropic do
       {^ref, {:error, reason}} ->
         Logger.error("Anthropic stream error: #{inspect(reason)}")
         {:error, "Stream error: #{inspect(reason)}"}
+
+      {{Finch.HTTP1.Pool, _}, _} ->
+        # Finch internal connection pool message — safely discard
+        collect_stream(resp, callback, acc)
     after
       620_000 ->
         Logger.error("Anthropic stream timeout after 620s")

@@ -350,6 +350,10 @@ defmodule OptimalSystemAgent.Providers.Ollama do
         Logger.error("Ollama stream error: #{inspect(reason)}")
         {:error, "Ollama stream error: #{inspect(reason)}"}
 
+      {{Finch.HTTP1.Pool, _}, _} ->
+        # Finch internal connection pool message — safely discard
+        collect_stream(resp, callback, acc)
+
       other ->
         Logger.debug("[Ollama] collect_stream unexpected msg (ref=#{inspect(ref, limit: 2)}): #{inspect(other, limit: 4)}")
         collect_stream(resp, callback, acc)
