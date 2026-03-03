@@ -97,6 +97,15 @@ func (m Model) Update(rawMsg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return m.handleKey(v)
 
+	case tea.PasteMsg:
+		// Forward bracketed paste to the input so the textarea can insert the text.
+		if m.state == StateIdle || m.state == StateProcessing {
+			var cmd tea.Cmd
+			m.input, cmd = m.input.Update(v)
+			return m, cmd
+		}
+		return m, nil
+
 	// -- Program lifecycle --
 
 	case ProgramReady:
