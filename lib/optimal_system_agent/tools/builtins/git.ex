@@ -105,10 +105,16 @@ defmodule OptimalSystemAgent.Tools.Builtins.Git do
         case git(["add", "-A"], dir) do
           {:ok, _} ->
             case git(["commit", "-m", message], dir) do
-              {:ok, output} -> {:ok, output}
-              # Nothing to commit is not a fatal error
-              {:error, output} when output =~ "nothing to commit" -> {:ok, output}
-              {:error, reason} -> {:error, reason}
+              {:ok, output} ->
+                {:ok, output}
+
+              {:error, output} ->
+                # Nothing to commit is not a fatal error
+                if String.contains?(output, "nothing to commit") do
+                  {:ok, output}
+                else
+                  {:error, output}
+                end
             end
 
           {:error, reason} ->
