@@ -39,6 +39,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
     iteration: 0,
     overflow_retries: 0,
     consecutive_failures: 0,
+    auto_continues: 0,
     last_tool_signature: nil,
     status: :idle,
     tools: [],
@@ -141,6 +142,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
       | messages: state.messages ++ [%{role: "user", content: message_with_nudge}],
         iteration: 0,
         overflow_retries: 0,
+        auto_continues: 0,
         status: :thinking
     }
 
@@ -299,7 +301,26 @@ defmodule OptimalSystemAgent.Agent.Loop do
         # No tool calls — final response. Guard empty content (Bug 27: Unicode messages
         # from small local models sometimes return whitespace-only responses).
         content = if is_nil(content) or String.trim(content) == "", do: "...", else: content
-        {content, state}
+
+        if state.auto_continues < 2 and wants_to_continue?(content) do
+          Logger.info("[loop] Auto-continue: model described intent without tool calls (nudge #{state.auto_continues + 1}/2)")
+          nudge = %{
+            role: "system",
+            content: "[System: You described what you would do but did not call any tools. " <>
+              "EXECUTE by calling the appropriate tools NOW. " <>
+              "Give a brief 1-line status of what you're doing, then call the tools. " <>
+              "Do NOT narrate step-by-step — just act. Example: " <>
+              "\"Checking project structure.\" then call dir_list + file_read.]"
+          }
+          state = %{state |
+            messages: state.messages ++ [%{role: "assistant", content: content}, nudge],
+            auto_continues: state.auto_continues + 1,
+            iteration: state.iteration + 1
+          }
+          run_loop(state)
+        else
+          {content, state}
+        end
 
       {:ok, %{content: content, tool_calls: tool_calls} = resp} when is_list(tool_calls) ->
         # Execute tool calls
@@ -755,4 +776,24 @@ defmodule OptimalSystemAgent.Agent.Loop do
   end
 
   defp prompt_injection?(_), do: false
+
+  # Detect when a local model describes intent ("Let me check...") instead of
+  # calling tools. Returns true if the response looks like narrated intent
+  # rather than a final answer.
+  @intent_patterns [
+    ~r/\blet me (check|read|look|examine|create|write|edit|search|find|open|run|list|inspect)\b/i,
+    ~r/\bi('ll| will) (check|read|look|create|write|edit|search|find|open|run|list|inspect)\b/i,
+    ~r/\bi('m going to|am going to) /i,
+    ~r/\bfirst,? i (need|want) to /i,
+    ~r/\blet's start by /i,
+    ~r/\bnow (i'll|let me|i will|i need to) /i,
+    ~r/\bi (need|want) to (check|read|look|examine|create|write|edit|search|find|open|run|list)\b/i
+  ]
+
+  defp wants_to_continue?(nil), do: false
+  defp wants_to_continue?(content) when byte_size(content) < 20, do: false
+
+  defp wants_to_continue?(content) do
+    Enum.any?(@intent_patterns, &Regex.match?(&1, content))
+  end
 end
