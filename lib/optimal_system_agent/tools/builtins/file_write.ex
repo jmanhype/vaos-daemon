@@ -20,14 +20,14 @@ defmodule OptimalSystemAgent.Tools.Builtins.FileWrite do
   def name, do: "file_write"
 
   @impl true
-  def description, do: "Write content to a file"
+  def description, do: "Write content to a file. Use relative paths (e.g. 'my-app/server.js') to write into the workspace at ~/.osa/workspace/. Absolute paths and ~ paths are also accepted."
 
   @impl true
   def parameters do
     %{
       "type" => "object",
       "properties" => %{
-        "path" => %{"type" => "string", "description" => "Path to write to"},
+        "path" => %{"type" => "string", "description" => "Path to write to. Relative paths are rooted at ~/.osa/workspace/ automatically. Example: 'todo-app/server.js' writes to ~/.osa/workspace/todo-app/server.js"},
         "content" => %{"type" => "string", "description" => "Content to write"}
       },
       "required" => ["path", "content"]
@@ -36,7 +36,14 @@ defmodule OptimalSystemAgent.Tools.Builtins.FileWrite do
 
   @impl true
   def execute(%{"path" => path, "content" => content}) do
-    expanded = Path.expand(path)
+    normalized =
+      if relative_path?(path) do
+        Path.join("~/.osa/workspace", path)
+      else
+        path
+      end
+
+    expanded = Path.expand(normalized)
 
     if write_allowed?(expanded) do
       case File.mkdir_p(Path.dirname(expanded)) do
@@ -52,6 +59,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.FileWrite do
     else
       {:error, "Access denied: #{path} is outside allowed paths or targets a protected location"}
     end
+  end
+
+  defp relative_path?(path) do
+    not (String.starts_with?(path, "~") or
+           String.starts_with?(path, "/") or
+           String.match?(path, ~r/^[A-Za-z]:[\\\/]/))
   end
 
   defp allowed_write_paths do
