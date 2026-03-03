@@ -36,7 +36,17 @@ defmodule OptimalSystemAgent.Tools.Builtins.FileWrite do
 
   @impl true
   def execute(%{"path" => path, "content" => content}) do
-    expanded = Path.expand(path)
+    # Relative paths (no leading ~, /, or drive letter) are rooted in the
+    # user workspace so generated apps land in ~/.osa/workspace/ rather than
+    # the Elixir process's CWD (the OSA project root).
+    normalized =
+      if relative_path?(path) do
+        Path.join("~/.osa/workspace", path)
+      else
+        path
+      end
+
+    expanded = Path.expand(normalized)
 
     if write_allowed?(expanded) do
       case File.mkdir_p(Path.dirname(expanded)) do
@@ -52,6 +62,13 @@ defmodule OptimalSystemAgent.Tools.Builtins.FileWrite do
     else
       {:error, "Access denied: #{path} is outside allowed paths or targets a protected location"}
     end
+  end
+
+  # A path is relative when it doesn't begin with ~, /, or a Windows drive letter (C:\, C:/)
+  defp relative_path?(path) do
+    not (String.starts_with?(path, "~") or
+           String.starts_with?(path, "/") or
+           String.match?(path, ~r/^[A-Za-z]:[\\\/]/))
   end
 
   defp allowed_write_paths do
