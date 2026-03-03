@@ -302,24 +302,41 @@ defmodule OptimalSystemAgent.Agent.Loop do
         # from small local models sometimes return whitespace-only responses).
         content = if is_nil(content) or String.trim(content) == "", do: "...", else: content
 
-        if state.auto_continues < 2 and wants_to_continue?(content) do
-          Logger.info("[loop] Auto-continue: model described intent without tool calls (nudge #{state.auto_continues + 1}/2)")
-          nudge = %{
-            role: "system",
-            content: "[System: You described what you would do but did not call any tools. " <>
-              "EXECUTE by calling the appropriate tools NOW. " <>
-              "Give a brief 1-line status of what you're doing, then call the tools. " <>
-              "Do NOT narrate step-by-step — just act. Example: " <>
-              "\"Checking project structure.\" then call dir_list + file_read.]"
-          }
-          state = %{state |
-            messages: state.messages ++ [%{role: "assistant", content: content}, nudge],
-            auto_continues: state.auto_continues + 1,
-            iteration: state.iteration + 1
-          }
-          run_loop(state)
-        else
-          {content, state}
+        cond do
+          state.auto_continues < 2 and wants_to_continue?(content) ->
+            Logger.info("[loop] Auto-continue: model described intent without tool calls (nudge #{state.auto_continues + 1}/2)")
+            nudge = %{
+              role: "system",
+              content: "[System: You described what you would do but did not call any tools. " <>
+                "EXECUTE by calling the appropriate tools NOW. " <>
+                "Give a brief 1-line status of what you're doing, then call the tools. " <>
+                "Do NOT narrate step-by-step — just act. Example: " <>
+                "\"Checking project structure.\" then call dir_list + file_read.]"
+            }
+            state = %{state |
+              messages: state.messages ++ [%{role: "assistant", content: content}, nudge],
+              auto_continues: state.auto_continues + 1,
+              iteration: state.iteration + 1
+            }
+            run_loop(state)
+
+          state.auto_continues < 2 and code_in_text?(content) ->
+            Logger.info("[loop] Coding nudge: model wrote code in markdown instead of calling file_write/file_edit (nudge #{state.auto_continues + 1}/2)")
+            nudge = %{
+              role: "system",
+              content: "[System: You wrote code in a markdown code block instead of saving it to a file. " <>
+                "Call file_write to create the file or file_edit to modify an existing one. " <>
+                "Do NOT show code in your response — use the tool to write it directly to disk.]"
+            }
+            state = %{state |
+              messages: state.messages ++ [%{role: "assistant", content: content}, nudge],
+              auto_continues: state.auto_continues + 1,
+              iteration: state.iteration + 1
+            }
+            run_loop(state)
+
+          true ->
+            {content, state}
         end
 
       {:ok, %{content: content, tool_calls: tool_calls} = resp} when is_list(tool_calls) ->
@@ -790,10 +807,23 @@ defmodule OptimalSystemAgent.Agent.Loop do
     ~r/\bi (need|want) to (check|read|look|examine|create|write|edit|search|find|open|run|list)\b/i
   ]
 
+  # Matches a code block with 5+ lines of content — indicates model wrote code
+  # in its response text instead of calling file_write or file_edit.
+  @code_block_pattern ~r/```[a-zA-Z]*\n(?:.*\n){5,}?```/
+
   defp wants_to_continue?(nil), do: false
   defp wants_to_continue?(content) when byte_size(content) < 20, do: false
 
   defp wants_to_continue?(content) do
     Enum.any?(@intent_patterns, &Regex.match?(&1, content))
+  end
+
+  # Detect when model embeds a substantial code block in its response text
+  # instead of calling file_write or file_edit to persist it to disk.
+  defp code_in_text?(nil), do: false
+  defp code_in_text?(content) when byte_size(content) < 50, do: false
+
+  defp code_in_text?(content) do
+    Regex.match?(@code_block_pattern, content)
   end
 end

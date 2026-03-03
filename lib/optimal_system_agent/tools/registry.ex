@@ -452,7 +452,8 @@ defmodule OptimalSystemAgent.Tools.Registry do
       "session_search" => OptimalSystemAgent.Tools.Builtins.SessionSearch,
       "skill_manager" => OptimalSystemAgent.Tools.Builtins.SkillManager,
       "ask_user" => OptimalSystemAgent.Tools.Builtins.AskUser,
-      "delegate" => OptimalSystemAgent.Tools.Builtins.Delegate
+      "delegate" => OptimalSystemAgent.Tools.Builtins.Delegate,
+      "git" => OptimalSystemAgent.Tools.Builtins.Git
     }
   end
 
