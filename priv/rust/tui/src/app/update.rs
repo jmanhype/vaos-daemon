@@ -1076,16 +1076,16 @@ impl App {
             }
         }
 
-        // Processing timeout — if no response after 90s, bail to Idle
+        // Processing timeout — if no response after 300s, bail to Idle
         if self.state == AppState::Processing {
             if let Some(start) = self.processing_start {
-                if start.elapsed() >= std::time::Duration::from_secs(90) {
-                    warn!("Processing timed out after 90s");
+                if start.elapsed() >= std::time::Duration::from_secs(300) {
+                    warn!("Processing timed out after 300s");
                     self.activity.stop();
                     self.status.set_active(false);
                     self.transition(AppState::Idle);
                     self.toasts.push(
-                        "Request timed out".into(),
+                        "Request timed out (5 min)".into(),
                         crate::components::toast::ToastLevel::Error,
                     );
                 }

@@ -117,8 +117,11 @@ defmodule OptimalSystemAgent.Providers.Ollama do
         options: %{temperature: Keyword.get(opts, :temperature, 0.7)}
       }
       |> maybe_add_tools(model, opts)
+      |> maybe_add_think(model, opts)
 
-    req_opts = [json: body, receive_timeout: 120_000] ++ auth_headers()
+    # 600 s — thinking models (kimi-k2.5) need up to ~300 s before producing
+    # any output; 120 s was too short and caused Cortex synthesis timeouts.
+    req_opts = [json: body, receive_timeout: 600_000] ++ auth_headers()
 
     try do
       case Req.post("#{url}/api/chat", req_opts) do
@@ -138,6 +141,45 @@ defmodule OptimalSystemAgent.Providers.Ollama do
       e ->
         Logger.error("Ollama unexpected error: #{Exception.message(e)}")
         {:error, "Ollama unexpected error: #{Exception.message(e)}"}
+    end
+  end
+
+  @impl true
+  def chat_stream(messages, callback, opts \\ []) do
+    url = Application.get_env(:optimal_system_agent, :ollama_url, "http://localhost:11434")
+
+    model =
+      Keyword.get(opts, :model) ||
+        Application.get_env(:optimal_system_agent, :ollama_model, default_model())
+
+    body =
+      %{
+        model: model,
+        messages: format_messages(messages),
+        stream: true,
+        keep_alive: "30m",
+        options: %{temperature: Keyword.get(opts, :temperature, 0.7)}
+      }
+      |> maybe_add_tools(model, opts)
+      |> maybe_add_think(model, opts)
+
+    # 600 s per-chunk read timeout — slow local CPU models and long thinking
+    # phases (kimi-k2.5 takes ~300 s) need more than the default 300 s.
+    req_opts = [json: body, receive_timeout: 600_000, into: :self] ++ auth_headers()
+
+    try do
+      case Req.post("#{url}/api/chat", req_opts) do
+        {:ok, resp} ->
+          collect_stream(resp, callback, %{buffer: "", content: "", tool_calls: []})
+
+        {:error, reason} ->
+          Logger.error("Ollama stream connection failed: #{inspect(reason)}")
+          {:error, "Ollama stream connection failed: #{inspect(reason)}"}
+      end
+    rescue
+      e ->
+        Logger.error("Ollama stream unexpected error: #{Exception.message(e)}")
+        {:error, "Ollama stream unexpected error: #{Exception.message(e)}"}
     end
   end
 
@@ -212,6 +254,38 @@ defmodule OptimalSystemAgent.Providers.Ollama do
     end
   end
 
+  # Controls the `think` field for Ollama reasoning models (kimi, qwen3 thinking, etc.)
+  # Default: disabled for known thinking models to prevent unbounded timeouts.
+  # Override per-call: opts[:think] = true/false
+  # Override globally: OLLAMA_THINK=true in .env (sets :ollama_think in app env)
+  defp maybe_add_think(body, model, opts) do
+    case Keyword.get(opts, :think) do
+      nil ->
+        think_cfg = Application.get_env(:optimal_system_agent, :ollama_think)
+
+        cond do
+          think_cfg != nil ->
+            Map.put(body, "think", think_cfg)
+
+          thinking_model?(model) ->
+            # Disable extended reasoning by default — prevents 10+ minute stalls
+            Map.put(body, "think", false)
+
+          true ->
+            body
+        end
+
+      val ->
+        Map.put(body, "think", val)
+    end
+  end
+
+  # Returns true for models known to enter unbounded thinking phases by default.
+  defp thinking_model?(model_name) do
+    name = String.downcase(model_name)
+    String.contains?(name, "thinking") or String.starts_with?(name, "kimi")
+  end
+
   defp format_tools(tools) do
     Enum.map(tools, fn tool ->
       %{
@@ -243,6 +317,84 @@ defmodule OptimalSystemAgent.Providers.Ollama do
 
   defp generate_id,
     do: OptimalSystemAgent.Utils.ID.generate()
+
+  defp collect_stream(resp, callback, acc) do
+    ref = resp.body
+
+    receive do
+      {^ref, {:data, data}} ->
+        {lines, new_buffer} = split_ndjson(acc.buffer <> data)
+        acc = %{acc | buffer: new_buffer}
+
+        acc =
+          Enum.reduce(lines, acc, fn line, inner_acc ->
+            process_ndjson_line(line, callback, inner_acc)
+          end)
+
+        collect_stream(resp, callback, acc)
+
+      {^ref, :done} ->
+        content = Text.strip_thinking_tokens(acc.content)
+
+        tool_calls =
+          if acc.tool_calls != [] do
+            acc.tool_calls
+          else
+            ToolCallParsers.parse(acc.content, "ollama")
+          end
+
+        callback.({:done, %{content: content, tool_calls: tool_calls, usage: %{}}})
+        :ok
+
+      {^ref, {:error, reason}} ->
+        Logger.error("Ollama stream error: #{inspect(reason)}")
+        {:error, "Ollama stream error: #{inspect(reason)}"}
+
+      other ->
+        Logger.debug("[Ollama] collect_stream unexpected msg (ref=#{inspect(ref, limit: 2)}): #{inspect(other, limit: 4)}")
+        collect_stream(resp, callback, acc)
+    after
+      620_000 ->
+        Logger.error("Ollama stream timeout after 620s")
+        {:error, "Ollama stream timeout"}
+    end
+  end
+
+  # Split buffered data into complete NDJSON lines + partial remainder
+  defp split_ndjson(data) do
+    lines = String.split(data, "\n")
+    {complete, [remainder]} = Enum.split(lines, -1)
+    {Enum.reject(complete, &(&1 == "")), remainder}
+  end
+
+  defp process_ndjson_line(line, callback, acc) do
+    case Jason.decode(line) do
+      {:ok, %{"message" => %{"content" => text}}} when is_binary(text) and text != "" ->
+        callback.({:text_delta, text})
+        %{acc | content: acc.content <> text}
+
+      # kimi-k2.5 and other thinking models send a "thinking" field during
+      # extended reasoning before producing content or tool calls.
+      {:ok, %{"message" => %{"thinking" => text}}} when is_binary(text) and text != "" ->
+        callback.({:thinking_delta, text})
+        acc
+
+      {:ok, %{"message" => %{"tool_calls" => calls}}} when is_list(calls) ->
+        tool_calls =
+          Enum.map(calls, fn call ->
+            %{
+              id: call["id"] || generate_id(),
+              name: call["function"]["name"],
+              arguments: call["function"]["arguments"] || %{}
+            }
+          end)
+
+        %{acc | tool_calls: acc.tool_calls ++ tool_calls}
+
+      _ ->
+        acc
+    end
+  end
 
   # Returns `[headers: [{"authorization", "Bearer <key>"}]]` when
   # OLLAMA_API_KEY is set (Ollama Cloud), empty list otherwise.

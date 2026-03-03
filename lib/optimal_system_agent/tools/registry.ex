@@ -459,27 +459,53 @@ defmodule OptimalSystemAgent.Tools.Registry do
   # --- SKILL.md Loading ---
 
   defp load_skills do
-    dir = Path.expand(skills_dir())
+    # Load built-in skills from priv/skills/ first (lower priority)
+    priv_dir = resolve_priv_skills_path()
 
-    if File.dir?(dir) do
-      dir
-      |> File.ls!()
-      |> Enum.filter(&File.dir?(Path.join(dir, &1)))
-      |> Enum.reduce(%{}, fn skill_dir, acc ->
-        skill_file = Path.join([dir, skill_dir, "SKILL.md"])
+    priv_skills =
+      load_skill_definitions()
+      |> Enum.reduce(%{}, fn skill, acc ->
+        # Store absolute path so the LLM can read the full skill instructions via file_read
+        abs_path =
+          if priv_dir, do: Path.join(priv_dir, skill.source_path), else: skill.source_path
 
-        if File.exists?(skill_file) do
-          case parse_skill_file(skill_file) do
-            {:ok, skill} -> Map.put(acc, skill.name, skill)
-            :error -> acc
-          end
-        else
-          acc
-        end
+        entry = %{
+          name: skill.name,
+          description: skill.description,
+          triggers: skill.triggers,
+          tools: [],
+          path: abs_path
+        }
+
+        Map.put(acc, skill.name, entry)
       end)
-    else
-      %{}
-    end
+
+    # Load user skills from ~/.osa/skills/ (higher priority — override priv skills)
+    user_dir = Path.expand(skills_dir())
+
+    user_skills =
+      if File.dir?(user_dir) do
+        user_dir
+        |> File.ls!()
+        |> Enum.filter(&File.dir?(Path.join(user_dir, &1)))
+        |> Enum.reduce(%{}, fn skill_dir, acc ->
+          skill_file = Path.join([user_dir, skill_dir, "SKILL.md"])
+
+          if File.exists?(skill_file) do
+            case parse_skill_file(skill_file) do
+              {:ok, skill} -> Map.put(acc, skill.name, skill)
+              :error -> acc
+            end
+          else
+            acc
+          end
+        end)
+      else
+        %{}
+      end
+
+    # User skills override built-in skills with the same name
+    Map.merge(priv_skills, user_skills)
   end
 
   defp parse_skill_file(path) do
