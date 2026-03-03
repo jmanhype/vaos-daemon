@@ -117,6 +117,7 @@ defmodule OptimalSystemAgent.Providers.Ollama do
         options: %{temperature: Keyword.get(opts, :temperature, 0.7)}
       }
       |> maybe_add_tools(model, opts)
+      |> maybe_add_think(model, opts)
 
     # 600 s — thinking models (kimi-k2.5) need up to ~300 s before producing
     # any output; 120 s was too short and caused Cortex synthesis timeouts.
@@ -160,46 +161,26 @@ defmodule OptimalSystemAgent.Providers.Ollama do
         options: %{temperature: Keyword.get(opts, :temperature, 0.7)}
       }
       |> maybe_add_tools(model, opts)
+      |> maybe_add_think(model, opts)
 
     # 600 s per-chunk read timeout — slow local CPU models and long thinking
     # phases (kimi-k2.5 takes ~300 s) need more than the default 300 s.
     req_opts = [json: body, receive_timeout: 600_000, into: :self] ++ auth_headers()
 
-    # Spawn an unlinked process to own the Req/Finch HTTP stream.
-    # Finch delivers chunk messages ({pool_pid, {:data, data}} tuples) to the
-    # process that calls Req.post — if that were the GenServer, the chunks would
-    # land in handle_info/2 instead of our receive block.  Running Req.post in a
-    # dedicated process keeps Finch messages isolated and prevents the 310 s
-    # timeout from firing before the model finishes.
-    caller = self()
-    ref = make_ref()
+    try do
+      case Req.post("#{url}/api/chat", req_opts) do
+        {:ok, resp} ->
+          collect_stream(resp, callback, %{buffer: "", content: "", tool_calls: []})
 
-    spawn(fn ->
-      try do
-        result =
-          case Req.post("#{url}/api/chat", req_opts) do
-            {:ok, resp} ->
-              fwd = fn event -> send(caller, {ref, :chunk, event}) end
-              collect_stream(resp, fwd, %{buffer: "", content: "", tool_calls: []})
-
-            {:error, reason} ->
-              Logger.error("Ollama stream connection failed: #{inspect(reason)}")
-              {:error, "Ollama stream connection failed: #{inspect(reason)}"}
-          end
-
-        case result do
-          :ok -> :ok
-          {:error, reason} -> send(caller, {ref, :stream_error, reason})
-        end
-      rescue
-        e ->
-          msg = "Ollama stream unexpected error: #{Exception.message(e)}"
-          Logger.error(msg)
-          send(caller, {ref, :stream_error, msg})
+        {:error, reason} ->
+          Logger.error("Ollama stream connection failed: #{inspect(reason)}")
+          {:error, "Ollama stream connection failed: #{inspect(reason)}"}
       end
-    end)
-
-    drain_stream(ref, callback, 660_000)
+    rescue
+      e ->
+        Logger.error("Ollama stream unexpected error: #{Exception.message(e)}")
+        {:error, "Ollama stream unexpected error: #{Exception.message(e)}"}
+    end
   end
 
   # --- Private ---
@@ -273,6 +254,38 @@ defmodule OptimalSystemAgent.Providers.Ollama do
     end
   end
 
+  # Controls the `think` field for Ollama reasoning models (kimi, qwen3 thinking, etc.)
+  # Default: disabled for known thinking models to prevent unbounded timeouts.
+  # Override per-call: opts[:think] = true/false
+  # Override globally: OLLAMA_THINK=true in .env (sets :ollama_think in app env)
+  defp maybe_add_think(body, model, opts) do
+    case Keyword.get(opts, :think) do
+      nil ->
+        think_cfg = Application.get_env(:optimal_system_agent, :ollama_think)
+
+        cond do
+          think_cfg != nil ->
+            Map.put(body, "think", think_cfg)
+
+          thinking_model?(model) ->
+            # Disable extended reasoning by default — prevents 10+ minute stalls
+            Map.put(body, "think", false)
+
+          true ->
+            body
+        end
+
+      val ->
+        Map.put(body, "think", val)
+    end
+  end
+
+  # Returns true for models known to enter unbounded thinking phases by default.
+  defp thinking_model?(model_name) do
+    name = String.downcase(model_name)
+    String.contains?(name, "thinking") or String.starts_with?(name, "kimi")
+  end
+
   defp format_tools(tools) do
     Enum.map(tools, fn tool ->
       %{
@@ -305,28 +318,6 @@ defmodule OptimalSystemAgent.Providers.Ollama do
   defp generate_id,
     do: OptimalSystemAgent.Utils.ID.generate()
 
-  # Receive loop that consumes forwarded chunk messages sent by the spawned
-  # streaming process.  Running in the caller's process ensures callbacks like
-  # Process.put(:llm_stream_result, result) write to the right process dict.
-  defp drain_stream(ref, callback, timeout) do
-    receive do
-      {^ref, :chunk, {:done, _} = event} ->
-        callback.(event)
-        :ok
-
-      {^ref, :chunk, event} ->
-        callback.(event)
-        drain_stream(ref, callback, timeout)
-
-      {^ref, :stream_error, reason} ->
-        {:error, reason}
-    after
-      timeout ->
-        Logger.error("Ollama stream timeout after #{div(timeout, 1000)}s")
-        {:error, "Ollama stream timeout"}
-    end
-  end
-
   defp collect_stream(resp, callback, acc) do
     ref = resp.body
 
@@ -358,6 +349,10 @@ defmodule OptimalSystemAgent.Providers.Ollama do
       {^ref, {:error, reason}} ->
         Logger.error("Ollama stream error: #{inspect(reason)}")
         {:error, "Ollama stream error: #{inspect(reason)}"}
+
+      other ->
+        Logger.debug("[Ollama] collect_stream unexpected msg (ref=#{inspect(ref, limit: 2)}): #{inspect(other, limit: 4)}")
+        collect_stream(resp, callback, acc)
     after
       620_000 ->
         Logger.error("Ollama stream timeout after 620s")

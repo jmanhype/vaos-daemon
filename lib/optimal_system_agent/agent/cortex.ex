@@ -22,7 +22,7 @@ defmodule OptimalSystemAgent.Agent.Cortex do
   alias OptimalSystemAgent.PromptLoader
 
   @default_refresh_interval 300_000
-  @boot_delay 30_000
+  @boot_delay 300_000
   @max_recent_sessions 5
   @topic_ets_table :osa_cortex_topics
 
@@ -133,7 +133,7 @@ defmodule OptimalSystemAgent.Agent.Cortex do
       timer_ref: timer_ref
     }
 
-    Logger.info("Cortex started — first synthesis in #{@boot_delay}ms, interval #{interval}ms")
+    Logger.info("Cortex started — first synthesis in #{div(@boot_delay, 60_000)}min, interval #{div(interval, 60_000)}min")
     {:ok, state}
   end
 
@@ -174,24 +174,41 @@ defmodule OptimalSystemAgent.Agent.Cortex do
   @impl true
   def handle_cast(:refresh, state) do
     state = cancel_timer(state)
-    new_state = do_synthesis(state)
-    timer_ref = Process.send_after(self(), :refresh, new_state.refresh_interval)
-    {:noreply, %{new_state | timer_ref: timer_ref}}
+    dispatch_synthesis(state)
+    timer_ref = Process.send_after(self(), :refresh, state.refresh_interval)
+    {:noreply, %{state | timer_ref: timer_ref}}
+  end
+
+  @impl true
+  def handle_cast({:synthesis_done, updates}, state) do
+    {:noreply, Map.merge(state, updates)}
   end
 
   @impl true
   def handle_info(:refresh, state) do
     state = cancel_timer(state)
-    new_state = do_synthesis(state)
-    timer_ref = Process.send_after(self(), :refresh, new_state.refresh_interval)
-    {:noreply, %{new_state | timer_ref: timer_ref}}
+    dispatch_synthesis(state)
+    timer_ref = Process.send_after(self(), :refresh, state.refresh_interval)
+    {:noreply, %{state | timer_ref: timer_ref}}
   end
 
   # ────────────────────────────────────────────────────────────────────
   # Synthesis Engine
   # ────────────────────────────────────────────────────────────────────
 
-  defp do_synthesis(state) do
+  # Spawn synthesis in a Task so the GenServer stays responsive during
+  # the LLM call (bulletin/0 won't block context builds).
+  defp dispatch_synthesis(state) do
+    self_pid = self()
+    session_summaries = state.session_summaries
+
+    Task.start(fn ->
+      updates = run_synthesis(session_summaries)
+      GenServer.cast(self_pid, {:synthesis_done, updates})
+    end)
+  end
+
+  defp run_synthesis(session_summaries) do
     try do
       # 1. Gather raw material
       memory_content = Memory.recall()
@@ -202,26 +219,24 @@ defmodule OptimalSystemAgent.Agent.Cortex do
       update_topic_table(active_topics)
 
       # 3. Generate/update session summaries for recent sessions
-      session_summaries = update_session_summaries(state.session_summaries, recent_sessions)
+      new_summaries = update_session_summaries(session_summaries, recent_sessions)
 
       # 4. Build the synthesis
       if memory_content == "" and recent_sessions == [] do
         Logger.debug("Cortex: no material for synthesis, skipping")
 
         %{
-          state
-          | last_refresh: DateTime.utc_now(),
-            active_topics: active_topics,
-            session_summaries: session_summaries
+          last_refresh: DateTime.utc_now(),
+          active_topics: active_topics,
+          session_summaries: new_summaries
         }
       else
-        # Build targeted synthesis prompt
         messages =
           build_synthesis_messages(
             memory_content,
             recent_sessions,
             active_topics,
-            session_summaries
+            new_summaries
           )
 
         case Providers.chat(messages, max_tokens: 500, temperature: 0.2) do
@@ -233,21 +248,19 @@ defmodule OptimalSystemAgent.Agent.Cortex do
             )
 
             %{
-              state
-              | bulletin: bulletin,
-                active_topics: active_topics,
-                session_summaries: session_summaries,
-                last_refresh: DateTime.utc_now()
+              bulletin: bulletin,
+              active_topics: active_topics,
+              session_summaries: new_summaries,
+              last_refresh: DateTime.utc_now()
             }
 
           {:ok, %{content: _}} ->
             Logger.warning("Cortex: LLM returned empty content, keeping previous bulletin")
 
             %{
-              state
-              | active_topics: active_topics,
-                session_summaries: session_summaries,
-                last_refresh: DateTime.utc_now()
+              active_topics: active_topics,
+              session_summaries: new_summaries,
+              last_refresh: DateTime.utc_now()
             }
 
           {:error, reason} ->
@@ -256,17 +269,16 @@ defmodule OptimalSystemAgent.Agent.Cortex do
             )
 
             %{
-              state
-              | active_topics: active_topics,
-                session_summaries: session_summaries,
-                last_refresh: DateTime.utc_now()
+              active_topics: active_topics,
+              session_summaries: new_summaries,
+              last_refresh: DateTime.utc_now()
             }
         end
       end
     rescue
       e ->
         Logger.error("Cortex: synthesis crashed — #{inspect(e)}")
-        %{state | last_refresh: DateTime.utc_now()}
+        %{last_refresh: DateTime.utc_now()}
     end
   end
 

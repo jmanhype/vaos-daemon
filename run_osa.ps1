@@ -40,12 +40,20 @@ if (-not $hasApiKey) {
     }
 }
 
-# Kill any stale process on :8089
+# Kill any stale process on :8089 (beam.smp may be a grandchild of the PS window)
 $stale = Get-NetTCPConnection -LocalPort 8089 -ErrorAction SilentlyContinue
 if ($stale) {
     Write-Host "Killing stale process on :8089..." -ForegroundColor Yellow
-    $stale | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
-    Start-Sleep -Seconds 2
+    $pids = $stale | Select-Object -ExpandProperty OwningProcess -Unique
+    foreach ($pid in $pids) {
+        # Kill the direct owner and any beam.smp children
+        Get-Process -Id $pid -ErrorAction SilentlyContinue | ForEach-Object {
+            $_.Kill($true)  # $true = kill entire process tree
+        }
+    }
+    # Also kill any orphaned beam.smp processes
+    Get-Process -Name "beam.smp" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 3
 }
 
 # Start Elixir backend in new window
@@ -88,4 +96,7 @@ Write-Host "Backend ready! Launching TUI..." -ForegroundColor Green
 & $TUI
 
 Write-Host "Shutting down backend..." -ForegroundColor Yellow
-Stop-Process -Id $backend.Id -Force -ErrorAction SilentlyContinue
+# Kill the PowerShell wrapper and its entire process tree (beam.smp is a grandchild)
+$backendProc = Get-Process -Id $backend.Id -ErrorAction SilentlyContinue
+if ($backendProc) { $backendProc.Kill($true) }
+Get-Process -Name "beam.smp" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
