@@ -65,16 +65,6 @@ impl App {
             crate::app::state::AppState::Connecting => {
                 crate::view::connecting::draw_connecting(frame, area);
             }
-            crate::app::state::AppState::Banner => {
-                // Show full banner + input
-                let banner_height = area.height.saturating_sub(3);
-                let banner_area = Rect::new(area.x, area.y, area.width, banner_height);
-                self.header.draw_full(frame, banner_area);
-
-                let input_area =
-                    Rect::new(area.x, area.y + banner_height, area.width, 3);
-                self.input.draw(frame, input_area);
-            }
             _ => {
                 // Normal layout
                 let areas = crate::view::main_layout::LayoutAreas::compute(

@@ -1,3 +1,6 @@
+// Phase 3: Focus dispatch — wire when completions popup is integrated
+#![allow(dead_code)]
+
 /// Focus layers ordered by priority (highest first)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum FocusLayer {

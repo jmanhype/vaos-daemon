@@ -13,6 +13,8 @@ pub struct Cli {
     pub setup: bool,
     pub no_color: bool,
     pub version: bool,
+    /// Skip all tool permission prompts — auto-approve everything
+    pub dangerously_skip_permissions: bool,
 }
 
 impl Cli {
@@ -23,6 +25,7 @@ impl Cli {
             setup: false,
             no_color: false,
             version: false,
+            dangerously_skip_permissions: false,
         };
 
         let args: Vec<String> = std::env::args().skip(1).collect();
@@ -39,6 +42,9 @@ impl Cli {
                 "--setup" => cli.setup = true,
                 "--no-color" => cli.no_color = true,
                 "--version" | "-V" => cli.version = true,
+                "--dangerously-skip-permissions" | "--yolo" => {
+                    cli.dangerously_skip_permissions = true;
+                }
                 _ => {}
             }
             i += 1;

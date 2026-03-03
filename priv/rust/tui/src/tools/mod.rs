@@ -27,7 +27,6 @@ pub enum ToolStatus {
 
 // ─── RenderOpts ───────────────────────────────────────────────────────────────
 
-#[allow(dead_code)]
 pub struct RenderOpts {
     pub status: ToolStatus,
     pub width: u16,
@@ -46,7 +45,6 @@ pub trait ToolRenderer {
 
 // ─── Registry ─────────────────────────────────────────────────────────────────
 
-#[allow(dead_code)]
 pub fn render_tool(name: &str, args: &str, result: &str, opts: &RenderOpts) -> Vec<Line<'static>> {
     let lower = name.to_lowercase();
 
@@ -131,7 +129,6 @@ pub fn render_tool(name: &str, args: &str, result: &str, opts: &RenderOpts) -> V
 // ─── Shared Helpers ───────────────────────────────────────────────────────────
 
 /// Returns `(icon_string, icon_style)` for a given status.
-#[allow(dead_code)]
 pub(crate) fn status_icon(status: ToolStatus, spinner: Option<char>) -> (String, Style) {
     let theme = crate::style::theme();
     match status {
@@ -176,7 +173,6 @@ pub(crate) fn status_icon(status: ToolStatus, spinner: Option<char>) -> (String,
 }
 
 /// Human-readable duration: "55ms", "1.2s", "2m 3s".
-#[allow(dead_code)]
 pub(crate) fn format_duration(ms: u64) -> String {
     if ms == 0 {
         return String::new();
@@ -194,7 +190,6 @@ pub(crate) fn format_duration(ms: u64) -> String {
 }
 
 /// Truncate `lines` to `max`, appending a dim "... (N more lines)" hint.
-#[allow(dead_code)]
 pub(crate) fn truncate_lines(mut lines: Vec<Line<'static>>, max: usize) -> Vec<Line<'static>> {
     if lines.len() <= max {
         return lines;
@@ -211,7 +206,6 @@ pub(crate) fn truncate_lines(mut lines: Vec<Line<'static>>, max: usize) -> Vec<L
 
 /// Wrap each body line with a `│ ` left-border prefix.
 /// Returns `[header_line, │ body_line, …]`.
-#[allow(dead_code)]
 pub(crate) fn render_tool_box(
     header: Line<'static>,
     body: Vec<Line<'static>>,
@@ -234,7 +228,6 @@ pub(crate) fn render_tool_box(
 
 /// Extract the first matching key value from a JSON string (args).
 /// Handles string and number values.
-#[allow(dead_code)]
 pub(crate) fn parse_json_arg(args: &str, keys: &[&str]) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(args).ok()?;
     for key in keys {
@@ -252,7 +245,6 @@ pub(crate) fn parse_json_arg(args: &str, keys: &[&str]) -> Option<String> {
 
 /// Build a standard single-line collapsed header:
 ///   `<icon> <tool_name>  <detail>  <duration>`
-#[allow(dead_code)]
 pub(crate) fn make_header(
     status: ToolStatus,
     spinner: Option<char>,

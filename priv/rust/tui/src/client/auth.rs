@@ -6,6 +6,8 @@ use tracing::debug;
 ///
 /// Callers must pattern-match or call `require_token()` before using
 /// authenticated endpoints, making "forgot to login" a compile-time concept.
+// Auth utility methods kept for API completeness
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum AuthState {
     Unauthenticated,

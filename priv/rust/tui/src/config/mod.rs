@@ -23,6 +23,9 @@ pub struct Config {
     pub profile_dir: PathBuf,
     #[serde(skip)]
     pub base_url: String,
+    /// When true, auto-approve all tool permissions (--dangerously-skip-permissions / --yolo)
+    #[serde(skip)]
+    pub skip_permissions: bool,
 }
 
 fn default_theme() -> String {
@@ -36,6 +39,7 @@ impl Default for Config {
             sidebar_enabled: true,
             profile_dir: default_profile_dir(),
             base_url: default_base_url(),
+            skip_permissions: false,
         }
     }
 }
@@ -65,6 +69,7 @@ impl Config {
         };
 
         config.profile_dir = profile_dir;
+        config.skip_permissions = cli.dangerously_skip_permissions;
 
         // CLI overrides
         if cli.dev {

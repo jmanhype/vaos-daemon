@@ -1,5 +1,3 @@
-use tracing::debug;
-
 use super::App;
 use crate::app::state::AppState;
 use crate::event::backend::BackendEvent;
@@ -87,7 +85,14 @@ impl App {
                 } else if arg.contains('/') {
                     // provider/model format
                     let parts: Vec<&str> = arg.splitn(2, '/').collect();
-                    self.switch_model(parts[0], parts[1]);
+                    if parts.len() >= 2 && !parts[1].is_empty() {
+                        self.switch_model(parts[0], parts[1]);
+                    } else {
+                        self.chat.add_system_message(
+                            "Usage: /model provider/model_name",
+                            "warning",
+                        );
+                    }
                 } else if let Some((first, rest)) = arg.split_once(' ') {
                     if KNOWN_PROVIDERS.contains(&first) {
                         // "/model ollama qwen3:8b" → provider=ollama, model=qwen3:8b
@@ -144,10 +149,7 @@ impl App {
                 }
             }
             "/setup" => {
-                self.toasts.push(
-                    "Setup wizard coming in Phase 4".into(),
-                    crate::components::toast::ToastLevel::Info,
-                );
+                self.check_onboarding();
             }
             "/verbose" => {
                 self.activity.verbosity = self.activity.verbosity.cycle();
@@ -155,6 +157,21 @@ impl App {
                     format!("Tool verbosity: {}", self.activity.verbosity.label()),
                     crate::components::toast::ToastLevel::Info,
                 );
+            }
+            "/yolo" | "/dangerous" => {
+                self.config.skip_permissions = !self.config.skip_permissions;
+                let state = if self.config.skip_permissions {
+                    "ON — auto-approving all tools"
+                } else {
+                    "OFF — permission prompts enabled"
+                };
+                self.sidebar.set_yolo_mode(self.config.skip_permissions);
+                self.toasts.push(
+                    format!("YOLO mode: {}", state),
+                    crate::components::toast::ToastLevel::Warning,
+                );
+                // Notify backend to toggle dangerous mode
+                self.execute_backend_command("dangerous_mode", if self.config.skip_permissions { "on" } else { "off" });
             }
             "/tools" => {
                 let count = self.header.tool_count();

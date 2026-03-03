@@ -9,6 +9,7 @@ use ratatui::widgets::Paragraph;
 use crate::event::Event;
 use crate::style;
 
+use self::completions::{CompletionAction, CompletionItem, Completions};
 use super::{AppAction, Component, ComponentAction};
 
 pub struct InputComponent {
@@ -29,6 +30,20 @@ pub struct InputComponent {
     /// Tab completion state
     tab_matches: Vec<String>,
     tab_index: usize,
+    /// Processing indicator (Step 4)
+    processing: bool,
+    /// Stash slot for Ctrl+S/Ctrl+R (Step 10)
+    stash: Option<String>,
+    /// File search active (Step 9: @ file refs)
+    file_search_active: bool,
+    /// File search matches
+    file_matches: Vec<String>,
+    /// File search cursor
+    file_match_index: usize,
+    /// File search prefix position (byte offset of '@')
+    file_search_start: usize,
+    /// Completions popup for slash commands
+    completions: Completions,
 }
 
 impl InputComponent {
@@ -43,6 +58,13 @@ impl InputComponent {
             commands: Vec::new(),
             tab_matches: Vec::new(),
             tab_index: 0,
+            processing: false,
+            stash: None,
+            file_search_active: false,
+            file_matches: Vec::new(),
+            file_match_index: 0,
+            file_search_start: 0,
+            completions: Completions::new(),
         }
     }
 
@@ -59,7 +81,22 @@ impl InputComponent {
     }
 
     pub fn set_commands(&mut self, commands: Vec<String>) {
+        // Populate completions popup items
+        let items: Vec<CompletionItem> = commands
+            .iter()
+            .map(|cmd| CompletionItem {
+                name: format!("/{}", cmd),
+                description: String::new(),
+                category: None,
+            })
+            .collect();
+        self.completions.set_items(items);
         self.commands = commands;
+    }
+
+    /// Set processing indicator state (Step 4)
+    pub fn set_processing(&mut self, active: bool) {
+        self.processing = active;
     }
 
     pub fn submit(&mut self) -> String {
@@ -71,6 +108,9 @@ impl InputComponent {
         self.cursor = 0;
         self.multiline = false;
         self.tab_matches.clear();
+        self.file_search_active = false;
+        self.file_matches.clear();
+        self.completions.hide();
         text
     }
 
@@ -79,6 +119,9 @@ impl InputComponent {
         self.cursor = 0;
         self.multiline = false;
         self.tab_matches.clear();
+        self.file_search_active = false;
+        self.file_matches.clear();
+        self.completions.hide();
     }
 
     pub fn set_content(&mut self, text: &str) {
@@ -86,16 +129,52 @@ impl InputComponent {
         self.cursor = self.content.len();
     }
 
+    /// Set cursor to approximate column position (for mouse click).
+    pub fn set_cursor_col(&mut self, col: u16) {
+        let target = col as usize;
+        let mut byte_pos = 0;
+        let mut char_col = 0;
+        for ch in self.content.chars() {
+            if char_col >= target {
+                break;
+            }
+            byte_pos += ch.len_utf8();
+            char_col += 1;
+        }
+        self.cursor = byte_pos.min(self.content.len());
+    }
+
     fn insert_char(&mut self, ch: char) {
         self.content.insert(self.cursor, ch);
         self.cursor += ch.len_utf8();
         self.tab_matches.clear();
+
+        // Slash command completions popup
+        if self.content.starts_with('/') && !self.file_search_active {
+            let filter = &self.content[1..self.cursor]; // text after '/'
+            self.completions.show(filter);
+        } else {
+            self.completions.hide();
+        }
+
+        // Step 9: Detect '@' to trigger file search
+        if ch == '@' {
+            self.file_search_active = true;
+            self.file_search_start = self.cursor - 1; // byte position of '@'
+            self.file_matches.clear();
+            self.file_match_index = 0;
+            self.rebuild_file_matches();
+        } else if self.file_search_active {
+            self.rebuild_file_matches();
+        }
     }
 
     pub fn insert_str(&mut self, s: &str) {
         self.content.insert_str(self.cursor, s);
         self.cursor += s.len();
         self.tab_matches.clear();
+        self.file_search_active = false;
+        self.file_matches.clear();
     }
 
     fn delete_char(&mut self) {
@@ -108,6 +187,22 @@ impl InputComponent {
             self.content.drain(self.cursor - prev..self.cursor);
             self.cursor -= prev;
             self.tab_matches.clear();
+
+            // Update completions popup filter
+            if self.content.starts_with('/') && !self.file_search_active {
+                let filter = &self.content[1..self.cursor];
+                self.completions.update_filter(filter);
+            } else {
+                self.completions.hide();
+            }
+
+            // If we deleted back past the '@', cancel file search
+            if self.file_search_active && self.cursor <= self.file_search_start {
+                self.file_search_active = false;
+                self.file_matches.clear();
+            } else if self.file_search_active {
+                self.rebuild_file_matches();
+            }
         }
     }
 
@@ -133,13 +228,26 @@ impl InputComponent {
         }
     }
 
-    fn handle_tab(&mut self) {
+    fn handle_tab(&mut self) -> bool {
+        // Step 9: If file search is active, cycle through file matches
+        if self.file_search_active && !self.file_matches.is_empty() {
+            let selected = self.file_matches[self.file_match_index].clone();
+            // Replace from '@' to cursor with '@selected_path'
+            let end = self.cursor;
+            self.content.drain(self.file_search_start..end);
+            let insertion = format!("@{}", selected);
+            self.content.insert_str(self.file_search_start, &insertion);
+            self.cursor = self.file_search_start + insertion.len();
+            self.file_match_index = (self.file_match_index + 1) % self.file_matches.len();
+            return true;
+        }
+
+        // Regular command tab completion
         if !self.content.starts_with('/') {
-            return;
+            return false;
         }
 
         if self.tab_matches.is_empty() {
-            // Build matches
             let prefix = &self.content[1..]; // skip the /
             self.tab_matches = self
                 .commands
@@ -156,6 +264,105 @@ impl InputComponent {
             self.content = match_.clone();
             self.cursor = self.content.len();
         }
+        true
+    }
+
+    /// Step 10: Stash current input
+    pub fn stash(&mut self) -> bool {
+        if self.content.is_empty() {
+            return false;
+        }
+        self.stash = Some(self.content.clone());
+        self.content.clear();
+        self.cursor = 0;
+        self.multiline = false;
+        true
+    }
+
+    /// Step 10: Restore from stash
+    pub fn restore_stash(&mut self) -> bool {
+        if let Some(stashed) = self.stash.take() {
+            self.content = stashed;
+            self.cursor = self.content.len();
+            self.multiline = self.content.contains('\n');
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Step 9: Rebuild file matches from cwd
+    fn rebuild_file_matches(&mut self) {
+        // Extract the search query after '@'
+        let query_start = self.file_search_start + 1; // skip '@'
+        if query_start > self.content.len() {
+            self.file_matches.clear();
+            return;
+        }
+        let query = &self.content[query_start..self.cursor];
+        if query.is_empty() {
+            self.file_matches.clear();
+            return;
+        }
+
+        let query_lower = query.to_lowercase();
+        let mut matches = Vec::new();
+
+        // Walk cwd (bounded to 3 levels deep, max 50 results)
+        if let Ok(cwd) = std::env::current_dir() {
+            Self::walk_dir(&cwd, &cwd, &query_lower, 3, &mut matches);
+        }
+
+        matches.sort();
+        matches.truncate(10); // Show at most 10 completions
+        self.file_matches = matches;
+        self.file_match_index = 0;
+    }
+
+    fn walk_dir(
+        base: &std::path::Path,
+        dir: &std::path::Path,
+        query: &str,
+        depth: usize,
+        results: &mut Vec<String>,
+    ) {
+        if depth == 0 || results.len() >= 50 {
+            return;
+        }
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+        for entry in entries.flatten() {
+            if results.len() >= 50 {
+                break;
+            }
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+
+            // Skip hidden dirs/files
+            if name.starts_with('.') {
+                continue;
+            }
+            // Skip common noise dirs
+            if name == "node_modules" || name == "target" || name == "_build" || name == "deps" {
+                continue;
+            }
+
+            let rel = path
+                .strip_prefix(base)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .to_string();
+
+            if name.to_lowercase().contains(query) || rel.to_lowercase().contains(query) {
+                results.push(rel.clone());
+            }
+
+            if path.is_dir() {
+                Self::walk_dir(base, &path, query, depth - 1, results);
+            }
+        }
     }
 }
 
@@ -167,14 +374,56 @@ impl Component for InputComponent {
 
         match event {
             Event::Terminal(CrosstermEvent::Key(key)) => {
+                // Route to completions popup first when visible
+                if self.completions.is_visible() {
+                    if let Some(action) = self.completions.handle_key(*key) {
+                        match action {
+                            CompletionAction::Select(name) => {
+                                // Replace input with selected command
+                                self.content = format!("{} ", name);
+                                self.cursor = self.content.len();
+                                self.tab_matches.clear();
+                                return ComponentAction::Consumed;
+                            }
+                            CompletionAction::Dismiss => {
+                                return ComponentAction::Consumed;
+                            }
+                        }
+                    }
+                    // Up/Down consumed by completions but returned None — still consumed
+                    match key.code {
+                        KeyCode::Up | KeyCode::Down => return ComponentAction::Consumed,
+                        _ => {}
+                    }
+                }
+
                 match (key.code, key.modifiers) {
                     // Submit (single-line mode)
                     (KeyCode::Enter, KeyModifiers::NONE) if !self.multiline => {
+                        // If file search dropdown is active and we have matches, select current match
+                        if self.file_search_active && !self.file_matches.is_empty() {
+                            let selected = self.file_matches[self.file_match_index].clone();
+                            let end = self.cursor;
+                            self.content.drain(self.file_search_start..end);
+                            let insertion = format!("@{} ", selected);
+                            self.content.insert_str(self.file_search_start, &insertion);
+                            self.cursor = self.file_search_start + insertion.len();
+                            self.file_search_active = false;
+                            self.file_matches.clear();
+                            return ComponentAction::Consumed;
+                        }
+
                         if self.content.trim().is_empty() {
                             return ComponentAction::Consumed;
                         }
                         let text = self.submit();
                         return ComponentAction::Emit(AppAction::Submit(text));
+                    }
+                    // Escape cancels file search if active
+                    (KeyCode::Esc, KeyModifiers::NONE) if self.file_search_active => {
+                        self.file_search_active = false;
+                        self.file_matches.clear();
+                        return ComponentAction::Consumed;
                     }
                     // Alt+Enter: insert newline (enters multiline mode)
                     (KeyCode::Enter, m) if m == KeyModifiers::ALT => {
@@ -195,7 +444,19 @@ impl Component for InputComponent {
                         }
                         return ComponentAction::Consumed;
                     }
-                    // Arrow keys
+                    // Arrow keys — up/down navigate file matches when file search active
+                    (KeyCode::Up, KeyModifiers::NONE) if self.file_search_active && !self.file_matches.is_empty() => {
+                        if self.file_match_index > 0 {
+                            self.file_match_index -= 1;
+                        } else {
+                            self.file_match_index = self.file_matches.len() - 1;
+                        }
+                        return ComponentAction::Consumed;
+                    }
+                    (KeyCode::Down, KeyModifiers::NONE) if self.file_search_active && !self.file_matches.is_empty() => {
+                        self.file_match_index = (self.file_match_index + 1) % self.file_matches.len();
+                        return ComponentAction::Consumed;
+                    }
                     (KeyCode::Left, KeyModifiers::NONE) => {
                         self.move_left();
                         return ComponentAction::Consumed;
@@ -213,7 +474,7 @@ impl Component for InputComponent {
                         self.cursor = self.content.len();
                         return ComponentAction::Consumed;
                     }
-                    // History up/down (only in single-line mode)
+                    // History up/down (only in single-line mode, not during file search)
                     (KeyCode::Up, KeyModifiers::NONE) if !self.multiline => {
                         if let Some(text) = self.history.prev() {
                             self.content = text.to_string();
@@ -251,6 +512,21 @@ impl Component for InputComponent {
                         self.cursor = self.content.len();
                         return ComponentAction::Consumed;
                     }
+                    // Step 10: Ctrl+S: stash
+                    (KeyCode::Char('s'), KeyModifiers::CONTROL) => {
+                        if self.stash() {
+                            return ComponentAction::Emit(AppAction::Toast("Input stashed".into()));
+                        }
+                        return ComponentAction::Consumed;
+                    }
+                    // Step 10: Ctrl+R: restore stash
+                    (KeyCode::Char('r'), KeyModifiers::CONTROL) => {
+                        if self.restore_stash() {
+                            return ComponentAction::Emit(AppAction::Toast("Input restored".into()));
+                        } else {
+                            return ComponentAction::Emit(AppAction::Toast("Nothing stashed".into()));
+                        }
+                    }
                     // Regular character input
                     (KeyCode::Char(ch), m)
                         if m == KeyModifiers::NONE || m == KeyModifiers::SHIFT =>
@@ -281,8 +557,18 @@ impl Component for InputComponent {
 
         // Input line
         let input_area = Rect::new(area.x, area.y + 1, area.width, area.height - 1);
-        let prompt = if self.focused { "\u{276f} " } else { "  " };
-        let prompt_style = if self.focused {
+
+        // Step 4: Processing-aware prompt
+        let (prompt, prompt_len) = if self.processing {
+            ("\u{25c8} \u{276f} ", 4) // "◈ ❯ " — 4 display chars
+        } else if self.focused {
+            ("\u{276f} ", 2) // "❯ " — 2 display chars
+        } else {
+            ("  ", 2)
+        };
+        let prompt_style = if self.processing {
+            Style::default().fg(theme.colors.secondary)
+        } else if self.focused {
             theme.prompt_char()
         } else {
             theme.faint()
@@ -321,9 +607,56 @@ impl Component for InputComponent {
             }
         }
 
+        // Slash command completions popup (draws above input)
+        self.completions.draw(frame, area);
+
+        // Step 9: File search dropdown
+        if self.file_search_active && !self.file_matches.is_empty() && area.height > 3 {
+            // Draw dropdown above the input (going upward from separator)
+            let max_visible = self.file_matches.len().min(5) as u16;
+            let dropdown_y = area.y.saturating_sub(max_visible);
+            for (i, path) in self.file_matches.iter().take(max_visible as usize).enumerate() {
+                let row_y = dropdown_y + i as u16;
+                if row_y >= area.y {
+                    break;
+                }
+                let is_selected = i == self.file_match_index;
+                let style = if is_selected {
+                    Style::default()
+                        .fg(theme.colors.primary)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(theme.colors.muted)
+                };
+                let prefix = if is_selected { "\u{25b8} " } else { "  " };
+                let display = format!("{}{}", prefix, path);
+                let line = Line::from(Span::styled(display, style));
+                let row_area = Rect::new(area.x + 2, row_y, area.width.saturating_sub(4), 1);
+                frame.render_widget(Paragraph::new(line), row_area);
+            }
+        }
+
+        // Stash indicator
+        if self.stash.is_some() && self.content.is_empty() {
+            let hint = "[Ctrl+R to restore stash]";
+            let hint_width = hint.len() as u16;
+            if input_area.width > hint_width + 10 {
+                let hint_area = Rect::new(
+                    input_area.x + input_area.width - hint_width,
+                    input_area.y,
+                    hint_width,
+                    1,
+                );
+                frame.render_widget(
+                    Paragraph::new(Span::styled(hint, theme.hint())),
+                    hint_area,
+                );
+            }
+        }
+
         // Show cursor
         if self.focused {
-            let cursor_x = area.x + 2 + self.cursor as u16; // 2 for prompt
+            let cursor_x = area.x + prompt_len as u16 + self.cursor as u16;
             let cursor_y = area.y + 1;
             if cursor_x < area.x + area.width {
                 frame.set_cursor_position(Position::new(cursor_x, cursor_y));

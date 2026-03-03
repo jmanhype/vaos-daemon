@@ -1,8 +1,9 @@
-/// App states — 12-state machine with validated transitions
+/// App states — 10-state machine with validated transitions
+// PlanReview + Permissions have handlers but no SSE trigger events yet
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppState {
     Connecting,
-    Banner,
     Idle,
     Processing,
     PlanReview,
@@ -11,7 +12,6 @@ pub enum AppState {
     Permissions,
     Quit,
     Sessions,
-    Models,
     Onboarding,
 }
 
@@ -21,12 +21,10 @@ impl AppState {
         use AppState::*;
         matches!(
             (self, target),
-            // Connecting can go to Banner or stay Connecting (retry)
-            (Connecting, Banner)
+            // Connecting goes directly to Idle or Onboarding
+            (Connecting, Idle)
                 | (Connecting, Connecting)
-                // Banner goes to Idle or Onboarding
-                | (Banner, Idle)
-                | (Banner, Onboarding)
+                | (Connecting, Onboarding)
                 // Idle can go to many states
                 | (Idle, Processing)
                 | (Idle, ModelPicker)
@@ -34,7 +32,6 @@ impl AppState {
                 | (Idle, Permissions)
                 | (Idle, Quit)
                 | (Idle, Sessions)
-                | (Idle, Models)
                 | (Idle, Onboarding)
                 // Processing transitions
                 | (Processing, Idle)
@@ -51,7 +48,6 @@ impl AppState {
                 | (Permissions, Idle)
                 | (Quit, Idle)
                 | (Sessions, Idle)
-                | (Models, Idle)
                 | (Onboarding, Idle)
                 // Emergency: any state can go to Connecting (reconnect)
                 | (_, Connecting)
@@ -66,14 +62,13 @@ impl AppState {
                 | AppState::PlanReview
                 | AppState::Quit
                 | AppState::Sessions
-                | AppState::Models
                 | AppState::Onboarding
                 | AppState::ModelPicker
         )
     }
 
     pub fn allows_input(&self) -> bool {
-        matches!(self, AppState::Idle)
+        matches!(self, AppState::Idle | AppState::Processing)
     }
 
     pub fn is_processing(&self) -> bool {
@@ -85,7 +80,6 @@ impl std::fmt::Display for AppState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             AppState::Connecting => write!(f, "Connecting"),
-            AppState::Banner => write!(f, "Banner"),
             AppState::Idle => write!(f, "Idle"),
             AppState::Processing => write!(f, "Processing"),
             AppState::PlanReview => write!(f, "Plan Review"),
@@ -94,7 +88,6 @@ impl std::fmt::Display for AppState {
             AppState::Permissions => write!(f, "Permissions"),
             AppState::Quit => write!(f, "Quit"),
             AppState::Sessions => write!(f, "Sessions"),
-            AppState::Models => write!(f, "Models"),
             AppState::Onboarding => write!(f, "Onboarding"),
         }
     }

@@ -25,14 +25,11 @@ pub fn render_diff(old_text: &str, new_text: &str, _width: u16) -> Vec<Line<'sta
     for group in diff.grouped_ops(3) {
         // Compute hunk header coordinates from the op group.
         let first = group.first().unwrap();
-        let last = group.last().unwrap();
 
         let old_start = first.old_range().start + 1; // 1-indexed
         let old_count: usize = group.iter().map(|op| op.old_range().len()).sum();
         let new_start = first.new_range().start + 1;
         let new_count: usize = group.iter().map(|op| op.new_range().len()).sum();
-
-        let _ = last; // suppress unused-variable warning
 
         let hunk_header = format!(
             "@@ -{},{} +{},{} @@",

@@ -10,7 +10,7 @@ use crate::event::Event;
 use crate::style;
 
 use super::{Component, ComponentAction};
-use message::{Message, MessageType};
+use message::{Message, MessageType, ToolCallData};
 
 /// Chat viewport managing a scrollable list of messages
 pub struct Chat {
@@ -83,7 +83,15 @@ impl Chat {
         self.scroll_to_bottom();
     }
 
-    /// Add an inline tool-call summary to the chat (compact one-liner).
+    /// Add a styled help message (no content needed — rendering is hardcoded).
+    pub fn add_help_message(&mut self) {
+        self.messages
+            .push(Message::new(MessageType::Help, String::new(), None));
+        self.has_messages = true;
+        self.scroll_to_bottom();
+    }
+
+    /// Add an inline tool-call summary to the chat (compact one-liner, legacy).
     pub fn add_tool_message(&mut self, content: &str) {
         self.messages
             .push(Message::new(MessageType::ToolCall, content.to_string(), None));
@@ -91,8 +99,55 @@ impl Chat {
         self.scroll_to_bottom();
     }
 
+    /// Add a rich tool-call message with pre-rendered styled Lines.
+    pub fn add_tool_message_rich(&mut self, data: ToolCallData) {
+        self.messages.push(Message::new_tool_call(data));
+        self.has_messages = true;
+        self.scroll_to_bottom();
+    }
+
+    /// Attach result data to the last matching tool call (for expand toggle).
+    pub fn update_last_tool_result(&mut self, tool_name: &str, result: &str) {
+        for msg in self.messages.iter_mut().rev() {
+            if let Some(ref mut td) = msg.tool_data {
+                if td.name == tool_name && td.result.is_empty() {
+                    td.result = result.to_string();
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Toggle expand/collapse on the most recent tool call message (Ctrl+O).
+    pub fn toggle_last_tool_expand(&mut self, width: u16) {
+        for msg in self.messages.iter_mut().rev() {
+            if let Some(ref mut td) = msg.tool_data {
+                // Re-render with expanded=true if currently collapsed (1 line), or collapsed if expanded
+                let is_expanded = td.lines.len() > 1;
+                let status = if td.success {
+                    crate::tools::ToolStatus::Success
+                } else {
+                    crate::tools::ToolStatus::Error
+                };
+                let opts = crate::tools::RenderOpts {
+                    status,
+                    width,
+                    expanded: !is_expanded,
+                    compact: is_expanded, // when collapsing, use compact
+                    spinner_frame: None,
+                    duration_ms: td.duration_ms,
+                    truncated: false,
+                };
+                td.lines = crate::tools::render_tool(&td.name, &td.args, &td.result, &opts);
+                msg.invalidate_cache();
+                break;
+            }
+        }
+    }
+
     pub fn update_streaming(&mut self, content: &str) {
         self.streaming_content = Some(content.to_string());
+        self.has_messages = true; // ensure welcome screen is dismissed
         self.scroll_to_bottom();
     }
 

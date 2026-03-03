@@ -1,3 +1,6 @@
+// Phase 3: Centralized keymap — wire when splitting update.rs key handlers
+#![allow(dead_code)]
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// Key binding definition

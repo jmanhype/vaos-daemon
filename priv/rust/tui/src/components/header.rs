@@ -1,5 +1,5 @@
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::Paragraph;
 
 use crate::event::Event;
 use crate::style;
@@ -91,42 +91,6 @@ impl Header {
         }
     }
 
-    /// Full banner view for startup (with logo in bordered box)
-    pub fn draw_full(&self, frame: &mut Frame, area: Rect) {
-        let theme = style::theme();
-
-        let mut lines = vec![
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("◈ ", theme.banner_title()),
-                Span::styled("OSA Agent  ", theme.banner_title()),
-                Span::styled(format!("v{}", self.version), theme.header_version()),
-            ]),
-            Line::from(Span::styled("Your OS, Supercharged", theme.banner_detail())),
-        ];
-
-        if !self.workspace.is_empty() {
-            // Truncate long paths
-            let cwd = if self.workspace.len() > 60 {
-                format!("...{}", &self.workspace[self.workspace.len() - 57..])
-            } else {
-                self.workspace.clone()
-            };
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(cwd, theme.welcome_cwd())));
-        }
-
-        let text = Text::from(lines);
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(ratatui::widgets::BorderType::Rounded)
-            .border_style(Style::default().fg(theme.colors.primary));
-
-        let paragraph = Paragraph::new(text)
-            .block(block)
-            .alignment(Alignment::Center);
-        frame.render_widget(paragraph, area);
-    }
 }
 
 impl Component for Header {

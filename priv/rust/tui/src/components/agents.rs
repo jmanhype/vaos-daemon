@@ -8,17 +8,16 @@ use super::{Component, ComponentAction};
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[allow(dead_code)]
 pub enum AgentStatus {
     Running,
     Completed,
     Failed,
 }
 
-#[allow(dead_code)]
 struct AgentEntry {
     name: String,
     role: String,
+    #[allow(dead_code)]
     model: String,
     status: AgentStatus,
     current_action: String,
@@ -26,13 +25,11 @@ struct AgentEntry {
     tokens_used: u32,
 }
 
-#[allow(dead_code)]
 struct WaveInfo {
     current: u32,
     total: u32,
 }
 
-#[allow(dead_code)]
 struct SwarmInfo {
     id: String,
     pattern: String,
@@ -68,6 +65,7 @@ impl Agents {
         }
     }
 
+    #[allow(dead_code)]
     pub fn is_active(&self) -> bool {
         self.active
     }
@@ -85,7 +83,6 @@ impl Agents {
 
     // ─── Public mutation API ───────────────────────────────────────────────────
 
-    #[allow(dead_code)]
     pub fn task_started(&mut self, task_id: impl Into<String>) {
         self.active = true;
         self.task_id = Some(task_id.into());
@@ -94,7 +91,6 @@ impl Agents {
         self.swarm = None;
     }
 
-    #[allow(dead_code)]
     pub fn agent_started(&mut self, name: impl Into<String>, role: impl Into<String>, model: impl Into<String>) {
         let name = name.into();
         // Avoid duplicates — treat a restart as a reset
@@ -117,7 +113,6 @@ impl Agents {
         self.active = true;
     }
 
-    #[allow(dead_code)]
     pub fn agent_progress(&mut self, name: &str, action: impl Into<String>, tool_uses: u32, tokens: u32) {
         if let Some(entry) = self.agents.iter_mut().find(|e| e.name == name) {
             entry.current_action = action.into();
@@ -126,7 +121,6 @@ impl Agents {
         }
     }
 
-    #[allow(dead_code)]
     pub fn agent_completed(&mut self, name: &str, tool_uses: u32, tokens: u32) {
         if let Some(entry) = self.agents.iter_mut().find(|e| e.name == name) {
             entry.status = AgentStatus::Completed;
@@ -136,7 +130,6 @@ impl Agents {
         }
     }
 
-    #[allow(dead_code)]
     pub fn agent_failed(&mut self, name: &str, error: impl Into<String>, tool_uses: u32, tokens: u32) {
         if let Some(entry) = self.agents.iter_mut().find(|e| e.name == name) {
             entry.status = AgentStatus::Failed;
@@ -146,18 +139,15 @@ impl Agents {
         }
     }
 
-    #[allow(dead_code)]
     pub fn wave_started(&mut self, current: u32, total: u32) {
         self.wave = Some(WaveInfo { current, total });
     }
 
-    #[allow(dead_code)]
     pub fn task_completed(&mut self) {
         // Caller may want to hide after a tick delay; here we just mark inactive immediately.
         self.active = false;
     }
 
-    #[allow(dead_code)]
     pub fn swarm_started(&mut self, id: impl Into<String>, pattern: impl Into<String>, count: u32) {
         self.swarm = Some(SwarmInfo {
             id: id.into(),
@@ -168,7 +158,6 @@ impl Agents {
         self.active = true;
     }
 
-    #[allow(dead_code)]
     pub fn swarm_completed(&mut self, id: &str) {
         if let Some(ref mut s) = self.swarm {
             if s.id == id {
@@ -177,7 +166,6 @@ impl Agents {
         }
     }
 
-    #[allow(dead_code)]
     pub fn swarm_failed(&mut self, id: &str, _reason: &str) {
         if let Some(ref mut s) = self.swarm {
             if s.id == id {

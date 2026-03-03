@@ -24,22 +24,28 @@ pub struct SseClient {
 }
 
 impl SseClient {
-    pub fn new(
+    /// Construct with a pre-existing cancellation token. Use this when the
+    /// caller needs to hold a cancel handle before the client is started
+    /// (e.g. when the auth token is fetched asynchronously after the cancel
+    /// token is stored in app state).
+    pub fn with_cancel(
         session_id: String,
         base_url: String,
         token: String,
         event_tx: mpsc::UnboundedSender<Event>,
+        cancel: CancellationToken,
     ) -> Self {
         Self {
             session_id,
             base_url,
             token,
             event_tx,
-            cancel: CancellationToken::new(),
+            cancel,
         }
     }
 
     /// Returns a cancellation token that can be used to stop the SSE stream.
+    #[allow(dead_code)]
     pub fn cancel_token(&self) -> CancellationToken {
         self.cancel.clone()
     }
@@ -125,8 +131,12 @@ impl SseClient {
             self.base_url, self.session_id
         );
 
+        // No total-request timeout for SSE long-polling — the stream is
+        // intentionally long-lived. Duration::from_secs(0) is NOT "no
+        // timeout": reqwest wraps it in a tokio::time::sleep(Duration::ZERO)
+        // which fires on the first poll, immediately killing the body stream.
+        // Omitting .timeout() leaves reqwest at its default (no timeout).
         let http = HttpClient::builder()
-            .timeout(Duration::from_secs(0)) // no timeout for SSE long-polling
             .build()
             .map_err(|e| SseError::Disconnected(e.into()))?;
 

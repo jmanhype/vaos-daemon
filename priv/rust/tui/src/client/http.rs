@@ -1,3 +1,6 @@
+// Backend API client — methods exist for the full API surface, wired as features mature
+#![allow(dead_code)]
+
 use anyhow::Result;
 use reqwest::Client as HttpClient;
 use std::path::PathBuf;
@@ -355,6 +358,21 @@ impl ApiClient {
         Ok(machines)
     }
 
+    // -- Session mutations --
+
+    /// PUT /api/v1/sessions/:id
+    pub async fn rename_session(&self, id: &str, title: &str) -> Result<()> {
+        let body = serde_json::json!({ "title": title });
+        let _ = self.put(&format!("/api/v1/sessions/{}", id), &body).await?;
+        Ok(())
+    }
+
+    /// DELETE /api/v1/sessions/:id
+    pub async fn delete_session(&self, id: &str) -> Result<()> {
+        let _ = self.delete(&format!("/api/v1/sessions/{}", id)).await?;
+        Ok(())
+    }
+
     // -- Onboarding --
 
     /// GET /onboarding/status
@@ -424,8 +442,27 @@ impl ApiClient {
         Ok(resp)
     }
 
+    /// PUT JSON with auth header.
+    async fn put<T: serde::Serialize>(
+        &self,
+        path: &str,
+        body: &T,
+    ) -> Result<reqwest::Response> {
+        let url = format!("{}{}", self.base_url, path);
+        let mut req = self.http.put(&url).json(body);
+        if let Ok(token) = self.auth.read().await.require_token() {
+            req = req.header("Authorization", format!("Bearer {}", token));
+        }
+        let resp = req.send().await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("HTTP {} from {}: {}", status, path, body);
+        }
+        Ok(resp)
+    }
+
     /// DELETE with auth header.
-    #[allow(dead_code)]
     async fn delete(&self, path: &str) -> Result<reqwest::Response> {
         let url = format!("{}{}", self.base_url, path);
         let mut req = self.http.delete(&url);

@@ -1,3 +1,7 @@
+// Backend API contract types — fields exist because the JSON schema requires them,
+// not because Rust code reads every field. Suppress dead_code for the whole module.
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
