@@ -40,6 +40,7 @@ defmodule OptimalSystemAgent.Providers.OpenAICompat do
       }
       |> maybe_add_tools(opts)
       |> maybe_add_max_tokens(opts)
+      |> maybe_add_reasoning(model, opts)
 
     extra_headers = Keyword.get(opts, :extra_headers, [])
 
@@ -50,9 +51,11 @@ defmodule OptimalSystemAgent.Providers.OpenAICompat do
       ] ++ extra_headers
 
     url = "#{base_url}/chat/completions"
+    # Reasoning models (o3, deepseek-reasoner, etc.) need 300+ s for chain-of-thought
+    timeout = Keyword.get(opts, :receive_timeout, 120_000)
 
     try do
-      case Req.post(url, json: body, headers: headers, receive_timeout: 120_000) do
+      case Req.post(url, json: body, headers: headers, receive_timeout: timeout) do
         {:ok, %{status: 200, body: %{"choices" => [%{"message" => msg} | _]} = resp}} ->
           content = Text.strip_thinking_tokens(msg["content"] || "")
           tool_calls = parse_tool_calls(msg)
@@ -357,6 +360,37 @@ defmodule OptimalSystemAgent.Providers.OpenAICompat do
       nil -> body
       n -> Map.put(body, :max_tokens, n)
     end
+  end
+
+  # Add reasoning_effort for OpenAI o-series models.
+  # o3/o3-mini/o4-mini support "low", "medium", "high" (default: medium).
+  # For non-reasoning models this is a no-op.
+  defp maybe_add_reasoning(body, model, opts) do
+    case Keyword.get(opts, :reasoning_effort) do
+      nil ->
+        if reasoning_model?(model) do
+          Map.put(body, :reasoning_effort, "medium")
+        else
+          body
+        end
+
+      effort when effort in ["low", "medium", "high"] ->
+        Map.put(body, :reasoning_effort, effort)
+
+      _ ->
+        body
+    end
+  end
+
+  @doc "Returns true for models that use chain-of-thought reasoning."
+  def reasoning_model?(model) do
+    name = String.downcase(to_string(model))
+
+    String.starts_with?(name, "o3") or
+      String.starts_with?(name, "o4") or
+      String.starts_with?(name, "o1") or
+      name == "deepseek-reasoner" or
+      String.contains?(name, "kimi")
   end
 
   defp parse_usage(%{"usage" => %{"prompt_tokens" => inp, "completion_tokens" => out}}),

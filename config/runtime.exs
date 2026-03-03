@@ -79,13 +79,6 @@ default_provider =
     true -> :ollama
   end
 
-ollama_think_cfg =
-  case System.get_env("OLLAMA_THINK") do
-    "true" -> true
-    "false" -> false
-    _ -> nil
-  end
-
 config :optimal_system_agent,
   # LLM Providers
   anthropic_api_key: System.get_env("ANTHROPIC_API_KEY"),
@@ -99,7 +92,11 @@ config :optimal_system_agent,
   ollama_api_key: System.get_env("OLLAMA_API_KEY"),
   # OLLAMA_THINK: set to "true" to enable extended reasoning (kimi-k2, qwen3-thinking, etc.)
   # Default nil → ollama.ex disables thinking for known reasoning models to prevent timeouts.
-  ollama_think: ollama_think_cfg,
+  ollama_think: (case System.get_env("OLLAMA_THINK") do
+    "true" -> true
+    "false" -> false
+    _ -> nil
+  end),
 
   # Channel tokens
   telegram_bot_token: System.get_env("TELEGRAM_BOT_TOKEN"),

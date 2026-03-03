@@ -1,5 +1,3 @@
-use tracing::debug;
-
 use super::App;
 use crate::app::state::AppState;
 use crate::event::backend::BackendEvent;
@@ -82,18 +80,32 @@ impl App {
             }
             "/model" => {
                 if arg.is_empty() {
-                    self.toasts.push(
-                        "Usage: /model <provider>/<name> or /model <name>".into(),
-                        crate::components::toast::ToastLevel::Info,
-                    );
+                    // No args — open picker
+                    self.load_models();
                 } else if arg.contains('/') {
+                    // provider/model format
                     let parts: Vec<&str> = arg.splitn(2, '/').collect();
-                    self.switch_model(parts[0], parts[1]);
+                    if parts.len() >= 2 && !parts[1].is_empty() {
+                        self.switch_model(parts[0], parts[1]);
+                    } else {
+                        self.chat.add_system_message(
+                            "Usage: /model provider/model_name",
+                            "warning",
+                        );
+                    }
+                } else if let Some((first, rest)) = arg.split_once(' ') {
+                    if KNOWN_PROVIDERS.contains(&first) {
+                        // "/model ollama qwen3:8b" → provider=ollama, model=qwen3:8b
+                        self.switch_model(first, rest.trim());
+                    } else {
+                        // "/model some model" — assume ollama
+                        self.switch_model("ollama", arg);
+                    }
                 } else if KNOWN_PROVIDERS.contains(&arg) {
-                    // Open model picker (will show all models, user can filter by provider)
+                    // Just a provider name — open picker filtered to it
                     self.load_models();
                 } else {
-                    // Default to ollama/<name>
+                    // Bare model name — default to ollama
                     self.switch_model("ollama", arg);
                 }
             }
@@ -109,7 +121,7 @@ impl App {
                 } else if arg == "new" {
                     self.create_session();
                 } else {
-                    debug!("Would switch to session: {}", arg);
+                    self.switch_session(arg);
                 }
             }
             "/login" => {
@@ -137,10 +149,7 @@ impl App {
                 }
             }
             "/setup" => {
-                self.toasts.push(
-                    "Setup wizard coming in Phase 4".into(),
-                    crate::components::toast::ToastLevel::Info,
-                );
+                self.check_onboarding();
             }
             "/verbose" => {
                 self.activity.verbosity = self.activity.verbosity.cycle();
@@ -148,6 +157,21 @@ impl App {
                     format!("Tool verbosity: {}", self.activity.verbosity.label()),
                     crate::components::toast::ToastLevel::Info,
                 );
+            }
+            "/yolo" | "/dangerous" => {
+                self.config.skip_permissions = !self.config.skip_permissions;
+                let state = if self.config.skip_permissions {
+                    "ON — auto-approving all tools"
+                } else {
+                    "OFF — permission prompts enabled"
+                };
+                self.sidebar.set_yolo_mode(self.config.skip_permissions);
+                self.toasts.push(
+                    format!("YOLO mode: {}", state),
+                    crate::components::toast::ToastLevel::Warning,
+                );
+                // Notify backend to toggle dangerous mode
+                self.execute_backend_command("dangerous_mode", if self.config.skip_permissions { "on" } else { "off" });
             }
             "/tools" => {
                 let count = self.header.tool_count();

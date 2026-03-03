@@ -86,6 +86,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.AgentRoutes do
 
         case Jason.encode(event) do
           {:ok, data} ->
+            Logger.debug("[SSE] sending #{event_type} to #{session_id}")
             case chunk(conn, "event: #{event_type}\ndata: #{data}\n\n") do
               {:ok, conn} ->
                 sse_loop(conn, session_id)

@@ -15,7 +15,6 @@ use ratatui::text::{Line, Span, Text};
 ///   - Blockquotes  `> text` — muted italic with `│ ` prefix
 ///   - Horizontal rules  `---` / `***` — full-width `─`
 ///   - Plain text — unstyled
-#[allow(dead_code)]
 pub fn render_markdown(input: &str, width: u16) -> Text<'static> {
     let theme = crate::style::theme();
     let mut lines: Vec<Line<'static>> = Vec::new();

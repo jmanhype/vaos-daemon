@@ -19,23 +19,34 @@ pub struct Config {
     pub theme: String,
     #[serde(default)]
     pub sidebar_enabled: bool,
+    #[serde(default = "default_request_timeout_secs")]
+    pub request_timeout_secs: u64,
     #[serde(skip)]
     pub profile_dir: PathBuf,
     #[serde(skip)]
     pub base_url: String,
+    /// When true, auto-approve all tool permissions (--dangerously-skip-permissions / --yolo)
+    #[serde(skip)]
+    pub skip_permissions: bool,
 }
 
 fn default_theme() -> String {
     "dark".to_string()
 }
 
+fn default_request_timeout_secs() -> u64 {
+    900
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
             theme: default_theme(),
+            request_timeout_secs: default_request_timeout_secs(),
             sidebar_enabled: true,
             profile_dir: default_profile_dir(),
             base_url: default_base_url(),
+            skip_permissions: false,
         }
     }
 }
@@ -65,6 +76,7 @@ impl Config {
         };
 
         config.profile_dir = profile_dir;
+        config.skip_permissions = cli.dangerously_skip_permissions;
 
         // CLI overrides
         if cli.dev {

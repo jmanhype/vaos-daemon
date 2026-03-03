@@ -7,8 +7,6 @@ pub mod status_bar;
 pub mod tasks;
 pub mod toast;
 pub mod sidebar;
-pub mod selection;
-pub mod attachments;
 
 use ratatui::prelude::*;
 
@@ -58,6 +56,8 @@ pub enum AppAction {
     OpenSessions,
     /// Execute a command
     ExecuteCommand(String, String),
+    /// Show a toast message
+    Toast(String),
 }
 
 #[derive(Debug)]

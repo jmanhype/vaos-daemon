@@ -13,7 +13,7 @@ defmodule OptimalSystemAgent.Providers.OpenAICompatTest do
 
   # Wraps parameters JSON in an XML function tag (Format 1).
   defp xml_function_tag(name, params_json),
-    do: ~s(<function name="#{name}" parameters=#{params_json}></function>)
+    do: ~s|<function name="#{name}" parameters=#{params_json}></function>|
 
   # ---------------------------------------------------------------------------
   # parse_tool_calls_from_content/1 — original tests
@@ -32,7 +32,7 @@ defmodule OptimalSystemAgent.Providers.OpenAICompatTest do
     # ── Format 1: <function name="..." parameters={...}></function> ──
 
     test "parses simple XML function tag" do
-      content = ~s(<function name="file_read" parameters={"path": "/foo/bar"}></function>)
+      content = ~s|<function name="file_read" parameters={"path": "/foo/bar"}></function>|
       [tc] = OpenAICompat.parse_tool_calls_from_content(content)
       assert tc.name == "file_read"
       assert tc.arguments == %{"path" => "/foo/bar"}
@@ -41,7 +41,7 @@ defmodule OptimalSystemAgent.Providers.OpenAICompatTest do
 
     test "parses XML function tag with nested JSON arguments (Bug 4 fix)" do
       content =
-        ~s(<function name="shell_execute" parameters={"command": "ls", "options": {"cwd": "/tmp", "timeout": 30}}></function>)
+        ~s|<function name="shell_execute" parameters={"command": "ls", "options": {"cwd": "/tmp", "timeout": 30}}></function>|
 
       [tc] = OpenAICompat.parse_tool_calls_from_content(content)
       assert tc.name == "shell_execute"
@@ -50,10 +50,9 @@ defmodule OptimalSystemAgent.Providers.OpenAICompatTest do
     end
 
     test "parses multiple XML function tags" do
-      content = """
-      <function name="file_read" parameters={"path": "/a"}></function>
-      <function name="file_write" parameters={"path": "/b", "content": "hi"}></function>
-      """
+      content =
+        ~s|<function name="file_read" parameters={"path": "/a"}></function>\n| <>
+          ~s|<function name="file_write" parameters={"path": "/b", "content": "hi"}></function>\n|
 
       tcs = OpenAICompat.parse_tool_calls_from_content(content)
       assert length(tcs) == 2
@@ -64,7 +63,7 @@ defmodule OptimalSystemAgent.Providers.OpenAICompatTest do
 
     test "handles XML with string values containing braces" do
       content =
-        ~s(<function name="eval" parameters={"code": "if (x > 0) { return x; }"}></function>)
+        ~s|<function name="eval" parameters={"code": "if (x > 0) { return x; }"}></function>|
 
       [tc] = OpenAICompat.parse_tool_calls_from_content(content)
       assert tc.name == "eval"
@@ -72,7 +71,7 @@ defmodule OptimalSystemAgent.Providers.OpenAICompatTest do
     end
 
     test "returns empty args map for malformed XML JSON" do
-      content = ~s(<function name="bad_tool" parameters={not valid json}></function>)
+      content = ~s|<function name="bad_tool" parameters={not valid json}></function>|
       [tc] = OpenAICompat.parse_tool_calls_from_content(content)
       assert tc.name == "bad_tool"
       assert tc.arguments == %{}
@@ -82,7 +81,7 @@ defmodule OptimalSystemAgent.Providers.OpenAICompatTest do
 
     test "parses function_call tag format" do
       content =
-        ~s(<function_call>{"name": "web_search", "arguments": {"query": "elixir otp"}}</function_call>)
+        ~s|<function_call>{"name": "web_search", "arguments": {"query": "elixir otp"}}</function_call>|
 
       [tc] = OpenAICompat.parse_tool_calls_from_content(content)
       assert tc.name == "web_search"
@@ -91,7 +90,7 @@ defmodule OptimalSystemAgent.Providers.OpenAICompatTest do
 
     test "parses function_call with nested arguments" do
       content =
-        ~s(<function_call>{"name": "orchestrate", "arguments": {"task": "research", "opts": {"depth": 3, "parallel": true}}}</function_call>)
+        ~s|<function_call>{"name": "orchestrate", "arguments": {"task": "research", "opts": {"depth": 3, "parallel": true}}}</function_call>|
 
       [tc] = OpenAICompat.parse_tool_calls_from_content(content)
       assert tc.name == "orchestrate"
@@ -99,10 +98,9 @@ defmodule OptimalSystemAgent.Providers.OpenAICompatTest do
     end
 
     test "parses multiple function_call tags" do
-      content = """
-      <function_call>{"name": "tool_a", "arguments": {}}</function_call>
-      <function_call>{"name": "tool_b", "arguments": {"x": 1}}</function_call>
-      """
+      content =
+        ~s|<function_call>{"name": "tool_a", "arguments": {}}</function_call>\n| <>
+          ~s|<function_call>{"name": "tool_b", "arguments": {"x": 1}}</function_call>\n|
 
       tcs = OpenAICompat.parse_tool_calls_from_content(content)
       assert length(tcs) == 2
@@ -113,7 +111,7 @@ defmodule OptimalSystemAgent.Providers.OpenAICompatTest do
     # ── Format 3: raw JSON {"name": "...", "arguments": {...}} ──
 
     test "parses raw JSON tool call" do
-      content = ~s({"name": "memory_save", "arguments": {"key": "foo", "value": "bar"}})
+      content = ~s|{"name": "memory_save", "arguments": {"key": "foo", "value": "bar"}}|
       [tc] = OpenAICompat.parse_tool_calls_from_content(content)
       assert tc.name == "memory_save"
       assert tc.arguments == %{"key" => "foo", "value" => "bar"}
@@ -121,7 +119,7 @@ defmodule OptimalSystemAgent.Providers.OpenAICompatTest do
 
     test "parses raw JSON with nested arguments" do
       content =
-        ~s({"name": "file_edit", "arguments": {"path": "/x", "changes": {"line": 5, "text": "hello"}}})
+        ~s|{"name": "file_edit", "arguments": {"path": "/x", "changes": {"line": 5, "text": "hello"}}}|
 
       [tc] = OpenAICompat.parse_tool_calls_from_content(content)
       assert tc.name == "file_edit"
@@ -138,59 +136,60 @@ defmodule OptimalSystemAgent.Providers.OpenAICompatTest do
 
   describe "extract_balanced_json edge cases (via parse_tool_calls_from_content)" do
     test "deeply nested JSON object is parsed correctly" do
-      json = ~s({"name": "deep", "arguments": {"a": {"b": {"c": {"d": "val"}}}}})
+      json = ~s|{"name": "deep", "arguments": {"a": {"b": {"c": {"d": "val"}}}}}|
       [tc] = OpenAICompat.parse_tool_calls_from_content(function_call_wrap(json))
       assert tc.name == "deep"
       assert tc.arguments == %{"a" => %{"b" => %{"c" => %{"d" => "val"}}}}
     end
 
     test "string value with escaped quotes is parsed correctly" do
-      # The outer JSON uses \\" which inside an Elixir sigil becomes a literal \"
-      json = ~s({"name": "echo", "arguments": {"msg": "he said \\"hello\\""}})
+      # The outer JSON uses escaped quotes inside the sigil
+      json = ~s|{"name": "echo", "arguments": {"msg": "he said \\"hello\\""}}|
       [tc] = OpenAICompat.parse_tool_calls_from_content(function_call_wrap(json))
       assert tc.name == "echo"
-      assert tc.arguments["msg"] == ~s(he said "hello")
+      assert tc.arguments["msg"] == ~s|he said "hello"|
     end
 
     test "string value with escaped backslashes is parsed correctly" do
-      # JSON: {"path": "C:\\Users\\foo"}
-      json = ~s({"name": "win_path", "arguments": {"path": "C:\\\\Users\\\\foo"}})
+      # JSON with Windows-style path separators
+      win_path = "C" <> ":\\Users\\foo"
+      json = Jason.encode!(%{"name" => "win_path", "arguments" => %{"path" => win_path}})
       [tc] = OpenAICompat.parse_tool_calls_from_content(function_call_wrap(json))
       assert tc.name == "win_path"
-      assert tc.arguments["path"] == "C:\\Users\\foo"
+      assert tc.arguments["path"] == win_path
     end
 
     test "string value containing braces is parsed correctly" do
-      json = ~s({"name": "run_code", "arguments": {"code": "if (x) { return; }"}})
+      json = ~s|{"name": "run_code", "arguments": {"code": "if (x) { return; }"}}|
       [tc] = OpenAICompat.parse_tool_calls_from_content(function_call_wrap(json))
       assert tc.name == "run_code"
       assert tc.arguments["code"] == "if (x) { return; }"
     end
 
     test "empty object as arguments produces empty map" do
-      json = ~s({"name": "noop", "arguments": {}})
+      json = ~s|{"name": "noop", "arguments": {}}|
       [tc] = OpenAICompat.parse_tool_calls_from_content(function_call_wrap(json))
       assert tc.name == "noop"
       assert tc.arguments == %{}
     end
 
     test "nested empty object as argument value is parsed correctly" do
-      json = ~s({"name": "cfg", "arguments": {"opts": {}}})
+      json = ~s|{"name": "cfg", "arguments": {"opts": {}}}|
       [tc] = OpenAICompat.parse_tool_calls_from_content(function_call_wrap(json))
       assert tc.name == "cfg"
       assert tc.arguments == %{"opts" => %{}}
     end
 
     test "array value in arguments is parsed correctly" do
-      json = ~s({"name": "tag_item", "arguments": {"tags": ["a", "b"]}})
+      json = ~s|{"name": "tag_item", "arguments": {"tags": ["a", "b"]}}|
       [tc] = OpenAICompat.parse_tool_calls_from_content(function_call_wrap(json))
       assert tc.name == "tag_item"
       assert tc.arguments["tags"] == ["a", "b"]
     end
 
-    test "truncated JSON (missing closing brace) returns empty list gracefully" do
+    test "truncated JSON missing closing brace returns empty list gracefully" do
       # Missing the outer closing brace — extract_balanced_json returns :error
-      truncated = "<function_call>{\"name\": \"broken\", \"arguments\": {\"x\": 1}"
+      truncated = ~s|<function_call>{"name": "broken", "arguments": {"x": 1}|
       assert OpenAICompat.parse_tool_calls_from_content(truncated) == []
     end
 
@@ -202,7 +201,7 @@ defmodule OptimalSystemAgent.Providers.OpenAICompatTest do
 
     test "multiple nested same-level objects in arguments" do
       json =
-        ~s({"name": "multi", "arguments": {"a": {"x": 1}, "b": {"y": 2}}})
+        ~s|{"name": "multi", "arguments": {"a": {"x": 1}, "b": {"y": 2}}}|
 
       [tc] = OpenAICompat.parse_tool_calls_from_content(function_call_wrap(json))
       assert tc.name == "multi"
@@ -221,7 +220,7 @@ defmodule OptimalSystemAgent.Providers.OpenAICompatTest do
 
   describe "scan_balanced via XML format (extract_xml_function_calls)" do
     test "XML with deeply nested parameters" do
-      params = ~s({"outer": {"middle": {"inner": "value"}}})
+      params = ~s|{"outer": {"middle": {"inner": "value"}}}|
       content = xml_function_tag("deep_xml", params)
       [tc] = OpenAICompat.parse_tool_calls_from_content(content)
       assert tc.name == "deep_xml"
@@ -229,24 +228,24 @@ defmodule OptimalSystemAgent.Providers.OpenAICompatTest do
     end
 
     test "XML with string values containing opening and closing braces" do
-      params = ~s({"snippet": "for i in range(10): { pass }"})
+      params = ~s|{"snippet": "for i in range(10): { pass }"}|
       content = xml_function_tag("code_tool", params)
       [tc] = OpenAICompat.parse_tool_calls_from_content(content)
       assert tc.arguments["snippet"] == "for i in range(10): { pass }"
     end
 
     test "XML with escaped quotes inside string values" do
-      params = ~s({"label": "he said \\"hi\\"", "value": 1})
+      params = ~s|{"label": "he said \\"hi\\"", "value": 1}|
       content = xml_function_tag("annotate", params)
       [tc] = OpenAICompat.parse_tool_calls_from_content(content)
-      assert tc.arguments["label"] == ~s(he said "hi")
+      assert tc.arguments["label"] == ~s|he said "hi"|
     end
 
     test "multiple XML function tags with nested args are all parsed" do
       content =
-        xml_function_tag("tool_one", ~s({"x": {"a": 1}})) <>
+        xml_function_tag("tool_one", ~s|{"x": {"a": 1}}|) <>
           "\n" <>
-          xml_function_tag("tool_two", ~s({"y": {"b": 2}}))
+          xml_function_tag("tool_two", ~s|{"y": {"b": 2}}|)
 
       tcs = OpenAICompat.parse_tool_calls_from_content(content)
       assert length(tcs) == 2
@@ -262,8 +261,8 @@ defmodule OptimalSystemAgent.Providers.OpenAICompatTest do
       # First tag is well-formed; second is truncated with no closing tag.
       # The well-formed tag should produce one result; the truncated one is
       # ignored because extract_balanced_json returns :error for it.
-      well_formed = xml_function_tag("ok_tool", ~s({"k": "v"}))
-      malformed = ~s(<function name="broken_tool" parameters={"incomplete": )
+      well_formed = xml_function_tag("ok_tool", ~s|{"k": "v"}|)
+      malformed = ~s|<function name="broken_tool" parameters={"incomplete": |
       content = well_formed <> "\n" <> malformed
 
       tcs = OpenAICompat.parse_tool_calls_from_content(content)
@@ -325,7 +324,7 @@ defmodule OptimalSystemAgent.Providers.OpenAICompatTest do
     test "name with brace-appended arguments is cleaned via XML path" do
       # normalize_tool_name splits on [ \s({ ] so "file_read{...}" -> "file_read"
       content =
-        xml_function_tag(~s(file_read{"path":"/x"}), ~s({"path": "/x"}))
+        xml_function_tag(~s|file_read{"path":"/x"}|, ~s|{"path": "/x"}|)
 
       [tc] = OpenAICompat.parse_tool_calls_from_content(content)
       assert tc.name == "file_read"
@@ -337,7 +336,7 @@ defmodule OptimalSystemAgent.Providers.OpenAICompatTest do
       # ["", "", "spaced_tool", ...] and List.first returns "".
       # String.trim("") is still "".  The function does NOT strip leading spaces
       # before splitting — this is the documented behaviour of the current impl.
-      content = xml_function_tag("  spaced_tool  ", ~s({"k": "v"}))
+      content = xml_function_tag("  spaced_tool  ", ~s|{"k": "v"}|)
       [tc] = OpenAICompat.parse_tool_calls_from_content(content)
       assert tc.name == ""
     end
@@ -574,7 +573,7 @@ defmodule OptimalSystemAgent.Providers.OpenAICompatTest do
 
     test "falls back to content parsing when no tool_calls key" do
       msg = %{
-        "content" => ~s(<function name="ping" parameters={"host": "localhost"}></function>)
+        "content" => ~s|<function name="ping" parameters={"host": "localhost"}></function>|
       }
 
       [tc] = OpenAICompat.parse_tool_calls(msg)
@@ -701,7 +700,7 @@ defmodule OptimalSystemAgent.Providers.OpenAICompatTest do
     test "content path with function_call tag produces correct tool call" do
       msg = %{
         "content" =>
-          ~s(<function_call>{"name": "search", "arguments": {"q": "test"}}</function_call>)
+          ~s|<function_call>{"name": "search", "arguments": {"q": "test"}}</function_call>|
       }
 
       [tc] = OpenAICompat.parse_tool_calls(msg)
@@ -711,7 +710,7 @@ defmodule OptimalSystemAgent.Providers.OpenAICompatTest do
 
     test "content path with raw JSON tool call produces correct tool call" do
       msg = %{
-        "content" => ~s({"name": "raw_call", "arguments": {"flag": true}})
+        "content" => ~s|{"name": "raw_call", "arguments": {"flag": true}}|
       }
 
       [tc] = OpenAICompat.parse_tool_calls(msg)

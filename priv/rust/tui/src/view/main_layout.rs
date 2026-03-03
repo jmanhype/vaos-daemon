@@ -22,8 +22,13 @@ impl LayoutAreas {
         let header = Rect::new(area.x, y, area.width, layout.header_height.min(area.height));
         y += layout.header_height;
 
-        // Main content area (chat + optional sidebar)
-        let main_height = layout.chat_height;
+        // Compute fixed bottom sections first, give remainder to chat
+        let bottom_height = task_lines + agent_lines + layout.status_height + layout.input_height;
+        let main_height = area
+            .height
+            .saturating_sub(layout.header_height + bottom_height)
+            .max(5); // min 5 lines for chat
+
         let (sidebar, chat) = if layout.sidebar_width > 0 {
             let sb = Rect::new(area.x, y, layout.sidebar_width, main_height);
             let ch = Rect::new(
@@ -61,9 +66,8 @@ impl LayoutAreas {
         let status = Rect::new(area.x, y, area.width, layout.status_height);
         y += layout.status_height;
 
-        // Input (separator + prompt)
-        let remaining = area.height.saturating_sub(y - area.y);
-        let input = Rect::new(area.x, y, area.width, remaining.max(layout.input_height));
+        // Input (separator + prompt) — pinned height, no excess
+        let input = Rect::new(area.x, y, area.width, layout.input_height);
 
         // Toast overlay (top-right corner)
         let toast = Rect::new(

@@ -1,14 +1,10 @@
 const COMPACT_MODE_BREAKPOINT: u16 = 100;
 const SIDEBAR_MIN_WIDTH: u16 = 28;
 const SIDEBAR_MAX_WIDTH: u16 = 40;
-const CHAT_MIN_WIDTH: u16 = 50;
-const MIN_SIDEBAR_TOTAL_WIDTH: u16 = 79; // 28 + 50 + 1
+const MIN_SIDEBAR_TOTAL_WIDTH: u16 = 79; // SIDEBAR_MIN_WIDTH(28) + chat(50) + border(1)
 const HEADER_HEIGHT: u16 = 2; // header line + separator
 const INPUT_HEIGHT: u16 = 2; // separator + prompt line
 const MIN_CHAT_HEIGHT: u16 = 5;
-
-// Suppress dead-code warnings for constants used only in computation
-const _: u16 = CHAT_MIN_WIDTH;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LayoutMode {
@@ -16,6 +12,8 @@ pub enum LayoutMode {
     Sidebar,
 }
 
+// Layout metadata fields are computed for debugging/future use
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Layout {
     pub mode: LayoutMode,

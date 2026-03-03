@@ -80,12 +80,14 @@ defmodule OptimalSystemAgent.Providers.Anthropic do
       |> maybe_add_thinking(thinking)
 
     headers = build_headers(api_key, thinking)
+    # Extended thinking can take 300+ s before producing output
+    timeout = if thinking, do: 600_000, else: 120_000
 
     try do
       case Req.post("#{base_url}/messages",
              json: body,
              headers: headers,
-             receive_timeout: 120_000
+             receive_timeout: timeout
            ) do
         {:ok, %{status: 200, body: resp}} ->
           content = extract_content(resp)
@@ -139,12 +141,14 @@ defmodule OptimalSystemAgent.Providers.Anthropic do
       |> maybe_add_thinking(thinking)
 
     headers = build_headers(api_key, thinking)
+    # Extended thinking can take 300+ s before producing the first token
+    timeout = if thinking, do: 600_000, else: 120_000
 
     try do
       case Req.post("#{base_url}/messages",
              json: body,
              headers: headers,
-             receive_timeout: 120_000,
+             receive_timeout: timeout,
              into: :self
            ) do
         {:ok, resp} ->
@@ -197,8 +201,8 @@ defmodule OptimalSystemAgent.Providers.Anthropic do
         Logger.error("Anthropic stream error: #{inspect(reason)}")
         {:error, "Stream error: #{inspect(reason)}"}
     after
-      130_000 ->
-        Logger.error("Anthropic stream timeout")
+      620_000 ->
+        Logger.error("Anthropic stream timeout after 620s")
         {:error, "Stream timeout"}
     end
   end

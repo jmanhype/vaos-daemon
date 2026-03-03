@@ -1,12 +1,16 @@
 pub mod commands;
 pub mod event_loop;
 pub mod focus;
+mod handle_actions;
+mod handle_backend;
+mod handle_dialogs;
 pub mod keys;
 pub mod layout;
 pub mod state;
 pub mod update;
 
 use anyhow::Result;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
@@ -16,17 +20,24 @@ use tracing::info;
 use crate::client::http::ApiClient;
 use crate::components::activity::Activity;
 use crate::components::agents::Agents;
+use crate::components::chat::thinking_box::ThinkingBox;
 use crate::components::chat::Chat;
 use crate::components::header::Header;
 use crate::components::input::InputComponent;
+use crate::components::sidebar::Sidebar;
 use crate::components::status_bar::StatusBar;
 use crate::components::tasks::Tasks;
 use crate::components::toast::Toasts;
 use crate::config::cli::Cli;
 use crate::config::Config;
 use crate::dialogs::command_palette::CommandPalette;
+use crate::dialogs::file_picker::FilePicker;
 use crate::dialogs::model_picker::ModelPicker;
+use crate::dialogs::onboarding::OnboardingWizard;
+use crate::dialogs::permissions::Permissions;
+use crate::dialogs::plan_review::PlanReview;
 use crate::dialogs::quit_confirm::QuitConfirm;
+use crate::dialogs::reasoning::ReasoningSelector;
 use crate::dialogs::sessions::SessionBrowser;
 use crate::event::Event;
 
@@ -36,11 +47,11 @@ use self::layout::Layout;
 use self::state::AppState;
 
 /// Constants
-pub const TICK_INTERVAL: Duration = Duration::from_millis(200);
-pub const BANNER_DURATION: Duration = Duration::from_secs(2);
 pub const HEALTH_RETRY_DELAY: Duration = Duration::from_secs(5);
 pub const MAX_MESSAGE_SIZE: usize = 100_000;
 
+// Phase 3+ fields are initialized but not yet read — suppress until wired
+#[allow(dead_code)]
 pub struct App {
     // Components
     pub header: Header,
@@ -48,6 +59,8 @@ pub struct App {
     pub input: InputComponent,
     pub status: StatusBar,
     pub activity: Activity,
+    pub sidebar: Sidebar,
+    pub thinking_box: ThinkingBox,
     pub tasks: Tasks,
     pub agents: Agents,
     pub toasts: Toasts,
@@ -57,6 +70,11 @@ pub struct App {
     pub palette: CommandPalette,
     pub model_picker: Option<ModelPicker>,
     pub session_browser: Option<SessionBrowser>,
+    pub onboarding: Option<OnboardingWizard>,
+    pub plan_review: Option<PlanReview>,
+    pub permissions: Option<Permissions>,
+    pub reasoning_selector: Option<ReasoningSelector>,
+    pub file_picker: Option<FilePicker>,
 
     // State
     pub state: AppState,
@@ -87,15 +105,19 @@ pub struct App {
     pub stream_buf: String,
     pub thinking_buf: String,
     pub processing_start: Option<Instant>,
-    pub banner_start: Option<Instant>,
+    pub last_cancel_attempt: Option<Instant>,
     pub cancelled: bool,
     pub sse_reconnecting: bool,
+
+    // Pending tool call args (tool_name -> args JSON), used to pair with ToolCallEnd
+    pub pending_tool_args: HashMap<String, String>,
 
     // Background tasks
     pub bg_tasks: Vec<String>,
 
     // Backend auto-start
     pub backend_spawn_attempted: bool,
+    pub health_retry_count: u32,
 
     // Commands from backend
     pub command_entries: Vec<crate::client::types::CommandEntry>,
@@ -119,10 +141,16 @@ impl App {
             .unwrap_or_else(crate::style::themes::dark);
         crate::style::set_theme(theme);
 
+        // Use actual terminal size instead of hardcoded 80x24
+        let (init_w, init_h) = crossterm::terminal::size().unwrap_or((80, 24));
+
         info!(
-            "App initialized: session={}, url={}",
-            session_id, config.base_url
+            "App initialized: session={}, url={}, term={}x{}",
+            session_id, config.base_url, init_w, init_h
         );
+
+        let mut sidebar = Sidebar::new();
+        sidebar.set_yolo_mode(config.skip_permissions);
 
         Ok(Self {
             header: Header::new(),
@@ -130,6 +158,8 @@ impl App {
             input: InputComponent::new(),
             status: StatusBar::new(),
             activity: Activity::new(),
+            sidebar,
+            thinking_box: ThinkingBox::new(),
             tasks: Tasks::new(),
             agents: Agents::new(),
             toasts: Toasts::new(),
@@ -138,20 +168,25 @@ impl App {
             palette: CommandPalette::new(),
             model_picker: None,
             session_browser: None,
+            onboarding: None,
+            plan_review: None,
+            permissions: None,
+            reasoning_selector: None,
+            file_picker: None,
 
             state: AppState::Connecting,
             prev_state: None,
             focus: FocusStack::new(),
             keys: KeyMap::default(),
-            layout: Layout::compute(80, 24, config.sidebar_enabled, 0, 0),
+            layout: Layout::compute(init_w, init_h, config.sidebar_enabled, 0, 0),
 
             client,
             sse_cancel: None,
 
             session_id,
 
-            width: 80,
-            height: 24,
+            width: init_w,
+            height: init_h,
 
             config,
 
@@ -161,12 +196,15 @@ impl App {
             stream_buf: String::new(),
             thinking_buf: String::new(),
             processing_start: None,
-            banner_start: None,
+            last_cancel_attempt: None,
             cancelled: false,
             sse_reconnecting: false,
 
+            pending_tool_args: HashMap::new(),
+
             bg_tasks: Vec::new(),
             backend_spawn_attempted: false,
+            health_retry_count: 0,
             command_entries: Vec::new(),
         })
     }
@@ -196,6 +234,13 @@ impl App {
             self.state,
             target,
         );
+        // Auto-manage processing indicator on state transitions
+        if target == AppState::Processing && self.state != AppState::Processing {
+            self.input.set_processing(true);
+        } else if self.state == AppState::Processing && target != AppState::Processing {
+            self.input.set_processing(false);
+            self.last_cancel_attempt = None;
+        }
         self.prev_state = Some(self.state);
         self.state = target;
     }

@@ -13,8 +13,6 @@ pub enum Event {
     Backend(BackendEvent),
     /// App-internal timer events
     Tick,
-    /// Banner timeout
-    BannerTimeout,
     /// Health retry
     HealthRetry,
 }

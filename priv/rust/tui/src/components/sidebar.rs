@@ -23,13 +23,28 @@ struct SidebarSection {
 ///   ...
 ///
 /// A dim left-border character is drawn at x=0 of the area on each row.
-#[allow(dead_code)]
 pub struct Sidebar {
     provider: String,
     model: String,
     session_id: String,
     tool_count: usize,
     context_pct: f64,
+    // ── New fields ──────────────────────────────────────────────────────────
+    /// Cumulative input tokens across all LlmResponse events this session.
+    input_tokens: u64,
+    /// Cumulative output tokens across all LlmResponse events this session.
+    output_tokens: u64,
+    /// Elapsed milliseconds of the current (or last) processing run.
+    elapsed_ms: u64,
+    /// Current agent name / role — empty when none active.
+    current_agent: String,
+    /// Whether --dangerously-skip-permissions / --yolo mode is active.
+    yolo_mode: bool,
+    /// Signal Theory mode from last ClassifyResult.
+    signal_mode: String,
+    /// Signal Theory genre from last ClassifyResult.
+    signal_genre: String,
+    // ────────────────────────────────────────────────────────────────────────
     sections: Vec<SidebarSection>,
     width: u16,
 }
@@ -42,6 +57,13 @@ impl Sidebar {
             session_id: String::new(),
             tool_count: 0,
             context_pct: 0.0,
+            input_tokens: 0,
+            output_tokens: 0,
+            elapsed_ms: 0,
+            current_agent: String::new(),
+            yolo_mode: false,
+            signal_mode: String::new(),
+            signal_genre: String::new(),
             sections: Vec::new(),
             width: 24,
         };
@@ -56,28 +78,57 @@ impl Sidebar {
         self.width = w;
     }
 
-    #[allow(dead_code)]
     pub fn set_provider_info(&mut self, provider: impl Into<String>, model: impl Into<String>) {
         self.provider = provider.into();
         self.model = model.into();
         self.rebuild_sections();
     }
 
-    #[allow(dead_code)]
     pub fn set_session(&mut self, id: impl Into<String>) {
         self.session_id = id.into();
         self.rebuild_sections();
     }
 
-    #[allow(dead_code)]
     pub fn set_tool_count(&mut self, n: usize) {
         self.tool_count = n;
         self.rebuild_sections();
     }
 
-    #[allow(dead_code)]
     pub fn set_context(&mut self, pct: f64) {
         self.context_pct = pct.clamp(0.0, 1.0);
+        self.rebuild_sections();
+    }
+
+    /// Accumulate token counts from an LlmResponse event.
+    pub fn set_tokens(&mut self, input: u64, output: u64) {
+        self.input_tokens += input;
+        self.output_tokens += output;
+        self.rebuild_sections();
+    }
+
+    /// Set the current agent name/role. Pass an empty string to clear.
+    pub fn set_current_agent(&mut self, name: impl Into<String>) {
+        self.current_agent = name.into();
+        self.rebuild_sections();
+    }
+
+    /// Update elapsed processing time in milliseconds.
+    /// Called from the tick handler while processing is active.
+    pub fn set_elapsed_ms(&mut self, ms: u64) {
+        self.elapsed_ms = ms;
+        self.rebuild_sections();
+    }
+
+    /// Set signal mode and genre from ClassifyResult.
+    pub fn set_signal_info(&mut self, mode: &str, genre: &str) {
+        self.signal_mode = mode.to_string();
+        self.signal_genre = genre.to_string();
+        self.rebuild_sections();
+    }
+
+    /// Set whether --yolo / --dangerously-skip-permissions mode is active.
+    pub fn set_yolo_mode(&mut self, enabled: bool) {
+        self.yolo_mode = enabled;
         self.rebuild_sections();
     }
 
@@ -99,6 +150,14 @@ impl Sidebar {
     fn rebuild_sections(&mut self) {
         self.sections.clear();
 
+        // ── YOLO mode indicator (shown first when active) ─────────────────
+        if self.yolo_mode {
+            self.sections.push(SidebarSection {
+                title: "Mode".into(),
+                items: vec![("yolo".into(), "ON".into())],
+            });
+        }
+
         // ── Provider / Model ──────────────────────────────────────────────
         if !self.provider.is_empty() || !self.model.is_empty() {
             self.sections.push(SidebarSection {
@@ -116,6 +175,25 @@ impl Sidebar {
             self.sections.push(SidebarSection {
                 title: "Session".into(),
                 items: vec![("id".into(), short_id)],
+            });
+        }
+
+        // ── Agent ─────────────────────────────────────────────────────────
+        if !self.current_agent.is_empty() {
+            self.sections.push(SidebarSection {
+                title: "Agent".into(),
+                items: vec![("role".into(), self.truncate_value(&self.current_agent, 14))],
+            });
+        }
+
+        // ── Signal ───────────────────────────────────────────────────────
+        if !self.signal_mode.is_empty() || !self.signal_genre.is_empty() {
+            self.sections.push(SidebarSection {
+                title: "Signal".into(),
+                items: vec![
+                    ("mode".into(), self.truncate_value(&self.signal_mode, 14)),
+                    ("genre".into(), self.truncate_value(&self.signal_genre, 14)),
+                ],
             });
         }
 
@@ -137,6 +215,25 @@ impl Sidebar {
             });
         }
 
+        // ── Tokens ────────────────────────────────────────────────────────
+        if self.input_tokens > 0 || self.output_tokens > 0 {
+            self.sections.push(SidebarSection {
+                title: "Tokens".into(),
+                items: vec![
+                    ("in".into(), Self::format_tokens(self.input_tokens)),
+                    ("out".into(), Self::format_tokens(self.output_tokens)),
+                ],
+            });
+        }
+
+        // ── Timing ────────────────────────────────────────────────────────
+        if self.elapsed_ms > 0 {
+            self.sections.push(SidebarSection {
+                title: "Timing".into(),
+                items: vec![("elap".into(), Self::format_elapsed(self.elapsed_ms))],
+            });
+        }
+
         // ── Tools ─────────────────────────────────────────────────────────
         self.sections.push(SidebarSection {
             title: "Tools".into(),
@@ -144,11 +241,60 @@ impl Sidebar {
         });
     }
 
+    /// Format a token count as a compact human-readable string.
+    ///
+    /// Examples: 42 → "42", 1_200 → "1.2K", 85_000 → "85K", 1_500_000 → "1.5M"
+    fn format_tokens(n: u64) -> String {
+        if n >= 1_000_000 {
+            let m = n as f64 / 1_000_000.0;
+            if (m.fract() * 10.0).round() == 0.0 {
+                format!("{}M", m as u64)
+            } else {
+                format!("{:.1}M", m)
+            }
+        } else if n >= 1_000 {
+            let k = n as f64 / 1_000.0;
+            if (k.fract() * 10.0).round() == 0.0 {
+                format!("{}K", k as u64)
+            } else {
+                format!("{:.1}K", k)
+            }
+        } else {
+            n.to_string()
+        }
+    }
+
+    /// Format elapsed milliseconds as a compact human-readable string.
+    ///
+    /// Examples: 500 → "500ms", 1_200 → "1.2s", 62_000 → "1m2s"
+    fn format_elapsed(ms: u64) -> String {
+        let total_secs = ms / 1_000;
+        let mins = total_secs / 60;
+        let secs = total_secs % 60;
+        if mins > 0 {
+            format!("{}m{}s", mins, secs)
+        } else if ms < 1_000 {
+            format!("{}ms", ms)
+        } else {
+            let frac = (ms % 1_000) / 100; // tenths of a second
+            if frac == 0 {
+                format!("{}s", total_secs)
+            } else {
+                format!("{}.{}s", total_secs, frac)
+            }
+        }
+    }
+
     fn truncate_value(&self, s: &str, max: usize) -> String {
-        if s.len() <= max {
+        if max == 0 {
+            return String::new();
+        }
+        let char_count: usize = s.chars().count();
+        if char_count <= max {
             s.to_string()
         } else {
-            format!("{}…", &s[..max.saturating_sub(1)])
+            let truncated: String = s.chars().take(max.saturating_sub(1)).collect();
+            format!("{}…", truncated)
         }
     }
 
@@ -201,12 +347,17 @@ impl Component for Sidebar {
                 );
             }
 
-            // Section title
+            // Section title — "Mode" gets yellow+bold when YOLO is active
             if inner_w > 0 {
+                let title_style = if section.title == "Mode" && self.yolo_mode {
+                    theme.sidebar_title().fg(Color::Yellow).bold()
+                } else {
+                    theme.sidebar_title()
+                };
                 frame.render_widget(
                     Paragraph::new(Line::from(Span::styled(
                         &section.title,
-                        theme.sidebar_title(),
+                        title_style,
                     ))),
                     Rect::new(inner_x, y, inner_w, 1),
                 );
@@ -225,9 +376,16 @@ impl Component for Sidebar {
                 let value_max = (inner_w as usize).saturating_sub(label_col + 1);
                 let value_trunc = self.truncate_value(value, value_max);
 
+                // "yolo ON" value gets yellow+bold highlight
+                let value_style = if label == "yolo" && self.yolo_mode {
+                    theme.sidebar_value().fg(Color::Yellow).bold()
+                } else {
+                    theme.sidebar_value()
+                };
+
                 let line = Line::from(vec![
                     Span::styled(format!("{:<5} ", label_trunc), theme.sidebar_label()),
-                    Span::styled(value_trunc, theme.sidebar_value()),
+                    Span::styled(value_trunc, value_style),
                 ]);
 
                 if inner_w > 0 {

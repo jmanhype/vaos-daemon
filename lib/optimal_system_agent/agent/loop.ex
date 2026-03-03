@@ -587,6 +587,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
 
     callback = fn
       {:text_delta, text} ->
+        Logger.debug("[stream] text_delta #{byte_size(text)}B → session:#{session_id}")
         Bus.emit(:system_event, %{
           event: :streaming_token,
           session_id: session_id,
@@ -594,6 +595,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
         })
 
       {:done, result} ->
+        Logger.info("[stream] done → session:#{session_id}")
         Process.put(:llm_stream_result, result)
 
       {:thinking_delta, text} ->

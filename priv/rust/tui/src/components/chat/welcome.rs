@@ -3,22 +3,16 @@ use ratatui::widgets::Paragraph;
 
 use crate::style;
 
-/// Braille-art diamond/circuit symbol (OSA identity)
+/// Block-letter ASCII art logo
 const LOGO_ART: &[&str] = &[
-    "          \u{2800}\u{2840}\u{2844}\u{2846}\u{2847}\u{2847}\u{2847}\u{2847}\u{2846}\u{2844}\u{2840}\u{2800}          ",
-    "        \u{2840}\u{2847}\u{281b}\u{2800}\u{2800}\u{2800}\u{2800}\u{2800}\u{2800}\u{281b}\u{2847}\u{2840}        ",
-    "      \u{2844}\u{281b}\u{2800}\u{2800}\u{2800}\u{28c0}\u{28e4}\u{28c0}\u{2800}\u{2800}\u{2800}\u{281b}\u{2844}      ",
-    "    \u{2846}\u{2800}\u{2800}\u{2800}\u{28c0}\u{28f6}\u{28ff}\u{28ff}\u{28f6}\u{28c0}\u{2800}\u{2800}\u{2800}\u{2846}    ",
-    "    \u{2847}\u{2800}\u{2800}\u{28e0}\u{28ff}\u{28ff}\u{28ff}\u{28ff}\u{28ff}\u{28ff}\u{28e0}\u{2800}\u{2800}\u{2847}    ",
-    "    \u{2846}\u{2800}\u{2800}\u{2800}\u{2819}\u{283b}\u{28ff}\u{28ff}\u{283b}\u{2819}\u{2800}\u{2800}\u{2800}\u{2846}    ",
-    "      \u{2843}\u{2819}\u{2800}\u{2800}\u{2800}\u{2819}\u{283b}\u{2819}\u{2800}\u{2800}\u{2800}\u{2819}\u{2843}      ",
-    "        \u{2819}\u{2846}\u{2819}\u{2800}\u{2800}\u{2800}\u{2800}\u{2800}\u{2800}\u{2819}\u{2846}\u{2819}        ",
-    "          \u{2800}\u{2819}\u{2843}\u{2843}\u{2846}\u{2846}\u{2846}\u{2846}\u{2843}\u{2843}\u{2819}\u{2800}          ",
+    " \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557} \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557} \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557} ",
+    "\u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2550}\u{2588}\u{2588}\u{2557}\u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2550}\u{2550}\u{255d}\u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2588}\u{2588}\u{2557}",
+    "\u{2588}\u{2588}\u{2551}   \u{2588}\u{2588}\u{2551}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2551}",
+    "\u{2588}\u{2588}\u{2551}   \u{2588}\u{2588}\u{2551}\u{255a}\u{2550}\u{2550}\u{2550}\u{2550}\u{2588}\u{2588}\u{2551}\u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2588}\u{2588}\u{2551}",
+    "\u{255a}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2554}\u{255d}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2551}\u{2588}\u{2588}\u{2551}  \u{2588}\u{2588}\u{2551}",
+    " \u{255a}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{255d} \u{255a}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{255d}\u{255a}\u{2550}\u{255d}  \u{255a}\u{2550}\u{255d}",
+    "        a g e n t  \u{25c8}",
 ];
-
-pub fn draw_welcome(frame: &mut Frame, area: Rect) {
-    draw_welcome_with_tools(frame, area, 0, None, None);
-}
 
 pub fn draw_welcome_with_tools(
     frame: &mut Frame,
@@ -45,34 +39,10 @@ pub fn draw_welcome_with_tools(
     // Build the display lines
     let mut lines: Vec<Line<'static>> = Vec::new();
 
-    // Braille art logo with gradient
+    // Block-letter logo with gradient
     for art_line in LOGO_ART {
         lines.push(style::gradient::theme_gradient(art_line, true));
     }
-
-    lines.push(Line::from(""));
-
-    // Box-drawing text logo
-    lines.push(style::gradient::theme_gradient(
-        "  \u{2554}\u{2550}\u{2550}\u{2550}\u{2557} \u{2554}\u{2550}\u{2550}\u{2550}\u{2557} \u{2554}\u{2550}\u{2550}\u{2550}\u{2557}  ",
-        true,
-    ));
-    lines.push(style::gradient::theme_gradient(
-        "  \u{2551}   \u{2551} \u{2551}     \u{2551}   \u{2551}  ",
-        true,
-    ));
-    lines.push(style::gradient::theme_gradient(
-        "  \u{2551}   \u{2551}  \u{2550}\u{2550}\u{2550}\u{2557} \u{2560}\u{2550}\u{2550}\u{2550}\u{2563}  ",
-        true,
-    ));
-    lines.push(style::gradient::theme_gradient(
-        "  \u{2551}   \u{2551}     \u{2551} \u{2551}   \u{2551}  ",
-        true,
-    ));
-    lines.push(style::gradient::theme_gradient(
-        "  \u{255a}\u{2550}\u{2550}\u{2550}\u{255d} \u{255a}\u{2550}\u{2550}\u{2550}\u{255d} \u{2551}   \u{2551}  ",
-        true,
-    ));
 
     lines.push(Line::from(""));
 

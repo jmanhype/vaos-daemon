@@ -14,7 +14,7 @@ pub fn dark() -> Theme {
     Theme {
         name: "dark".to_string(),
         colors: ThemeColors {
-            primary: hex("#7C3AED"),
+            primary: hex("#E5E7EB"),
             secondary: hex("#06B6D4"),
             success: hex("#22C55E"),
             warning: hex("#F59E0B"),
@@ -23,7 +23,7 @@ pub fn dark() -> Theme {
             dim: hex("#374151"),
             border: hex("#4B5563"),
             msg_border_user: hex("#06B6D4"),
-            msg_border_agent: hex("#7C3AED"),
+            msg_border_agent: hex("#E5E7EB"),
             msg_border_system: hex("#374151"),
             msg_border_warning: hex("#F59E0B"),
             msg_border_error: hex("#EF4444"),
@@ -31,11 +31,11 @@ pub fn dark() -> Theme {
             modal_bg: hex("#111827"),
             tooltip_bg: hex("#1F2937"),
             input_bg: hex("#111827"),
-            selection_bg: hex("#312E81"),
+            selection_bg: hex("#374151"),
             dialog_bg: hex("#1F2937"),
-            button_active_bg: hex("#7C3AED"),
-            button_active_text: hex("#FFFFFF"),
-            grad_a: hex("#7C3AED"),
+            button_active_bg: hex("#E5E7EB"),
+            button_active_text: hex("#111827"),
+            grad_a: hex("#E5E7EB"),
             grad_b: hex("#06B6D4"),
         },
     }
