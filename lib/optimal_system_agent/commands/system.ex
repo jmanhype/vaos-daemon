@@ -868,4 +868,20 @@ defmodule OptimalSystemAgent.Commands.System do
         "#{IO.ANSI.green()}[#{String.duplicate("█", filled)}#{String.duplicate("░", empty)}]#{IO.ANSI.reset()}"
     end
   end
+
+  # ── Shell Command ────────────────────────────────────────────────
+
+  @doc "Handle the `shell` command (used internally by TUI `!<cmd>` mode)."
+  def cmd_shell("", _session_id) do
+    {:command, "Usage: !<command>  (e.g. !ls -la, !npm install)\nRuns in ~/.osa/workspace/"}
+  end
+
+  def cmd_shell(arg, _session_id) do
+    alias OptimalSystemAgent.Tools.Builtins.ShellExecute
+
+    case ShellExecute.execute(%{"command" => arg}) do
+      {:ok, output} -> {:command, output}
+      {:error, reason} -> {:command, "Error: #{reason}"}
+    end
+  end
 end

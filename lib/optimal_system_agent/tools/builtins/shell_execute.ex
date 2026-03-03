@@ -8,6 +8,9 @@ defmodule OptimalSystemAgent.Tools.Builtins.ShellExecute do
   alias OptimalSystemAgent.Security.ShellPolicy
 
   @max_output_bytes ShellPolicy.max_output_bytes()
+  # Default timeout for shell commands — long enough for npm install / cargo build.
+  # Override with OSA_SHELL_TIMEOUT_MS env var.
+  @default_timeout_ms 300_000
 
   @impl true
   def name, do: "shell_execute"
@@ -46,7 +49,13 @@ defmodule OptimalSystemAgent.Tools.Builtins.ShellExecute do
 
           Logger.debug("[ShellExecute] Dispatching command via Sandbox.Executor")
 
-          case Executor.execute(trimmed, workspace: workspace, cwd: workspace) do
+          timeout =
+            case System.get_env("OSA_SHELL_TIMEOUT_MS") do
+              nil -> @default_timeout_ms
+              s -> String.to_integer(s)
+            end
+
+          case Executor.execute(trimmed, workspace: workspace, cwd: workspace, timeout: timeout) do
             {:ok, output, 0} -> {:ok, maybe_truncate(output)}
             {:ok, output, code} -> {:error, "Exit #{code}:\n#{maybe_truncate(output)}"}
             {:error, reason} -> {:error, reason}

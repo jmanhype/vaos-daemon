@@ -360,6 +360,9 @@ defmodule OptimalSystemAgent.Commands do
       {"docs", "Built-in documentation", &System.cmd_docs/2},
       {"update", "Check for updates", &System.cmd_update/2},
 
+      # ── Shell (TUI !<cmd> mode) ──
+      {"shell", "Execute a shell command in ~/.osa/workspace", &System.cmd_shell/2},
+
       # ── Exit ──
       {"exit", "Exit the CLI", &System.cmd_exit/2},
       {"quit", "Exit the CLI", &System.cmd_exit/2},
