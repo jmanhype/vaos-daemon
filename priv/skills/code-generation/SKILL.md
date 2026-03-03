@@ -1,6 +1,6 @@
 ---
 name: code-generation
-description: "Generate complete, functional codebases from natural language requirements. Scaffolds projects, writes real implementation code, initializes toolchains, and verifies the output compiles and runs."
+description: "Generate complete, runnable codebases. ALWAYS write files to ~/.osa/workspace/<project-name>/ using absolute paths with file_write. Run builds/installs with shell_execute using 'cd ~/.osa/workspace/<name> && <cmd>'. Plan file tree first, write files in dependency order (config → models → logic → routes → tests), verify with build command, tell user the output path."
 tools: [file_write, file_read, file_edit, file_glob, shell_execute, dir_list, memory_save]
 trigger: generate code|scaffold|create project|new app|code gen|build app|create api|generate api|generate frontend|generate backend|generate service|scaffold api|scaffold app
 priority: 2
@@ -18,6 +18,24 @@ This skill activates when:
 - Keywords detected: generate, scaffold, create project, new app, code gen, build app, create api
 - User describes a feature, app, or service they want built
 - User provides a PRD, spec, or requirements document
+
+## WORKSPACE RULE (critical — follow exactly)
+
+**All generated projects go into `~/.osa/workspace/<project-name>/`.**
+
+- Every `file_write` path must be absolute: `~/.osa/workspace/my-app/src/main.go`
+- Every `shell_execute` command must start with: `cd ~/.osa/workspace/my-app && <command>`
+- Never use relative paths — they resolve against the server process CWD, not the shell
+
+Example correct flow:
+```
+file_write: ~/.osa/workspace/my-api/go.mod
+shell_execute: cd ~/.osa/workspace/my-api && go mod tidy
+file_write: ~/.osa/workspace/my-api/cmd/server/main.go
+shell_execute: cd ~/.osa/workspace/my-api && go build ./...
+```
+
+At the end, tell the user: `Project generated at ~/.osa/workspace/<project-name>/`
 
 ## Core Principles
 
@@ -94,36 +112,36 @@ Actions:
 ### Phase 3: Project Initialization
 
 Initialize the project using the ecosystem's standard toolchain.
+**Always use `~/.osa/workspace/<name>` as the project root.**
 
 ```
-By Language:
+By Language (W = ~/.osa/workspace/<name>):
 
 Go:
-  shell_execute: go mod init <module-path>
-  shell_execute: go mod tidy (after writing imports)
+  file_write: W/go.mod  (content: module <name>\n\ngo 1.22)
+  shell_execute: cd W && go mod tidy
 
 Node.js / TypeScript:
-  shell_execute: npm init -y
-  shell_execute: npm install <dependencies>
-  shell_execute: npm install -D <dev-dependencies>
-  Then: write tsconfig.json, .eslintrc, etc.
+  shell_execute: cd ~/.osa/workspace && npm init -y --prefix <name>
+  shell_execute: cd W && npm install <dependencies>
+  file_write: W/tsconfig.json, W/.eslintrc.json, etc.
 
 SvelteKit:
-  shell_execute: npm create svelte@latest <name> -- --template skeleton
-  shell_execute: cd <name> && npm install
+  shell_execute: cd ~/.osa/workspace && npm create svelte@latest <name> -- --template skeleton --no-install
+  shell_execute: cd W && npm install
 
 Elixir / Phoenix:
-  shell_execute: mix phx.new <name> --no-ecto (or with ecto)
-  shell_execute: cd <name> && mix deps.get
+  shell_execute: cd ~/.osa/workspace && mix phx.new <name> --no-install
+  shell_execute: cd W && mix deps.get
 
 Python:
-  shell_execute: python -m venv .venv
-  file_write: requirements.txt or pyproject.toml
-  shell_execute: pip install -r requirements.txt
+  shell_execute: cd W && python -m venv .venv
+  file_write: W/requirements.txt
+  shell_execute: cd W && pip install -r requirements.txt
 
 Rust:
-  shell_execute: cargo init <name>
-  Then: edit Cargo.toml with dependencies
+  shell_execute: cd ~/.osa/workspace && cargo new <name>
+  (then edit W/Cargo.toml with dependencies)
 ```
 
 If the user wants to add code to an existing project, skip initialization. Use `dir_list` and `file_glob` to understand the existing structure first.

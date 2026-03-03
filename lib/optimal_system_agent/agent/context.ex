@@ -487,10 +487,12 @@ defmodule OptimalSystemAgent.Agent.Context do
     date = Date.utc_today() |> Date.to_iso8601()
     provider = Application.get_env(:optimal_system_agent, :default_provider, :unknown)
     model = get_active_model(provider)
+    workspace = Path.expand("~/.osa/workspace")
 
     """
     ## Environment
     - Working directory: #{cwd}
+    - User workspace: #{workspace} (write all user projects and code here)
     - Date: #{date}
     - OS: #{os_family}/#{os_name}
     - Elixir #{elixir_ver} / OTP #{otp_release}

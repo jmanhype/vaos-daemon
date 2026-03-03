@@ -39,7 +39,7 @@ fn tool_display(name: &str) -> (&'static str, &'static str) {
         "file_edit" | "Edit" => ("\u{270f}\u{fe0f}", "editing"),
 
         // Execute tools
-        "bash" | "Bash" | "terminal" => ("\u{1f4bb}", "executing"),
+        "bash" | "Bash" | "terminal" | "shell_execute" => ("\u{1f4bb}", "executing"),
 
         // Agent tools
         "delegate" | "Delegate" | "Task" => ("\u{1f500}", "delegating"),

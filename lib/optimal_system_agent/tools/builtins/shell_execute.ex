@@ -78,10 +78,19 @@ defmodule OptimalSystemAgent.Tools.Builtins.ShellExecute do
   defp cd_outside_osa?(command) do
     # Match any `cd <path>` where path is not under ~/.osa/
     osa_prefix = Path.expand("~/.osa")
+    # Relative paths are resolved against the shell's CWD (~/.osa/workspace/),
+    # not the Elixir process CWD — otherwise `cd my-project` is incorrectly blocked.
+    workspace = Path.expand("~/.osa/workspace")
 
     Regex.scan(~r/\bcd\s+(\S+)/, command)
     |> Enum.any?(fn [_match, path] ->
-      expanded = Path.expand(path)
+      expanded =
+        if Path.type(path) == :relative do
+          Path.expand(path, workspace)
+        else
+          Path.expand(path)
+        end
+
       not String.starts_with?(expanded, osa_prefix)
     end)
   end

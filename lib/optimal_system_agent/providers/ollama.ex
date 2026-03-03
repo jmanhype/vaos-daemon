@@ -141,6 +141,65 @@ defmodule OptimalSystemAgent.Providers.Ollama do
     end
   end
 
+  @impl true
+  def chat_stream(messages, callback, opts \\ []) do
+    url = Application.get_env(:optimal_system_agent, :ollama_url, "http://localhost:11434")
+
+    model =
+      Keyword.get(opts, :model) ||
+        Application.get_env(:optimal_system_agent, :ollama_model, default_model())
+
+    body =
+      %{
+        model: model,
+        messages: format_messages(messages),
+        stream: true,
+        keep_alive: "30m",
+        options: %{temperature: Keyword.get(opts, :temperature, 0.7)}
+      }
+      |> maybe_add_tools(model, opts)
+
+    # 600 s per-chunk read timeout — slow local CPU models and long thinking
+    # phases (kimi-k2.5 takes ~300 s) need more than the default 300 s.
+    req_opts = [json: body, receive_timeout: 600_000, into: :self] ++ auth_headers()
+
+    # Spawn an unlinked process to own the Req/Finch HTTP stream.
+    # Finch delivers chunk messages ({pool_pid, {:data, data}} tuples) to the
+    # process that calls Req.post — if that were the GenServer, the chunks would
+    # land in handle_info/2 instead of our receive block.  Running Req.post in a
+    # dedicated process keeps Finch messages isolated and prevents the 310 s
+    # timeout from firing before the model finishes.
+    caller = self()
+    ref = make_ref()
+
+    spawn(fn ->
+      try do
+        result =
+          case Req.post("#{url}/api/chat", req_opts) do
+            {:ok, resp} ->
+              fwd = fn event -> send(caller, {ref, :chunk, event}) end
+              collect_stream(resp, fwd, %{buffer: "", content: "", tool_calls: []})
+
+            {:error, reason} ->
+              Logger.error("Ollama stream connection failed: #{inspect(reason)}")
+              {:error, "Ollama stream connection failed: #{inspect(reason)}"}
+          end
+
+        case result do
+          :ok -> :ok
+          {:error, reason} -> send(caller, {ref, :stream_error, reason})
+        end
+      rescue
+        e ->
+          msg = "Ollama stream unexpected error: #{Exception.message(e)}"
+          Logger.error(msg)
+          send(caller, {ref, :stream_error, msg})
+      end
+    end)
+
+    drain_stream(ref, callback, 660_000)
+  end
+
   # --- Private ---
 
   defp pick_best_model(models) do
@@ -243,6 +302,102 @@ defmodule OptimalSystemAgent.Providers.Ollama do
 
   defp generate_id,
     do: OptimalSystemAgent.Utils.ID.generate()
+
+  # Receive loop that consumes forwarded chunk messages sent by the spawned
+  # streaming process.  Running in the caller's process ensures callbacks like
+  # Process.put(:llm_stream_result, result) write to the right process dict.
+  defp drain_stream(ref, callback, timeout) do
+    receive do
+      {^ref, :chunk, {:done, _} = event} ->
+        callback.(event)
+        :ok
+
+      {^ref, :chunk, event} ->
+        callback.(event)
+        drain_stream(ref, callback, timeout)
+
+      {^ref, :stream_error, reason} ->
+        {:error, reason}
+    after
+      timeout ->
+        Logger.error("Ollama stream timeout after #{div(timeout, 1000)}s")
+        {:error, "Ollama stream timeout"}
+    end
+  end
+
+  defp collect_stream(resp, callback, acc) do
+    ref = resp.body
+
+    receive do
+      {^ref, {:data, data}} ->
+        {lines, new_buffer} = split_ndjson(acc.buffer <> data)
+        acc = %{acc | buffer: new_buffer}
+
+        acc =
+          Enum.reduce(lines, acc, fn line, inner_acc ->
+            process_ndjson_line(line, callback, inner_acc)
+          end)
+
+        collect_stream(resp, callback, acc)
+
+      {^ref, :done} ->
+        content = Text.strip_thinking_tokens(acc.content)
+
+        tool_calls =
+          if acc.tool_calls != [] do
+            acc.tool_calls
+          else
+            ToolCallParsers.parse(acc.content, "ollama")
+          end
+
+        callback.({:done, %{content: content, tool_calls: tool_calls, usage: %{}}})
+        :ok
+
+      {^ref, {:error, reason}} ->
+        Logger.error("Ollama stream error: #{inspect(reason)}")
+        {:error, "Ollama stream error: #{inspect(reason)}"}
+    after
+      620_000 ->
+        Logger.error("Ollama stream timeout after 620s")
+        {:error, "Ollama stream timeout"}
+    end
+  end
+
+  # Split buffered data into complete NDJSON lines + partial remainder
+  defp split_ndjson(data) do
+    lines = String.split(data, "\n")
+    {complete, [remainder]} = Enum.split(lines, -1)
+    {Enum.reject(complete, &(&1 == "")), remainder}
+  end
+
+  defp process_ndjson_line(line, callback, acc) do
+    case Jason.decode(line) do
+      {:ok, %{"message" => %{"content" => text}}} when is_binary(text) and text != "" ->
+        callback.({:text_delta, text})
+        %{acc | content: acc.content <> text}
+
+      # kimi-k2.5 and other thinking models send a "thinking" field during
+      # extended reasoning before producing content or tool calls.
+      {:ok, %{"message" => %{"thinking" => text}}} when is_binary(text) and text != "" ->
+        callback.({:thinking_delta, text})
+        acc
+
+      {:ok, %{"message" => %{"tool_calls" => calls}}} when is_list(calls) ->
+        tool_calls =
+          Enum.map(calls, fn call ->
+            %{
+              id: call["id"] || generate_id(),
+              name: call["function"]["name"],
+              arguments: call["function"]["arguments"] || %{}
+            }
+          end)
+
+        %{acc | tool_calls: acc.tool_calls ++ tool_calls}
+
+      _ ->
+        acc
+    end
+  end
 
   # Returns `[headers: [{"authorization", "Bearer <key>"}]]` when
   # OLLAMA_API_KEY is set (Ollama Cloud), empty list otherwise.
