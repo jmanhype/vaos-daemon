@@ -118,7 +118,9 @@ defmodule OptimalSystemAgent.Providers.Ollama do
       }
       |> maybe_add_tools(model, opts)
 
-    req_opts = [json: body, receive_timeout: 120_000] ++ auth_headers()
+    # 600 s — thinking models (kimi-k2.5) need up to ~300 s before producing
+    # any output; 120 s was too short and caused Cortex synthesis timeouts.
+    req_opts = [json: body, receive_timeout: 600_000] ++ auth_headers()
 
     try do
       case Req.post("#{url}/api/chat", req_opts) do
