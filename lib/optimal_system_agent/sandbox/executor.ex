@@ -116,7 +116,8 @@ defmodule OptimalSystemAgent.Sandbox.Executor do
             [stderr_to_stdout: true]
             |> then(fn o -> if cwd, do: Keyword.put(o, :cd, cwd), else: o end)
 
-          System.cmd("sh", ["-c", command], cmd_opts)
+          {shell, shell_args} = resolve_shell()
+          System.cmd(shell, shell_args ++ [command], cmd_opts)
         rescue
           e -> {Exception.message(e), 1}
         end
@@ -129,6 +130,34 @@ defmodule OptimalSystemAgent.Sandbox.Executor do
       nil ->
         Logger.warning("[Sandbox.Executor] BEAM task timed out after #{timeout}ms")
         {:error, "Command timed out after #{timeout}ms"}
+    end
+  end
+
+  # Resolve the shell to use for command execution.
+  # On Windows, `sh` may not be in Erlang's PATH even if Git for Windows is installed.
+  # We try (in order): `sh` from PATH, known Git/WSL paths, then fall back to cmd.exe.
+  @spec resolve_shell() :: {String.t(), [String.t()]}
+  defp resolve_shell do
+    case :os.type() do
+      {:win32, _} ->
+        sh =
+          System.find_executable("sh") ||
+            Enum.find_value(
+              [
+                "C:/Program Files/Git/usr/bin/sh.exe",
+                "C:/Program Files (x86)/Git/usr/bin/sh.exe"
+              ],
+              fn path -> if File.exists?(path), do: path end
+            )
+
+        if sh do
+          {sh, ["-c"]}
+        else
+          {"cmd.exe", ["/c"]}
+        end
+
+      _ ->
+        {"sh", ["-c"]}
     end
   end
 
