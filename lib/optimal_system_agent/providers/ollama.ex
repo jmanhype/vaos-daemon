@@ -163,21 +163,42 @@ defmodule OptimalSystemAgent.Providers.Ollama do
       |> maybe_add_tools(model, opts)
       |> maybe_add_think(model, opts)
 
-    # 600 s per-chunk read timeout — slow local CPU models and long thinking
-    # phases (kimi-k2.5 takes ~300 s) need more than the default 300 s.
-    req_opts = [json: body, receive_timeout: 600_000, into: :self] ++ auth_headers()
+    # Use into: fn (synchronous callback) instead of into: :self.
+    # With plain HTTP (Ollama localhost), Req/Finch delivers chunks as
+    # {{Finch.HTTP1.Pool, pid}, {:data, binary}} — a format that doesn't match
+    # the {ref, {:data, binary}} patterns used by the mailbox-based receive loop.
+    # The callback approach runs directly in the calling process, bypassing all
+    # mailbox message format differences between HTTP and HTTPS connections.
+    stream_key = {__MODULE__, :stream, make_ref()}
+    Process.put(stream_key, %{buffer: "", content: "", tool_calls: []})
+
+    req_opts =
+      [
+        json: body,
+        receive_timeout: 600_000,
+        into: fn {:data, data}, {req, resp} ->
+          acc = Process.get(stream_key)
+          acc = handle_stream_chunk(data, callback, acc)
+          Process.put(stream_key, acc)
+          {:cont, {req, resp}}
+        end
+      ] ++ auth_headers()
 
     try do
       case Req.post("#{url}/api/chat", req_opts) do
-        {:ok, resp} ->
-          collect_stream(resp, callback, %{buffer: "", content: "", tool_calls: []})
+        {:ok, _resp} ->
+          acc = Process.get(stream_key)
+          Process.delete(stream_key)
+          finalize_stream(acc, callback)
 
         {:error, reason} ->
+          Process.delete(stream_key)
           Logger.error("Ollama stream connection failed: #{inspect(reason)}")
           {:error, "Ollama stream connection failed: #{inspect(reason)}"}
       end
     rescue
       e ->
+        Process.delete(stream_key)
         Logger.error("Ollama stream unexpected error: #{Exception.message(e)}")
         {:error, "Ollama stream unexpected error: #{Exception.message(e)}"}
     end
@@ -318,50 +339,22 @@ defmodule OptimalSystemAgent.Providers.Ollama do
   defp generate_id,
     do: OptimalSystemAgent.Utils.ID.generate()
 
-  defp collect_stream(resp, callback, acc) do
-    ref = resp.body
+  defp handle_stream_chunk(data, callback, acc) do
+    {lines, new_buffer} = split_ndjson(acc.buffer <> data)
+    acc = %{acc | buffer: new_buffer}
+    Enum.reduce(lines, acc, &process_ndjson_line(&1, callback, &2))
+  end
 
-    receive do
-      {^ref, {:data, data}} ->
-        {lines, new_buffer} = split_ndjson(acc.buffer <> data)
-        acc = %{acc | buffer: new_buffer}
+  defp finalize_stream(acc, callback) do
+    content = Text.strip_thinking_tokens(acc.content)
 
-        acc =
-          Enum.reduce(lines, acc, fn line, inner_acc ->
-            process_ndjson_line(line, callback, inner_acc)
-          end)
+    tool_calls =
+      if acc.tool_calls != [],
+        do: acc.tool_calls,
+        else: ToolCallParsers.parse(acc.content, "ollama")
 
-        collect_stream(resp, callback, acc)
-
-      {^ref, :done} ->
-        content = Text.strip_thinking_tokens(acc.content)
-
-        tool_calls =
-          if acc.tool_calls != [] do
-            acc.tool_calls
-          else
-            ToolCallParsers.parse(acc.content, "ollama")
-          end
-
-        callback.({:done, %{content: content, tool_calls: tool_calls, usage: %{}}})
-        :ok
-
-      {^ref, {:error, reason}} ->
-        Logger.error("Ollama stream error: #{inspect(reason)}")
-        {:error, "Ollama stream error: #{inspect(reason)}"}
-
-      {{Finch.HTTP1.Pool, _}, _} ->
-        # Finch internal connection pool message — safely discard
-        collect_stream(resp, callback, acc)
-
-      other ->
-        Logger.debug("[Ollama] collect_stream unexpected msg (ref=#{inspect(ref, limit: 2)}): #{inspect(other, limit: 4)}")
-        collect_stream(resp, callback, acc)
-    after
-      620_000 ->
-        Logger.error("Ollama stream timeout after 620s")
-        {:error, "Ollama stream timeout"}
-    end
+    callback.({:done, %{content: content, tool_calls: tool_calls, usage: %{}}})
+    :ok
   end
 
   # Split buffered data into complete NDJSON lines + partial remainder
