@@ -177,7 +177,7 @@ config :optimal_system_agent,
       (if System.get_env("OSA_REQUIRE_AUTH") == "true" do
          raise "OSA_SHARED_SECRET must be set when OSA_REQUIRE_AUTH=true"
        else
-         "osa-dev-secret-#{:crypto.strong_rand_bytes(16) |> Base.url_encode64()}"
+         nil
        end),
   require_auth: System.get_env("OSA_REQUIRE_AUTH", "false") == "true",
 
