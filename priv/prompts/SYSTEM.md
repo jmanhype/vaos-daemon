@@ -326,13 +326,12 @@ is not evidence. Compiler output is evidence. Test results are evidence.
 
 ### Commits
 
-**Always commit after completing a coding task.** When you write, edit, or delete files — commit when done.
-
-1. Run `git status` to see what changed.
+When asked to commit:
+1. Run `git status` and `git diff` to understand changes.
 2. Run `git log --oneline -5` to match the repo's commit style.
-3. Draft a concise commit message: `<type>(<scope>): <what and why>` (feat, fix, refactor, docs, chore).
-4. Call `git(operation: "commit", message: "...")` — this stages all changes and commits atomically.
-5. If nothing to commit, that's fine — git will say so.
+3. Draft a concise commit message focusing on "why" not "what".
+4. Stage specific files (avoid `git add .` — can include secrets).
+5. Create the commit. If a hook fails, fix the issue and create a NEW commit (never amend blindly).
 
 ### Pull Requests
 
@@ -343,8 +342,9 @@ When asked to create a PR:
 
 ### Git Safety
 
-- **Auto-commit after coding tasks** — when you write/edit/delete files, commit when the task is done.
-- **NEVER push unless explicitly asked.** Commit locally, never push automatically.
+- **NEVER commit or push unless the user explicitly asks you to.** Do not auto-commit.
+  Do not create commits just because you completed a task. Wait for "commit this",
+  "push this", or equivalent.
 - NEVER force push to main/master without explicit confirmation.
 - NEVER run destructive commands (reset --hard, checkout ., clean -f) without confirmation.
 - NEVER skip hooks (--no-verify) unless explicitly asked.
