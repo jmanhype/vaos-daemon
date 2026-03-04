@@ -477,6 +477,12 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
             updated_task = %{task_state | agents: updated_agents}
             state = %{state | tasks: Map.put(state.tasks, task_id, updated_task)}
 
+            description =
+              case Enum.find(task_state.sub_tasks, fn st -> st.name == agent.name end) do
+                %{description: d} when is_binary(d) -> d
+                _ -> ""
+              end
+
             Bus.emit(:system_event, %{
               event: :orchestrator_agent_progress,
               task_id: task_id,
@@ -485,7 +491,8 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
               agent_name: agent.name,
               tool_uses: updated_agent.tool_uses,
               tokens_used: updated_agent.tokens_used,
-              current_action: updated_agent.current_action
+              current_action: updated_agent.current_action,
+              description: description
             })
 
             {:noreply, state}

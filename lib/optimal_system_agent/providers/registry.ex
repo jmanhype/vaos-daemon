@@ -252,7 +252,7 @@ defmodule OptimalSystemAgent.Providers.Registry do
   # --- Private ---
 
   defp call_with_fallback(provider, module, messages, opts) do
-    case apply_provider(module, messages, opts) do
+    case with_retry(fn -> apply_provider(module, messages, opts) end) do
       {:ok, _} = result ->
         result
 
@@ -284,7 +284,7 @@ defmodule OptimalSystemAgent.Providers.Registry do
   end
 
   defp stream_with_fallback(provider, module, messages, callback, opts) do
-    result = try_stream_provider(module, messages, callback, opts)
+    result = with_retry(fn -> try_stream_provider(module, messages, callback, opts) end)
 
     case result do
       :ok ->
@@ -351,6 +351,43 @@ defmodule OptimalSystemAgent.Providers.Registry do
       end
     else
       fallback_sync_stream(module, messages, callback, opts)
+    end
+  end
+
+  # Retry wrapper for rate-limited responses.
+  #
+  # - On `{:error, {:rate_limited, seconds}}` — sleep for `seconds` (capped at 60s),
+  #   then retry.
+  # - On `{:error, {:rate_limited, nil}}` — use exponential backoff: 1s, 2s, 4s.
+  # - Any other error — return immediately without retrying.
+  # - Max 3 attempts total (1 initial + 2 retries).
+  # - Streaming responses return `:ok` on success; the retry logic handles both
+  #   `{:ok, _}` and bare `:ok`.
+  @max_retries 3
+  @backoff_base_ms 1_000
+
+  defp with_retry(fun, attempt \\ 1) do
+    result = fun.()
+
+    case result do
+      {:error, {:rate_limited, retry_after}} when attempt <= @max_retries ->
+        sleep_ms =
+          if is_integer(retry_after) and retry_after > 0 do
+            min(retry_after, 60) * 1_000
+          else
+            round(@backoff_base_ms * :math.pow(2, attempt - 1))
+          end
+
+        Logger.warning(
+          "Rate limited (attempt #{attempt}/#{@max_retries}). " <>
+            "Retrying in #{div(sleep_ms, 1_000)}s..."
+        )
+
+        Process.sleep(sleep_ms)
+        with_retry(fun, attempt + 1)
+
+      _other ->
+        result
     end
   end
 
