@@ -128,7 +128,7 @@ defmodule OptimalSystemAgent.Commands do
       n when n in ~w(compact usage) -> "context"
       "cortex" -> "intelligence"
       n when n in ~w(verbose think plan config) -> "config"
-      n when n in ~w(agents tiers tier swarms hooks learning) -> "agents"
+      n when n in ~w(agents tiers tier swarms swarm hooks learning) -> "agents"
       n when n in ~w(budget thinking export machines providers) -> "info"
       n when n in ~w(reload doctor setup create-command) -> "system"
       n when n in ~w(commit build test lint verify create-pr fix explain) -> "workflow"
@@ -278,6 +278,7 @@ defmodule OptimalSystemAgent.Commands do
       {"tiers", "Show model tier configuration", &Agents.cmd_tiers/2},
       {"tier", "Set a tier model override", &Agents.cmd_tier_set/2},
       {"swarms", "List swarm presets", &Agents.cmd_swarms/2},
+      {"swarm", "Launch a swarm: /swarm <preset> <task>", &Agents.cmd_swarm/2},
       {"hooks", "Show hook pipeline status", &Agents.cmd_hooks/2},
       {"learning", "Learning engine metrics", &Agents.cmd_learning/2},
 

@@ -486,8 +486,20 @@ defmodule OptimalSystemAgent.Tools.Registry do
   def handle_call({:execute, tool_name, arguments}, _from, state) do
     result =
       case Map.get(state.builtin_tools, tool_name) do
-        nil -> {:error, "Unknown tool: #{tool_name}"}
-        mod -> mod.execute(arguments)
+        nil ->
+          # Builtin miss — fall through to MCP tools stored in :persistent_term
+          mcp_tools = :persistent_term.get({__MODULE__, :mcp_tools}, %{})
+
+          case Map.get(mcp_tools, tool_name) do
+            nil ->
+              {:error, "Unknown tool: #{tool_name}"}
+
+            %{original_name: original_name} ->
+              OptimalSystemAgent.MCP.Client.call_tool(original_name, arguments)
+          end
+
+        mod ->
+          mod.execute(arguments)
       end
 
     {:reply, result, state}
@@ -521,7 +533,8 @@ defmodule OptimalSystemAgent.Tools.Registry do
       "delegate" => OptimalSystemAgent.Tools.Builtins.Delegate,
       "git" => OptimalSystemAgent.Tools.Builtins.Git,
       "github" => OptimalSystemAgent.Tools.Builtins.Github,
-      "multi_file_edit" => OptimalSystemAgent.Tools.Builtins.MultiFileEdit
+      "multi_file_edit" => OptimalSystemAgent.Tools.Builtins.MultiFileEdit,
+      "semantic_search" => OptimalSystemAgent.Tools.Builtins.SemanticSearch
     }
   end
 

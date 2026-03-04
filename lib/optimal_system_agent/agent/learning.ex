@@ -337,11 +337,16 @@ defmodule OptimalSystemAgent.Agent.Learning do
     # Check for skill generation candidates
     state = check_skill_generation(patterns, state)
 
-    %{
+    state = %{
       state
       | patterns: patterns,
         metrics: %{state.metrics | consolidations: state.metrics.consolidations + 1}
     }
+
+    persist_patterns(state)
+    persist_solutions(state)
+
+    state
   end
 
   # ── REFLECT: Full Consolidation ─────────────────────────────────

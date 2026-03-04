@@ -149,27 +149,100 @@ defmodule OptimalSystemAgent.Commands.Agents do
     end
   end
 
-  @doc "Handle the `/swarms` command."
+  @doc "Handle the `/swarms` command — list available presets."
   def cmd_swarms(_arg, _session_id) do
-    alias OptimalSystemAgent.Agent.Roster
+    alias OptimalSystemAgent.Swarm.Patterns
 
-    presets = Roster.swarm_presets()
+    patterns = Patterns.list_patterns()
 
     lines =
-      Enum.map_join(presets, "\n", fn {name, preset} ->
-        agents_str = Enum.join(preset.agents, ", ")
-        "  #{String.pad_trailing(name, 20)} #{preset.pattern} — #{agents_str}"
+      Enum.map_join(patterns, "\n", fn {name, description} ->
+        "  #{String.pad_trailing(name, 22)} #{description}"
       end)
 
     output = """
-    Swarm Presets (#{map_size(presets)})
+    Swarm Presets (#{length(patterns)})
 
     #{lines}
 
-    Use: /swarm <preset> to launch a swarm (coming soon)
+    Usage: /swarm <preset> <task description>
     """
 
     {:command, String.trim(output)}
+  end
+
+  @doc "Handle the `/swarm <preset> <task>` command — launch a swarm."
+  def cmd_swarm(arg, session_id) do
+    alias OptimalSystemAgent.Swarm.{Orchestrator, Patterns}
+
+    parts = arg |> String.trim() |> String.split(~r/\s+/, parts: 2)
+
+    case parts do
+      [""] ->
+        cmd_swarms("", session_id)
+
+      [preset_name] when preset_name != "" ->
+        # Preset given but no task
+        case Patterns.get_pattern(preset_name) do
+          {:ok, _config} ->
+            {:command,
+             "Usage: /swarm #{preset_name} <task description>\n\nProvide a task for the swarm to work on."}
+
+          {:error, :not_found} ->
+            available = Patterns.list_patterns() |> Enum.map_join(", ", &elem(&1, 0))
+            {:command, "Unknown preset: #{preset_name}\n\nAvailable: #{available}"}
+        end
+
+      [preset_name, task] ->
+        case Patterns.get_pattern(preset_name) do
+          {:error, :not_found} ->
+            available = Patterns.list_patterns() |> Enum.map_join(", ", &elem(&1, 0))
+            {:command, "Unknown preset: #{preset_name}\n\nAvailable: #{available}"}
+
+          {:ok, config} ->
+            pattern_atom =
+              config["mode"]
+              |> case do
+                "parallel" -> :parallel
+                "pipeline" -> :pipeline
+                "sequential" -> :pipeline
+                "debate" -> :debate
+                "review" -> :review
+                _ -> nil
+              end
+
+            opts =
+              [session_id: session_id]
+              |> then(fn o -> if pattern_atom, do: Keyword.put(o, :pattern, pattern_atom), else: o end)
+
+            case Orchestrator.launch(task, opts) do
+              {:ok, swarm_id} ->
+                short_id = String.slice(swarm_id, 0, 12)
+                agents = config["agents"] || []
+                agents_str = Enum.join(agents, ", ")
+
+                output = """
+                Swarm launched
+
+                  ID:      #{short_id}
+                  Preset:  #{preset_name}
+                  Pattern: #{config["mode"] || "auto"}
+                  Agents:  #{agents_str}
+                  Task:    #{String.slice(task, 0, 120)}
+
+                Use /swarm-status #{short_id} to check progress.
+                """
+
+                {:command, String.trim(output)}
+
+              {:error, reason} ->
+                {:command, "Failed to launch swarm: #{reason}"}
+            end
+        end
+
+      _ ->
+        cmd_swarms("", session_id)
+    end
   end
 
   @doc "Handle the `/hooks` command."
