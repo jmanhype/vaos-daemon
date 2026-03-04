@@ -102,7 +102,7 @@ $backendScript = @"
 `$env:PATH = 'C:\Program Files\Erlang OTP\bin;$ELIXIR_BIN;' + `$env:PATH
 Set-Location '$OSA_DIR'
 Get-Content '.env' | ForEach-Object {
-    if (`$_ -match '^\s*([^#][^=]+)=(.*)$') {
+    if (`$_ -match '^\s*([^#][^=]+)=(.*)`$') {
         [System.Environment]::SetEnvironmentVariable(`$Matches[1].Trim(), `$Matches[2].Trim(), 'Process')
     }
 }
