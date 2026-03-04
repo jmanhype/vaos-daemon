@@ -23,9 +23,11 @@ defmodule OptimalSystemAgent.Tools.Builtins.CodeSymbols do
   @impl true
   def description,
     do:
-      "Extract function/module/class definitions from code files without reading full content. " <>
-        "Returns a compact symbol table (file:line [kind] name). " <>
-        "Use to understand codebase structure, find where functions are defined, or get an API overview. " <>
+      "Knowledge graph for codebase indexing — extracts all function/module/class/struct definitions " <>
+        "across a project without reading full file contents. " <>
+        "Use this FIRST when exploring an unfamiliar codebase: get a complete symbol map " <>
+        "(file:line [kind] name), understand module boundaries, find where things are defined, " <>
+        "and identify entry points before diving into individual files. " <>
         "Supports: Elixir (.ex/.exs), Go (.go), TypeScript/JavaScript (.ts/.tsx/.js/.jsx), Python (.py), Rust (.rs)."
 
   @impl true
