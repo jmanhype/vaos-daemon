@@ -29,6 +29,10 @@ defmodule OptimalSystemAgent.Agent.Loop do
   # conversation to prevent context overflow. Default: 10 KB.
   defp max_tool_output_bytes, do: Application.get_env(:optimal_system_agent, :max_tool_output_bytes, 10_240)
 
+  # ETS table for cancel flags — checked each loop iteration.
+  # Created in application.ex, written by cancel/1, read by run_loop.
+  @cancel_table :osa_cancel_flags
+
   defstruct [
     :session_id,
     :user_id,
@@ -68,6 +72,23 @@ defmodule OptimalSystemAgent.Agent.Loop do
     _ -> %{iteration_count: 0, tools_used: []}
   end
 
+  @doc """
+  Cancel a running agent loop for the given session.
+
+  Sets a flag in an ETS table that the run_loop checks at each iteration.
+  This works even though handle_call blocks the GenServer mailbox,
+  because ETS reads are concurrent.
+  """
+  def cancel(session_id) do
+    :ets.insert(@cancel_table, {session_id, true})
+    Logger.info("[loop] Cancel requested for session #{session_id}")
+    :ok
+  rescue
+    ArgumentError ->
+      Logger.warning("[loop] Cancel table not found — agent may not be running")
+      {:error, :not_running}
+  end
+
   # --- Server Callbacks ---
 
   @impl true
@@ -96,6 +117,13 @@ defmodule OptimalSystemAgent.Agent.Loop do
   @impl true
   def handle_call({:process, message, opts}, _from, state) do
     skip_plan = Keyword.get(opts, :skip_plan, false)
+
+    # Clear any stale cancel flag for this session
+    try do
+      :ets.delete(@cancel_table, state.session_id)
+    rescue
+      ArgumentError -> :ok
+    end
 
     # Apply per-call provider/model overrides (SDK passthrough)
     state = apply_overrides(state, opts)
@@ -255,14 +283,39 @@ defmodule OptimalSystemAgent.Agent.Loop do
 
   # --- Agent Loop ---
 
-  defp run_loop(%{iteration: iter} = state) do
+  defp run_loop(%{iteration: iter, session_id: sid} = state) do
+    # Check cancel flag (ETS read — concurrent-safe even during handle_call)
+    cancelled? =
+      try do
+        case :ets.lookup(@cancel_table, sid) do
+          [{^sid, true}] -> true
+          _ -> false
+        end
+      rescue
+        ArgumentError -> false
+      end
+
     max_iter = max_iterations()
 
-    if iter >= max_iter do
-      Logger.warning("Agent loop hit max iterations (#{max_iter})")
-      {"I've reached my reasoning limit for this request. Here's what I have so far.", state}
-    else
-      do_run_loop(state)
+    cond do
+      cancelled? ->
+        Logger.info("[loop] Cancelled by user at iteration #{iter}")
+        :ets.delete(@cancel_table, sid)
+
+        Bus.emit(:system_event, %{
+          event: :agent_cancelled,
+          session_id: sid,
+          iteration: iter
+        })
+
+        {"Cancelled by user.", state}
+
+      iter >= max_iter ->
+        Logger.warning("Agent loop hit max iterations (#{max_iter})")
+        {"I've reached my reasoning limit for this request. Here's what I have so far.", state}
+
+      true ->
+        do_run_loop(state)
     end
   end
 

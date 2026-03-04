@@ -692,6 +692,24 @@ impl App {
                     );
                 }
             },
+            BackendEvent::CancelTimeout => {
+                // Safety net: if the backend cancel response never came via SSE,
+                // force the UI back to idle so the user isn't stuck.
+                if self.cancelled && self.state.is_processing() {
+                    info!("Cancel timeout — forcing UI back to Idle");
+                    self.chat.clear_streaming();
+                    self.stream_buf.clear();
+                    self.thinking_buf.clear();
+                    self.activity.stop();
+                    self.status.set_active(false);
+                    self.cancelled = false;
+                    self.transition(AppState::Idle);
+                    self.toasts.push(
+                        "Cancelled (backend did not respond)".into(),
+                        crate::components::toast::ToastLevel::Warning,
+                    );
+                }
+            },
         }
         false
     }

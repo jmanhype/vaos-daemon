@@ -167,4 +167,9 @@ pub enum BackendEvent {
     SchedulerReloaded(Result<(), String>),
     MachinesLoaded(Result<Vec<MachineInfo>, String>),
     OnboardingComplete(Result<OnboardingSetupResponse, String>),
+
+    // === Cancel ===
+    /// Fired 3s after cancel request if the SSE stream hasn't delivered a response.
+    /// Forces the UI back to Idle to prevent getting stuck.
+    CancelTimeout,
 }

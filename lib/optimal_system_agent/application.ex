@@ -38,6 +38,11 @@ defmodule OptimalSystemAgent.Application do
   @impl true
   def start(_type, _args) do
     Application.put_env(:optimal_system_agent, :start_time, System.monotonic_time(:second))
+
+    # ETS table for Loop cancel flags — must exist before any agent session starts.
+    # public + set so Loop.cancel/1 and run_loop can read/write concurrently.
+    :ets.new(:osa_cancel_flags, [:named_table, :public, :set])
+
     children =
       [
         # Process registry for agent sessions

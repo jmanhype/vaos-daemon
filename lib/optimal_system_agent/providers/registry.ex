@@ -329,9 +329,15 @@ defmodule OptimalSystemAgent.Providers.Registry do
     end
   end
 
-  defp try_stream_provider({:compat, _} = entry, messages, callback, opts) do
-    # Compat providers don't implement chat_stream — always use sync fallback
-    fallback_sync_stream(entry, messages, callback, opts)
+  defp try_stream_provider({:compat, provider}, messages, callback, opts) do
+    # Compat providers now support chat_stream via OpenAICompatProvider
+    try do
+      @compat.chat_stream(provider, messages, callback, opts)
+    rescue
+      e ->
+        Logger.warning("Compat provider #{provider} streaming failed: #{Exception.message(e)}, falling back to sync")
+        fallback_sync_stream({:compat, provider}, messages, callback, opts)
+    end
   end
 
   defp try_stream_provider(module, messages, callback, opts) when is_atom(module) do

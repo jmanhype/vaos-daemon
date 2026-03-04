@@ -112,6 +112,33 @@ defmodule OptimalSystemAgent.Providers.OpenAICompatProvider do
     end
   end
 
+  @doc "Send a streaming chat completion request through the named provider."
+  def chat_stream(provider, messages, callback, opts \\ []) do
+    config = get_config!(provider)
+
+    api_key = Application.get_env(:optimal_system_agent, :"#{provider}_api_key")
+
+    model =
+      Keyword.get(opts, :model) ||
+        Application.get_env(:optimal_system_agent, :"#{provider}_model", config.default_model)
+
+    url = Application.get_env(:optimal_system_agent, :"#{provider}_url", config.default_url)
+
+    opts =
+      opts
+      |> Keyword.delete(:model)
+      |> maybe_add_headers(config)
+      |> maybe_extend_timeout(model)
+
+    case OpenAICompat.chat_stream(url, api_key, model, messages, callback, opts) do
+      {:error, "API key not configured"} ->
+        {:error, "#{provider |> to_string() |> String.upcase()}_API_KEY not configured"}
+
+      other ->
+        other
+    end
+  end
+
   defp maybe_add_headers(opts, %{extra_headers: headers}), do: Keyword.put(opts, :extra_headers, headers)
   defp maybe_add_headers(opts, _config), do: opts
 

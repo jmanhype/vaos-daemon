@@ -2,15 +2,17 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.SessionRoutes do
   @moduledoc """
   Session management routes.
 
-    GET  /sessions
-    POST /sessions
-    GET  /sessions/:id
-    GET  /sessions/:id/messages
+    GET   /sessions
+    POST  /sessions
+    GET   /sessions/:id
+    GET   /sessions/:id/messages
+    POST  /sessions/:id/cancel
   """
   use Plug.Router
   import OptimalSystemAgent.Channels.HTTP.API.Shared
 
   alias OptimalSystemAgent.Agent.Memory
+  alias OptimalSystemAgent.Agent.Loop
 
   plug :match
   plug :dispatch
@@ -132,6 +134,24 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.SessionRoutes do
     conn
     |> put_resp_content_type("application/json")
     |> send_resp(200, body)
+  end
+
+  # ── POST /sessions/:id/cancel ──────────────────────────────────────
+
+  post "/:id/cancel" do
+    session_id = conn.params["id"]
+
+    case Loop.cancel(session_id) do
+      :ok ->
+        body = Jason.encode!(%{status: "cancel_requested", session_id: session_id})
+
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(200, body)
+
+      {:error, :not_running} ->
+        json_error(conn, 404, "not_running", "No active agent loop for session #{session_id}")
+    end
   end
 
   match _ do
