@@ -16,7 +16,7 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.AgentRunner do
   """
   require Logger
 
-  alias OptimalSystemAgent.Agent.{Roster, Tier, Orchestrator.SubTask, Orchestrator.AgentState}
+  alias OptimalSystemAgent.Agent.{Roster, Tier, Memory, Orchestrator.SubTask, Orchestrator.AgentState}
   alias OptimalSystemAgent.Events.Bus
   alias OptimalSystemAgent.Providers.Registry, as: Providers
   alias OptimalSystemAgent.Tools.Registry, as: Tools
@@ -157,8 +157,27 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.AgentRunner do
         sub_task.description
       end
 
+    # Inject relevant memories into system context so the sub-agent is aware
+    # of past decisions, preferences, and patterns related to its task.
+    system_prompt_with_memory =
+      case Memory.recall_relevant(sub_task.description, 1000) do
+        "" ->
+          system_prompt
+
+        relevant_memories ->
+          """
+          #{system_prompt}
+
+          ## Relevant Memory Context
+          The following past decisions and preferences are relevant to your task.
+          Use them to stay consistent with established patterns:
+
+          #{relevant_memories}
+          """
+      end
+
     messages = [
-      %{role: "system", content: system_prompt},
+      %{role: "system", content: system_prompt_with_memory},
       %{role: "user", content: user_message}
     ]
 

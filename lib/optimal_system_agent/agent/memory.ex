@@ -180,6 +180,33 @@ defmodule OptimalSystemAgent.Agent.Memory do
     GenServer.call(__MODULE__, {:search_messages, query, opts})
   end
 
+  @doc """
+  Automatically extract insights from recent messages and save them to MEMORY.md.
+
+  Scans the last N messages for patterns signalled by keywords like "always",
+  "never", "prefer", "use", "remember", "pattern", "rule". Deduplicates against
+  already-indexed content and saves each novel insight as a "preference" entry.
+
+  Returns `{:ok, saved_count}`.
+  """
+  @spec extract_insights([map()]) :: {:ok, non_neg_integer()}
+  def extract_insights(messages) when is_list(messages) do
+    GenServer.call(__MODULE__, {:extract_insights, messages})
+  end
+
+  @doc """
+  After a complex conversation (>5 turns), check whether a pattern nudge should
+  be surfaced to the user.
+
+  Returns `{:nudge, text}` when the conditions are met and the pattern has not
+  been recently ignored, or `:no_nudge` otherwise.
+  """
+  @spec maybe_pattern_nudge(non_neg_integer(), [map()]) ::
+          {:nudge, String.t()} | :no_nudge
+  def maybe_pattern_nudge(turn_count, messages) when is_list(messages) do
+    GenServer.call(__MODULE__, {:maybe_pattern_nudge, turn_count, messages})
+  end
+
   @doc "Get statistics for a specific session."
   @spec session_stats(String.t()) :: map()
   def session_stats(session_id) do
@@ -202,7 +229,7 @@ defmodule OptimalSystemAgent.Agent.Memory do
     build_index()
 
     Logger.info("Agent.Memory started — sessions at #{dir}, index built")
-    {:ok, %{sessions_dir: dir}}
+    {:ok, %{sessions_dir: dir, ignored_nudges: MapSet.new(), last_nudge_turn: 0}}
   end
 
   # ── Casts ──────────────────────────────────────────────────────────
@@ -318,6 +345,18 @@ defmodule OptimalSystemAgent.Agent.Memory do
   @impl true
   def handle_call({:session_stats, session_id}, _from, state) do
     result = do_session_stats(session_id)
+    {:reply, result, state}
+  end
+
+  @impl true
+  def handle_call({:extract_insights, messages}, _from, state) do
+    {count, state} = do_extract_insights(messages, state)
+    {:reply, {:ok, count}, state}
+  end
+
+  @impl true
+  def handle_call({:maybe_pattern_nudge, turn_count, messages}, _from, state) do
+    {result, state} = do_maybe_pattern_nudge(turn_count, messages, state)
     {:reply, result, state}
   end
 
@@ -976,6 +1015,132 @@ defmodule OptimalSystemAgent.Agent.Memory do
     |> Enum.reject(fn word -> MapSet.member?(@stop_words, word) end)
     |> Enum.filter(fn word -> String.length(word) > 2 end)
     |> Enum.reject(fn word -> Regex.match?(~r/^\d+$/, word) end)
+    |> Enum.uniq()
+  end
+
+  # ────────────────────────────────────────────────────────────────────
+  # Auto-Insight Extraction
+  # ────────────────────────────────────────────────────────────────────
+
+  # Keywords that signal a user or assistant is expressing a rule/preference.
+  @insight_keywords ~w(always never prefer use remember pattern rule convention
+                       important avoid default must should habit tip note keep)
+
+  defp do_extract_insights(messages, state) do
+    # Consider only assistant and user messages (not tool results)
+    candidate_messages =
+      messages
+      |> Enum.filter(fn msg ->
+        role = Map.get(msg, :role, Map.get(msg, "role", ""))
+        content = Map.get(msg, :content, Map.get(msg, "content", ""))
+        role in ["assistant", "user"] and is_binary(content) and byte_size(content) > 20
+      end)
+
+    # Extract sentences that contain insight keywords
+    insights =
+      candidate_messages
+      |> Enum.flat_map(fn msg ->
+        content = Map.get(msg, :content, Map.get(msg, "content", ""))
+        extract_insight_sentences(content)
+      end)
+      |> Enum.uniq()
+      |> Enum.reject(&already_indexed?/1)
+
+    if insights == [] do
+      {0, state}
+    else
+      Enum.each(insights, fn insight ->
+        remember(insight, "preference")
+        Logger.debug("[Memory] Auto-saved insight: #{String.slice(insight, 0, 80)}")
+      end)
+
+      Logger.info("[Memory] Auto-extracted #{length(insights)} insight(s) from conversation")
+      {length(insights), state}
+    end
+  end
+
+  # Extract individual sentences from content that contain insight keywords.
+  defp extract_insight_sentences(content) do
+    content
+    |> String.split(~r/[.!?\n]+/, trim: true)
+    |> Enum.map(&String.trim/1)
+    |> Enum.filter(fn sentence ->
+      lower = String.downcase(sentence)
+      String.length(sentence) > 30 and
+        Enum.any?(@insight_keywords, fn kw -> String.contains?(lower, kw) end)
+    end)
+  end
+
+  # Check if a candidate insight is already covered by indexed memory entries.
+  defp already_indexed?(candidate) do
+    keywords = extract_keywords(candidate)
+
+    if keywords == [] do
+      false
+    else
+      # If more than half the keywords are already indexed, skip
+      indexed_count =
+        Enum.count(keywords, fn kw ->
+          try do
+            case :ets.lookup(@index_table, kw) do
+              [{^kw, ids}] when ids != [] -> true
+              _ -> false
+            end
+          rescue
+            _ -> false
+          end
+        end)
+
+      indexed_count >= div(length(keywords), 2) + 1
+    end
+  end
+
+  # ────────────────────────────────────────────────────────────────────
+  # Adaptive Pattern Nudging
+  # ────────────────────────────────────────────────────────────────────
+
+  # Minimum turns between nudges to avoid annoying the user.
+  @nudge_cooldown_turns 15
+
+  defp do_maybe_pattern_nudge(turn_count, messages, state) do
+    should_nudge =
+      turn_count > 5 and
+        turn_count - state.last_nudge_turn >= @nudge_cooldown_turns
+
+    if not should_nudge do
+      {:no_nudge, state}
+    else
+      # Look for unsaved patterns in recent messages
+      patterns = detect_unsaved_patterns(messages)
+
+      if patterns == [] do
+        {:no_nudge, state}
+      else
+        pattern_preview = patterns |> Enum.take(2) |> Enum.join("; ")
+
+        nudge_text =
+          "I noticed a pattern in our conversation: #{String.slice(pattern_preview, 0, 150)}. " <>
+            "Want me to save this to memory so I remember it in future sessions? " <>
+            "(Reply \"yes save\" or \"no thanks\")"
+
+        state = %{state | last_nudge_turn: turn_count}
+        {{:nudge, nudge_text}, state}
+      end
+    end
+  end
+
+  # Identify patterns from recent messages that haven't been saved yet.
+  defp detect_unsaved_patterns(messages) do
+    messages
+    |> Enum.filter(fn msg ->
+      role = Map.get(msg, :role, Map.get(msg, "role", ""))
+      role in ["assistant", "user"]
+    end)
+    |> Enum.flat_map(fn msg ->
+      content = Map.get(msg, :content, Map.get(msg, "content", ""))
+      if is_binary(content), do: extract_insight_sentences(content), else: []
+    end)
+    |> Enum.reject(&already_indexed?/1)
     |> Enum.uniq()
   end
 

@@ -8,6 +8,7 @@ defmodule OptimalSystemAgent.Application do
     - Events.Bus (goldrush-compiled :osa_event_router)
     - Bridge.PubSub (goldrush → PubSub bridge, 3 tiers)
     - Repo (SQLite3 persistent storage)
+    - Telemetry.Metrics (ETS metrics — tool counts, provider latency, noise filter rate)
     - Providers.Registry (LLM provider routing via :osa_provider_router)
     - Tools.Registry (tool dispatch via :osa_tool_dispatcher)
     - Machines (composable skill set activation from ~/.osa/config.json)
@@ -56,6 +57,9 @@ defmodule OptimalSystemAgent.Application do
         OptimalSystemAgent.Events.Bus,
         OptimalSystemAgent.Bridge.PubSub,
         OptimalSystemAgent.Store.Repo,
+
+        # Telemetry — subscribes to Events.Bus; must start after Bus + TaskSupervisor
+        OptimalSystemAgent.Telemetry.Metrics,
 
         # LLM providers (goldrush-compiled :osa_provider_router)
         OptimalSystemAgent.Providers.Registry,
