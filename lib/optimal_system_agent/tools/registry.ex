@@ -453,7 +453,8 @@ defmodule OptimalSystemAgent.Tools.Registry do
       "skill_manager" => OptimalSystemAgent.Tools.Builtins.SkillManager,
       "ask_user" => OptimalSystemAgent.Tools.Builtins.AskUser,
       "delegate" => OptimalSystemAgent.Tools.Builtins.Delegate,
-      "git" => OptimalSystemAgent.Tools.Builtins.Git
+      "git" => OptimalSystemAgent.Tools.Builtins.Git,
+      "code_symbols" => OptimalSystemAgent.Tools.Builtins.CodeSymbols
     }
   end
 

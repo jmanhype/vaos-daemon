@@ -488,12 +488,13 @@ defmodule OptimalSystemAgent.Agent.Context do
     provider = Application.get_env(:optimal_system_agent, :default_provider, :unknown)
     model = get_active_model(provider)
     workspace = Path.expand("~/.osa/workspace")
+    workspace_info = cached_workspace_overview(workspace)
 
     """
     ## Environment
     - Working directory: #{cwd}
     - User workspace: #{workspace} (write all user projects and code here)
-    - Date: #{date}
+    #{workspace_info}- Date: #{date}
     - OS: #{os_family}/#{os_name}
     - Elixir #{elixir_ver} / OTP #{otp_release}
     - Provider: #{provider} / #{model}
@@ -501,6 +502,108 @@ defmodule OptimalSystemAgent.Agent.Context do
     """
   rescue
     _ -> nil
+  end
+
+  defp cached_workspace_overview(workspace) do
+    case Process.get(:osa_workspace_overview_cache) do
+      nil ->
+        overview = build_workspace_overview(workspace)
+        Process.put(:osa_workspace_overview_cache, overview)
+        overview
+
+      cached ->
+        cached
+    end
+  end
+
+  defp build_workspace_overview(workspace) do
+    unless File.dir?(workspace), do: "", else: do_build_workspace_overview(workspace)
+  rescue
+    _ -> ""
+  end
+
+  defp do_build_workspace_overview(workspace) do
+    project_type = detect_project_type(workspace)
+    file_count = count_workspace_files(workspace)
+    tree = compact_workspace_tree(workspace)
+
+    tree_line = if tree != "", do: "- Structure:\n#{tree}\n", else: ""
+
+    "- Workspace project: #{project_type} (#{file_count} files)\n#{tree_line}"
+  end
+
+  defp detect_project_type(dir) do
+    cond do
+      File.exists?(Path.join(dir, "mix.exs")) -> "Elixir/OTP"
+      File.exists?(Path.join(dir, "go.mod")) -> "Go"
+      File.exists?(Path.join(dir, "Cargo.toml")) -> "Rust"
+      File.exists?(Path.join(dir, "package.json")) -> "Node.js"
+      File.exists?(Path.join(dir, "pyproject.toml")) or
+          File.exists?(Path.join(dir, "requirements.txt")) -> "Python"
+      File.exists?(Path.join(dir, "pom.xml")) -> "Java"
+      true -> "Generic"
+    end
+  end
+
+  defp count_workspace_files(dir) do
+    case System.cmd("git", ["ls-files", "--cached", "--others", "--exclude-standard"],
+           cd: dir,
+           stderr_to_stdout: true
+         ) do
+      {output, 0} ->
+        output |> String.split("\n") |> Enum.reject(&(&1 == "")) |> length()
+
+      _ ->
+        Path.wildcard(Path.join(dir, "**/*")) |> Enum.count(&File.regular?/1)
+    end
+  rescue
+    _ -> 0
+  end
+
+  @workspace_skip ~w(node_modules _build deps .git __pycache__ dist build target .elixir_ls ebin)
+
+  defp compact_workspace_tree(dir) do
+    case File.ls(dir) do
+      {:ok, entries} ->
+        entries
+        |> Enum.reject(fn e -> e in @workspace_skip or String.starts_with?(e, ".") end)
+        |> Enum.sort()
+        |> Enum.take(12)
+        |> Enum.map(fn entry ->
+          path = Path.join(dir, entry)
+
+          if File.dir?(path) do
+            count = count_dir_summary(path)
+            "    #{entry}/ (#{count})"
+          else
+            "    #{entry}"
+          end
+        end)
+        |> Enum.join("\n")
+
+      _ ->
+        ""
+    end
+  end
+
+  defp count_dir_summary(dir) do
+    case File.ls(dir) do
+      {:ok, entries} ->
+        files = Enum.count(entries, &File.regular?(Path.join(dir, &1)))
+        dirs = Enum.count(entries, fn e ->
+          File.dir?(Path.join(dir, e)) and e not in @workspace_skip
+        end)
+
+        cond do
+          files > 0 and dirs > 0 -> "#{files} files, #{dirs} dirs"
+          files > 0 -> "#{files} files"
+          dirs > 0 -> "#{dirs} dirs"
+          true -> "empty"
+        end
+
+      _ ->
+        "?"
+    end
   end
 
   defp cached_git_info do

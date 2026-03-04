@@ -103,8 +103,9 @@ defmodule OptimalSystemAgent.Agent.Loop do
     # Increment turn counter for memory/skill nudges (Phase 6)
     state = %{state | turn_count: state.turn_count + 1}
 
-    # 0. Clear per-message caches (git info runs once per message, not per iteration)
+    # 0. Clear per-message caches (git info and workspace overview run once per message, not per iteration)
     Process.delete(:osa_git_info_cache)
+    Process.delete(:osa_workspace_overview_cache)
 
     # Clear system message cache at start of each process call (Phase 4)
     Process.delete(:osa_system_msg_cache)
