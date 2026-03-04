@@ -373,6 +373,17 @@ impl ApiClient {
         Ok(())
     }
 
+    /// POST /api/v1/sessions/:id/cancel — cancel a running agent loop.
+    pub async fn cancel_session(&self, id: &str) -> Result<()> {
+        let _ = self
+            .post(
+                &format!("/api/v1/sessions/{}/cancel", id),
+                &serde_json::json!({}),
+            )
+            .await?;
+        Ok(())
+    }
+
     // -- Onboarding --
 
     /// GET /onboarding/status

@@ -5,7 +5,7 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Elixir](https://img.shields.io/badge/Elixir-1.17+-purple.svg)](https://elixir-lang.org)
 [![OTP](https://img.shields.io/badge/OTP-27+-green.svg)](https://www.erlang.org)
-[![Tests](https://img.shields.io/badge/Tests-711-brightgreen.svg)](#)
+[![Tests](https://img.shields.io/badge/Tests-792-brightgreen.svg)](#)
 [![Version](https://img.shields.io/badge/Version-0.2.5-orange.svg)](#)
 
 ---
@@ -18,7 +18,7 @@ We built Signal Theory to solve our own problem: most messages are noise, and pr
 
 Then we saw [OpenClaw](https://github.com/openclaw/openclaw), [NanoClaw](https://github.com/qwibitai/nanoclaw), and [Nanobot](https://github.com/HKUDS/nanobot) — and realized everyone else was still treating every message the same. Full pipeline, full cost, full latency, every time. No signal intelligence. No noise filtering. No cost optimization.
 
-So we open-sourced OSA. The same agent that powers MIOSA, available to everyone. 39,500+ lines of Elixir/OTP. 711 tests. Runs locally on your machine. Your data stays yours.
+So we open-sourced OSA. The same agent that powers MIOSA, available to everyone. 47,000+ lines of Elixir/OTP + 16,000 lines of Rust TUI. 792 tests. Runs locally on your machine. Your data stays yours.
 
 **If you're looking for an OpenClaw alternative that actually thinks before it acts — this is it.**
 
@@ -32,7 +32,7 @@ None of them solve the **intelligence problem.** They're message processors, not
 
 OSA is different. It's grounded in [Signal Theory](https://zenodo.org/records/18774174) — every message is classified, weighted, and routed before a single token of AI compute is spent. Noise gets filtered. Signals get prioritized. Complex tasks get decomposed across multiple agents. The system learns and adapts.
 
-**39,500+ lines of Elixir/OTP. 711 tests. 147 resource files. Zero cloud dependency.**
+**63,000+ lines of Elixir/OTP + Rust. 792 tests. 147 resource files. Zero cloud dependency.**
 
 ## What Makes OSA Different
 
@@ -351,8 +351,8 @@ Each channel adapter handles webhook signature verification, rate limiting, and 
 | **Dynamic skill creation** | Runtime SKILL.md + register | No | No | No | No | No |
 | **Workflow tracking** | Multi-step + LLM decomposition | No | No | No | No | No |
 | **Language** | Elixir/OTP | TypeScript | Python | TypeScript | Python | Python |
-| **Codebase** | ~39.5K lines | ~200 lines core | ~4K lines | ~430K lines | ~50K lines | ~30K lines |
-| **Tests** | 711 | Minimal | Minimal | Basic | Basic | Basic |
+| **Codebase** | ~63K lines (Elixir + Rust) | ~200 lines core | ~4K lines | ~430K lines | ~50K lines | ~30K lines |
+| **Tests** | 792 | Minimal | Minimal | Basic | Basic | Basic |
 
 ## Install
 
@@ -373,6 +373,16 @@ curl -fsSL https://raw.githubusercontent.com/Miosa-osa/OSA/main/install.sh | sh
 osagent
 ```
 
+The installer:
+- Detects OS (macOS/Linux) and architecture (arm64/amd64)
+- Auto-installs Rust and Elixir if missing (with prompt)
+- Builds the Rust TUI and Elixir backend
+- Installs `osa` and `osagent` to `~/.local/bin/`
+- Creates `~/.osa/` config directory with `.env` template
+- Adds `~/.local/bin` to your PATH
+
+**After install, `osa` works from any directory on your machine.** No need to `cd` into the project. The launcher resolves the project root via `~/.osa/project_root` automatically.
+
 ### From Source
 
 For contributors or if you want to hack on OSA itself:
@@ -384,9 +394,9 @@ mix setup              # deps + database + compile
 bin/osa                # start talking
 ```
 
-`bin/osa` builds the Go TUI on first run, starts the Elixir backend in the background, waits for health, and launches the terminal UI. One command, one terminal. When you quit, the backend shuts down automatically.
+`bin/osa` builds the Rust TUI on first run, starts the Elixir backend in the background, waits for health, and launches the terminal UI. One command, one terminal. When you quit, the backend shuts down automatically.
 
-Requires Elixir 1.17+ and Erlang/OTP 27+, Go 1.21+ (for TUI build). See [Getting Started](docs/getting-started/) for full setup guide.
+Requires Elixir 1.17+ and Erlang/OTP 27+, Rust/Cargo (for TUI build). See [Getting Started](docs/getting-started/) for full setup guide.
 
 ---
 
@@ -396,51 +406,48 @@ Requires Elixir 1.17+ and Erlang/OTP 27+, Go 1.21+ (for TUI build). See [Getting
 
 | Command | What it does |
 |---|---|
-| `bin/osa` | **Recommended.** Backend + Go TUI in one command |
-| `bin/osa --dev` | Dev mode (profile isolation, port 19001) |
-| `mix osa.chat` | Backend + built-in Elixir CLI (no Go TUI) |
+| `osa` | **Recommended.** Backend + Rust TUI in one command. Works from any directory. |
+| `osa --dev` | Dev mode (profile isolation, port 19001) |
+| `osa setup` | Run the setup wizard (provider, API keys) |
+| `mix osa.chat` | Backend + built-in Elixir CLI (no TUI) |
 | `mix osa.serve` | Backend only (for custom clients) |
-| `mix osa.setup` | Run the setup wizard without starting the app |
-| `osagent` | Release binary — same as `bin/osa` |
-| `osagent serve` | Release binary — backend only |
+| `osagent` | TUI binary only (connects to running backend) |
 
-**First time?** Just run `bin/osa`. It auto-detects first run and launches the setup wizard.
+**First time?** Just run `osa`. It auto-detects first run and launches the setup wizard.
 
-The Go TUI gives you tree connectors on tool calls, per-agent sub-status, task checklists, thinking time display, expand/collapse with `ctrl+o`, and background tasks with `ctrl+b`. See [Go TUI README](priv/go/tui/README.md) for the full display reference.
+The Rust TUI gives you tree connectors on tool calls, per-agent sub-status, task checklists, thinking time display, expand/collapse with `ctrl+o`, and background tasks with `ctrl+b`.
 
 ## Usage
 
 ```bash
-# Release binary
-osagent                # interactive chat (default)
-osagent setup          # configure provider + API keys
-osagent version        # print version
-osagent serve          # headless HTTP API mode (port 8089)
+# Run from anywhere on your machine
+osa                    # interactive chat (backend + TUI)
+osa setup              # configure provider + API keys
+osa --dev              # dev mode (port 19001)
 
-# Development (mix tasks)
-mix osa.chat           # backend + CLI
-mix osa.serve          # backend only (for Go TUI)
+# Development (from project directory)
+mix osa.chat           # backend + built-in Elixir CLI
+mix osa.serve          # backend only (headless HTTP API on port 8089)
 mix osa.setup          # setup wizard only
 ```
 
-On first run, `osagent` (or `mix osa.chat`) launches a setup wizard — pick your LLM provider, paste an API key (or choose Ollama for fully local), and you're chatting.
+On first run, `osa` launches a setup wizard — pick your LLM provider, paste an API key (or choose Ollama for fully local), and you're chatting.
 
 ### Switch Providers
 
 ```bash
 # Local AI (default — free, private, no API key)
-osagent setup          # select Ollama
+osa setup              # select Ollama
 
 # Cloud — pick any of 18 providers
-osagent setup          # select Anthropic, OpenAI, Groq, DeepSeek, etc.
+osa setup              # select Anthropic, OpenAI, Groq, DeepSeek, etc.
 
-# Or set env vars directly
-export OSA_DEFAULT_PROVIDER=anthropic
-export ANTHROPIC_API_KEY=sk-ant-...
-osagent
+# Or set env vars directly (in ~/.osa/.env)
+OSA_DEFAULT_PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-Config lives in `~/.osa/config.json` — edit it directly if you prefer.
+Config lives in `~/.osa/.env` and `~/.osa/config.json`.
 
 ### Upgrade
 

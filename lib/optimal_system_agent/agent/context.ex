@@ -177,6 +177,7 @@ defmodule OptimalSystemAgent.Agent.Context do
 
   defp gather_dynamic_blocks(state) do
     [
+      {tool_process_block(), 1, "tool_process"},
       {runtime_block(state), 1, "runtime"},
       {environment_block(state), 1, "environment"},
       {plan_mode_block(state), 1, "plan_mode"},
@@ -477,6 +478,77 @@ defmodule OptimalSystemAgent.Agent.Context do
   end
 
   defp plan_mode_block(_), do: nil
+
+  defp tool_process_block do
+    cwd = File.cwd!()
+
+    """
+    ## How to Use Tools
+
+    You have tools available. Use them proactively to accomplish tasks. Follow this process:
+
+    ### Process
+
+    1. **Read the user's request.** Understand what they need.
+    2. **Decide if tools are needed.** Simple conversation = no tools. Tasks involving files, commands, search, or memory = use tools.
+    3. **Call ONE tool at a time.** Wait for the result before deciding what to do next.
+    4. **Use the result.** Read the tool output, then decide: call another tool, or respond to the user.
+    5. **Respond when done.** Summarize what you did and the results.
+
+    ### Tool Routing Rules (CRITICAL)
+
+    - Use **file_read** — NOT shell_execute with cat/head/tail
+    - Use **file_edit** for surgical changes — NOT shell_execute with sed/awk. NEVER file_write for small edits.
+    - Use **mcts_index** — for finding relevant files in a large/unfamiliar codebase. Faster and smarter than file_glob loops.
+    - Use **file_glob** — for specific pattern-based file search when you know what you're looking for.
+    - Use **file_grep** — NOT shell_execute with grep/rg for content search
+    - Use **dir_list** — NOT shell_execute with ls for directory listing
+    - Use **web_fetch** — NOT shell_execute with curl for fetching URLs
+    - Reserve **shell_execute** for system commands only (git, mix, npm, docker, make, etc.)
+
+    ### When to Use Each Tool
+
+    - **file_read** — Read file content. Always read before modifying.
+    - **file_write** — Create new files or completely rewrite existing ones. Read first if file exists.
+    - **file_edit** — Surgical string replacement in existing files. old_string must be unique. Preferred over file_write for modifications.
+    - **file_glob** — Find files by pattern (e.g. '**/*.ex', 'lib/**/*.ts').
+    - **file_grep** — Search file contents by regex. Returns file:line:content matches.
+    - **dir_list** — List directory contents with types and sizes.
+    - **shell_execute** — Run system commands: git, mix test, npm, docker, compile, etc.
+    - **web_search** — Search the web for current information or documentation.
+    - **web_fetch** — Fetch and read a specific URL's content.
+    - **memory_save** — Save important information to persistent memory.
+    - **orchestrate** — Spawn parallel sub-agents for complex multi-part tasks.
+    - **mcts_index** — MCTS-powered codebase indexer. Use when you need to find relevant files in a large codebase efficiently. Ranks files by relevance to your goal using Monte Carlo Tree Search.
+
+    ### When NOT to Use Tools
+
+    - Greetings and casual conversation ("hey", "thanks", "what's up")
+    - Questions you can answer from your training knowledge
+    - Opinions or recommendations that don't require looking at files
+
+    ### Important Rules
+
+    - **Always read before writing.** Never modify a file you haven't read first.
+    - **Use file_edit for surgical changes.** Only use file_write for new files or complete rewrites.
+    - **One tool call per turn.** Call one tool, get the result, then decide the next step.
+    - **Use absolute paths.** The current working directory is: #{cwd}
+    - **Be proactive.** If the user asks to "fix" something, read → find → fix → verify.
+
+    ### Brevity
+
+    - Answer concisely. Fewer than 4 lines unless detail is requested.
+    - No preamble. No postamble. Direct answers.
+    - Don't add features, refactor, or improve beyond what was asked.
+
+    ### Code Safety
+
+    - ALWAYS read a file before editing it.
+    - Use file_edit for surgical changes. Only use file_write for new files or complete rewrites.
+    - Don't add error handling for impossible scenarios.
+    - Don't create abstractions for one-time operations.
+    """
+  end
 
   defp environment_block(_state) do
     cwd = File.cwd!()

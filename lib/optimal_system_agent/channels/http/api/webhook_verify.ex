@@ -54,6 +54,30 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.WebhookVerify do
     end
   end
 
+  @doc """
+  Verify Signal webhook x-signal-signature header.
+
+  signal-cli-rest-api uses the same `sha256=<hex>` HMAC pattern as Meta webhooks.
+  The header name is `x-signal-signature`.
+
+  Returns `{:error, :no_secret}` when the configured secret is nil so the
+  caller can decide whether to warn-and-process (dev mode) or reject.
+  """
+  @spec verify_signal(Plug.Conn.t(), binary(), String.t() | nil) :: :ok | {:error, atom()}
+  def verify_signal(_conn, _raw_body, nil), do: {:error, :no_secret}
+
+  def verify_signal(conn, raw_body, secret) do
+    header = get_req_header(conn, "x-signal-signature") |> List.first("")
+    expected_hex = Base.encode16(:crypto.mac(:hmac, :sha256, secret, raw_body), case: :lower)
+    expected = "sha256=" <> expected_hex
+
+    if Plug.Crypto.secure_compare(header, expected) do
+      :ok
+    else
+      {:error, :invalid_signature}
+    end
+  end
+
   @doc "Verify email inbound x-webhook-secret header."
   @spec verify_email(Plug.Conn.t(), String.t() | nil) :: :ok | {:error, atom()}
   def verify_email(_conn, nil), do: {:error, :no_secret}

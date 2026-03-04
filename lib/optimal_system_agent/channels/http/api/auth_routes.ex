@@ -4,9 +4,23 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.AuthRoutes do
 
   These routes are forwarded to before the JWT authenticate plug runs,
   so no bearer token is required.
+
+  ## Login security
+
+  When `OSA_REQUIRE_AUTH` is true (or `OSA_SHARED_SECRET` is set), the
+  login endpoint requires the shared secret in the POST body:
+
+      POST /login
+      {"user_id": "alice", "secret": "<OSA_SHARED_SECRET>"}
+
+  If the secret is missing or wrong, a 401 is returned. In dev mode
+  (no shared secret configured), open access is preserved but a warning
+  is logged on every login so operators notice the gap.
   """
   use Plug.Router
   import OptimalSystemAgent.Channels.HTTP.API.Shared
+
+  require Logger
 
   alias OptimalSystemAgent.Channels.HTTP.Auth
 
@@ -21,23 +35,28 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.AuthRoutes do
   # ── POST /login ────────────────────────────────────────────────────
 
   post "/login" do
-    user_id =
-      get_in(conn.body_params, ["user_id"]) ||
-        "tui_#{System.unique_integer([:positive])}"
+    with :ok <- verify_login_secret(conn) do
+      user_id =
+        get_in(conn.body_params, ["user_id"]) ||
+          "tui_#{System.unique_integer([:positive])}"
 
-    token = Auth.generate_token(%{"user_id" => user_id})
-    refresh = Auth.generate_refresh_token(%{"user_id" => user_id})
+      token = Auth.generate_token(%{"user_id" => user_id})
+      refresh = Auth.generate_refresh_token(%{"user_id" => user_id})
 
-    body =
-      Jason.encode!(%{
-        "token" => token,
-        "refresh_token" => refresh,
-        "expires_in" => 900
-      })
+      body =
+        Jason.encode!(%{
+          "token" => token,
+          "refresh_token" => refresh,
+          "expires_in" => 900
+        })
 
-    conn
-    |> put_resp_content_type("application/json")
-    |> send_resp(200, body)
+      conn
+      |> put_resp_content_type("application/json")
+      |> send_resp(200, body)
+    else
+      {:error, :unauthorized} ->
+        json_error(conn, 401, "unauthorized", "Invalid or missing secret")
+    end
   end
 
   # ── POST /logout ───────────────────────────────────────────────────
@@ -82,4 +101,38 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.AuthRoutes do
   match _ do
     json_error(conn, 404, "not_found", "Auth endpoint not found")
   end
+
+  # ── Helpers ──────────────────────────────────────────────────────────
+
+  # Returns :ok when the request is allowed to proceed, {:error, :unauthorized}
+  # when the secret check fails.
+  #
+  # Logic:
+  #   1. If require_auth is true OR a shared_secret is configured → enforce secret.
+  #   2. Otherwise (dev mode) → warn and allow.
+  defp verify_login_secret(conn) do
+    require_auth = Application.get_env(:optimal_system_agent, :require_auth, false)
+    configured_secret = Application.get_env(:optimal_system_agent, :shared_secret)
+
+    if require_auth or not is_nil(configured_secret) do
+      provided = get_in(conn.body_params, ["secret"]) || ""
+
+      if configured_secret && Plug.Crypto.secure_compare(configured_secret, provided) do
+        :ok
+      else
+        Logger.warning("[AuthRoutes] Login rejected — secret mismatch from #{format_remote_ip(conn)}")
+        {:error, :unauthorized}
+      end
+    else
+      Logger.warning(
+        "[AuthRoutes] Login without secret verification — " <>
+          "set OSA_SHARED_SECRET or OSA_REQUIRE_AUTH=true to enable auth"
+      )
+
+      :ok
+    end
+  end
+
+  defp format_remote_ip(%{remote_ip: {a, b, c, d}}), do: "#{a}.#{b}.#{c}.#{d}"
+  defp format_remote_ip(%{remote_ip: ip}), do: inspect(ip)
 end

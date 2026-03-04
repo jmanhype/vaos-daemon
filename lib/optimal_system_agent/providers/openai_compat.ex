@@ -31,6 +31,24 @@ defmodule OptimalSystemAgent.Providers.OpenAICompat do
     end
   end
 
+  @doc """
+  Streaming chat completion for OpenAI-compatible endpoints.
+
+  Sends SSE-streamed tokens to the callback as `{:text_delta, text}`,
+  `{:thinking_delta, text}`, and `{:done, result}`.
+
+  Returns `:ok` on success or `{:error, reason}` on failure.
+  """
+  @spec chat_stream(String.t(), String.t() | nil, String.t(), list(), function(), keyword()) ::
+          :ok | {:error, String.t()}
+  def chat_stream(base_url, api_key, model, messages, callback, opts) do
+    unless api_key do
+      {:error, "API key not configured"}
+    else
+      do_chat_stream(base_url, api_key, model, messages, callback, opts)
+    end
+  end
+
   defp do_chat(base_url, api_key, model, messages, opts) do
     body =
       %{
@@ -72,6 +90,215 @@ defmodule OptimalSystemAgent.Providers.OpenAICompat do
     rescue
       e -> {:error, "Unexpected error: #{Exception.message(e)}"}
     end
+  end
+
+  # ── Streaming implementation ───────────────────────────────────────────
+
+  defp do_chat_stream(base_url, api_key, model, messages, callback, opts) do
+    body =
+      %{
+        model: model,
+        messages: format_messages(messages),
+        temperature: Keyword.get(opts, :temperature, 0.7),
+        stream: true
+      }
+      |> maybe_add_tools(opts)
+      |> maybe_add_max_tokens(opts)
+      |> maybe_add_reasoning(model, opts)
+
+    extra_headers = Keyword.get(opts, :extra_headers, [])
+
+    headers =
+      [
+        {"Authorization", "Bearer #{api_key}"},
+        {"Content-Type", "application/json"}
+      ] ++ extra_headers
+
+    url = "#{base_url}/chat/completions"
+    timeout = Keyword.get(opts, :receive_timeout, 600_000)
+
+    # Accumulator for streamed data (stored in process dictionary like Ollama)
+    stream_key = {__MODULE__, :stream, make_ref()}
+    Process.put(stream_key, %{
+      buffer: "",
+      content: "",
+      tool_calls: %{},   # index → %{id, name, arguments_json}
+      usage: %{}
+    })
+
+    try do
+      case Req.post(url,
+             json: body,
+             headers: headers,
+             receive_timeout: timeout,
+             into: fn {:data, data}, {req, resp} ->
+               acc = Process.get(stream_key)
+               acc = handle_sse_chunk(data, callback, acc)
+               Process.put(stream_key, acc)
+               {:cont, {req, resp}}
+             end
+           ) do
+        {:ok, _resp} ->
+          acc = Process.get(stream_key)
+          Process.delete(stream_key)
+          finalize_sse_stream(acc, callback, model)
+
+        {:error, reason} ->
+          Process.delete(stream_key)
+          Logger.error("OpenAI-compat stream failed: #{inspect(reason)}")
+          {:error, "Stream connection failed: #{inspect(reason)}"}
+      end
+    rescue
+      e ->
+        Process.delete(stream_key)
+        Logger.error("OpenAI-compat stream error: #{Exception.message(e)}")
+        {:error, "Stream error: #{Exception.message(e)}"}
+    end
+  end
+
+  # Parse SSE data lines. OpenAI SSE format:
+  #   data: {"choices":[{"delta":{"content":"tok"}}]}
+  #   data: [DONE]
+  defp handle_sse_chunk(data, callback, acc) do
+    {lines, new_buffer} = split_sse_lines(acc.buffer <> data)
+    acc = %{acc | buffer: new_buffer}
+    Enum.reduce(lines, acc, &process_sse_line(&1, callback, &2))
+  end
+
+  defp split_sse_lines(data) do
+    lines = String.split(data, "\n")
+    {complete, [remainder]} = Enum.split(lines, -1)
+    # Only keep lines starting with "data:" — skip comments, empty lines, event: lines
+    sse_data =
+      complete
+      |> Enum.filter(&String.starts_with?(&1, "data:"))
+      |> Enum.map(fn "data:" <> rest -> String.trim_leading(rest) end)
+
+    {sse_data, remainder}
+  end
+
+  defp process_sse_line("[DONE]", _callback, acc), do: acc
+
+  defp process_sse_line(json_str, callback, acc) do
+    case Jason.decode(json_str) do
+      {:ok, %{"choices" => [%{"delta" => delta} | _]} = chunk} ->
+        acc = process_delta(delta, callback, acc)
+        # Capture usage if present (some providers send it in the final chunk)
+        case chunk do
+          %{"usage" => %{"prompt_tokens" => inp, "completion_tokens" => out}} ->
+            %{acc | usage: %{input_tokens: inp, output_tokens: out}}
+          _ ->
+            acc
+        end
+
+      {:ok, %{"usage" => %{"prompt_tokens" => inp, "completion_tokens" => out}}} ->
+        %{acc | usage: %{input_tokens: inp, output_tokens: out}}
+
+      {:ok, %{"error" => %{"message" => msg}}} ->
+        Logger.error("OpenAI-compat stream error: #{msg}")
+        acc
+
+      {:error, _} ->
+        # Malformed JSON — skip
+        acc
+
+      _ ->
+        acc
+    end
+  end
+
+  defp process_delta(delta, callback, acc) do
+    # Text content
+    acc =
+      case delta do
+        %{"content" => text} when is_binary(text) and text != "" ->
+          callback.({:text_delta, text})
+          %{acc | content: acc.content <> text}
+
+        _ ->
+          acc
+      end
+
+    # Reasoning/thinking content (DeepSeek and some providers)
+    acc =
+      case delta do
+        %{"reasoning_content" => text} when is_binary(text) and text != "" ->
+          callback.({:thinking_delta, text})
+          acc
+
+        _ ->
+          acc
+      end
+
+    # Tool call deltas — accumulate across chunks.
+    # OpenAI streams tool calls as: index, id (first chunk), function.name (first),
+    # function.arguments (subsequent chunks, partial JSON).
+    case delta do
+      %{"tool_calls" => tool_deltas} when is_list(tool_deltas) ->
+        Enum.reduce(tool_deltas, acc, fn tc_delta, a ->
+          idx = tc_delta["index"] || 0
+          existing = Map.get(a.tool_calls, idx, %{id: nil, name: "", arguments_json: ""})
+
+          updated =
+            existing
+            |> maybe_set_id(tc_delta)
+            |> maybe_append_name(tc_delta)
+            |> maybe_append_args(tc_delta)
+
+          %{a | tool_calls: Map.put(a.tool_calls, idx, updated)}
+        end)
+
+      _ ->
+        acc
+    end
+  end
+
+  defp maybe_set_id(tc, %{"id" => id}) when is_binary(id), do: %{tc | id: id}
+  defp maybe_set_id(tc, _), do: tc
+
+  defp maybe_append_name(tc, %{"function" => %{"name" => name}}) when is_binary(name),
+    do: %{tc | name: tc.name <> name}
+  defp maybe_append_name(tc, _), do: tc
+
+  defp maybe_append_args(tc, %{"function" => %{"arguments" => args}}) when is_binary(args),
+    do: %{tc | arguments_json: tc.arguments_json <> args}
+  defp maybe_append_args(tc, _), do: tc
+
+  defp finalize_sse_stream(acc, callback, model) do
+    content = Text.strip_thinking_tokens(acc.content)
+
+    # Build tool_calls from accumulated deltas
+    streamed_tool_calls =
+      acc.tool_calls
+      |> Enum.sort_by(fn {idx, _} -> idx end)
+      |> Enum.map(fn {_idx, tc} ->
+        args =
+          case Jason.decode(tc.arguments_json) do
+            {:ok, parsed} when is_map(parsed) -> parsed
+            _ -> %{}
+          end
+
+        %{
+          id: tc.id || generate_id(),
+          name: tc.name |> String.split(~r/\s+/) |> List.first(),
+          arguments: args
+        }
+      end)
+
+    # Fallback: parse tool calls from content if none streamed
+    tool_calls =
+      if streamed_tool_calls != [] do
+        streamed_tool_calls
+      else
+        case ToolCallParsers.parse(acc.content, model) do
+          [] -> parse_tool_calls_from_content(acc.content)
+          calls -> calls
+        end
+      end
+
+    result = %{content: content, tool_calls: tool_calls, usage: acc.usage}
+    callback.({:done, result})
+    :ok
   end
 
   @doc "Format messages into the OpenAI wire format."

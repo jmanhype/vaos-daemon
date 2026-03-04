@@ -64,7 +64,8 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.AgentRunner do
       agent_name: sub_task.name,
       role: sub_task.role,
       tier: agent_tier,
-      model: tier_opts.model
+      model: tier_opts.model,
+      description: sub_task.description || ""
     })
 
     subtask_id = "#{task_id}_#{sub_task.name}"

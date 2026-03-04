@@ -289,16 +289,25 @@ impl App {
 
     pub(super) fn cancel_processing(&mut self) {
         self.cancelled = true;
-        self.chat.clear_streaming();
-        self.stream_buf.clear();
-        self.thinking_buf.clear();
-        self.activity.stop();
-        self.status.set_active(false);
-        self.transition(AppState::Idle);
         self.toasts.push(
-            "Cancelled".into(),
+            "Cancelling...".into(),
             crate::components::toast::ToastLevel::Info,
         );
+
+        // Tell the backend to stop the agent loop
+        let client = self.client.clone();
+        let session_id = self.session_id.clone();
+        let tx = self.event_tx.clone();
+        tokio::spawn(async move {
+            if let Err(e) = client.cancel_session(&session_id).await {
+                tracing::warn!("Backend cancel failed: {}", e);
+            }
+            // The SSE stream will deliver the final "Cancelled by user." response,
+            // which triggers handle_agent_response → resets UI to Idle.
+            // If SSE doesn't fire within 3s, force-reset the UI.
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            let _ = tx.send(Event::Backend(BackendEvent::CancelTimeout));
+        });
     }
 
     pub(super) fn background_task(&mut self) {

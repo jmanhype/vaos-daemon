@@ -103,15 +103,15 @@ defmodule OptimalSystemAgent.Agent.LoopUnitTest do
   end
 
   # ---------------------------------------------------------------------------
-  # Doom loop counter logic (mirrors loop.ex cond at lines 330-340)
+  # Doom loop detection logic (mirrors loop.ex recent_failure_signatures logic)
   # ---------------------------------------------------------------------------
 
   # State-like struct used by doom loop logic
-  defp doom_state(consecutive_failures, last_tool_signature) do
-    %{consecutive_failures: consecutive_failures, last_tool_signature: last_tool_signature}
+  defp doom_state(recent_failure_signatures) do
+    %{recent_failure_signatures: recent_failure_signatures}
   end
 
-  # Mirror of the doom loop cond from loop.ex
+  # Mirror of the doom loop logic from loop.ex
   defp doom_step(tool_calls, results, state) do
     tool_signature = tool_calls |> Enum.map(& &1.name) |> Enum.sort()
 
@@ -121,129 +121,157 @@ defmodule OptimalSystemAgent.Agent.LoopUnitTest do
           String.starts_with?(result_str, "Blocked:")
       end)
 
-    {consecutive_failures, last_sig} =
-      cond do
-        all_failed and tool_signature == state.last_tool_signature ->
-          {state.consecutive_failures + 1, tool_signature}
-
-        all_failed ->
-          {1, tool_signature}
-
-        true ->
-          {0, nil}
+    recent_failure_signatures =
+      if all_failed do
+        [tool_signature | state.recent_failure_signatures] |> Enum.take(6)
+      else
+        []
       end
 
-    %{state | consecutive_failures: consecutive_failures, last_tool_signature: last_sig}
+    %{state | recent_failure_signatures: recent_failure_signatures}
   end
 
-  describe "doom loop counter — cond logic" do
-    test "first failure with new signature sets counter to 1" do
-      state = doom_state(0, nil)
+  defp doom_loop?(recent_failure_signatures) do
+    length(recent_failure_signatures) >= 3 and
+      (
+        Enum.any?(
+          Enum.uniq(recent_failure_signatures),
+          fn sig -> Enum.count(recent_failure_signatures, &(&1 == sig)) >= 3 end
+        ) or
+          length(recent_failure_signatures) >= 6
+      )
+  end
+
+  describe "doom loop detection — recent_failure_signatures logic" do
+    test "first failure records one entry" do
+      state = doom_state([])
       tools = [%{name: "bash"}]
       results = ["Error: permission denied"]
 
       new_state = doom_step(tools, results, state)
 
-      assert new_state.consecutive_failures == 1
-      assert new_state.last_tool_signature == ["bash"]
+      assert new_state.recent_failure_signatures == [["bash"]]
+      refute doom_loop?(new_state.recent_failure_signatures)
     end
 
-    test "second identical failure increments counter to 2" do
-      state = doom_state(1, ["bash"])
+    test "two identical failures does not trigger — need 3" do
+      state = doom_state([["bash"]])
       tools = [%{name: "bash"}]
       results = ["Error: permission denied"]
 
       new_state = doom_step(tools, results, state)
 
-      assert new_state.consecutive_failures == 2
-      assert new_state.last_tool_signature == ["bash"]
+      assert length(new_state.recent_failure_signatures) == 2
+      refute doom_loop?(new_state.recent_failure_signatures)
     end
 
-    test "third identical failure increments counter to 3 — triggers halt" do
-      state = doom_state(2, ["bash"])
+    test "three identical failures triggers doom loop" do
+      state = doom_state([["bash"], ["bash"]])
       tools = [%{name: "bash"}]
       results = ["Blocked: dangerous command"]
 
       new_state = doom_step(tools, results, state)
 
-      assert new_state.consecutive_failures == 3
-      assert new_state.consecutive_failures >= 3
+      assert length(new_state.recent_failure_signatures) == 3
+      assert doom_loop?(new_state.recent_failure_signatures)
     end
 
-    test "different failing signature resets counter to 1 (not 0)" do
-      # Counter was at 2 from bash failures; now file_read fails — resets to 1
-      state = doom_state(2, ["bash"])
-      tools = [%{name: "file_read"}]
-      results = ["Error: file not found"]
+    test "alternating failures across 3 distinct tools trigger doom loop at 6 attempts" do
+      # Use 3 rotating distinct tools so no single tool hits 3 occurrences
+      # before the window fills — saturation (condition 2) fires at step 6
+      state0 = doom_state([])
 
-      new_state = doom_step(tools, results, state)
-
-      assert new_state.consecutive_failures == 1
-      assert new_state.last_tool_signature == ["file_read"]
-    end
-
-    test "alternating failures never reach 3 (always reset to 1)" do
-      state0 = doom_state(0, nil)
-
-      # bash fails
       state1 = doom_step([%{name: "bash"}], ["Error: 1"], state0)
-      assert state1.consecutive_failures == 1
+      refute doom_loop?(state1.recent_failure_signatures)
 
-      # file_read fails — different signature, resets to 1
       state2 = doom_step([%{name: "file_read"}], ["Error: 2"], state1)
-      assert state2.consecutive_failures == 1
+      refute doom_loop?(state2.recent_failure_signatures)
 
-      # bash fails again — different from last (file_read), resets to 1
-      state3 = doom_step([%{name: "bash"}], ["Error: 3"], state2)
-      assert state3.consecutive_failures == 1
+      state3 = doom_step([%{name: "http_request"}], ["Error: 3"], state2)
+      refute doom_loop?(state3.recent_failure_signatures)
 
-      # Never hits 3 through alternation
-      refute state3.consecutive_failures >= 3
+      state4 = doom_step([%{name: "bash"}], ["Error: 4"], state3)
+      refute doom_loop?(state4.recent_failure_signatures)
+
+      state5 = doom_step([%{name: "file_read"}], ["Error: 5"], state4)
+      refute doom_loop?(state5.recent_failure_signatures)
+
+      # 6th failure — window saturated, trigger regardless of pattern
+      state6 = doom_step([%{name: "http_request"}], ["Error: 6"], state5)
+      assert length(state6.recent_failure_signatures) == 6
+      assert doom_loop?(state6.recent_failure_signatures)
     end
 
-    test "any success resets counter to 0 and clears last signature" do
-      state = doom_state(2, ["bash"])
+    test "alternating two tools triggers doom loop early via 3-repeat rule" do
+      # bash/file_read alternation — bash appears at steps 1, 3, 5 (3 times) → triggers at step 5
+      state0 = doom_state([])
+
+      state1 = doom_step([%{name: "bash"}], ["Error: 1"], state0)
+      state2 = doom_step([%{name: "file_read"}], ["Error: 2"], state1)
+      state3 = doom_step([%{name: "bash"}], ["Error: 3"], state2)
+      state4 = doom_step([%{name: "file_read"}], ["Error: 4"], state3)
+
+      refute doom_loop?(state4.recent_failure_signatures)
+
+      # Step 5: bash appears for the 3rd time — triggers condition 1
+      state5 = doom_step([%{name: "bash"}], ["Error: 5"], state4)
+      assert doom_loop?(state5.recent_failure_signatures)
+    end
+
+    test "any success clears the failure window" do
+      state = doom_state([["bash"], ["bash"]])
       tools = [%{name: "bash"}]
-      results = ["success output"]  # does NOT start with Error: or Blocked:
+      results = ["success output"]
 
       new_state = doom_step(tools, results, state)
 
-      assert new_state.consecutive_failures == 0
-      assert new_state.last_tool_signature == nil
+      assert new_state.recent_failure_signatures == []
+      refute doom_loop?(new_state.recent_failure_signatures)
     end
 
-    test "partial failure (some succeed, some fail) does NOT count — all_failed is false" do
-      state = doom_state(0, nil)
+    test "partial failure (some succeed) does NOT count — all_failed is false" do
+      state = doom_state([])
       tools = [%{name: "bash"}, %{name: "file_read"}]
       results = ["Error: bash failed", "file content here"]
 
       new_state = doom_step(tools, results, state)
 
-      # all_failed = false because file_read succeeded
-      assert new_state.consecutive_failures == 0
-      assert new_state.last_tool_signature == nil
+      assert new_state.recent_failure_signatures == []
+      refute doom_loop?(new_state.recent_failure_signatures)
     end
 
-    test "multi-tool failure with sorted signature matches correctly" do
+    test "multi-tool failure with sorted signature counts correctly" do
       # Signature is sorted — [file_read, bash] == [bash, file_read] after sort
-      state = doom_state(1, ["bash", "file_read"])
+      state = doom_state([["bash", "file_read"], ["bash", "file_read"]])
       tools = [%{name: "file_read"}, %{name: "bash"}]
       results = ["Error: 1", "Error: 2"]
 
       new_state = doom_step(tools, results, state)
 
-      # Sorted signatures match — counter increments
-      assert new_state.consecutive_failures == 2
+      assert length(new_state.recent_failure_signatures) == 3
+      assert doom_loop?(new_state.recent_failure_signatures)
     end
 
-    test "blocked prefix counts as failure for doom detection" do
-      state = doom_state(1, ["shell_execute"])
+    test "blocked prefix counts as failure" do
+      state = doom_state([["shell_execute"], ["shell_execute"]])
       tools = [%{name: "shell_execute"}]
       results = ["Blocked: dangerous command: rm -rf /"]
 
       new_state = doom_step(tools, results, state)
 
-      assert new_state.consecutive_failures == 2
+      assert doom_loop?(new_state.recent_failure_signatures)
+    end
+
+    test "window is capped at 6 entries" do
+      # Seed a full window already at 6
+      prior = List.duplicate(["bash"], 5)
+      state = doom_state(prior)
+      tools = [%{name: "bash"}]
+      results = ["Error: overflow"]
+
+      new_state = doom_step(tools, results, state)
+
+      assert length(new_state.recent_failure_signatures) == 6
     end
   end
 

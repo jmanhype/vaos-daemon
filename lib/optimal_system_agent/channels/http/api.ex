@@ -52,6 +52,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
       |> Plug.Conn.send_resp(500, body)
   end
 
+  plug OptimalSystemAgent.Channels.HTTP.RateLimiter
   plug :authenticate
   plug OptimalSystemAgent.Channels.HTTP.Integrity
   plug :match

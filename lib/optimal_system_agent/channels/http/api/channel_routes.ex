@@ -174,12 +174,36 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.ChannelRoutes do
   # ── Signal ─────────────────────────────────────────────────────────
 
   post "/signal/webhook" do
-    case SignalChannel.handle_webhook(conn.body_params) do
-      :ok ->
-        send_resp(conn, 200, "")
+    secret = Application.get_env(:optimal_system_agent, :signal_webhook_secret)
+    raw_body = conn.assigns[:raw_body] || Jason.encode!(conn.body_params)
 
-      {:error, :not_started} ->
-        json_error(conn, 503, "channel_unavailable", "Signal adapter not started")
+    verified =
+      case verify_signal(conn, raw_body, secret) do
+        :ok ->
+          :ok
+
+        {:error, :no_secret} ->
+          # Dev mode: no secret configured — warn and allow.
+          # In production, set signal_webhook_secret to enforce verification.
+          Logger.warning("Signal webhook: signal_webhook_secret not configured — processing without verification (dev mode)")
+          :ok
+
+        {:error, :invalid_signature} ->
+          {:error, :invalid_signature}
+      end
+
+    case verified do
+      {:error, :invalid_signature} ->
+        json_error(conn, 401, "unauthorized", "Invalid signature")
+
+      :ok ->
+        case SignalChannel.handle_webhook(conn.body_params) do
+          :ok ->
+            send_resp(conn, 200, "")
+
+          {:error, :not_started} ->
+            json_error(conn, 503, "channel_unavailable", "Signal adapter not started")
+        end
     end
   end
 
