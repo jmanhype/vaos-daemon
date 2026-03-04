@@ -283,14 +283,21 @@ impl App {
                 self.agents.task_started(&task_id);
                 self.recompute_layout();
             }
-            BackendEvent::OrchestratorAgentStarted { agent_name, role, model } => {
-                self.agents.agent_started(&agent_name, &role, &model);
+            BackendEvent::OrchestratorAgentsSpawning { agents, .. } => {
+                self.agents.on_agents_spawning(&agents);
+                self.recompute_layout();
+            }
+            BackendEvent::OrchestratorTaskAppraised { .. } => {
+                // Appraisal info is informational only; no UI state change needed.
+            }
+            BackendEvent::OrchestratorAgentStarted { agent_name, role, model, subject } => {
+                self.agents.agent_started(&agent_name, &role, &model, &subject);
                 let display = if role.is_empty() { agent_name.clone() } else { format!("{}/{}", agent_name, role) };
                 self.sidebar.set_current_agent(display);
                 self.recompute_layout();
             }
-            BackendEvent::OrchestratorAgentProgress { agent_name, current_action, tool_uses, tokens_used } => {
-                self.agents.agent_progress(&agent_name, &current_action, tool_uses, tokens_used);
+            BackendEvent::OrchestratorAgentProgress { agent_name, current_action, tool_uses, tokens_used, subject } => {
+                self.agents.agent_progress(&agent_name, &current_action, tool_uses, tokens_used, &subject);
             }
             BackendEvent::OrchestratorAgentCompleted { agent_name, tool_uses, tokens_used, .. } => {
                 self.agents.agent_completed(&agent_name, tool_uses, tokens_used);
@@ -302,6 +309,10 @@ impl App {
             }
             BackendEvent::OrchestratorWaveStarted { wave_number, total_waves } => {
                 self.agents.wave_started(wave_number, total_waves);
+                self.recompute_layout();
+            }
+            BackendEvent::OrchestratorSynthesizing { agent_count } => {
+                self.agents.on_synthesizing(agent_count);
                 self.recompute_layout();
             }
             BackendEvent::OrchestratorTaskCompleted { .. } => {

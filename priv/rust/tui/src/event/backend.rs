@@ -1,5 +1,12 @@
 use crate::client::types::*;
 
+/// Agent info emitted during the spawning phase (before agents start running).
+#[derive(Debug, Clone)]
+pub struct SpawningAgent {
+    pub name: String,
+    pub role: String,
+}
+
 /// Events from the backend (SSE stream + HTTP responses)
 #[derive(Debug, Clone)]
 pub enum BackendEvent {
@@ -49,16 +56,26 @@ pub enum BackendEvent {
 
     // === Orchestrator ===
     OrchestratorTaskStarted { task_id: String },
+    OrchestratorAgentsSpawning {
+        agent_count: usize,
+        agents: Vec<SpawningAgent>,
+    },
+    OrchestratorTaskAppraised {
+        estimated_cost_usd: f64,
+        estimated_hours: f64,
+    },
     OrchestratorAgentStarted {
         agent_name: String,
         role: String,
         model: String,
+        subject: String,
     },
     OrchestratorAgentProgress {
         agent_name: String,
         current_action: String,
         tool_uses: u32,
         tokens_used: u32,
+        subject: String,
     },
     OrchestratorAgentCompleted {
         agent_name: String,
@@ -76,6 +93,7 @@ pub enum BackendEvent {
         wave_number: u32,
         total_waves: u32,
     },
+    OrchestratorSynthesizing { agent_count: usize },
     OrchestratorTaskCompleted { task_id: String },
 
     // === Context ===

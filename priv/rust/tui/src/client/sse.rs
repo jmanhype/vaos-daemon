@@ -399,6 +399,35 @@ fn parse_sse_event(event_type: &str, data: &[u8]) -> Option<BackendEvent> {
 
         "system_event" => parse_system_event(data),
 
+        // The backend unwraps system_event sub-events: the SSE frame header
+        // arrives as e.g. "orchestrator_agent_started" rather than "system_event".
+        // Route these directly to the same parser.
+        "orchestrator_task_started"
+        | "orchestrator_agents_spawning"
+        | "orchestrator_task_appraised"
+        | "orchestrator_agent_started"
+        | "orchestrator_agent_progress"
+        | "orchestrator_agent_completed"
+        | "orchestrator_agent_failed"
+        | "orchestrator_wave_started"
+        | "orchestrator_synthesizing"
+        | "orchestrator_task_completed"
+        | "context_pressure"
+        | "task_created"
+        | "task_updated"
+        | "swarm_started"
+        | "swarm_completed"
+        | "swarm_failed"
+        | "swarm_cancelled"
+        | "swarm_timeout"
+        | "swarm_intelligence_started"
+        | "swarm_intelligence_round"
+        | "swarm_intelligence_converged"
+        | "swarm_intelligence_completed"
+        | "hook_blocked"
+        | "budget_warning"
+        | "budget_exceeded" => parse_system_event(data),
+
         "" => None,
 
         other => Some(BackendEvent::ParseWarning {
@@ -426,6 +455,50 @@ fn parse_system_event(data: &[u8]) -> Option<BackendEvent> {
             })
         }
 
+        "orchestrator_agents_spawning" => {
+            #[derive(serde::Deserialize)]
+            struct Agent {
+                #[serde(default)]
+                name: String,
+                #[serde(default)]
+                role: String,
+            }
+            #[derive(serde::Deserialize)]
+            struct Ev {
+                #[serde(default)]
+                agent_count: usize,
+                #[serde(default)]
+                agents: Vec<Agent>,
+            }
+            let ev: Ev = serde_json::from_slice(data).ok()?;
+            Some(BackendEvent::OrchestratorAgentsSpawning {
+                agent_count: ev.agent_count,
+                agents: ev
+                    .agents
+                    .into_iter()
+                    .map(|a| crate::event::backend::SpawningAgent {
+                        name: a.name,
+                        role: a.role,
+                    })
+                    .collect(),
+            })
+        }
+
+        "orchestrator_task_appraised" => {
+            #[derive(serde::Deserialize)]
+            struct Ev {
+                #[serde(default)]
+                estimated_cost_usd: f64,
+                #[serde(default)]
+                estimated_hours: f64,
+            }
+            let ev: Ev = serde_json::from_slice(data).ok()?;
+            Some(BackendEvent::OrchestratorTaskAppraised {
+                estimated_cost_usd: ev.estimated_cost_usd,
+                estimated_hours: ev.estimated_hours,
+            })
+        }
+
         "orchestrator_agent_started" => {
             #[derive(serde::Deserialize)]
             struct Ev {
@@ -433,12 +506,15 @@ fn parse_system_event(data: &[u8]) -> Option<BackendEvent> {
                 role: String,
                 #[serde(default)]
                 model: String,
+                #[serde(default)]
+                description: String,
             }
             let ev: Ev = serde_json::from_slice(data).ok()?;
             Some(BackendEvent::OrchestratorAgentStarted {
                 agent_name: ev.agent_name,
                 role: ev.role,
                 model: ev.model,
+                subject: ev.description,
             })
         }
 
@@ -452,6 +528,8 @@ fn parse_system_event(data: &[u8]) -> Option<BackendEvent> {
                 tool_uses: u32,
                 #[serde(default)]
                 tokens_used: u32,
+                #[serde(default)]
+                description: String,
             }
             let ev: Ev = serde_json::from_slice(data).ok()?;
             Some(BackendEvent::OrchestratorAgentProgress {
@@ -459,6 +537,19 @@ fn parse_system_event(data: &[u8]) -> Option<BackendEvent> {
                 current_action: ev.current_action,
                 tool_uses: ev.tool_uses,
                 tokens_used: ev.tokens_used,
+                subject: ev.description,
+            })
+        }
+
+        "orchestrator_synthesizing" => {
+            #[derive(serde::Deserialize)]
+            struct Ev {
+                #[serde(default)]
+                agent_count: usize,
+            }
+            let ev: Ev = serde_json::from_slice(data).ok()?;
+            Some(BackendEvent::OrchestratorSynthesizing {
+                agent_count: ev.agent_count,
             })
         }
 

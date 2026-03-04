@@ -101,7 +101,12 @@ impl App {
                 false
             }
             (KeyCode::Char('o'), KeyModifiers::CONTROL) => {
-                self.chat.toggle_last_tool_expand(self.width);
+                if self.agents.is_active() {
+                    self.agents.toggle_collapse();
+                    self.recompute_layout();
+                } else {
+                    self.chat.toggle_last_tool_expand(self.width);
+                }
                 false
             }
             (KeyCode::Char('j'), KeyModifiers::NONE) if input_empty => {
@@ -265,6 +270,7 @@ impl App {
     fn handle_tick(&mut self) {
         self.toasts.tick();
         self.activity.tick();
+        self.agents.tick();
 
         if self.state.is_processing() {
             if let Some(start) = self.processing_start {
