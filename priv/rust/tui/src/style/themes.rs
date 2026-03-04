@@ -4,9 +4,11 @@ use super::{Theme, ThemeColors};
 
 fn hex(s: &str) -> Color {
     let s = s.trim_start_matches('#');
-    let r = u8::from_str_radix(&s[0..2], 16).unwrap();
-    let g = u8::from_str_radix(&s[2..4], 16).unwrap();
-    let b = u8::from_str_radix(&s[4..6], 16).unwrap();
+    // All callers pass compile-time hex literals; fallback to 0 avoids a panic
+    // if a digit is ever malformed rather than producing a wrong color.
+    let r = u8::from_str_radix(s.get(0..2).unwrap_or("00"), 16).unwrap_or(0);
+    let g = u8::from_str_radix(s.get(2..4).unwrap_or("00"), 16).unwrap_or(0);
+    let b = u8::from_str_radix(s.get(4..6).unwrap_or("00"), 16).unwrap_or(0);
     Color::Rgb(r, g, b)
 }
 

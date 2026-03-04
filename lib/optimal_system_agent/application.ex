@@ -70,7 +70,8 @@ defmodule OptimalSystemAgent.Application do
         # OS template discovery and connection
         OptimalSystemAgent.OS.Registry,
 
-        # MCP integration
+        # MCP integration — Registry for server name lookup + DynamicSupervisor for per-server GenServers
+        {Registry, keys: :unique, name: OptimalSystemAgent.MCP.Registry},
         {DynamicSupervisor, name: OptimalSystemAgent.MCP.Supervisor, strategy: :one_for_one},
 
         # Channel adapters
@@ -126,6 +127,15 @@ defmodule OptimalSystemAgent.Application do
         # so the banner shows the correct model (not a stale fallback)
         OptimalSystemAgent.Providers.Ollama.auto_detect_model()
         OptimalSystemAgent.Agent.Tier.detect_ollama_tiers()
+
+        # Start MCP servers asynchronously — don't block boot if servers are slow.
+        # After servers initialise, register their tools in Tools.Registry.
+        Task.start(fn ->
+          OptimalSystemAgent.MCP.Client.start_servers()
+          # Brief pause to let servers complete their JSON-RPC handshake
+          Process.sleep(2_000)
+          OptimalSystemAgent.Tools.Registry.register_mcp_tools()
+        end)
 
         {:ok, pid}
 

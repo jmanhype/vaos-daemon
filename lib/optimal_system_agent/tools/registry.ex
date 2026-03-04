@@ -45,15 +45,30 @@ defmodule OptimalSystemAgent.Tools.Registry do
     # Re-filter at read time in case availability changed (e.g., env var set after boot)
     builtin_tools = :persistent_term.get({__MODULE__, :builtin_tools}, %{})
 
-    builtin_tools
-    |> Enum.filter(fn {_name, mod} -> tool_available?(mod) end)
-    |> Enum.map(fn {_name, mod} ->
-      %{
-        name: mod.name(),
-        description: mod.description(),
-        parameters: mod.parameters()
-      }
-    end)
+    builtin =
+      builtin_tools
+      |> Enum.filter(fn {_name, mod} -> tool_available?(mod) end)
+      |> Enum.map(fn {_name, mod} ->
+        %{
+          name: mod.name(),
+          description: mod.description(),
+          parameters: mod.parameters()
+        }
+      end)
+
+    # Append MCP tools (lock-free, registered asynchronously after boot)
+    mcp_tools = :persistent_term.get({__MODULE__, :mcp_tools}, %{})
+
+    mcp =
+      Enum.map(mcp_tools, fn {prefixed_name, info} ->
+        %{
+          name: prefixed_name,
+          description: Map.get(info, :description, "MCP tool: #{info.original_name}"),
+          parameters: Map.get(info, :input_schema, %{"type" => "object", "properties" => %{}})
+        }
+      end)
+
+    builtin ++ mcp
   end
 
   @doc """
@@ -63,14 +78,53 @@ defmodule OptimalSystemAgent.Tools.Registry do
   GenServer callbacks or from sub-agent Tasks spawned during orchestration.
   This prevents deadlock when Tools.Registry.execute calls orchestrate,
   which spawns sub-agents that call back into Tools.
+
+  MCP tools (prefixed `mcp_`) are routed to MCP.Client.call_tool/2.
   """
   def execute_direct(tool_name, arguments) do
     builtin_tools = :persistent_term.get({__MODULE__, :builtin_tools}, %{})
 
     case Map.get(builtin_tools, tool_name) do
-      nil -> {:error, "Unknown tool: #{tool_name}"}
-      mod -> mod.execute(arguments)
+      nil ->
+        mcp_tools = :persistent_term.get({__MODULE__, :mcp_tools}, %{})
+
+        case Map.get(mcp_tools, tool_name) do
+          nil ->
+            {:error, "Unknown tool: #{tool_name}"}
+
+          %{original_name: original_name} ->
+            OptimalSystemAgent.MCP.Client.call_tool(original_name, arguments)
+        end
+
+      mod ->
+        mod.execute(arguments)
     end
+  end
+
+  @doc """
+  Discover MCP tools from all running servers and register them.
+
+  Called from Application after MCP servers start. Idempotent — safe to
+  call multiple times (e.g. after reloading mcp.json).
+  """
+  def register_mcp_tools do
+    tools = OptimalSystemAgent.MCP.Client.list_tools()
+
+    mcp_map =
+      Enum.reduce(tools, %{}, fn tool, acc ->
+        # Prefix with mcp_ so SDK filtering and namespacing work correctly
+        prefixed_name = "mcp_#{tool.name}"
+        Map.put(acc, prefixed_name, %{server: tool.server, original_name: tool.name})
+      end)
+
+    :persistent_term.put({__MODULE__, :mcp_tools}, mcp_map)
+
+    Logger.info("MCP tools registered: #{map_size(mcp_map)} (#{length(tools)} total from servers)")
+    :ok
+  rescue
+    e ->
+      Logger.warning("register_mcp_tools failed: #{inspect(e)}")
+      :ok
   end
 
   @doc "List tool and skill documentation (for context injection)."
@@ -391,7 +445,19 @@ defmodule OptimalSystemAgent.Tools.Registry do
   end
 
   def handle_call(:list_tools, _from, state) do
-    {:reply, state.tools, state}
+    # Include MCP tools from persistent_term (registered asynchronously after boot)
+    mcp_tools = :persistent_term.get({__MODULE__, :mcp_tools}, %{})
+
+    mcp =
+      Enum.map(mcp_tools, fn {prefixed_name, info} ->
+        %{
+          name: prefixed_name,
+          description: Map.get(info, :description, "MCP tool: #{info.original_name}"),
+          parameters: Map.get(info, :input_schema, %{"type" => "object", "properties" => %{}})
+        }
+      end)
+
+    {:reply, state.tools ++ mcp, state}
   end
 
   def handle_call(:reload_skills, _from, state) do
@@ -453,7 +519,9 @@ defmodule OptimalSystemAgent.Tools.Registry do
       "skill_manager" => OptimalSystemAgent.Tools.Builtins.SkillManager,
       "ask_user" => OptimalSystemAgent.Tools.Builtins.AskUser,
       "delegate" => OptimalSystemAgent.Tools.Builtins.Delegate,
-      "git" => OptimalSystemAgent.Tools.Builtins.Git
+      "git" => OptimalSystemAgent.Tools.Builtins.Git,
+      "github" => OptimalSystemAgent.Tools.Builtins.Github,
+      "multi_file_edit" => OptimalSystemAgent.Tools.Builtins.MultiFileEdit
     }
   end
 

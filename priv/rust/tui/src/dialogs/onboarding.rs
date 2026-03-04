@@ -349,7 +349,8 @@ impl OnboardingWizard {
             KeyCode::Enter => self.advance(),
             KeyCode::Esc => self.retreat(),
             KeyCode::Char(c) if c.is_ascii_digit() => {
-                let n = c.to_digit(10).unwrap() as usize;
+                // is_ascii_digit() guarantees to_digit(10) returns Some; 0 is a safe fallback.
+                let n = c.to_digit(10).unwrap_or(0) as usize;
                 let idx = if n == 0 { 9 } else { n - 1 };
                 if idx < count {
                     self.selected_machines[idx] = !self.selected_machines[idx];
@@ -373,7 +374,8 @@ impl OnboardingWizard {
             KeyCode::Enter => self.advance(),
             KeyCode::Esc => self.retreat(),
             KeyCode::Char(c) if c.is_ascii_digit() => {
-                let n = c.to_digit(10).unwrap() as usize;
+                // is_ascii_digit() guarantees to_digit(10) returns Some; 0 is a safe fallback.
+                let n = c.to_digit(10).unwrap_or(0) as usize;
                 let idx = if n == 0 { 9 } else { n - 1 };
                 if idx < count {
                     self.selected_channels[idx] = !self.selected_channels[idx];

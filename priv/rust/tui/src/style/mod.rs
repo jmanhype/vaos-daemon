@@ -537,13 +537,14 @@ use std::sync::RwLock;
 static CURRENT_THEME: RwLock<Option<Theme>> = RwLock::new(None);
 
 pub fn set_theme(theme: Theme) {
-    *CURRENT_THEME.write().unwrap() = Some(theme);
+    // Recover from a poisoned lock rather than propagating a panic.
+    *CURRENT_THEME.write().unwrap_or_else(|e| e.into_inner()) = Some(theme);
 }
 
 pub fn theme() -> Theme {
     CURRENT_THEME
         .read()
-        .unwrap()
+        .unwrap_or_else(|e| e.into_inner())
         .clone()
         .unwrap_or_else(|| themes::dark())
 }

@@ -24,7 +24,8 @@ pub fn render_diff(old_text: &str, new_text: &str, _width: u16) -> Vec<Line<'sta
 
     for group in diff.grouped_ops(3) {
         // Compute hunk header coordinates from the op group.
-        let first = group.first().unwrap();
+        // `grouped_ops` only yields non-empty groups, but guard defensively.
+        let Some(first) = group.first() else { continue };
 
         let old_start = first.old_range().start + 1; // 1-indexed
         let old_count: usize = group.iter().map(|op| op.old_range().len()).sum();
