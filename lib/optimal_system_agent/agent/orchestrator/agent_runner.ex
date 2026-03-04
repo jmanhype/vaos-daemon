@@ -112,6 +112,7 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.AgentRunner do
         case sub_task.role do
           :lead -> :elite
           :red_team -> :specialist
+          :explorer -> :specialist
           _ -> :specialist
         end
     end

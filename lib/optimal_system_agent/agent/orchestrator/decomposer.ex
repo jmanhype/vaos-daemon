@@ -10,14 +10,15 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.Decomposer do
   """
   require Logger
 
-  alias OptimalSystemAgent.Agent.Orchestrator.{Complexity, SubTask}
+  alias OptimalSystemAgent.Agent.Orchestrator.{Complexity, Explorer, SubTask}
 
   @doc """
   Decompose a task message into a list of SubTask structs.
 
   Returns `{:ok, [SubTask.t()]}` or `{:error, reason}`.
-  For simple tasks, returns a single "execute" sub-task.
-  For complex tasks, returns the LLM-generated decomposition.
+  For simple tasks, returns an explore sub-task followed by execute.
+  For complex tasks, returns the LLM-generated decomposition with an
+  Explorer as Wave 0 so all agents have codebase context before acting.
   """
   @spec decompose_task(String.t()) :: {:ok, [SubTask.t()]} | {:error, term()}
   def decompose_task(message) do
@@ -26,17 +27,18 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.Decomposer do
         :simple ->
           {:ok,
            [
+             Explorer.build_explore_subtask(message),
              %SubTask{
                name: "execute",
                description: message,
                role: :builder,
                tools_needed: ["file_read", "file_write", "shell_execute"],
-               depends_on: []
+               depends_on: ["explore"]
              }
            ]}
 
         {:complex, sub_tasks} ->
-          {:ok, sub_tasks}
+          {:ok, Explorer.inject_explore_phase(sub_tasks, message)}
       end
     rescue
       e ->

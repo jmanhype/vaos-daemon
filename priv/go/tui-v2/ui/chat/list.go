@@ -22,6 +22,7 @@ import (
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/miosa/osa-tui/style"
+	"github.com/miosa/osa-tui/ui/common"
 	"github.com/miosa/osa-tui/ui/tools"
 )
 
@@ -260,7 +261,8 @@ func (u *userMessageItem) Render(cw int) string {
 	if out, ok := u.cache.get(cw, u.version); ok {
 		return out
 	}
-	label := style.UserLabel.Render("❯  You")
+	ts := style.MsgMeta.Render(u.ts.Format("15:04"))
+	label := style.UserLabel.Render("❯  You") + "  " + ts
 	border := lipgloss.NewStyle().
 		Border(lipgloss.ThickBorder(), false, false, false, true).
 		BorderForeground(style.MsgBorderUser).
@@ -309,6 +311,24 @@ func (a *assistantMessageItem) shouldSkip() bool {
 	return strings.TrimSpace(a.content) == "" && len(a.toolCalls) == 0
 }
 
+// agentLabel builds the label line for an assistant message item.
+func agentLabel(a *assistantMessageItem) string {
+	labelText := "◈ OSA"
+	if a.isError {
+		labelText = "✗ OSA"
+	} else if a.isCancelled {
+		labelText = "◈ OSA (cancelled)"
+	}
+	label := style.AgentLabel.Render(labelText)
+	if a.signal != nil && a.signal.Mode != "" && a.signal.Genre != "" {
+		label += style.StatusSignal.Render(fmt.Sprintf(" [%s/%s]", a.signal.Mode, a.signal.Genre))
+	}
+	if !a.ts.IsZero() {
+		label += "  " + style.MsgMeta.Render(a.ts.Format("15:04"))
+	}
+	return label
+}
+
 func (a *assistantMessageItem) Render(cw int) string {
 	cw = cappedWidth(cw)
 	if out, ok := a.cache.get(cw, a.version); ok {
@@ -323,20 +343,7 @@ func (a *assistantMessageItem) Render(cw int) string {
 		borderColor = style.MsgBorderSystem
 	}
 
-	// Label + optional signal badge
-	labelText := "◈ OSA"
-	if a.isError {
-		labelText = "✗ OSA"
-	} else if a.isCancelled {
-		labelText = "◈ OSA (cancelled)"
-	}
-	label := style.AgentLabel.Render(labelText)
-	if a.signal != nil && a.signal.Mode != "" && a.signal.Genre != "" {
-		badge := style.StatusSignal.Render(
-			fmt.Sprintf(" [%s/%s]", a.signal.Mode, a.signal.Genre),
-		)
-		label += badge
-	}
+	label := agentLabel(a)
 
 	// Markdown-rendered body
 	var body string
@@ -484,11 +491,12 @@ type ChatMessage struct {
 
 // Model is the Bubble Tea model for the scrollable chat message list.
 type Model struct {
-	vp      viewport.Model
-	items   []Item // ordered slice of all persistent message items
-	width   int
-	height  int
-	focused bool // when true, the active message receives a brighter border
+	vp           viewport.Model
+	items        []Item // ordered slice of all persistent message items
+	width        int
+	height       int
+	focused      bool // when true, the active message receives a brighter border
+	contentLines int  // total rendered line count — used for scrollbar sizing
 
 	// Welcome screen data
 	welcomeVersion string
@@ -507,10 +515,18 @@ type Model struct {
 	nextID int
 }
 
+// vpWidth returns the viewport width, reserving 2 columns for the scrollbar.
+func vpWidth(w int) int {
+	if w > 12 {
+		return w - 2
+	}
+	return w
+}
+
 // New constructs a chat Model sized to width × height.
 func New(width, height int) Model {
 	vp := viewport.New(
-		viewport.WithWidth(width),
+		viewport.WithWidth(vpWidth(width)),
 		viewport.WithHeight(height),
 	)
 	vp.SetContent("")
@@ -531,7 +547,7 @@ func (m *Model) SetSize(w, h int) {
 	m.width = w
 	m.height = h
 	vp := viewport.New(
-		viewport.WithWidth(w),
+		viewport.WithWidth(vpWidth(w)),
 		viewport.WithHeight(h),
 	)
 	vp.SetContent("")
@@ -718,9 +734,32 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return m, cmd
 }
 
-// View returns the rendered viewport output.
+// AtBottom reports whether the viewport is scrolled to the bottom.
+func (m Model) AtBottom() bool { return m.vp.AtBottom() }
+
+// ScrollPercent returns the vertical scroll position as a value 0–1.
+func (m Model) ScrollPercent() float64 { return m.vp.ScrollPercent() }
+
+// View returns the rendered viewport output with a scrollbar column on the right.
 func (m Model) View() string {
-	return m.vp.View()
+	chatContent := m.vp.View()
+	scrollbar := common.Scrollbar(m.vp.Height(), m.contentLines, m.vp.YOffset())
+	if scrollbar == "" {
+		return chatContent
+	}
+	chatLines := strings.Split(chatContent, "\n")
+	sbLines := strings.Split(scrollbar, "\n")
+	var buf strings.Builder
+	for i, line := range chatLines {
+		if i > 0 {
+			buf.WriteByte('\n')
+		}
+		buf.WriteString(line)
+		if i < len(sbLines) {
+			buf.WriteString(" " + sbLines[i])
+		}
+	}
+	return buf.String()
 }
 
 // WelcomeView returns the welcome screen rendered at the current width.
@@ -751,7 +790,9 @@ func (m *Model) contentWidth() int {
 
 // refresh re-renders all content into the viewport and scrolls to bottom.
 func (m *Model) refresh() {
-	m.vp.SetContent(m.renderAll())
+	content := m.renderAll()
+	m.contentLines = strings.Count(content, "\n") + 1
+	m.vp.SetContent(content)
 	_ = m.vp.GotoBottom()
 }
 
@@ -840,15 +881,7 @@ func (m *Model) renderAll() string {
 // to indicate it is the focused (active) message.
 func renderFocusedAssistant(a *assistantMessageItem, cw int) string {
 	cw = cappedWidth(cw)
-
-	// Label + optional signal badge
-	label := style.AgentLabel.Render("◈ OSA")
-	if a.signal != nil && a.signal.Mode != "" && a.signal.Genre != "" {
-		badge := style.StatusSignal.Render(
-			fmt.Sprintf(" [%s/%s]", a.signal.Mode, a.signal.Genre),
-		)
-		label += badge
-	}
+	label := agentLabel(a)
 
 	body := renderMarkdown(a.content, cw-2)
 

@@ -22,7 +22,7 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
   require Logger
 
   alias OptimalSystemAgent.Agent.{Appraiser, Roster, TaskQueue}
-  alias OptimalSystemAgent.Agent.Orchestrator.{SkillManager, Decomposer, AgentRunner}
+  alias OptimalSystemAgent.Agent.Orchestrator.{SkillManager, Decomposer, AgentRunner, GitVersioning}
   alias OptimalSystemAgent.Events.Bus
   alias OptimalSystemAgent.Providers.Registry, as: Providers
 
@@ -509,6 +509,9 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
         {:noreply, state}
 
       task_state ->
+        # Checkpoint the workspace before agents start making changes
+        GitVersioning.checkpoint(task_id)
+
         waves = Decomposer.build_execution_waves(task_state.sub_tasks)
         task_state = %{task_state | pending_waves: waves, current_wave: 0}
         state = %{state | tasks: Map.put(state.tasks, task_id, task_state)}
@@ -607,6 +610,9 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
         Logger.info(
           "[Orchestrator] Task #{task_id} completed — #{map_size(task_state.agents)} agents, synthesis ready"
         )
+
+        # Commit any workspace changes produced by the agents
+        GitVersioning.commit_outcome(task_id, task_state.message)
 
         {:noreply, state}
     end

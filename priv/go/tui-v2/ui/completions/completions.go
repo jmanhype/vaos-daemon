@@ -3,6 +3,7 @@
 package completions
 
 import (
+	"fmt"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
@@ -305,6 +306,10 @@ func (m Model) View() string {
 	}
 
 	content := strings.Join(rows, "\n")
+
+	// Footer: cursor position / total count
+	footer := style.Faint.Render(fmt.Sprintf(" %d / %d", m.cursor+1, total))
+	content += "\n" + footer
 
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).

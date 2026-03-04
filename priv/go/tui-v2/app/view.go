@@ -12,6 +12,17 @@ import (
 	"github.com/miosa/osa-tui/ui/logo"
 )
 
+// scrollHint returns a one-line indicator when the chat is not at the bottom.
+// Returns an empty string when the user is already at the latest message.
+func (m Model) scrollHint() string {
+	if m.chat.AtBottom() {
+		return ""
+	}
+	pct := int(m.chat.ScrollPercent() * 100)
+	hint := fmt.Sprintf("  ↓ scroll to latest  [%d%%]  End", pct)
+	return style.Faint.Render(hint)
+}
+
 // -- View ---------------------------------------------------------------------
 
 // View returns the tea.View for the current frame.
@@ -86,6 +97,11 @@ func (m Model) renderView() string {
 			sections = append(sections, m.picker.View())
 		}
 
+		// Scroll hint (visible only when scrolled up, hidden at bottom)
+		if hint := m.scrollHint(); hint != "" {
+			sections = append(sections, hint)
+		}
+
 		// Status bar
 		sections = append(sections, m.status.View())
 
@@ -116,7 +132,6 @@ func (m Model) renderMain() string {
 	return chatView
 }
 
-
 // -- Rendering helpers --------------------------------------------------------
 
 // renderConnecting shows the ASCII logo with a connecting message.
@@ -133,7 +148,6 @@ const osaLogo = ` ██████╗ ███████╗ █████
 ██║   ██║╚════██║██╔══██║
 ╚██████╔╝███████║██║  ██║
  ╚═════╝ ╚══════╝╚═╝  ╚═╝`
-
 
 // -- Help text ----------------------------------------------------------------
 
@@ -257,4 +271,3 @@ Tips:
   · Ctrl+L toggles the sidebar panel
   · /sessions lists sessions; /session <id> to switch`
 }
-
