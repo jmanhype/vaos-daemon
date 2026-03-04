@@ -84,12 +84,10 @@ if (-not $hasApiKey) {
 $stale = Get-NetTCPConnection -LocalPort 8089 -ErrorAction SilentlyContinue
 if ($stale) {
     Write-Host "Killing stale process on :8089..." -ForegroundColor Yellow
-    $pids = $stale | Select-Object -ExpandProperty OwningProcess -Unique
-    foreach ($pid in $pids) {
-        # Kill the direct owner and any beam.smp children
-        Get-Process -Id $pid -ErrorAction SilentlyContinue | ForEach-Object {
-            $_.Kill($true)  # $true = kill entire process tree
-        }
+    $ownerPids = $stale | Select-Object -ExpandProperty OwningProcess -Unique
+    foreach ($ownerPid in $ownerPids) {
+        # Kill process tree (taskkill works on Windows PowerShell 5.1)
+        taskkill /F /T /PID $ownerPid 2>$null
     }
     # Also kill any orphaned beam.smp processes
     Get-Process -Name "beam.smp" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
@@ -98,18 +96,24 @@ if ($stale) {
 
 # Start Elixir backend in new window
 Write-Host "Starting OSA backend on :8089..." -ForegroundColor Cyan
-$backendScript = @"
-`$env:PATH = 'C:\Program Files\Erlang OTP\bin;$ELIXIR_BIN;' + `$env:PATH
-Set-Location '$OSA_DIR'
+# Use single-quoted here-string so $_, $Matches, $env:PATH are literal in the generated script.
+# Variable parts (paths) are substituted via -replace after building the string.
+$backendScript = @'
+$env:PATH = 'ELIXIR_BIN_PLACEHOLDER;C:\Program Files\Erlang OTP\bin;' + $env:PATH
+Set-Location 'OSA_DIR_PLACEHOLDER'
 Get-Content '.env' | ForEach-Object {
-    if (`$_ -match '^\s*([^#][^=]+)=(.*)`$') {
-        [System.Environment]::SetEnvironmentVariable(`$Matches[1].Trim(), `$Matches[2].Trim(), 'Process')
+    if ($_ -match '^\s*([^#][^=]+)=(.*)$') {
+        [System.Environment]::SetEnvironmentVariable($Matches[1].Trim(), $Matches[2].Trim(), 'Process')
     }
 }
-$extraEnvLines
-`$env:OSA_SKIP_NIF = 'true'
-& '$ELIXIR_BIN\mix.bat' osa.serve
-"@
+EXTRA_ENV_PLACEHOLDER
+$env:OSA_SKIP_NIF = 'true'
+& 'MIX_PATH_PLACEHOLDER' osa.serve
+'@
+$backendScript = $backendScript -replace 'ELIXIR_BIN_PLACEHOLDER', $ELIXIR_BIN
+$backendScript = $backendScript -replace 'OSA_DIR_PLACEHOLDER',   $OSA_DIR
+$backendScript = $backendScript -replace 'EXTRA_ENV_PLACEHOLDER',  $extraEnvLines
+$backendScript = $backendScript -replace 'MIX_PATH_PLACEHOLDER',  "$ELIXIR_BIN\mix.bat"
 
 $backendScript | Out-File "$env:TEMP\osa_backend.ps1" -Encoding UTF8
 $backend = Start-Process powershell -ArgumentList "-NoExit", "-File", "$env:TEMP\osa_backend.ps1" -PassThru
@@ -137,6 +141,5 @@ Write-Host "Backend ready! Launching TUI..." -ForegroundColor Green
 
 Write-Host "Shutting down backend..." -ForegroundColor Yellow
 # Kill the PowerShell wrapper and its entire process tree (beam.smp is a grandchild)
-$backendProc = Get-Process -Id $backend.Id -ErrorAction SilentlyContinue
-if ($backendProc) { $backendProc.Kill($true) }
+taskkill /F /T /PID $backend.Id 2>$null
 Get-Process -Name "beam.smp" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
