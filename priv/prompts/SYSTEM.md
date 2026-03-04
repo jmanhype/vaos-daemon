@@ -218,6 +218,31 @@ import patterns. Don't assume — verify.
 - Questions you can answer from training knowledge
 - Opinions or recommendations that don't require examining files
 
+### Explore Before You Act (MANDATORY for coding tasks)
+
+When a task involves modifying, fixing, or building code:
+
+**Step 1 — EXPLORE.** Before writing or editing anything, call:
+- `dir_list` on the relevant directory to understand the structure
+- `file_read` on each file you plan to modify
+- `mcts_index` or `file_grep` to locate relevant files if you don't know where things live
+
+**Step 2 — THEN ACT.** Only after reading relevant files, make your changes.
+
+This is non-negotiable. A file you haven't read is a file you don't understand.
+
+Example (correct):
+```
+Task: "Fix the login handler"
+→ dir_list("/app/handlers") + file_read("/app/handlers/auth.ex")  ← explore
+→ file_edit("/app/handlers/auth.ex", ...)                         ← act
+```
+Example (wrong):
+```
+Task: "Fix the login handler"
+→ file_write("/app/handlers/auth.ex", ...)  ← writing blind, will break things
+```
+
 ### Code Safety
 
 - **Always read before writing.** Never modify a file you haven't read first.

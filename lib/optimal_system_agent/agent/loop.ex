@@ -138,9 +138,28 @@ defmodule OptimalSystemAgent.Agent.Loop do
         message
       end
 
+    # Inject an exploration directive before complex coding tasks so local models
+    # read relevant files BEFORE writing — the "explore first" pattern.
+    messages_to_append =
+      if complex_coding_task?(message_with_nudge) do
+        [
+          %{
+            role: "system",
+            content:
+              "[System: This task involves code changes. MANDATORY explore-first protocol: " <>
+                "Call dir_list and file_read to understand the relevant structure BEFORE " <>
+                "calling file_write, file_edit, or shell_execute. " <>
+                "Never modify a file you haven't read first.]"
+          },
+          %{role: "user", content: message_with_nudge}
+        ]
+      else
+        [%{role: "user", content: message_with_nudge}]
+      end
+
     state = %{
       state
-      | messages: state.messages ++ [%{role: "user", content: message_with_nudge}],
+      | messages: state.messages ++ messages_to_append,
         iteration: 0,
         overflow_retries: 0,
         auto_continues: 0,
@@ -386,6 +405,27 @@ defmodule OptimalSystemAgent.Agent.Loop do
              end) do
           Process.put(:osa_memory_version, Process.get(:osa_memory_version, 0) + 1)
         end
+
+        # Explore-first nudge — if the model writes/edits files without reading first at iteration 1
+        state =
+          if state.iteration == 1 and
+               state.auto_continues < 2 and
+               write_without_read?(tool_calls) do
+            Logger.info("[loop] Explore-first nudge: model issued write tools before reading (iteration 1)")
+
+            nudge = %{
+              role: "system",
+              content:
+                "[System: You modified files without reading them first. " <>
+                  "Always explore before you act: call dir_list and file_read to understand " <>
+                  "the current state of relevant files before making changes. " <>
+                  "On your next step, read what you changed to verify it's correct.]"
+            }
+
+            %{state | messages: state.messages ++ [nudge], auto_continues: state.auto_continues + 1}
+          else
+            state
+          end
 
         # Skill creation nudge — 5+ tool calls in single turn suggests a reusable pattern (Phase 6)
         state =
@@ -826,5 +866,28 @@ defmodule OptimalSystemAgent.Agent.Loop do
 
   defp code_in_text?(content) do
     Regex.match?(@code_block_pattern, content)
+  end
+
+  # Detect when a task involves code changes — triggers the explore-first directive.
+  @coding_action_patterns ~r/\b(fix|change|update|refactor|add|implement|create|modify|edit|write|build|rewrite|delete|remove|rename)\b/i
+  @coding_context_patterns ~r/\b(function|method|module|file|code|script|class|endpoint|handler|component|route|controller|service|model|schema|migration|test|spec|bug|error|feature)\b/i
+
+  defp complex_coding_task?(message) when is_binary(message) do
+    Regex.match?(@coding_action_patterns, message) and
+      Regex.match?(@coding_context_patterns, message)
+  end
+
+  defp complex_coding_task?(_), do: false
+
+  # Detect when the model issued write/execute tools without any read tools first.
+  # Triggered at iteration 1 (first tool batch) to catch blind writes.
+  @write_tools ~w(file_write file_edit shell_execute)
+  @read_tools ~w(file_read dir_list file_glob file_grep mcts_index)
+
+  defp write_without_read?(tool_calls) do
+    names = Enum.map(tool_calls, & &1.name)
+    has_write = Enum.any?(names, &(&1 in @write_tools))
+    has_read = Enum.any?(names, &(&1 in @read_tools))
+    has_write and not has_read
   end
 end
