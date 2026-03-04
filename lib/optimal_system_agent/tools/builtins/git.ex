@@ -1,6 +1,8 @@
 defmodule OptimalSystemAgent.Tools.Builtins.Git do
   @behaviour OptimalSystemAgent.Tools.Behaviour
 
+  require Logger
+
   @default_allowed_paths ["~", "/tmp"]
 
   @impl true
@@ -64,8 +66,14 @@ defmodule OptimalSystemAgent.Tools.Builtins.Git do
     work_dir = resolve_work_dir(params["path"])
 
     case validate_path(work_dir) do
-      :ok -> run_operation(operation, work_dir, params)
-      {:error, reason} -> {:error, reason}
+      :ok ->
+        case ensure_repo(work_dir) do
+          :ok -> run_operation(operation, work_dir, params)
+          {:error, reason} -> {:error, reason}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -172,6 +180,26 @@ defmodule OptimalSystemAgent.Tools.Builtins.Git do
     end
   rescue
     e -> {:error, "git command failed: #{Exception.message(e)}"}
+  end
+
+  # Ensure the directory is a git repo — initialize it if not.
+  # Sets minimal local config (user.name/email) so commits work without global config.
+  defp ensure_repo(dir) do
+    case git(["rev-parse", "--git-dir"], dir) do
+      {:ok, _} ->
+        :ok
+
+      {:error, _} ->
+        Logger.info("[git] No repo found at #{dir} — initializing")
+
+        with {:ok, _} <- git(["init"], dir),
+             {:ok, _} <- git(["config", "user.email", "osa@local"], dir),
+             {:ok, _} <- git(["config", "user.name", "OSA"], dir) do
+          :ok
+        else
+          {:error, reason} -> {:error, "git init failed: #{reason}"}
+        end
+    end
   end
 
   defp resolve_work_dir(nil) do
