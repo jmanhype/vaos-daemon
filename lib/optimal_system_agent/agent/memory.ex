@@ -202,7 +202,13 @@ defmodule OptimalSystemAgent.Agent.Memory do
     build_index()
 
     Logger.info("Agent.Memory started — sessions at #{dir}, index built")
-    {:ok, %{sessions_dir: dir}}
+    {:ok, %{sessions_dir: dir}, {:continue, :reindex_to_sidecar}}
+  end
+
+  @impl true
+  def handle_continue(:reindex_to_sidecar, state) do
+    Task.start_link(fn -> reindex_memory_to_sidecar() end)
+    {:noreply, state}
   end
 
   # ── Casts ──────────────────────────────────────────────────────────
@@ -1164,4 +1170,62 @@ defmodule OptimalSystemAgent.Agent.Memory do
     end
   end
   defp ensure_utf8(val), do: to_string(val)
+
+  # ────────────────────────────────────────────────────────────────────
+  # Sidecar Integration
+  # ────────────────────────────────────────────────────────────────────
+
+  defp reindex_memory_to_sidecar do
+    # Index all memory entries to Python sidecar for semantic search
+    if Application.get_env(:optimal_system_agent, :python_sidecar_enabled, false) do
+      alias OptimalSystemAgent.Python.Embeddings
+
+      try do
+        # Load all memory entries from ETS
+        entries =
+          try do
+            :ets.tab2list(@entry_table)
+            |> Enum.map(fn {_id, entry} -> entry end)
+          rescue
+            _ -> []
+          end
+
+        # Send each entry to sidecar for indexing
+        Enum.each(entries, fn entry ->
+          send_entry_to_sidecar(entry, Embeddings)
+        end)
+
+        if entries != [] do
+          Logger.info("Memory.reindex_to_sidecar: sent #{length(entries)} entries to sidecar")
+        end
+      rescue
+        e ->
+          Logger.warning("Memory.reindex_to_sidecar failed: #{inspect(e)}")
+      end
+    end
+  end
+
+  defp send_entry_to_sidecar(entry, embeddings_module) do
+    entry_id = entry[:id] || ""
+    content = entry[:content] || ""
+    category = entry[:category] || "general"
+    timestamp = entry[:timestamp] || ""
+
+    # Index the entry in the sidecar
+    case embeddings_module.index_entry(entry_id, content, %{
+      "category" => category,
+      "timestamp" => timestamp
+    }) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "Failed to index entry #{entry_id} to sidecar: #{inspect(reason)}"
+        )
+
+      _ ->
+        :ok
+    end
+  end
 end

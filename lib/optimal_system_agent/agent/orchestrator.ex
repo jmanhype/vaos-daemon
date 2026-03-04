@@ -22,7 +22,7 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
   require Logger
 
   alias OptimalSystemAgent.Agent.{Appraiser, Roster, TaskQueue}
-  alias OptimalSystemAgent.Agent.Orchestrator.{SkillManager, Decomposer, AgentRunner}
+  alias OptimalSystemAgent.Agent.Orchestrator.{SkillManager, Decomposer, AgentRunner, WaveExecutor}
   alias OptimalSystemAgent.Events.Bus
   alias OptimalSystemAgent.Providers.Registry, as: Providers
 
@@ -585,7 +585,7 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
         {:noreply, state}
 
       task_state ->
-        synthesis = synthesize_results(task_id, task_state.results, task_state.message, task_state.session_id)
+        synthesis = WaveExecutor.synthesize_results(task_id, task_state.results, task_state.message, task_state.session_id)
 
         task_state = %{
           task_state
@@ -619,7 +619,7 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
     # Task.async completion — demonitor and flush the :DOWN message
     Process.demonitor(ref, [:flush])
 
-    case find_task_by_ref(ref, state) do
+    case WaveExecutor.find_task_by_ref(ref, state.tasks) do
       nil ->
         {:noreply, state}
 
@@ -631,7 +631,7 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
             text when is_binary(text) -> text
           end
 
-        state = record_agent_result(state, task_id, agent_name, agent_id, subtask_id, result_text, result)
+        state = WaveExecutor.record_agent_result(state, task_id, agent_name, agent_id, subtask_id, result_text, result)
 
         # Check if all agents in current wave are done
         task_state = Map.get(state.tasks, task_id)
@@ -646,13 +646,13 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
 
   @impl true
   def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
-    case find_task_by_ref(ref, state) do
+    case WaveExecutor.find_task_by_ref(ref, state.tasks) do
       nil ->
         {:noreply, state}
 
       {task_id, agent_name, agent_id, subtask_id} ->
         result_text = "FAILED: Agent crashed: #{inspect(reason)}"
-        state = record_agent_result(state, task_id, agent_name, agent_id, subtask_id, result_text, {:error, result_text})
+        state = WaveExecutor.record_agent_result(state, task_id, agent_name, agent_id, subtask_id, result_text, {:error, result_text})
 
         task_state = Map.get(state.tasks, task_id)
 
@@ -661,147 +661,6 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
         else
           {:noreply, state}
         end
-    end
-  end
-
-  # ── Non-blocking execution helpers ──────────────────────────────────
-
-  # Find which task owns a given Task.async ref
-  defp find_task_by_ref(ref, state) do
-    Enum.find_value(state.tasks, fn {task_id, task_state} ->
-      case Map.get(task_state.wave_refs, ref) do
-        {agent_name, agent_id, subtask_id} ->
-          {task_id, agent_name, agent_id, subtask_id}
-
-        nil ->
-          nil
-      end
-    end)
-  end
-
-  # Record an agent's result: update agent state, wave_refs, results map, TaskQueue
-  defp record_agent_result(state, task_id, agent_name, agent_id, subtask_id, result_text, raw_result) do
-    task_state = Map.get(state.tasks, task_id)
-
-    # Update agent status
-    {status, agent_result, error} =
-      case raw_result do
-        {:ok, text} -> {:completed, text, nil}
-        {:error, reason} -> {:failed, nil, reason}
-        text when is_binary(text) -> {:completed, text, nil}
-      end
-
-    updated_agent =
-      case Map.get(task_state.agents, agent_id) do
-        nil -> nil
-        agent ->
-          %{agent | status: status, result: agent_result, error: error, completed_at: DateTime.utc_now()}
-      end
-
-    updated_agents =
-      if updated_agent, do: Map.put(task_state.agents, agent_id, updated_agent), else: task_state.agents
-
-    # Remove ref from wave_refs and store result
-    wave_refs = Map.reject(task_state.wave_refs, fn {_ref, {name, _, _}} -> name == agent_name end)
-
-    task_state = %{
-      task_state
-      | agents: updated_agents,
-        wave_refs: wave_refs,
-        results: Map.put(task_state.results, agent_name, result_text)
-    }
-
-    # TaskQueue complete/fail (best-effort)
-    try do
-      case status do
-        :completed -> TaskQueue.complete(subtask_id, result_text)
-        :failed -> TaskQueue.fail(subtask_id, error || result_text)
-      end
-    catch
-      :exit, _ -> :ok
-    end
-
-    Bus.emit(:system_event, %{
-      event: :orchestrator_agent_completed,
-      task_id: task_id,
-      session_id: task_state.session_id,
-      agent_id: agent_id,
-      agent_name: agent_name,
-      status: status
-    })
-
-    # Emit task_updated so the TUI reflects the final state of this subtask.
-    status_str = if status == :completed, do: "completed", else: "failed"
-    Bus.emit(:system_event, %{
-      event: :task_updated,
-      task_id: subtask_id,
-      status: status_str,
-      session_id: task_state.session_id
-    })
-
-    %{state | tasks: Map.put(state.tasks, task_id, task_state)}
-  end
-
-  # ── Result Synthesis ────────────────────────────────────────────────
-
-  defp synthesize_results(task_id, results, original_message, session_id) do
-    if map_size(results) == 0 do
-      "No agents produced results."
-    else
-      agent_outputs =
-        Enum.map(results, fn {name, result} ->
-          "## Agent: #{name}\n#{result}"
-        end)
-        |> Enum.join("\n\n---\n\n")
-
-      prompt = """
-      You are synthesizing the work of multiple agents. The original task was:
-      "#{String.slice(original_message, 0, 500)}"
-
-      Here are the results from each agent:
-
-      #{agent_outputs}
-
-      Provide a unified response that:
-      1. Summarizes what was accomplished
-      2. Lists any files created or modified
-      3. Notes any issues or follow-up items
-      4. Gives a clear status: COMPLETE, PARTIAL, or FAILED
-      """
-
-      Bus.emit(:system_event, %{
-        event: :orchestrator_synthesizing,
-        task_id: task_id,
-        session_id: session_id,
-        agent_count: map_size(results)
-      })
-
-      try do
-        case Providers.chat([%{role: "user", content: prompt}],
-               temperature: 0.3,
-               max_tokens: 2000
-             ) do
-          {:ok, %{content: synthesis}} when is_binary(synthesis) and synthesis != "" ->
-            synthesis
-
-          _ ->
-            # Fallback: join all results
-            Logger.warning(
-              "[Orchestrator] Synthesis LLM call failed -- falling back to joined results"
-            )
-
-            Enum.map_join(results, "\n\n---\n\n", fn {name, result} ->
-              "## #{name}\n#{result}"
-            end)
-        end
-      rescue
-        e ->
-          Logger.error("[Orchestrator] Synthesis failed: #{Exception.message(e)}")
-
-          Enum.map_join(results, "\n\n---\n\n", fn {name, result} ->
-            "## #{name}\n#{result}"
-          end)
-      end
     end
   end
 
