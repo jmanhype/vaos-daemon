@@ -102,7 +102,7 @@ func (m Model) handleClientAgentResponse(r client.AgentResponseEvent) (Model, te
 	// If the user scrolled up to read older messages, notify them that a new
 	// response arrived without yanking them back to the bottom.
 	if !m.chat.AtBottom() {
-		m.toasts.Add("↓ Nova resposta — End para ir", toast.ToastInfo)
+		m.toasts.Add("↓ New response — press End to jump", toast.ToastInfo)
 		return m, tea.Batch(focusCmd, m.tickCmd())
 	}
 	return m, focusCmd
