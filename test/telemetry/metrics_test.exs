@@ -4,6 +4,16 @@ defmodule OptimalSystemAgent.Telemetry.MetricsTest do
 
   alias OptimalSystemAgent.Telemetry.Metrics
 
+  setup_all do
+    # Start Metrics if it isn't already running (e.g. when using mix test --no-start)
+    case Process.whereis(Metrics) do
+      nil -> start_supervised!(Metrics)
+      _pid -> :ok
+    end
+
+    :ok
+  end
+
   # ---------------------------------------------------------------------------
   # record_tool_execution/2
   # ---------------------------------------------------------------------------

@@ -82,7 +82,11 @@ defmodule OptimalSystemAgent.Telemetry.Metrics do
 
   @impl true
   def init(_opts) do
-    :ets.new(:osa_telemetry, [:named_table, :public, :set])
+    try do
+      :ets.new(:osa_telemetry, [:named_table, :public, :set])
+    rescue
+      ArgumentError -> :ok
+    end
 
     seed_table()
     subscribe_to_events()
@@ -90,6 +94,12 @@ defmodule OptimalSystemAgent.Telemetry.Metrics do
     schedule_flush()
     Logger.info("[Telemetry.Metrics] Started — flushing to ~/.osa/metrics.json every 5m")
     {:ok, %{}}
+  end
+
+  @impl true
+  def terminate(_reason, _state) do
+    flush_to_disk()
+    :ok
   end
 
   @impl true
@@ -136,13 +146,13 @@ defmodule OptimalSystemAgent.Telemetry.Metrics do
   defp subscribe_to_events do
     self_pid = self()
 
-    OptimalSystemAgent.Events.Bus.register_handler(:tool_result, fn payload ->
+    safe_register(:tool_result, fn payload ->
       tool = Map.get(payload, :tool, Map.get(payload, "tool", "unknown"))
       duration = Map.get(payload, :duration_ms, Map.get(payload, "duration_ms", 0))
       send(self_pid, {:osa_event, {:tool_result, to_string(tool), duration}})
     end)
 
-    OptimalSystemAgent.Events.Bus.register_handler(:llm_response, fn payload ->
+    safe_register(:llm_response, fn payload ->
       provider =
         payload
         |> Map.get(:provider, Map.get(payload, "provider", :unknown))
@@ -153,10 +163,20 @@ defmodule OptimalSystemAgent.Telemetry.Metrics do
       send(self_pid, {:osa_event, {:llm_response, provider, latency, success}})
     end)
 
-    OptimalSystemAgent.Events.Bus.register_handler(:user_message, fn payload ->
+    safe_register(:user_message, fn payload ->
       session_id = Map.get(payload, :session_id, Map.get(payload, "session_id", "unknown"))
       send(self_pid, {:osa_event, {:user_message, to_string(session_id)}})
     end)
+  end
+
+  # Wraps Events.Bus.register_handler so that startup succeeds even when
+  # Events.Bus is not running (e.g. mix test --no-start).
+  defp safe_register(event_type, handler) do
+    OptimalSystemAgent.Events.Bus.register_handler(event_type, handler)
+  rescue
+    _ -> :ok
+  catch
+    :exit, _ -> :ok
   end
 
   defp handle_event({:tool_result, tool_name, duration_ms}) do
@@ -333,6 +353,7 @@ defmodule OptimalSystemAgent.Telemetry.Metrics do
 
     payload =
       summary
+      |> Map.put(:schema_version, 1)
       |> Map.put(:flushed_at, DateTime.utc_now() |> DateTime.to_iso8601())
       |> Jason.encode!(pretty: true)
 

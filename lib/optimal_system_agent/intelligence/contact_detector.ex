@@ -84,13 +84,22 @@ defmodule OptimalSystemAgent.Intelligence.ContactDetector do
     |> Enum.map(fn name -> {:name, name} end)
   end
 
-  # Common words that happen to be capitalised but are not names
+  # Common words that happen to be capitalised but are not names.
+  # Includes sentence-starter words that appear capitalised at the beginning of sentences.
   @stop_words ~w(
     I A The An And Or But In On At To For Of With By From As Is Was Be
     It This That These Those My Your His Her Our Their Its We You He She They
     Monday Tuesday Wednesday Thursday Friday Saturday Sunday
     January February March April May June July August September October November December
     Hi Hello Hey Dear Thanks Thank Sorry Please Yes No Ok Okay
+    So Now Just Also Still Even Then When Where What Why How Which
+    If Unless Until While After Before Since During
+    Not Never Always Sometimes Often Usually Generally
+    Here There Above Below Next Last First Second Third
+    Using Using Adding Creating Updating Fixing Adding Running
+    Can Could Would Should Must Might May Will Shall
+    New Old Good Bad More Most Less Some Any All
+    True False Done Note Todo See
   )
 
   defp stop_word?(word), do: word in @stop_words

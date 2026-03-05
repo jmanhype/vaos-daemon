@@ -14,6 +14,7 @@ defmodule OptimalSystemAgent.Intelligence.CommProfiler do
   require Logger
 
   @table :osa_comm_profiles
+  @profile_ttl_seconds 90 * 24 * 60 * 60
 
   # ---------------------------------------------------------------------------
   # Default profile shape
@@ -27,7 +28,8 @@ defmodule OptimalSystemAgent.Intelligence.CommProfiler do
       avg_score: 0.7,
       avg_length: 0,
       message_count: 0,
-      score_history: []           # last 10 scores (newest first)
+      score_history: [],          # last 10 scores (newest first)
+      inserted_at: System.system_time(:second)
     }
   end
 
@@ -40,8 +42,19 @@ defmodule OptimalSystemAgent.Intelligence.CommProfiler do
   @doc "Get the communication profile for a user. Returns {:ok, profile}."
   def get_profile(user_id) do
     case :ets.lookup(@table, user_id) do
-      [{^user_id, profile}] -> {:ok, profile}
-      [] -> {:ok, default_profile()}
+      [{^user_id, profile}] ->
+        now = System.system_time(:second)
+        inserted = Map.get(profile, :inserted_at, now)
+
+        if now - inserted > @profile_ttl_seconds do
+          :ets.delete(@table, user_id)
+          {:ok, default_profile()}
+        else
+          {:ok, profile}
+        end
+
+      [] ->
+        {:ok, default_profile()}
     end
   end
 
@@ -72,7 +85,12 @@ defmodule OptimalSystemAgent.Intelligence.CommProfiler do
 
   @impl true
   def init(_opts) do
-    :ets.new(@table, [:named_table, :public, :set, read_concurrency: true])
+    try do
+      :ets.new(@table, [:named_table, :public, :set, read_concurrency: true])
+    rescue
+      ArgumentError -> :ok
+    end
+
     Logger.debug("[CommProfiler] ETS table #{@table} created")
     {:ok, %{}}
   end
