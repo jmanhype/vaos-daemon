@@ -262,7 +262,13 @@ defmodule OptimalSystemAgent.Tools.Builtins.Git do
       name ->
         # Create and switch to new branch
         case git(["checkout", "-b", name], dir) do
-          {:ok, output} -> {:ok, output}
+          {:ok, _} ->
+            # Auto-push new branch to origin
+            case git(["push", "-u", "origin", name], dir) do
+              {:ok, _} -> {:ok, "Created and pushed branch '#{name}' to origin"}
+              {:error, reason} -> {:ok, "Created branch '#{name}' locally (push failed: #{reason})"}
+            end
+
           # Branch already exists — just switch
           {:error, _} -> git(["checkout", name], dir)
         end
