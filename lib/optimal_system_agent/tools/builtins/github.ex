@@ -5,6 +5,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Github do
     pr_create pr_list pr_view pr_merge
     issue_create issue_list issue_view issue_comment
     repo_view run_list run_view
+    file_read file_write file_list
   )
 
   @gh_timeout 30_000
@@ -15,7 +16,8 @@ defmodule OptimalSystemAgent.Tools.Builtins.Github do
   @impl true
   def description,
     do:
-      "Interact with GitHub — create PRs, list issues, view CI runs, comment, and more via the gh CLI. " <>
+      "Interact with GitHub — read/write files in any repo, create PRs, list issues, view CI runs. " <>
+        "Supports any repo via the repo param (e.g. 'owner/name'). " <>
         "Requires gh (GitHub CLI) to be installed and authenticated."
 
   @impl true
@@ -27,13 +29,26 @@ defmodule OptimalSystemAgent.Tools.Builtins.Github do
           "type" => "string",
           "enum" => @allowed_commands,
           "description" =>
-            "GitHub operation: pr_create, pr_list, pr_view, pr_merge, " <>
+            "GitHub operation: " <>
+              "file_read: read a file from any repo. " <>
+              "file_write: create or update a file (commits the change). " <>
+              "file_list: list directory contents. " <>
+              "pr_create, pr_list, pr_view, pr_merge, " <>
               "issue_create, issue_list, issue_view, issue_comment, repo_view, run_list, run_view"
+        },
+        "repo" => %{
+          "type" => "string",
+          "description" =>
+            "Target repository in owner/name format (e.g. 'robertohluna/BOS'). " <>
+              "Defaults to the repo of the current working directory."
         },
         "args" => %{
           "type" => "object",
           "description" =>
             "Command-specific arguments. " <>
+              "file_read: {path}. " <>
+              "file_write: {path, content, message, branch?}. " <>
+              "file_list: {path?}. " <>
               "pr_create: {title, body, base?, draft?}. " <>
               "pr_list: {state?, limit?}. " <>
               "pr_view: {number, json?}. " <>
@@ -62,7 +77,8 @@ defmodule OptimalSystemAgent.Tools.Builtins.Github do
          :ok <- check_gh_installed(),
          :ok <- check_gh_auth() do
       args_map = Map.get(params, "args", %{}) || %{}
-      run_command(command, args_map)
+      repo = Map.get(params, "repo")
+      run_command(command, args_map, repo)
     end
   end
 
@@ -70,7 +86,93 @@ defmodule OptimalSystemAgent.Tools.Builtins.Github do
 
   # --- Command dispatch ---
 
-  defp run_command("pr_create", args) do
+  defp run_command("file_read", args, repo) do
+    path = Map.get(args, "path")
+
+    if is_nil(path) or path == "" do
+      {:error, "file_read requires: path"}
+    else
+      endpoint = repo_api_path(repo, "contents/#{path}")
+
+      case gh_api(["api", endpoint, "--jq", ".content,.encoding,.sha"]) do
+        {:ok, raw} ->
+          [content_b64, encoding, sha] =
+            raw |> String.trim() |> String.split("\n") |> Enum.take(3) |> pad_to(3)
+
+          content =
+            if encoding == "base64" do
+              content_b64
+              |> String.replace("\n", "")
+              |> Base.decode64!()
+            else
+              content_b64
+            end
+
+          {:ok, %{path: path, content: content, sha: String.trim(sha || "")}}
+
+        {:error, _} = err ->
+          err
+      end
+    end
+  end
+
+  defp run_command("file_write", args, repo) do
+    path = Map.get(args, "path")
+    content = Map.get(args, "content")
+    message = Map.get(args, "message") || "chore: update #{path} via OSA"
+
+    cond do
+      is_nil(path) or path == "" ->
+        {:error, "file_write requires: path"}
+
+      is_nil(content) ->
+        {:error, "file_write requires: content"}
+
+      true ->
+        endpoint = repo_api_path(repo, "contents/#{path}")
+        content_b64 = Base.encode64(content)
+
+        # Try to get current SHA (needed for updates; omitted for new files)
+        sha_args =
+          case gh_api(["api", endpoint, "--jq", ".sha"]) do
+            {:ok, sha} -> ["-f", "sha=#{String.trim(sha)}"]
+            {:error, _} -> []
+          end
+
+        put_args =
+          ["api", endpoint, "-X", "PUT",
+           "-f", "message=#{message}",
+           "-f", "content=#{content_b64}"]
+          ++ sha_args
+          ++ maybe_branch_args(args["branch"])
+
+        case gh_api(put_args) do
+          {:ok, _} ->
+            {:ok, %{status: "committed", path: path, message: message}}
+
+          {:error, _} = err ->
+            err
+        end
+    end
+  end
+
+  defp run_command("file_list", args, repo) do
+    path = Map.get(args, "path") || ""
+    endpoint = repo_api_path(repo, "contents/#{path}")
+
+    case gh_api(["api", endpoint, "--jq", "[.[] | {name, type, path, size}]"]) do
+      {:ok, json} ->
+        case Jason.decode(json) do
+          {:ok, entries} -> {:ok, %{path: path, entries: entries, count: length(entries)}}
+          _ -> {:ok, %{path: path, raw: json}}
+        end
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  defp run_command("pr_create", args, repo) do
     title = Map.get(args, "title")
     body = Map.get(args, "body")
 
@@ -81,21 +183,23 @@ defmodule OptimalSystemAgent.Tools.Builtins.Github do
         ["pr", "create", "--title", title, "--body", body || ""]
         |> maybe_append(args["base"], "--base", args["base"])
         |> maybe_flag(args["draft"], "--draft")
+        |> with_repo(repo)
 
       gh(cli_args)
     end
   end
 
-  defp run_command("pr_list", args) do
+  defp run_command("pr_list", args, repo) do
     cli_args =
       ["pr", "list"]
       |> maybe_append(args["state"], "--state", args["state"])
       |> maybe_append(args["limit"], "--limit", to_string(args["limit"] || ""))
+      |> with_repo(repo)
 
     gh(cli_args)
   end
 
-  defp run_command("pr_view", args) do
+  defp run_command("pr_view", args, repo) do
     number = Map.get(args, "number")
 
     if is_nil(number) do
@@ -104,12 +208,13 @@ defmodule OptimalSystemAgent.Tools.Builtins.Github do
       cli_args =
         ["pr", "view", to_string(number)]
         |> maybe_append(args["json"], "--json", args["json"])
+        |> with_repo(repo)
 
       gh(cli_args)
     end
   end
 
-  defp run_command("pr_merge", args) do
+  defp run_command("pr_merge", args, repo) do
     number = Map.get(args, "number")
 
     if is_nil(number) do
@@ -124,11 +229,11 @@ defmodule OptimalSystemAgent.Tools.Builtins.Github do
           _ -> "--merge"
         end
 
-      gh(["pr", "merge", to_string(number), flag])
+      gh(["pr", "merge", to_string(number), flag] |> with_repo(repo))
     end
   end
 
-  defp run_command("issue_create", args) do
+  defp run_command("issue_create", args, repo) do
     title = Map.get(args, "title")
     body = Map.get(args, "body")
 
@@ -138,73 +243,117 @@ defmodule OptimalSystemAgent.Tools.Builtins.Github do
       cli_args =
         ["issue", "create", "--title", title, "--body", body || ""]
         |> maybe_append(args["label"], "--label", args["label"])
+        |> with_repo(repo)
 
       gh(cli_args)
     end
   end
 
-  defp run_command("issue_list", args) do
+  defp run_command("issue_list", args, repo) do
     cli_args =
       ["issue", "list"]
       |> maybe_append(args["state"], "--state", args["state"])
       |> maybe_append(args["limit"], "--limit", to_string(args["limit"] || ""))
+      |> with_repo(repo)
 
     gh(cli_args)
   end
 
-  defp run_command("issue_view", args) do
+  defp run_command("issue_view", args, repo) do
     number = Map.get(args, "number")
 
     if is_nil(number) do
       {:error, "issue_view requires: number"}
     else
-      gh(["issue", "view", to_string(number)])
+      gh(["issue", "view", to_string(number)] |> with_repo(repo))
     end
   end
 
-  defp run_command("issue_comment", args) do
+  defp run_command("issue_comment", args, repo) do
     number = Map.get(args, "number")
     body = Map.get(args, "body")
 
     cond do
       is_nil(number) -> {:error, "issue_comment requires: number"}
       is_nil(body) or body == "" -> {:error, "issue_comment requires: body"}
-      true -> gh(["issue", "comment", to_string(number), "--body", body])
+      true -> gh(["issue", "comment", to_string(number), "--body", body] |> with_repo(repo))
     end
   end
 
-  defp run_command("repo_view", args) do
+  defp run_command("repo_view", args, repo) do
     cli_args =
       ["repo", "view"]
       |> maybe_append(args["json"], "--json", args["json"])
+      |> with_repo(repo)
 
     gh(cli_args)
   end
 
-  defp run_command("run_list", args) do
+  defp run_command("run_list", args, repo) do
     cli_args =
       ["run", "list"]
       |> maybe_append(args["limit"], "--limit", to_string(args["limit"] || ""))
+      |> with_repo(repo)
 
     gh(cli_args)
   end
 
-  defp run_command("run_view", args) do
+  defp run_command("run_view", args, repo) do
     run_id = Map.get(args, "run_id")
 
     if is_nil(run_id) do
       {:error, "run_view requires: run_id"}
     else
-      gh(["run", "view", to_string(run_id)])
+      gh(["run", "view", to_string(run_id)] |> with_repo(repo))
     end
   end
 
-  defp run_command(cmd, _args) do
+  defp run_command(cmd, _args, _repo) do
     {:error,
      "Unknown command: #{cmd}. Valid: #{Enum.join(@allowed_commands, ", ")}"}
   end
 
   # --- Helpers ---
+
+  # Build GitHub API path for a given repo and sub-path.
+  # When repo is nil, falls back to the detected repo of cwd via gh api.
+  defp repo_api_path(nil, sub), do: "repos/{owner}/{repo}/#{sub}"
+  defp repo_api_path(repo, sub), do: "repos/#{repo}/#{sub}"
+
+  # Append --repo flag when a repo is specified.
+  defp with_repo(args, nil), do: args
+  defp with_repo(args, repo), do: args ++ ["--repo", repo]
+
+  # gh api helper — uses gh CLI to call REST endpoints.
+  defp gh_api(args) do
+    task =
+      Task.async(fn ->
+        System.cmd("gh", args, stderr_to_stdout: true, cd: File.cwd!())
+      end)
+
+    case Task.yield(task, @gh_timeout) || Task.shutdown(task) do
+      {:ok, {output, 0}} ->
+        out = String.trim(output)
+        {:ok, if(out == "", do: "(no output)", else: out)}
+
+      {:ok, {output, _code}} ->
+        {:error, String.trim(output)}
+
+      nil ->
+        {:error, "gh api timed out after #{div(@gh_timeout, 1000)}s"}
+    end
+  rescue
+    e -> {:error, "gh api failed: #{Exception.message(e)}"}
+  end
+
+  # Append branch args for file_write when branch is specified.
+  defp maybe_branch_args(nil), do: []
+  defp maybe_branch_args(""), do: []
+  defp maybe_branch_args(branch), do: ["-f", "branch=#{branch}"]
+
+  # Pad a list to n elements with nil.
+  defp pad_to(list, n) when length(list) >= n, do: list
+  defp pad_to(list, n), do: list ++ List.duplicate(nil, n - length(list))
 
   defp gh(args) do
     task =
