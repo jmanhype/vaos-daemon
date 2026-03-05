@@ -8,7 +8,6 @@ use super::App;
 
 impl App {
     pub(super) fn handle_quit_dialog_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
-        self.quit_dialog.reset();
         if let Some(action) = self.quit_dialog.handle_key(key) {
             match action {
                 DialogAction::QuitConfirmed => return true,

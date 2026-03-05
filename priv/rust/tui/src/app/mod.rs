@@ -243,6 +243,10 @@ impl App {
         }
         self.prev_state = Some(self.state);
         self.state = target;
+        // Reset quit dialog focus to Cancel (safe default) each time the dialog opens.
+        if target == AppState::Quit {
+            self.quit_dialog.reset();
+        }
     }
 }
 
