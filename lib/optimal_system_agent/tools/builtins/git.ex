@@ -701,8 +701,14 @@ defmodule OptimalSystemAgent.Tools.Builtins.Git do
   end
 
   defp resolve_work_dir(nil) do
-    workspace = Path.expand("~/.osa/workspace")
-    if File.dir?(workspace), do: workspace, else: Path.expand("~")
+    cond do
+      dir = Application.get_env(:optimal_system_agent, :working_dir) ->
+        dir
+      File.dir?(Path.expand("~/.osa/workspace")) ->
+        Path.expand("~/.osa/workspace")
+      true ->
+        Path.expand("~")
+    end
   end
 
   defp resolve_work_dir(path), do: Path.expand(path)
