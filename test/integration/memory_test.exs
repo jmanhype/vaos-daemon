@@ -9,6 +9,23 @@ defmodule OptimalSystemAgent.Integration.MemoryTest do
   # ---------------------------------------------------------------------------
 
   describe "session management" do
+    setup do
+      # Pre-clean any leftover session files from previous runs
+      for prefix <- ~w[test-roundtrip- test-order- test-timestamp- test-list- test-resume-] do
+        cleanup_sessions_with_prefix(prefix)
+      end
+
+      # Also delete SQLite rows for test session prefixes (they persist across test runs)
+      import Ecto.Query
+      alias OptimalSystemAgent.Store.{Repo, Message}
+      test_prefixes = ~w[test-roundtrip- test-order- test-timestamp- test-list- test-resume-]
+      Enum.each(test_prefixes, fn prefix ->
+        from(m in Message, where: like(m.session_id, ^"#{prefix}%")) |> Repo.delete_all()
+      end)
+
+      :ok
+    end
+
     test "append and load_session roundtrips correctly" do
       session_id = "test-roundtrip-#{System.unique_integer([:positive])}"
 

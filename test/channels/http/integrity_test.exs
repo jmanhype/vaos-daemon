@@ -1,5 +1,5 @@
 defmodule OptimalSystemAgent.Channels.HTTP.IntegrityTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
   use Plug.Test
 
   alias OptimalSystemAgent.Channels.HTTP.Integrity
