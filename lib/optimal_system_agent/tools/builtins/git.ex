@@ -305,31 +305,37 @@ defmodule OptimalSystemAgent.Tools.Builtins.Git do
         {:error, "clone requires a url parameter"}
 
       url ->
-        target =
-          case params["path"] do
-            nil ->
-              workspace = Path.expand("~/.osa/workspace")
-              File.mkdir_p!(workspace)
-              # Default: clone into workspace/<repo-name>
-              repo_name =
-                url
-                |> String.split("/")
-                |> List.last()
-                |> String.replace_suffix(".git", "")
-
-              Path.join(workspace, repo_name)
-
-            path ->
-              Path.expand(path)
-          end
-
-        case validate_path(target) do
-          :ok ->
-            File.mkdir_p!(Path.dirname(target))
-            git(["clone", url, target], Path.expand("~"))
-
+        case validate_clone_url(url) do
           {:error, reason} ->
             {:error, reason}
+
+          :ok ->
+            target =
+              case params["path"] do
+                nil ->
+                  workspace = Path.expand("~/.osa/workspace")
+                  File.mkdir_p!(workspace)
+                  # Default: clone into workspace/<repo-name>
+                  repo_name =
+                    url
+                    |> String.split("/")
+                    |> List.last()
+                    |> String.replace_suffix(".git", "")
+
+                  Path.join(workspace, repo_name)
+
+                path ->
+                  Path.expand(path)
+              end
+
+            case validate_path(target) do
+              :ok ->
+                File.mkdir_p!(Path.dirname(target))
+                git(["clone", url, target], Path.expand("~"))
+
+              {:error, reason} ->
+                {:error, reason}
+            end
         end
     end
   end
@@ -350,7 +356,18 @@ defmodule OptimalSystemAgent.Tools.Builtins.Git do
         file -> ["reset", "HEAD", "--", file]
       end
 
-    git(args, dir)
+    case git(args, dir) do
+      {:ok, output} ->
+        warning =
+          if mode == "hard",
+            do: "WARNING: git reset --hard discards all uncommitted changes. ",
+            else: ""
+
+        {:ok, warning <> output}
+
+      error ->
+        error
+    end
   end
 
   defp run_operation("remote", dir, params) do
@@ -527,6 +544,18 @@ defmodule OptimalSystemAgent.Tools.Builtins.Git do
   end
 
   defp resolve_work_dir(path), do: Path.expand(path)
+
+  # SSRF prevention: only allow safe, expected git transport schemes.
+  defp validate_clone_url(url) do
+    uri = URI.parse(url)
+
+    if uri.scheme in [nil, "http", "https", "git", "ssh"] do
+      :ok
+    else
+      {:error,
+       "Unsupported clone URL scheme: #{inspect(uri.scheme)}. Use https://, git://, or ssh://."}
+    end
+  end
 
   defp validate_path(expanded_path) do
     allowed =

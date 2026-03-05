@@ -119,7 +119,7 @@ $backend = Start-Process powershell -ArgumentList "-NoExit", "-File", "$env:TEMP
 # Wait for health
 Write-Host "Waiting for backend..." -ForegroundColor Yellow
 $attempts = 0
-while ($attempts -lt 300) {
+while ($attempts -lt 60) {
     try {
         $r = Invoke-WebRequest -Uri "http://127.0.0.1:8089/health" -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
         if ($r.StatusCode -eq 200) { break }
@@ -128,7 +128,7 @@ while ($attempts -lt 300) {
     $attempts++
 }
 
-if ($attempts -eq 300) {
+if ($attempts -eq 60) {
     Write-Host "Backend failed to start. Check the backend window for errors." -ForegroundColor Red
     Stop-Process -Id $backend.Id -Force -ErrorAction SilentlyContinue
     exit 1

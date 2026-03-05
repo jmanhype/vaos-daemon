@@ -122,7 +122,10 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.GitVersioning do
   # --- Private ---
 
   defp commit(path, message, task_id, phase) do
-    with {:ok, _} <- Git.execute(%{"operation" => "add", "path" => path}),
+    # Use "add" with files=["-u"] so only already-tracked files are staged.
+    # This prevents accidentally committing secrets, temp files, or .env files
+    # that land in the workspace but were never explicitly git-added.
+    with {:ok, _} <- Git.execute(%{"operation" => "add", "path" => path, "files" => ["-u"]}),
          {:ok, result} <- Git.execute(%{"operation" => "commit", "path" => path, "message" => message}) do
       Logger.info("[GitVersioning] #{phase} commit for task #{task_id}: #{String.slice(result, 0, 80)}")
       :ok

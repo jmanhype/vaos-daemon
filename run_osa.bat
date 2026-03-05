@@ -22,6 +22,6 @@ docker run -d --name osa-backend ^
 echo Waiting for backend...
 timeout /t 5 /nobreak > nul
 
-:: Launch TUI
+:: Launch TUI (Rust TUI — Go TUI is retired)
 echo Launching OSA TUI...
-"%~dp0priv\go\tui-v2\osa"
+"%~dp0priv\rust\tui\target\release\osagent.exe"

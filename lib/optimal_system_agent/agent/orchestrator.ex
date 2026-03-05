@@ -22,7 +22,7 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
   require Logger
 
   alias OptimalSystemAgent.Agent.{Appraiser, Roster, TaskQueue}
-  alias OptimalSystemAgent.Agent.Orchestrator.{SkillManager, Decomposer, AgentRunner, WaveExecutor}
+  alias OptimalSystemAgent.Agent.Orchestrator.{SkillManager, Decomposer, AgentRunner, WaveExecutor, GitVersioning}
   alias OptimalSystemAgent.Events.Bus
   alias OptimalSystemAgent.Providers.Registry, as: Providers
 
@@ -509,6 +509,11 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
         {:noreply, state}
 
       task_state ->
+        # Checkpoint in a separate task to avoid blocking the GenServer.
+        # git operations can be slow (seconds) — running them inline would
+        # stall all other orchestrator calls for that duration.
+        Task.start(fn -> GitVersioning.checkpoint(task_id) end)
+
         waves = Decomposer.build_execution_waves(task_state.sub_tasks)
         task_state = %{task_state | pending_waves: waves, current_wave: 0}
         state = %{state | tasks: Map.put(state.tasks, task_id, task_state)}
