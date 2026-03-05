@@ -11,15 +11,29 @@ defmodule OptimalSystemAgent.Agent.LoopUnitTest do
   # The injection patterns are module attributes on Loop. We test them
   # by calling the same regex logic directly.
 
+  # Kept in sync with @injection_patterns in loop.ex — update both together.
   @injection_patterns [
     ~r/what\s+(is|are|was)\s+(your\s+)?(system\s+prompt|instructions?|rules?|configuration|directives?)/i,
-    ~r/(show|print|display|reveal|repeat|output|tell me|give me)\s+(your\s+)?(system\s+prompt|instructions?|full\s+prompt|prompt|initial\s+prompt)/i,
+    ~r/what\s+(is|are|was)\s+the\s+(system\s+prompt|instructions?|configuration|directives?)/i,
+    ~r/(show(\s+me)?|print|display|reveal|repeat|output|tell\s+me|give\s+me|say|recite|state|list|read)\s+(your\s+)?(system\s+prompt|instructions?|full\s+prompt|prompt|initial\s+prompt|configuration)/i,
+    ~r/tell\s+me\s+.{0,30}(system\s+prompt|instructions?|rules?|prompt)\s*(word\s+for\s+word|verbatim|exactly|literally)?/i,
+    ~r/(word\s+for\s+word|verbatim|character\s+for\s+character).{0,40}(prompt|instructions?|told|rules?)/i,
+    ~r/ignore\s+all\s+(instructions?|rules?|guidelines?|context|constraints?)/i,
     ~r/ignore\s+(all\s+)?(previous|prior|above)\s+(instructions?|prompt|context|rules?)/i,
     ~r/repeat\s+everything\s+(above|before|prior)/i,
     ~r/what\s+(were\s+)?(you\s+)?(told|instructed|programmed|trained|configured)\s+to/i,
-    ~r/(jailbreak|DAN|do anything now|developer\s+mode|prompt\s+injection)/i,
+    ~r/(jailbreak|do\s+anything\s+now|developer\s+mode|prompt\s+injection)/i,
+    ~r/\byou\s+(are|were|become|act\s+as)\s+DAN\b/i,
+    ~r/\bDAN\s+(mode|protocol|activated|enabled)\b/i,
+    ~r/(pretend|act\s+as\s+if|imagine|behave\s+as\s+if)\s+.{0,40}(no\s+restrictions?|no\s+guidelines?|no\s+rules?|unrestricted|without\s+limits?|uncensored)/i,
+    ~r/(output|print|repeat|copy|write\s+out)\s+(everything|all\s+text|all\s+content)\s+(above|before|prior)/i,
     ~r/disregard\s+(your\s+)?(previous\s+)?(instructions?|guidelines?|rules?)/i,
-    ~r/forget\s+(everything|all)\s+(you\s+)?(were\s+)?(told|instructed|programmed)/i
+    ~r/forget\s+(everything|all)\s+(you\s+)?(were\s+)?(told|instructed|programmed)/i,
+    ~r/system\s+prompt.*word\s+for\s+word/i,
+    ~r/verbatim.*(prompt|instructions?)/i,
+    ~r/(prompt|instructions?).*verbatim/i,
+    ~r/copy\s+(and\s+)?(paste|output)\s+(your\s+)?(prompt|instructions?)/i,
+    ~r/(override|bypass|circumvent|disable)\s+.{0,30}(instructions?|restrictions?|guidelines?|safety\s+filter)/i
   ]
 
   defp injection?(msg) when is_binary(msg) do

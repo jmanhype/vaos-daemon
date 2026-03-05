@@ -30,6 +30,8 @@ defmodule OptimalSystemAgent.Agent.Loop do
   # Tool results larger than this are truncated before being added to the
   # conversation to prevent context overflow. Default: 10 KB.
   defp max_tool_output_bytes, do: Application.get_env(:optimal_system_agent, :max_tool_output_bytes, 10_240)
+  defp auto_insights_interval, do: Application.get_env(:optimal_system_agent, :auto_insights_interval, 10)
+  defp max_response_tokens, do: Application.get_env(:optimal_system_agent, :max_response_tokens, 8_192)
 
   # ETS table for cancel flags — checked each loop iteration.
   # Created in application.ex, written by cancel/1, read by run_loop.
@@ -109,7 +111,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
       provider: Keyword.get(opts, :provider),
       model: Keyword.get(opts, :model),
       messages: Keyword.get(opts, :messages, []),
-      tools: Tools.list_tools_direct() ++ extra_tools,
+      tools: Tools.filter_applicable_tools(%{history: []}) ++ extra_tools,
       plan_mode_enabled: Application.get_env(:optimal_system_agent, :plan_mode_enabled, false),
       permission_tier: Keyword.get(opts, :permission_tier, :full)
     }
@@ -185,16 +187,17 @@ defmodule OptimalSystemAgent.Agent.Loop do
 
     # Auto-extract insights from recent conversation history every 10 turns.
     # This runs silently — no user-visible output.
-    if rem(state.turn_count, 10) == 0 and state.turn_count > 0 do
+    interval = auto_insights_interval()
+    if rem(state.turn_count, interval) == 0 and state.turn_count > 0 do
       recent = Enum.take(state.messages, -20)
       Task.start(fn -> Memory.extract_insights(recent) end)
     end
 
-    # Memory nudge every 10 turns (Phase 6)
+    # Memory nudge every N turns (Phase 6)
     # After complex tasks (>5 turns), also check for unsaved patterns to suggest saving.
     message_with_nudge =
       cond do
-        rem(state.turn_count, 10) == 0 and state.turn_count > 0 ->
+        rem(state.turn_count, interval) == 0 and state.turn_count > 0 ->
           message <>
             "\n\n[System: You've had #{state.turn_count} exchanges. " <>
             "Consider saving important context with memory_save if you haven't recently.]"
@@ -432,7 +435,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
     # Call LLM with streaming — emits per-token SSE events for live TUI display.
     # Falls back to sync chat if streaming is unavailable.
     thinking_opts = thinking_config(state)
-    llm_opts = [tools: state.tools, temperature: temperature()]
+    llm_opts = [tools: state.tools, temperature: temperature(), max_tokens: max_response_tokens()]
     llm_opts = if thinking_opts, do: Keyword.put(llm_opts, :thinking, thinking_opts), else: llm_opts
     result = llm_chat_stream(state, context.messages, llm_opts)
 

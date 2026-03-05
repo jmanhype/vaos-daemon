@@ -41,7 +41,7 @@ defmodule OptimalSystemAgent.Agent.Context do
   alias OptimalSystemAgent.Agent.TaskTracker
   alias OptimalSystemAgent.Soul
 
-  @response_reserve 4_096
+  @response_reserve 8_192
 
   defp max_tokens, do: Application.get_env(:optimal_system_agent, :max_context_tokens, 128_000)
 

@@ -4,6 +4,9 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -176,6 +179,54 @@ func (m Model) submitInput(text string) (Model, tea.Cmd) {
 		}
 		m.toasts.Add("Classifying signal...", toast.ToastInfo)
 		return m, tea.Batch(m.doClassify(arg), m.tickCmd())
+
+	case strings.HasPrefix(text, "/attach ") || text == "/attach":
+		path := strings.TrimSpace(strings.TrimPrefix(text, "/attach"))
+		if path == "" {
+			if m.pendingAttachment != "" {
+				m.chat.AddSystemMessage(fmt.Sprintf("Attached: %s — will be prepended to your next message.", m.pendingAttachment))
+			} else {
+				m.chat.AddSystemMessage("Usage: /attach <file>")
+			}
+			return m, nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			m.chat.AddSystemError(fmt.Sprintf("Cannot read %s: %v", path, err))
+			return m, nil
+		}
+		m.pendingAttachment = path
+		m.attachmentContent = string(data)
+		m.chat.AddSystemMessage(fmt.Sprintf("Attached: %s (%d bytes) — will be prepended to your next message.", filepath.Base(path), len(data)))
+		return m, nil
+
+	case strings.HasPrefix(text, "/diff ") || text == "/diff":
+		path := strings.TrimSpace(strings.TrimPrefix(text, "/diff"))
+		output, err := runGitDiff(path)
+		if err != nil {
+			m.chat.AddSystemError(fmt.Sprintf("git diff failed: %v", err))
+			return m, nil
+		}
+		if output == "" {
+			if path == "" {
+				m.chat.AddSystemMessage("No changes in working tree.")
+			} else {
+				m.chat.AddSystemMessage(fmt.Sprintf("No diff for: %s", path))
+			}
+			return m, nil
+		}
+		m.chat.AddSystemMessage(output)
+		return m, nil
+
+	case text == "/export" || strings.HasPrefix(text, "/export "):
+		arg := strings.TrimSpace(strings.TrimPrefix(text, "/export"))
+		outPath, err := exportConversation(arg, m.chat.PlainTextLines())
+		if err != nil {
+			m.chat.AddSystemError(fmt.Sprintf("Export failed: %v", err))
+			return m, nil
+		}
+		m.chat.AddSystemMessage(fmt.Sprintf("Conversation exported to: %s", outPath))
+		return m, nil
 	}
 
 	// Generic /command routing.
@@ -200,6 +251,14 @@ func (m Model) submitInput(text string) (Model, tea.Cmd) {
 
 // submitPrompt sends raw text directly to the agent pipeline.
 func (m Model) submitPrompt(text string) (Model, tea.Cmd) {
+	// Prepend any pending file attachment.
+	if m.attachmentContent != "" {
+		text = fmt.Sprintf("[Attached file: %s]\n```\n%s\n```\n\n%s",
+			m.pendingAttachment, m.attachmentContent, text)
+		m.pendingAttachment = ""
+		m.attachmentContent = ""
+	}
+
 	m.activity.Reset()
 	m.activity.Start()
 	m.agents.Reset()
@@ -416,4 +475,45 @@ func classifyWeightLabel(w float64) string {
 	default:
 		return "critical"
 	}
+}
+
+// runGitDiff runs `git diff HEAD -- <path>` (or plain `git diff` when path is
+// empty) and returns the output. Falls back to `git diff -- <path>` when HEAD
+// has no diff (e.g. staged-only changes).
+func runGitDiff(path string) (string, error) {
+	args := []string{"diff", "HEAD", "--"}
+	if path != "" {
+		args = append(args, path)
+	}
+	out, err := exec.Command("git", args...).CombinedOutput()
+	if err != nil {
+		// Retry without HEAD (covers repos with no commits yet or staged files)
+		args2 := []string{"diff", "--"}
+		if path != "" {
+			args2 = append(args2, path)
+		}
+		out2, err2 := exec.Command("git", args2...).CombinedOutput()
+		if err2 != nil {
+			return "", fmt.Errorf("%s", strings.TrimSpace(string(out)))
+		}
+		return string(out2), nil
+	}
+	return string(out), nil
+}
+
+// exportConversation writes lines to a file.
+// If outPath is empty a timestamped file is created in the current directory.
+func exportConversation(outPath string, lines []string) (string, error) {
+	if outPath == "" {
+		outPath = fmt.Sprintf("osa-export-%s.txt", time.Now().Format("20060102-150405"))
+	}
+	content := strings.Join(lines, "\n")
+	if err := os.WriteFile(outPath, []byte(content), 0o644); err != nil {
+		return "", err
+	}
+	abs, err := filepath.Abs(outPath)
+	if err != nil {
+		return outPath, nil
+	}
+	return abs, nil
 }

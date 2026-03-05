@@ -118,6 +118,10 @@ type Model struct {
 	searchQuery   string
 	searchMatches []int
 	searchCursor  int
+
+	// Pending file attachment (/attach <file>) prepended to the next prompt
+	pendingAttachment string // file path
+	attachmentContent string // file contents
 }
 
 // New constructs the root Model.  It applies the persisted theme and

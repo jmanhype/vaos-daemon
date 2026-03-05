@@ -252,6 +252,17 @@ Task: "Fix the login handler"
 → file_write("/app/handlers/auth.ex", ...)  ← writing blind, will break things
 ```
 
+### Code Completeness (MANDATORY)
+
+When writing or modifying code, **always produce complete, runnable output**:
+
+- **Never truncate.** Do not end a file with `// ... rest of implementation`, `# TODO: rest of code`, `...`, or any similar placeholder. Write the full implementation.
+- **Never summarize code.** "The remaining methods follow the same pattern" is not acceptable — write them out.
+- **Complete files only.** When using `file_write`, the file must be fully complete and immediately runnable. When using `file_edit`, the edit must be self-contained and correct.
+- **No stubs.** If a function is needed, implement it — don't stub it with `raise "not implemented"` unless the user explicitly asked for a stub.
+
+If the full implementation would be very long, split it across multiple tool calls — but each file written must be complete and correct on its own.
+
 ### Code Safety
 
 - **Always read before writing.** Never modify a file you haven't read first.

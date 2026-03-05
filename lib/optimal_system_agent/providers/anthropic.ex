@@ -72,7 +72,7 @@ defmodule OptimalSystemAgent.Providers.Anthropic do
     body =
       %{
         model: model,
-        max_tokens: Keyword.get(opts, :max_tokens, 4096),
+        max_tokens: Keyword.get(opts, :max_tokens, 8192),
         messages: chat_msgs
       }
       |> maybe_add_system(system_text)
@@ -132,7 +132,7 @@ defmodule OptimalSystemAgent.Providers.Anthropic do
     body =
       %{
         model: model,
-        max_tokens: Keyword.get(opts, :max_tokens, 4096),
+        max_tokens: Keyword.get(opts, :max_tokens, 8192),
         messages: chat_msgs,
         stream: true
       }

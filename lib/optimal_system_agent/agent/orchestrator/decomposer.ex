@@ -33,65 +33,67 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.Decomposer do
   For complex tasks, returns the LLM-generated decomposition with an
   Explorer as Wave 0 so all agents have codebase context before acting.
   """
-  @spec decompose_task(String.t()) :: {:ok, [SubTask.t()]} | {:error, term()}
+  @spec decompose_task(String.t()) :: {:ok, [SubTask.t()], map()} | {:error, term()}
   def decompose_task(message) do
     try do
       # 1. Check if a matching skill exists — prefer skill execution over decomposition
       case find_relevant_skill(message) do
         {:ok, skill} ->
           Logger.info("[Decomposer] Matched skill '#{skill.name}' — using skill execution instead of decomposition")
-          {:ok, [build_skill_subtask(message, skill)]}
+          sub_tasks = [build_skill_subtask(message, skill)]
+          {:ok, sub_tasks, %{estimated_tokens: estimate_tokens(message, sub_tasks)}}
 
         :no_match ->
           # 2. Heuristic: skip LLM decomposition call for tasks that clearly don't need it
           if should_decompose?(message) do
             case Complexity.analyze(message) do
               :simple ->
-                {:ok,
-                 [
-                   %SubTask{
-                     name: "execute",
-                     description: message,
-                     role: :builder,
-                     tools_needed: ["file_read", "file_write", "shell_execute"],
-                     depends_on: []
-                   }
-                 ]}
+                sub_tasks = [
+                  %SubTask{
+                    name: "execute",
+                    description: message,
+                    role: :builder,
+                    tools_needed: ["file_read", "file_write", "shell_execute"],
+                    depends_on: []
+                  }
+                ]
+                {:ok, sub_tasks, %{estimated_tokens: estimate_tokens(message, sub_tasks)}}
 
               {:complex, sub_tasks} ->
                 # 3. Estimate cost before committing to multi-agent execution
                 if cost_justified?(message, sub_tasks) do
-                  {:ok, Explorer.inject_explore_phase(sub_tasks, message)}
+                  final_tasks = Explorer.inject_explore_phase(sub_tasks, message)
+                  {:ok, final_tasks, %{estimated_tokens: estimate_tokens(message, final_tasks)}}
                 else
                   Logger.info(
                     "[Decomposer] Multi-agent cost not justified (#{length(sub_tasks)} sub-tasks) — keeping as single agent"
                   )
 
-                  {:ok,
-                   [
-                     %SubTask{
-                       name: "execute",
-                       description: message,
-                       role: :backend,
-                       tools_needed: ["file_read", "file_write", "shell_execute"],
-                       depends_on: []
-                     }
-                   ]}
+                  single = [
+                    %SubTask{
+                      name: "execute",
+                      description: message,
+                      role: :backend,
+                      tools_needed: ["file_read", "file_write", "shell_execute"],
+                      depends_on: []
+                    }
+                  ]
+                  {:ok, single, %{estimated_tokens: estimate_tokens(message, single)}}
                 end
             end
           else
             Logger.debug("[Decomposer] Task below decomposition threshold — skipping LLM analysis")
 
-            {:ok,
-             [
-               %SubTask{
-                 name: "execute",
-                 description: message,
-                 role: :backend,
-                 tools_needed: ["file_read", "file_write", "shell_execute"],
-                 depends_on: []
-               }
-             ]}
+            sub_tasks = [
+              %SubTask{
+                name: "execute",
+                description: message,
+                role: :backend,
+                tools_needed: ["file_read", "file_write", "shell_execute"],
+                depends_on: []
+              }
+            ]
+            {:ok, sub_tasks, %{estimated_tokens: estimate_tokens(message, sub_tasks)}}
           end
       end
     rescue
@@ -207,6 +209,23 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.Decomposer do
     end
   rescue
     _ -> :no_match
+  end
+
+  # Estimate total token cost for the chosen execution path.
+  # Single-agent: word_count * 1.5 + 600 output tokens.
+  # Multi-agent: coordination overhead + per-sub-task cost.
+  defp estimate_tokens(message, sub_tasks) do
+    word_count = message |> String.split() |> length()
+
+    if length(sub_tasks) <= 1 do
+      round(word_count * 1.5) + 600
+    else
+      @multi_agent_overhead +
+        Enum.reduce(sub_tasks, 0, fn st, acc ->
+          sub_words = st.description |> String.split() |> length()
+          acc + round(sub_words * 1.5) + 400
+        end)
+    end
   end
 
   # Build a single sub-task that uses the matched skill's path as its instructions source.
