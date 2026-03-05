@@ -376,7 +376,7 @@ defmodule OptimalSystemAgent.Agent.Context do
             end)
 
           case relevant do
-            [] -> text
+            [] -> nil
             _ -> Enum.join(relevant, "\n\n")
           end
         end
@@ -562,13 +562,12 @@ defmodule OptimalSystemAgent.Agent.Context do
     provider = Application.get_env(:optimal_system_agent, :default_provider, :unknown)
     model = get_active_model(provider)
     workspace = Path.expand("~/.osa/workspace")
-    workspace_info = cached_workspace_overview(workspace)
 
     """
     ## Environment
     - Working directory: #{cwd}
-    - User workspace: #{workspace} (write all user projects and code here)
-    #{workspace_info}- Date: #{date}
+    - User workspace: #{workspace}
+    - Date: #{date}
     - OS: #{os_family}/#{os_name}
     - Elixir #{elixir_ver} / OTP #{otp_release}
     - Provider: #{provider} / #{model}
@@ -680,18 +679,33 @@ defmodule OptimalSystemAgent.Agent.Context do
     end
   end
 
+  @git_cache_table :osa_git_info_cache
+  @git_cache_ttl 30_000
+
   defp cached_git_info do
-    case Process.get(:osa_git_info_cache) do
-      nil ->
-        Logger.debug("[Context] git info cache miss — running git commands")
-        info = gather_git_info()
-        Process.put(:osa_git_info_cache, info)
+    ensure_git_cache_table()
+    now = System.monotonic_time(:millisecond)
+
+    case :ets.lookup(@git_cache_table, :git_info) do
+      [{:git_info, info, ts}] when now - ts < @git_cache_ttl ->
+        Logger.debug("[Context] git info cache hit")
         info
 
-      cached ->
-        Logger.debug("[Context] git info cache hit")
-        cached
+      _ ->
+        Logger.debug("[Context] git info cache miss — running git commands")
+        info = gather_git_info()
+        :ets.insert(@git_cache_table, {:git_info, info, now})
+        info
     end
+  end
+
+  defp ensure_git_cache_table do
+    case :ets.whereis(@git_cache_table) do
+      :undefined -> :ets.new(@git_cache_table, [:named_table, :public, :set])
+      _ -> @git_cache_table
+    end
+  rescue
+    _ -> nil
   end
 
   defp gather_git_info do
