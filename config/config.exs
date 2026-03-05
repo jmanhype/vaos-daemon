@@ -6,7 +6,7 @@ config :optimal_system_agent,
 
   # Ollama settings (local LLM — no API key needed)
   ollama_url: "http://localhost:11434",
-  ollama_model: "llama3.2:latest",
+  ollama_model: "qwen2.5:7b",
 
   # Anthropic settings (set ANTHROPIC_API_KEY env var)
   anthropic_model: "claude-sonnet-4-6",

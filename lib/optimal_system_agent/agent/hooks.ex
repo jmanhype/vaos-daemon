@@ -236,12 +236,39 @@ defmodule OptimalSystemAgent.Agent.Hooks do
         handler: &cost_tracker/1
       },
 
+      # Read-before-write nudge — warns when file_edit/file_write targets an unread file
+      # (pre_tool_use, priority 12 — after security_check at 10)
+      %{
+        name: "read_before_write",
+        event: :pre_tool_use,
+        priority: 12,
+        handler: &read_before_write/1
+      },
+
+      # Track files read — records file paths after read/glob/dir_list
+      # (post_tool_use, priority 5 — runs early so data is available)
+      %{
+        name: "track_files_read",
+        event: :post_tool_use,
+        priority: 5,
+        handler: &track_files_read/1
+      },
+
       # Telemetry (post_tool_use, priority 90)
       %{
         name: "telemetry",
         event: :post_tool_use,
         priority: 90,
         handler: &telemetry_hook/1
+      },
+
+      # Session cleanup — remove :osa_files_read ETS entries when session ends
+      # to prevent unbounded memory growth (session_end, priority 90)
+      %{
+        name: "session_cleanup",
+        event: :session_end,
+        priority: 90,
+        handler: &session_cleanup/1
       }
     ]
 
@@ -321,6 +348,102 @@ defmodule OptimalSystemAgent.Agent.Hooks do
   end
 
   defp telemetry_hook(payload), do: {:ok, payload}
+
+
+  # Read-before-write — nudge when file_edit/file_write targets an existing file
+  # that hasn't been read yet. Does NOT block — just adds a flag to the payload.
+  defp read_before_write(%{tool_name: tool_name, arguments: args, session_id: sid} = payload)
+       when tool_name in ["file_edit", "file_write"] do
+    path = args["path"]
+
+    if is_binary(path) and File.exists?(path) do
+      # Check if file was already read in this session
+      read_key = {sid, path}
+
+      already_read =
+        try do
+          case :ets.lookup(:osa_files_read, read_key) do
+            [{^read_key, true}] -> true
+            _ -> false
+          end
+        rescue
+          ArgumentError -> false
+        end
+
+      if already_read do
+        {:ok, payload}
+      else
+        # Check nudge count — max 2 per session per file to avoid doom loops
+        nudge_key = {sid, :nudge_count, path}
+
+        nudge_count =
+          try do
+            case :ets.lookup(:osa_files_read, nudge_key) do
+              [{^nudge_key, n}] -> n
+              _ -> 0
+            end
+          rescue
+            ArgumentError -> 0
+          end
+
+        if nudge_count >= 2 do
+          {:ok, payload}
+        else
+          try do
+            :ets.insert(:osa_files_read, {nudge_key, nudge_count + 1})
+          rescue
+            ArgumentError -> :ok
+          end
+
+          {:ok,
+           Map.put(
+             payload,
+             :nudge,
+             "[Read-before-write] You're modifying #{path} without reading it first. " <>
+               "Call file_read on #{path} to understand its current content before editing."
+           )}
+        end
+      end
+    else
+      {:ok, payload}
+    end
+  end
+
+  defp read_before_write(payload), do: {:ok, payload}
+
+  # Track files read — records file paths in ETS after successful file_read/dir_list/glob
+  defp track_files_read(
+         %{tool_name: tool_name, arguments: args, session_id: sid, result: {:ok, _}} = payload
+       )
+       when tool_name in ["file_read", "dir_list", "glob"] do
+    path = args["path"] || args["pattern"] || ""
+
+    if is_binary(path) and path != "" do
+      try do
+        :ets.insert(:osa_files_read, {{sid, path}, true})
+      rescue
+        ArgumentError -> :ok
+      end
+    end
+
+    {:ok, payload}
+  end
+
+  defp track_files_read(payload), do: {:ok, payload}
+
+  # Session cleanup — remove all ETS entries for the session when it ends
+  defp session_cleanup(%{session_id: sid} = payload) do
+    try do
+      :ets.match_delete(:osa_files_read, {{sid, :_}, :_})
+      :ets.match_delete(:osa_files_read, {{sid, :nudge_count, :_}, :_})
+    rescue
+      ArgumentError -> :ok
+    end
+
+    {:ok, payload}
+  end
+
+  defp session_cleanup(payload), do: {:ok, payload}
 
   # MCP cache — pre_tool_use: inject cached schema if fresh (< 1 hour)
   defp mcp_cache_pre(%{tool_name: tool_name} = payload) when is_binary(tool_name) do

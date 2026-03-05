@@ -578,7 +578,10 @@ defmodule OptimalSystemAgent.Providers.OpenAICompat do
     case Keyword.get(opts, :tools) do
       nil -> body
       [] -> body
-      tools -> Map.put(body, :tools, format_tools(tools))
+      tools ->
+        body
+        |> Map.put(:tools, format_tools(tools))
+        |> Map.put(:tool_choice, "auto")
     end
   end
 

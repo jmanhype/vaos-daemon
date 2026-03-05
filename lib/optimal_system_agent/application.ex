@@ -44,6 +44,10 @@ defmodule OptimalSystemAgent.Application do
     # public + set so Loop.cancel/1 and run_loop can read/write concurrently.
     :ets.new(:osa_cancel_flags, [:named_table, :public, :set])
 
+    # ETS table for read-before-write tracking — tracks which files have been read
+    # per session so the pre_tool_use hook can nudge when writing unread files.
+    :ets.new(:osa_files_read, [:named_table, :public, :set])
+
     children =
       [
         # Process registry for agent sessions

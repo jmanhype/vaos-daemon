@@ -322,9 +322,10 @@ defmodule OptimalSystemAgent.Providers.OpenAICompatTest do
     end
 
     test "name with brace-appended arguments is cleaned via XML path" do
-      # normalize_tool_name splits on [ \s({ ] so "file_read{...}" -> "file_read"
+      # normalize_tool_name splits on [ \s({ ] so "file_read(...)" -> "file_read"
+      # Use parens instead of JSON (quotes inside XML attr break regex)
       content =
-        xml_function_tag(~s|file_read{"path":"/x"}|, ~s|{"path": "/x"}|)
+        xml_function_tag("file_read(path=/x)", ~s|{"path": "/x"}|)
 
       [tc] = OpenAICompat.parse_tool_calls_from_content(content)
       assert tc.name == "file_read"

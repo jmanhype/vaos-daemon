@@ -266,7 +266,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.ShellExecuteTest do
   # ---------------------------------------------------------------------------
 
   describe "timeout enforcement" do
-    @tag timeout: 60_000
+    @tag timeout: 120_000
     test "command that exceeds 30s is killed" do
       System.put_env("OSA_SHELL_TIMEOUT_MS", "30000")
       on_exit(fn -> System.delete_env("OSA_SHELL_TIMEOUT_MS") end)

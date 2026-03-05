@@ -128,7 +128,7 @@ config :optimal_system_agent,
 
   # Ollama overrides (OLLAMA_API_KEY required for cloud instances)
   ollama_url: System.get_env("OLLAMA_URL") || "http://localhost:11434",
-  ollama_model: System.get_env("OLLAMA_MODEL") || "llama3.2:latest",
+  ollama_model: System.get_env("OLLAMA_MODEL") || "qwen2.5:7b",
   ollama_api_key: System.get_env("OLLAMA_API_KEY"),
   # OLLAMA_THINK: set to "true" to enable extended reasoning (kimi-k2, qwen3-thinking, etc.)
   # Default nil → ollama.ex disables thinking for known reasoning models to prevent timeouts.
@@ -152,7 +152,7 @@ config :optimal_system_agent,
   default_model: (
     System.get_env("OSA_MODEL") ||
       case default_provider do
-        :ollama -> System.get_env("OLLAMA_MODEL") || "llama3.2:latest"
+        :ollama -> System.get_env("OLLAMA_MODEL") || "qwen2.5:7b"
         :groq -> System.get_env("GROQ_MODEL")
         :anthropic -> System.get_env("ANTHROPIC_MODEL")
         :openai -> System.get_env("OPENAI_MODEL")

@@ -18,6 +18,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
   require Logger
 
   alias OptimalSystemAgent.Agent.Context
+  alias OptimalSystemAgent.Agent.Explorer
   alias OptimalSystemAgent.Agent.Memory
   alias OptimalSystemAgent.Agent.Hooks
   alias OptimalSystemAgent.Providers.Registry, as: Providers
@@ -49,7 +50,9 @@ defmodule OptimalSystemAgent.Agent.Loop do
     plan_mode: false,
     plan_mode_enabled: false,
     turn_count: 0,
-    last_meta: %{iteration_count: 0, tools_used: []}
+    last_meta: %{iteration_count: 0, tools_used: []},
+    explored_files: MapSet.new(),
+    exploration_done: false
   ]
 
   # --- Client API ---
@@ -210,8 +213,16 @@ defmodule OptimalSystemAgent.Agent.Loop do
         iteration: 0,
         overflow_retries: 0,
         auto_continues: 0,
-        status: :thinking
+        status: :thinking,
+        exploration_done: false
     }
+
+    # 2.5. Auto-explore codebase before ReAct loop (if message looks like a code task)
+    # Pass raw message, not message_with_nudge, so heuristic operates on user intent only
+    state = case Explorer.maybe_explore(state, message) do
+      {:explored, new_state} -> new_state
+      {:skip, s} -> s
+    end
 
     # 3. Check if plan mode should trigger
     if not skip_plan and should_plan?(state) do
@@ -469,6 +480,9 @@ defmodule OptimalSystemAgent.Agent.Loop do
         # Append all tool messages in original order
         tool_messages = Enum.map(results, fn {_tc, {tool_msg, _result_str}} -> tool_msg end)
         state = %{state | messages: state.messages ++ tool_messages}
+
+        # Read-before-write nudge — check if any file_edit/file_write targeted an unread file
+        state = inject_read_nudges(state, tool_calls)
 
         # If memory_save ran successfully in this batch, invalidate system message cache (Phase 4)
         if Enum.any?(tool_calls, fn tc -> tc.name == "memory_save" end) and
@@ -897,6 +911,52 @@ defmodule OptimalSystemAgent.Agent.Loop do
     end
   end
 
+
+  # Inject system nudge when file_edit/file_write targeted files that weren't read first.
+  # Checks the :osa_files_read ETS table for nudge flags set by the read_before_write hook.
+  # Nudges max 2 times per session per file to prevent doom loops.
+  defp inject_read_nudges(state, tool_calls) do
+    write_tools = Enum.filter(tool_calls, fn tc -> tc.name in ["file_edit", "file_write"] end)
+
+    if write_tools == [] do
+      state
+    else
+      nudged_paths =
+        write_tools
+        |> Enum.map(fn tc -> tc.arguments["path"] end)
+        |> Enum.filter(fn path ->
+          is_binary(path) and File.exists?(path) and
+            not file_was_read?(state.session_id, path)
+        end)
+        |> Enum.uniq()
+
+      if nudged_paths == [] do
+        state
+      else
+        paths_str = Enum.join(nudged_paths, ", ")
+        nudge_msg = %{
+          role: "system",
+          content: "[System: You modified #{paths_str} without reading #{if length(nudged_paths) == 1, do: "it", else: "them"} first. " <>
+            "Always call file_read before file_edit/file_write on existing files to understand current content.]"
+        }
+        %{state | messages: state.messages ++ [nudge_msg]}
+      end
+    end
+  rescue
+    _ -> state
+  end
+
+  defp file_was_read?(session_id, path) do
+    try do
+      case :ets.lookup(:osa_files_read, {session_id, path}) do
+        [{_, true}] -> true
+        _ -> false
+      end
+    rescue
+      ArgumentError -> false
+    end
+  end
+
   # Extract unique tool names used during the agent loop from message history
   defp extract_tools_used(messages) do
     messages
@@ -926,13 +986,17 @@ defmodule OptimalSystemAgent.Agent.Loop do
   @injection_patterns [
     ~r/what\s+(is|are|was)\s+(your\s+)?(system\s+prompt|instructions?|rules?|configuration|directives?)/i,
     ~r/what\s+(is|are|was)\s+the\s+(system\s+prompt|instructions?|configuration|directives?)/i,
-    ~r/(show(\s+me)?|print|display|reveal|repeat|output|tell me|give me)\s+(your\s+)?(system\s+prompt|instructions?|full\s+prompt|prompt|initial\s+prompt)/i,
+    ~r/(show(\s+me)?|print|display|reveal|repeat|output|tell me|give me|say|recite|state|list|read)\s+(your\s+)?(system\s+prompt|instructions?|full\s+prompt|prompt|initial\s+prompt|configuration)/i,
     ~r/ignore\s+(all\s+)?(previous|prior|above)\s+(instructions?|prompt|context|rules?)/i,
     ~r/repeat\s+everything\s+(above|before|prior)/i,
     ~r/what\s+(were\s+)?(you\s+)?(told|instructed|programmed|trained|configured)\s+to/i,
     ~r/(jailbreak|DAN|do anything now|developer\s+mode|prompt\s+injection)/i,
     ~r/disregard\s+(your\s+)?(previous\s+)?(instructions?|guidelines?|rules?)/i,
-    ~r/forget\s+(everything|all)\s+(you\s+)?(were\s+)?(told|instructed|programmed)/i
+    ~r/forget\s+(everything|all)\s+(you\s+)?(were\s+)?(told|instructed|programmed)/i,
+    ~r/system\s+prompt.*word\s+for\s+word/i,
+    ~r/verbatim.*(prompt|instructions?)/i,
+    ~r/(prompt|instructions?).*verbatim/i,
+    ~r/copy\s+(and\s+)?(paste|output)\s+(your\s+)?(prompt|instructions?)/i
   ]
 
   # Tier 3 — structural boundary markers that signal injected prompt sections.
