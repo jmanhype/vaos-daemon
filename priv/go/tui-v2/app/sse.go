@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -39,6 +40,11 @@ func (m Model) handleOrchestrate(r msg.OrchestrateResult) (Model, tea.Cmd) {
 		m.chat.ClearProcessingView()
 		m.status.SetActive(false)
 		m.state = StateIdle
+		var rl *client.RateLimitError
+		if errors.As(r.Err, &rl) {
+			m.toasts.Add(rl.Error(), toast.ToastWarning)
+			return m, tea.Batch(m.input.Focus(), m.tickCmd())
+		}
 		m.chat.AddSystemError(fmt.Sprintf("Error: %v", r.Err))
 		return m, m.input.Focus()
 	}

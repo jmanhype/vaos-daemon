@@ -167,6 +167,15 @@ func (m Model) submitInput(text string) (Model, tea.Cmd) {
 		}
 		m.toasts.Add(fmt.Sprintf("Cancelling swarm %s...", id), toast.ToastInfo)
 		return m, tea.Batch(m.cancelSwarm(id), m.tickCmd())
+
+	case strings.HasPrefix(text, "/classify ") || text == "/classify":
+		arg := strings.TrimSpace(strings.TrimPrefix(text, "/classify"))
+		if arg == "" {
+			m.chat.AddSystemMessage("Usage: /classify <message>")
+			return m, nil
+		}
+		m.toasts.Add("Classifying signal...", toast.ToastInfo)
+		return m, tea.Batch(m.doClassify(arg), m.tickCmd())
 	}
 
 	// Generic /command routing.
@@ -374,4 +383,37 @@ func (m Model) handlePermissionDecision(d dialog.PermissionDecision) (Model, tea
 		m.chat.AddSystemWarning(fmt.Sprintf("Denied tool: %s", d.ToolCallID))
 	}
 	return m, m.input.Focus()
+}
+
+func (m Model) doClassify(message string) tea.Cmd {
+	c := m.client
+	return func() tea.Msg {
+		resp, err := c.Classify(message, "tui")
+		if err != nil {
+			return msg.ClassifyResult{Input: message, Err: err}
+		}
+		return msg.ClassifyResult{
+			Input:  message,
+			Mode:   resp.Signal.Mode,
+			Genre:  resp.Signal.Genre,
+			Type:   resp.Signal.Type,
+			Format: resp.Signal.Format,
+			Weight: resp.Signal.Weight,
+		}
+	}
+}
+
+func classifyWeightLabel(w float64) string {
+	switch {
+	case w < 0.1:
+		return "noise"
+	case w < 0.3:
+		return "low"
+	case w < 0.6:
+		return "medium"
+	case w < 0.85:
+		return "high"
+	default:
+		return "critical"
+	}
 }

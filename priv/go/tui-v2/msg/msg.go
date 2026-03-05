@@ -279,3 +279,14 @@ type SwarmCancelResult struct {
 	SwarmID string
 	Err     error
 }
+
+// ClassifyResult from POST /api/v1/classify.
+type ClassifyResult struct {
+	Input  string
+	Mode   string
+	Genre  string
+	Type   string
+	Format string
+	Weight float64
+	Err    error
+}
