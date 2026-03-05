@@ -152,10 +152,8 @@ defmodule OptimalSystemAgent.Agent.Loop do
       {:reply, {:ok, refusal}, state}
     else
 
-    # 1. Persist user message to JSONL session storage
-    Memory.append(state.session_id, %{role: "user", content: message, channel: state.channel})
-
-    # 1.5. Noise filter — intercept low-signal messages before reaching the LLM.
+    # 1. Noise filter — intercept low-signal messages before persisting or reaching the LLM.
+    # Check noise FIRST so filtered messages ("ok", "lol") are never written to memory.
     # signal_weight comes from an upstream classifier (e.g. HTTP handler that called
     # /api/v1/classify first). Defaults to nil (no weight check, Tier 1 regex only).
     signal_weight = Keyword.get(opts, :signal_weight, nil)
@@ -169,10 +167,12 @@ defmodule OptimalSystemAgent.Agent.Loop do
           {:clarify, prompt} -> prompt
         end
 
-      Memory.append(state.session_id, %{role: "assistant", content: ack, channel: state.channel})
       state = %{state | status: :idle}
       {:reply, {:ok, ack}, state}
     else
+
+    # 1.5. Persist user message to JSONL session storage (only non-noise messages)
+    Memory.append(state.session_id, %{role: "user", content: message, channel: state.channel})
 
     # 2. Compact message history if needed, then process through agent loop
     compacted = OptimalSystemAgent.Agent.Compactor.maybe_compact(state.messages)

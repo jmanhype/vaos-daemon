@@ -233,7 +233,7 @@ defmodule OptimalSystemAgent.Providers.Registry do
 
         {:error, {:rate_limited, retry_after}} ->
           HealthChecker.record_rate_limited(provider, retry_after)
-          Logger.warning("Provider #{provider} rate-limited in fallback chain, trying Y")
+          Logger.warning("Provider #{provider} rate-limited in fallback chain, trying next")
           {:cont, {:error, "rate-limited"}}
 
         {:error, reason} ->

@@ -426,7 +426,9 @@ defmodule OptimalSystemAgent.Commands.System do
 
       {:command, String.trim(output)}
     rescue
-      _ -> {:command, "Analytics not available — agent subsystems may not be fully initialized."}
+      e ->
+        Logger.warning("[cmd_analytics] error: #{inspect(e)}")
+        {:command, "Analytics not available — agent subsystems may not be fully initialized."}
     end
   end
 

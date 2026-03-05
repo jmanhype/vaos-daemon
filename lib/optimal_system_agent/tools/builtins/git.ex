@@ -552,10 +552,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Git do
         bad = params["bad_ref"] || "HEAD"
         with {:ok, _} <- git(["bisect", "start"], dir),
              {:ok, _} <- git(["bisect", "bad", bad], dir),
-             {:ok, out} <- case params["good_ref"] do
-               nil -> {:ok, "Mark good commits with bisect_action=good"}
-               g   -> git(["bisect", "good", g], dir)
-             end do
+             {:ok, out} <- bisect_mark_good(params["good_ref"], dir) do
           {:ok, "Bisect started. bad=#{bad}.\n#{out}"}
         end
       "good"  -> git(["bisect", "good"], dir)
@@ -571,8 +568,9 @@ defmodule OptimalSystemAgent.Tools.Builtins.Git do
           nil -> {:error, "bisect run requires bisect_command"}
           cmd ->
             [exe | rest] = String.split(String.trim(cmd), ~r/\s+/, trim: true)
-            if Path.basename(exe) in @safe_bisect_executables do
-              case System.cmd(exe, rest, cd: dir, stderr_to_stdout: true) do
+            basename = Path.basename(exe)
+            if basename in @safe_bisect_executables do
+              case System.cmd(basename, rest, cd: dir, stderr_to_stdout: true) do
                 {out, 0}    -> {:ok, "bisect run exit 0:\n#{out}"}
                 {out, code} -> {:error, "bisect run exit #{code}:\n#{out}"}
               end
@@ -616,6 +614,11 @@ defmodule OptimalSystemAgent.Tools.Builtins.Git do
   # Groups commit subjects by conventional commit type for changelog output.
   # Input: newline-separated commit subjects
   # Output: formatted changelog sections
+  # Helper for bisect start: mark the good ref if provided.
+  # Returns {:ok, message} in both cases so it can be used in a `with` chain.
+  defp bisect_mark_good(nil, _dir), do: {:ok, "Mark good commits with bisect_action=good"}
+  defp bisect_mark_good(good_ref, dir), do: git(["bisect", "good", good_ref], dir)
+
   defp group_by_conventional_type(""), do: "(no commits)"
   defp group_by_conventional_type("(no output)"), do: "(no commits)"
 

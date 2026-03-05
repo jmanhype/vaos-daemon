@@ -1228,4 +1228,53 @@ defmodule OptimalSystemAgent.Agent.Memory do
         :ok
     end
   end
+
+  @doc """
+  Scans a list of messages for user/assistant turns that contain insight-worthy content
+  (patterns, preferences, rules the user has stated). Returns a count of insights found.
+
+  Filters out:
+  - Tool result messages (role: "tool")
+  - Messages shorter than 20 bytes
+  - Messages with no insight keywords
+  """
+  @spec extract_insights(list(map())) :: non_neg_integer()
+  def extract_insights([]), do: 0
+
+  def extract_insights(messages) do
+    insight_keywords = ~w(always prefer never important remember rule convention avoid)
+
+    messages
+    |> Enum.filter(fn msg ->
+      role = Map.get(msg, :role) || Map.get(msg, "role")
+      content = Map.get(msg, :content) || Map.get(msg, "content") || ""
+      role in ["user", "assistant"] and byte_size(content) >= 20
+    end)
+    |> Enum.count(fn msg ->
+      content = String.downcase(Map.get(msg, :content) || Map.get(msg, "content") || "")
+      Enum.any?(insight_keywords, &String.contains?(content, &1))
+    end)
+  end
+
+  @doc """
+  Checks recent conversation history for user-stated patterns worth saving to memory.
+  Only triggers when turn_count > 5 and messages contain insight keywords.
+
+  Returns `:no_nudge` or `{:nudge, suggestion_text}`.
+  """
+  @spec maybe_pattern_nudge(non_neg_integer(), list(map())) :: :no_nudge | {:nudge, String.t()}
+  def maybe_pattern_nudge(turn_count, _messages) when turn_count <= 5, do: :no_nudge
+  def maybe_pattern_nudge(_turn_count, []), do: :no_nudge
+
+  def maybe_pattern_nudge(_turn_count, messages) do
+    insight_count = extract_insights(messages)
+
+    if insight_count > 0 do
+      {:nudge,
+       "I noticed #{insight_count} preference(s) or rule(s) in our recent conversation. " <>
+         "Use memory_save to persist them so I remember them in future sessions."}
+    else
+      :no_nudge
+    end
+  end
 end

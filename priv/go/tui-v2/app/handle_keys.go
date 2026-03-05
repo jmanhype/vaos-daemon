@@ -13,7 +13,6 @@ import (
 )
 
 // -- Key handling -------------------------------------------------------------
-// -- Key handling -------------------------------------------------------------
 
 // updateSearch re-runs the search against current chat items and jumps to the first match.
 func (m *Model) updateSearch() {
