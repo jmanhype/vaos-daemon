@@ -121,27 +121,9 @@ impl App {
             response
         };
 
-        // Prepend thinking content if present, so it persists in chat history
-        let full_response = if !self.thinking_buf.is_empty() {
-            // Truncate thinking to a reasonable preview
-            let thinking_preview = if self.thinking_buf.len() > 800 {
-                format!("{}…", &self.thinking_buf[..800])
-            } else {
-                self.thinking_buf.clone()
-            };
-            format!(
-                "💭 Thinking ({} chars):\n{}\n\n───\n\n{}",
-                self.thinking_buf.chars().count(),
-                thinking_preview,
-                display_response
-            )
-        } else {
-            display_response
-        };
-
         self.chat.clear_streaming();
         self.chat
-            .add_agent_message(&full_response, signal.as_ref());
+            .add_agent_message(&display_response, signal.as_ref());
 
         // Clear streaming state
         self.stream_buf.clear();
