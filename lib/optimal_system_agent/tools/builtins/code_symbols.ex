@@ -149,8 +149,11 @@ defmodule OptimalSystemAgent.Tools.Builtins.CodeSymbols do
         match = Regex.run(~r/^def\s+(\w+[?!]?)/, stripped) ->
           [%{line: num, kind: "def", name: Enum.at(match, 1)}]
 
-        include_private and (match = Regex.run(~r/^defp\s+(\w+[?!]?)/, stripped)) ->
-          [%{line: num, kind: "defp", name: Enum.at(match, 1)}]
+        include_private && String.starts_with?(stripped, "defp ") ->
+          case Regex.run(~r/^defp\s+(\w+[?!]?)/, stripped) do
+            [_, name] -> [%{line: num, kind: "defp", name: name}]
+            _ -> []
+          end
 
         match = Regex.run(~r/^defmacro\s+(\w+[?!]?)/, stripped) ->
           [%{line: num, kind: "defmacro", name: Enum.at(match, 1)}]
@@ -207,11 +210,17 @@ defmodule OptimalSystemAgent.Tools.Builtins.CodeSymbols do
         match = Regex.run(~r/^export\s+(?:const|let|var)\s+(\w+)/, stripped) ->
           [%{line: num, kind: "export const", name: Enum.at(match, 1)}]
 
-        include_private and (match = Regex.run(~r/^(?:async\s+)?function\s+(\w+)/, stripped)) ->
-          [%{line: num, kind: "function", name: Enum.at(match, 1)}]
+        include_private && Regex.match?(~r/^(?:async\s+)?function\s+\w+/, stripped) ->
+          case Regex.run(~r/^(?:async\s+)?function\s+(\w+)/, stripped) do
+            [_, name] -> [%{line: num, kind: "function", name: name}]
+            _ -> []
+          end
 
-        include_private and (match = Regex.run(~r/^class\s+(\w+)/, stripped)) ->
-          [%{line: num, kind: "class", name: Enum.at(match, 1)}]
+        include_private && String.starts_with?(stripped, "class ") ->
+          case Regex.run(~r/^class\s+(\w+)/, stripped) do
+            [_, name] -> [%{line: num, kind: "class", name: name}]
+            _ -> []
+          end
 
         true ->
           []
