@@ -180,22 +180,81 @@ func (m Model) Update(rawMsg tea.Msg) (tea.Model, tea.Cmd) {
 	case msg.OrchestrateResult:
 		return m.handleOrchestrate(v)
 
+	case msg.ClassifyResult:
+		if v.Err != nil {
+			m.chat.AddSystemError(fmt.Sprintf("Classify error: %v", v.Err))
+			return m, nil
+		}
+		label := classifyWeightLabel(v.Weight)
+		out := fmt.Sprintf(
+			"Signal Classification\n  Input:  %s\n  Mode:   %s\n  Genre:  %s\n  Type:   %s\n  Format: %s\n  Weight: %.2f (%s)",
+			v.Input, v.Mode, v.Genre, v.Type, v.Format, v.Weight, label,
+		)
+		m.chat.AddSystemMessage(out)
+		return m, nil
+
 	case msg.CommandResult:
 		return m.handleCommand(v)
 
 	case commandsLoaded:
 		m.commandEntries = []client.CommandEntry(v)
-		names := make([]string, len(v))
-		items := make([]completions.CompletionItem, len(v))
-		for i, cmd := range v {
-			names[i] = "/" + cmd.Name
-			items[i] = completions.CompletionItem{
-				Name:        "/" + cmd.Name,
-				Description: cmd.Description,
-				Category:    cmd.Category,
-				Icon:        "/",
-			}
+
+		// Local TUI commands always available (not returned by backend /api/v1/commands).
+		type localCmd struct{ name, desc, cat string }
+		localDefs := []localCmd{
+			{"/help", "Show available commands", "system"},
+			{"/clear", "Clear chat history", "system"},
+			{"/exit", "Exit OSA", "system"},
+			{"/setup", "Open setup wizard", "config"},
+			{"/status", "System status", "info"},
+			{"/login", "Authenticate with token", "auth"},
+			{"/logout", "Log out", "auth"},
+			{"/sessions", "List all sessions", "session"},
+			{"/session", "Show or switch session", "session"},
+			{"/models", "Browse available models", "config"},
+			{"/model", "Show or switch model", "config"},
+			{"/theme", "List or switch themes", "config"},
+			{"/bg", "List background tasks", "system"},
+			{"/swarm", "Launch a multi-agent swarm", "agents"},
+			{"/swarms", "List active swarms", "agents"},
+			{"/swarm-cancel", "Cancel a running swarm", "agents"},
+			{"/classify", "Classify a message signal", "intelligence"},
+			{"/diff", "Show diff for a file", "context"},
+			{"/attach", "Attach a file to the message", "context"},
+			{"/analytics", "Usage analytics", "analytics"},
+			{"/budget", "Token/cost budget status", "analytics"},
+			{"/thinking", "Toggle thinking display", "config"},
+			{"/export", "Export conversation", "system"},
+			{"/machines", "List registered machines", "info"},
+			{"/providers", "List configured providers", "info"},
 		}
+
+		// Build a set of local names for dedup.
+		localNames := make(map[string]struct{}, len(localDefs))
+		for _, lc := range localDefs {
+			localNames[lc.name] = struct{}{}
+		}
+
+		var items []completions.CompletionItem
+		var names []string
+		for _, lc := range localDefs {
+			items = append(items, completions.CompletionItem{
+				Name: lc.name, Description: lc.desc, Category: lc.cat, Icon: "/",
+			})
+			names = append(names, lc.name)
+		}
+		// Merge backend commands, skipping duplicates of local ones.
+		for _, cmd := range v {
+			n := "/" + cmd.Name
+			if _, dup := localNames[n]; dup {
+				continue
+			}
+			names = append(names, n)
+			items = append(items, completions.CompletionItem{
+				Name: n, Description: cmd.Description, Category: cmd.Category, Icon: "/",
+			})
+		}
+
 		m.input.SetCommands(names)
 		m.input.SetCompletions(items)
 		return m, nil
@@ -277,6 +336,13 @@ func (m Model) Update(rawMsg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case msg.SessionListResult:
 		return m.handleSessionList(v)
+
+	case msg.SwarmLaunchResult:
+		return m.handleSwarmLaunch(v)
+	case msg.SwarmListResult:
+		return m.handleSwarmList(v)
+	case msg.SwarmCancelResult:
+		return m.handleSwarmCancel(v)
 
 	case msg.SessionSwitchResult:
 		return m.handleSessionSwitch(v)

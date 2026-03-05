@@ -248,3 +248,45 @@ type OnboardingComplete struct {
 type OnboardingSetupError struct {
 	Err error
 }
+
+// SwarmLaunchResult is returned after launching a multi-agent swarm.
+type SwarmLaunchResult struct {
+	SwarmID    string
+	Status     string
+	Pattern    string
+	AgentCount int
+	Err        error
+}
+
+// SwarmInfo holds details about a single active swarm.
+type SwarmInfo struct {
+	ID         string
+	Status     string
+	Pattern    string
+	AgentCount int
+	StartedAt  string
+}
+
+// SwarmListResult is returned by the /swarms command.
+type SwarmListResult struct {
+	Swarms      []SwarmInfo
+	ActiveCount int
+	Err         error
+}
+
+// SwarmCancelResult is returned after cancelling a swarm.
+type SwarmCancelResult struct {
+	SwarmID string
+	Err     error
+}
+
+// ClassifyResult from POST /api/v1/classify.
+type ClassifyResult struct {
+	Input  string
+	Mode   string
+	Genre  string
+	Type   string
+	Format string
+	Weight float64
+	Err    error
+}

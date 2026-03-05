@@ -597,14 +597,13 @@ defmodule OptimalSystemAgent.Providers.OpenAICompat do
     name |> String.split(~r/[\s({]/) |> List.first() |> String.trim()
   end
 
-  @doc "Strip XML/text tool-call markup so it doesn't appear in chat output."
-  def strip_tool_call_markup(content) when is_binary(content) do
+  defp strip_tool_call_markup(content) when is_binary(content) do
     content
     |> String.replace(~r/<function\s+name="[^"]+"\s+parameters=\{.*?\}\s*>\s*<\/function>/s, "")
     |> String.replace(~r/<function_call>.*?<\/function_call>/s, "")
     |> String.trim()
   end
-  def strip_tool_call_markup(content), do: content
+  defp strip_tool_call_markup(content), do: content
 
   defp xml_tool_call_content?(content) when is_binary(content) do
     String.contains?(content, "<function") or String.contains?(content, "<function_call>")
@@ -672,6 +671,7 @@ defmodule OptimalSystemAgent.Providers.OpenAICompat do
   defp extract_error_message(body), do: inspect(body)
 
   # Parse the Retry-After header from HTTP 429 responses.
+  # Handles both integer seconds and RFC 7231 HTTP-date strings.
   # Returns the number of seconds to wait, or nil if the header is absent/unparseable.
   defp parse_retry_after(headers) when is_list(headers) do
     headers
@@ -680,17 +680,63 @@ defmodule OptimalSystemAgent.Providers.OpenAICompat do
       {"Retry-After", v} -> v
       _ -> nil
     end)
-    |> case do
-      nil -> nil
-      v ->
-        case Integer.parse(v) do
-          {seconds, _} when seconds > 0 -> seconds
-          _ -> nil
+    |> parse_retry_after_value()
+  end
+
+  defp parse_retry_after(_), do: nil
+
+  # Integer seconds: "30"
+  defp parse_retry_after_value(nil), do: nil
+
+  defp parse_retry_after_value(v) when is_binary(v) do
+    case Integer.parse(String.trim(v)) do
+      {seconds, ""} when seconds > 0 ->
+        seconds
+
+      _ ->
+        # RFC 7231 HTTP-date: "Thu, 01 Jan 2026 00:00:30 GMT"
+        case parse_http_date(v) do
+          {:ok, future_dt} ->
+            diff = DateTime.diff(future_dt, DateTime.utc_now(), :second)
+            if diff > 0, do: diff, else: nil
+
+          :error ->
+            nil
         end
     end
   end
 
-  defp parse_retry_after(_), do: nil
+  @http_date_months %{
+    "Jan" => 1, "Feb" => 2, "Mar" => 3, "Apr" => 4,
+    "May" => 5, "Jun" => 6, "Jul" => 7, "Aug" => 8,
+    "Sep" => 9, "Oct" => 10, "Nov" => 11, "Dec" => 12
+  }
+
+  # Parse RFC 7231 date format: "Thu, 01 Jan 2026 00:00:30 GMT"
+  defp parse_http_date(v) when is_binary(v) do
+    pattern = ~r/\w{3},\s+(\d{1,2})\s+(\w{3})\s+(\d{4})\s+(\d{2}):(\d{2}):(\d{2})\s+GMT/
+
+    case Regex.run(pattern, v) do
+      [_, day_s, month_s, year_s, hour_s, min_s, sec_s] ->
+        with {day, ""} <- Integer.parse(day_s),
+             {month, _} <- Map.fetch(@http_date_months, month_s) |> then(fn
+               {:ok, m} -> {m, ""}
+               :error -> :error
+             end),
+             {year, ""} <- Integer.parse(year_s),
+             {hour, ""} <- Integer.parse(hour_s),
+             {minute, ""} <- Integer.parse(min_s),
+             {second, ""} <- Integer.parse(sec_s),
+             {:ok, dt} <- DateTime.new(Date.new!(year, month, day), Time.new!(hour, minute, second)) do
+          {:ok, dt}
+        else
+          _ -> :error
+        end
+
+      _ ->
+        :error
+    end
+  end
 
   defp generate_id,
     do: OptimalSystemAgent.Utils.ID.generate()

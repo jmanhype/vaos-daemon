@@ -186,49 +186,6 @@ type SkillCreateResponse struct {
 	Message string `json:"message"`
 }
 
-// -- Complex orchestration ----------------------------------------------------
-
-// ComplexTaskRequest for POST /api/v1/orchestrate/complex.
-type ComplexTaskRequest struct {
-	Task      string `json:"task"`
-	Strategy  string `json:"strategy,omitempty"` // "auto", "parallel", "pipeline"
-	SessionID string `json:"session_id,omitempty"`
-	Blocking  bool   `json:"blocking,omitempty"`
-}
-
-// ComplexTaskResponse from POST /api/v1/orchestrate/complex.
-type ComplexTaskResponse struct {
-	TaskID    string `json:"task_id"`
-	Status    string `json:"status"` // "running" or "completed"
-	Synthesis string `json:"synthesis,omitempty"`
-	SessionID string `json:"session_id"`
-}
-
-// TaskProgress from GET /api/v1/orchestrate/:task_id/progress.
-type TaskProgress struct {
-	TaskID    string          `json:"task_id"`
-	Status    string          `json:"status"`
-	Agents    []TaskAgentInfo `json:"agents,omitempty"`
-	Formatted string          `json:"formatted,omitempty"`
-}
-
-// TaskAgentInfo within TaskProgress.
-type TaskAgentInfo struct {
-	Name       string `json:"name"`
-	Role       string `json:"role"`
-	Status     string `json:"status"`
-	ToolUses   int    `json:"tool_uses"`
-	TokensUsed int    `json:"tokens_used"`
-}
-
-// OrchestratedTask from GET /api/v1/orchestrate/tasks.
-type OrchestratedTask struct {
-	TaskID    string `json:"task_id"`
-	Status    string `json:"status"`
-	Task      string `json:"task"`
-	CreatedAt string `json:"created_at,omitempty"`
-}
-
 // -- Swarm management ---------------------------------------------------------
 
 // SwarmLaunchRequest for POST /api/v1/swarm/launch.

@@ -177,8 +177,16 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
 
     # Decompose is sync (needs LLM), but execution is async via handle_continue
     case Decomposer.decompose_task(message) do
-      {:ok, sub_tasks} when is_list(sub_tasks) and length(sub_tasks) > 0 ->
+      {:ok, sub_tasks, %{estimated_tokens: estimated_tokens}} when is_list(sub_tasks) and length(sub_tasks) > 0 ->
         sub_tasks = Enum.take(sub_tasks, Roster.max_agents())
+
+        Bus.emit(:system_event, %{
+          event: :orchestrator_task_decomposed,
+          task_id: task_id,
+          session_id: session_id,
+          sub_task_count: length(sub_tasks),
+          estimated_tokens: estimated_tokens
+        })
 
         # Estimate task value via Appraiser (best-effort)
         appraisal =
@@ -255,7 +263,7 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
         {:reply, {:ok, task_id}, state,
          {:continue, {:start_execution, task_id}}}
 
-      {:ok, []} ->
+      {:ok, [], _meta} ->
         Logger.warning(
           "[Orchestrator] Task decomposition returned no sub-tasks, running as simple"
         )

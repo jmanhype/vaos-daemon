@@ -22,7 +22,9 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.OrchestrationRoutes do
 
   alias OptimalSystemAgent.Agent.Loop
   alias OptimalSystemAgent.Channels.Session
+  alias OptimalSystemAgent.Channels.NoiseFilter
   alias OptimalSystemAgent.Swarm.Orchestrator, as: Swarm
+  alias OptimalSystemAgent.Swarm.Patterns, as: SwarmPatterns
   alias OptimalSystemAgent.Agent.Orchestrator, as: TaskOrchestrator
   alias OptimalSystemAgent.Agent.Progress
 
@@ -37,22 +39,49 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.OrchestrationRoutes do
       user_id = conn.body_params["user_id"] || conn.assigns[:user_id]
       session_id = conn.body_params["session_id"] || generate_session_id()
 
+      signal_weight =
+        case get_req_header(conn, "x-signal-weight") do
+          [v | _] ->
+            case Float.parse(v) do
+              {f, _} -> f
+              :error -> nil
+            end
+          [] -> nil
+        end
+
       case Session.ensure_loop(session_id, user_id, :http) do
         {:error, reason} ->
           json_error(conn, 503, "session_unavailable", "Could not start session: #{inspect(reason)}")
 
         _ ->
-          skip_plan = conn.body_params["skip_plan"] == true
-          working_dir = conn.body_params["working_dir"]
-          opts = [skip_plan: skip_plan]
-          opts = if is_binary(working_dir) and working_dir != "", do: Keyword.put(opts, :working_dir, working_dir), else: opts
-          Task.start(fn -> Loop.process_message(session_id, input, opts) end)
+          case NoiseFilter.check(input, signal_weight) do
+            {:filtered, _ack} ->
+              body = Jason.encode!(%{session_id: session_id, status: "filtered"})
 
-          body = Jason.encode!(%{session_id: session_id, status: "processing"})
+              conn
+              |> put_resp_content_type("application/json")
+              |> send_resp(200, body)
 
-          conn
-          |> put_resp_content_type("application/json")
-          |> send_resp(202, body)
+            {:clarify, prompt} ->
+              body = Jason.encode!(%{session_id: session_id, status: "clarify", prompt: prompt})
+
+              conn
+              |> put_resp_content_type("application/json")
+              |> send_resp(200, body)
+
+            _ ->
+              skip_plan = conn.body_params["skip_plan"] == true
+              working_dir = conn.body_params["working_dir"]
+              opts = [skip_plan: skip_plan]
+              opts = if is_binary(working_dir) and working_dir != "", do: Keyword.put(opts, :working_dir, working_dir), else: opts
+              Task.start(fn -> Loop.process_message(session_id, input, opts) end)
+
+              body = Jason.encode!(%{session_id: session_id, status: "processing"})
+
+              conn
+              |> put_resp_content_type("application/json")
+              |> send_resp(202, body)
+          end
       end
     else
       _ -> json_error(conn, 400, "invalid_request", "Missing required field: input")
@@ -279,16 +308,41 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.OrchestrationRoutes do
     }
   end
 
-  @valid_swarm_patterns ~w(parallel pipeline debate review)
+  # Execution patterns — how agents coordinate.
+  @execution_patterns ~w(parallel pipeline debate review)
 
   defp parse_swarm_pattern_opts(nil), do: {:ok, []}
 
   defp parse_swarm_pattern_opts(p) when is_binary(p) do
-    if p in @valid_swarm_patterns do
-      {:ok, [pattern: String.to_existing_atom(p)]}
-    else
-      {:error, :invalid_pattern,
-       "Invalid swarm pattern '#{p}'. Valid patterns: #{Enum.join(@valid_swarm_patterns, ", ")}"}
+    cond do
+      # Direct execution pattern override
+      p in @execution_patterns ->
+        {:ok, [pattern: String.to_existing_atom(p)]}
+
+      # Named preset from priv/swarms/patterns.json — look up its execution mode
+      true ->
+        case SwarmPatterns.get_pattern(p) do
+          {:ok, config} ->
+            pattern_atom =
+              case config["mode"] do
+                "parallel" -> :parallel
+                "pipeline" -> :pipeline
+                "sequential" -> :pipeline
+                "debate" -> :debate
+                "review" -> :review
+                _ -> nil
+              end
+
+            opts = if pattern_atom, do: [pattern: pattern_atom], else: []
+            {:ok, opts}
+
+          {:error, :not_found} ->
+            presets = SwarmPatterns.list_patterns() |> Enum.map_join(", ", &elem(&1, 0))
+            valid = Enum.join(@execution_patterns, ", ")
+
+            {:error, :invalid_pattern,
+             "Unknown pattern '#{p}'. Execution patterns: #{valid}. Named presets: #{presets}"}
+        end
     end
   end
 

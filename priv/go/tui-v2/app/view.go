@@ -262,12 +262,22 @@ func staticHelpText() string {
   /model <name>  Switch to model (e.g. /model qwen3:8b)
   /agents        List agent roster
   /tools         List available tools
+  /classify <msg> Classify a message signal (mode/genre/type/format/weight)
   /sessions      List all sessions
   /session       Show current session
   /session new   Create new session
   /session <id>  Switch to session
   /bg            List background tasks
+  /swarm <task>  Launch a multi-agent swarm (optional: pattern:<name>)
+  /swarms        List active swarms
+  /swarm-cancel <id>  Cancel a running swarm
+  /diff <file>   Show diff for a file
+  /attach <file> Attach a file to the next message
   /theme         List or switch themes
+  /thinking      Toggle extended thinking display
+  /export        Export conversation to file
+  /login <token> Authenticate with token
+  /logout        Log out
   /setup         Open setup wizard (re-configure provider, agent name, etc.)
   /clear         Clear chat history
   /exit          Exit OSA

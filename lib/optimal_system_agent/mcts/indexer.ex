@@ -47,6 +47,9 @@ defmodule OptimalSystemAgent.MCTS.Indexer do
     "/etc/master.passwd", ".netrc", ".npmrc", ".pypirc"
   ]
 
+  @cache_table :osa_mcts_cache
+  @cache_ttl_seconds 300
+
   @default_max_iterations 50
   @default_max_depth 6
   @default_max_results 20
@@ -86,37 +89,46 @@ defmodule OptimalSystemAgent.MCTS.Indexer do
     unless File.dir?(root_dir) do
       {:error, "Directory not found: #{root_dir}"}
     else
-      keywords = extract_keywords(goal)
+      cache_key = build_cache_key(goal, root_dir, max_iter)
 
-      Logger.debug("[MCTS.Indexer] Starting: goal=#{inspect(keywords)}, dir=#{root_dir}, iter=#{max_iter}")
+      case lookup_cache(cache_key) do
+        {:hit, result} ->
+          Logger.debug("[MCTS.Indexer] Cache hit for goal=#{inspect(goal)}")
+          {:ok, result}
 
-      root = %Node{path: root_dir, type: :dir, parent: nil}
-      tree = %{root_dir => root}
+        :miss ->
+          keywords = extract_keywords(goal)
+          Logger.debug("[MCTS.Indexer] Starting: goal=#{inspect(keywords)}, dir=#{root_dir}, iter=#{max_iter}")
 
-      tree = run_iterations(tree, root_dir, keywords, max_iter, max_depth)
+          root = %Node{path: root_dir, type: :dir, parent: nil}
+          tree = %{root_dir => root}
+          tree = run_iterations(tree, root_dir, keywords, max_iter, max_depth)
 
-      results =
-        tree
-        |> Enum.filter(fn {_path, node} -> node.type == :file and node.visits > 0 end)
-        |> Enum.sort_by(fn {_path, node} -> Node.avg_reward(node) end, :desc)
-        |> Enum.take(max_results)
-        |> Enum.map(fn {path, node} ->
-          %{
-            path: path,
-            relevance: Float.round(Node.avg_reward(node), 3),
-            visits: node.visits,
-            summary: node.content_summary
-          }
-        end)
+          results =
+            tree
+            |> Enum.filter(fn {_path, node} -> node.type == :file and node.visits > 0 end)
+            |> Enum.sort_by(fn {_path, node} -> Node.avg_reward(node) end, :desc)
+            |> Enum.take(max_results)
+            |> Enum.map(fn {path, node} ->
+              %{
+                path: path,
+                relevance: Float.round(Node.avg_reward(node), 3),
+                visits: node.visits,
+                summary: node.content_summary
+              }
+            end)
 
-      total_nodes = map_size(tree)
-      visited_files = Enum.count(tree, fn {_, n} -> n.type == :file and n.visits > 0 end)
+          total_nodes = map_size(tree)
+          visited_files = Enum.count(tree, fn {_, n} -> n.type == :file and n.visits > 0 end)
 
-      summary =
-        "MCTS explored #{total_nodes} paths (#{visited_files} files read) in #{max_iter} iterations. " <>
-          "Returning top #{length(results)} files for goal: \"#{goal}\""
+          summary =
+            "MCTS explored #{total_nodes} paths (#{visited_files} files read) in #{max_iter} iterations. " <>
+              "Returning top #{length(results)} files for goal: \"#{goal}\""
 
-      {:ok, %{files: results, summary: summary, total_explored: total_nodes}}
+          result = %{files: results, summary: summary, total_explored: total_nodes}
+          store_cache(cache_key, result)
+          {:ok, result}
+      end
     end
   end
 
@@ -380,5 +392,42 @@ defmodule OptimalSystemAgent.MCTS.Indexer do
   defp safe_path?(path) do
     expanded = Path.expand(path)
     not Enum.any?(@sensitive_paths, &String.contains?(expanded, &1))
+  end
+
+  # ---------------------------------------------------------------------------
+  # ETS result cache — avoids re-running MCTS for identical (goal, dir, iters)
+  # ---------------------------------------------------------------------------
+
+  defp build_cache_key(goal, root_dir, max_iter) do
+    :crypto.hash(:sha256, "#{goal}:#{root_dir}:#{max_iter}")
+    |> Base.encode16(case: :lower)
+  end
+
+  defp ensure_cache_table do
+    case :ets.info(@cache_table) do
+      :undefined ->
+        :ets.new(@cache_table, [:named_table, :set, :public, read_concurrency: true])
+      _ ->
+        :ok
+    end
+  end
+
+  defp lookup_cache(key) do
+    ensure_cache_table()
+    now = System.monotonic_time(:second)
+
+    case :ets.lookup(@cache_table, key) do
+      [{^key, result, inserted_at}] when now - inserted_at < @cache_ttl_seconds ->
+        {:hit, result}
+
+      _ ->
+        :miss
+    end
+  end
+
+  defp store_cache(key, result) do
+    ensure_cache_table()
+    now = System.monotonic_time(:second)
+    :ets.insert(@cache_table, {key, result, now})
   end
 end

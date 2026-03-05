@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -333,58 +334,6 @@ func (c *Client) CreateSkill(req SkillCreateRequest) (*SkillCreateResponse, erro
 	return &result, nil
 }
 
-// -- Complex orchestration ----------------------------------------------------
-
-func (c *Client) LaunchComplexTask(req ComplexTaskRequest) (*ComplexTaskResponse, error) {
-	resp, err := c.postJSON("/api/v1/orchestrate/complex", req)
-	if err != nil {
-		return nil, fmt.Errorf("complex task: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
-		return nil, c.parseError(resp)
-	}
-	var result ComplexTaskResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode complex task: %w", err)
-	}
-	return &result, nil
-}
-
-func (c *Client) GetTaskProgress(taskID string) (*TaskProgress, error) {
-	resp, err := c.get(fmt.Sprintf("/api/v1/orchestrate/%s/progress", taskID))
-	if err != nil {
-		return nil, fmt.Errorf("task progress: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.parseError(resp)
-	}
-	var result TaskProgress
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode task progress: %w", err)
-	}
-	return &result, nil
-}
-
-func (c *Client) ListOrchestratedTasks() ([]OrchestratedTask, error) {
-	resp, err := c.get("/api/v1/orchestrate/tasks")
-	if err != nil {
-		return nil, fmt.Errorf("list orchestrated tasks: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.parseError(resp)
-	}
-	var wrapper struct {
-		Tasks []OrchestratedTask `json:"tasks"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&wrapper); err != nil {
-		return nil, fmt.Errorf("decode orchestrated tasks: %w", err)
-	}
-	return wrapper.Tasks, nil
-}
-
 // -- Swarm management ---------------------------------------------------------
 
 func (c *Client) LaunchSwarm(req SwarmLaunchRequest) (*SwarmLaunchResponse, error) {
@@ -625,7 +574,32 @@ func (c *Client) setHeaders(req *http.Request) {
 	}
 }
 
+// RateLimitError is returned when the server responds with HTTP 429.
+// RetryAfter holds the number of seconds from the Retry-After header (0 if absent/unparseable).
+type RateLimitError struct {
+	RetryAfter int
+}
+
+func (e *RateLimitError) Error() string {
+	if e.RetryAfter > 0 {
+		return fmt.Sprintf("rate limited — retry after %ds", e.RetryAfter)
+	}
+	return "rate limited — please slow down"
+}
+
+// check429 returns a *RateLimitError if resp is a 429, otherwise nil.
+func check429(resp *http.Response) error {
+	if resp.StatusCode != http.StatusTooManyRequests {
+		return nil
+	}
+	retryAfter, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
+	return &RateLimitError{RetryAfter: retryAfter}
+}
+
 func (c *Client) parseError(resp *http.Response) error {
+	if err := check429(resp); err != nil {
+		return err
+	}
 	body, _ := io.ReadAll(resp.Body)
 	var apiErr ErrorResponse
 	if json.Unmarshal(body, &apiErr) == nil && apiErr.Error != "" {

@@ -26,8 +26,12 @@ defmodule OptimalSystemAgent.Intelligence.ProactiveMonitor do
   # Max alerts held in memory at one time
   @max_alerts 50
 
-  # Session considered stale after this many seconds without activity
-  @stale_session_seconds 24 * 60 * 60
+  # Session considered stale after this many seconds without activity.
+  # Override via: config :optimal_system_agent, :silence_threshold_hours, 48
+  defp stale_session_seconds do
+    hours = Application.get_env(:optimal_system_agent, :silence_threshold_hours, 24)
+    hours * 60 * 60
+  end
 
   # Memory file size threshold (bytes) before we emit a health alert
   @memory_size_threshold 10 * 1024 * 1024
@@ -210,7 +214,7 @@ defmodule OptimalSystemAgent.Intelligence.ProactiveMonitor do
           seconds_inactive = DateTime.diff(now, last_modified, :second)
           hours_inactive = div(seconds_inactive, 3600)
 
-          if seconds_inactive > @stale_session_seconds do
+          if seconds_inactive > stale_session_seconds() do
             topic = extract_last_topic(path)
 
             [

@@ -11,15 +11,29 @@ defmodule OptimalSystemAgent.Agent.LoopUnitTest do
   # The injection patterns are module attributes on Loop. We test them
   # by calling the same regex logic directly.
 
+  # Kept in sync with @injection_patterns in loop.ex — update both together.
   @injection_patterns [
     ~r/what\s+(is|are|was)\s+(your\s+)?(system\s+prompt|instructions?|rules?|configuration|directives?)/i,
-    ~r/(show|print|display|reveal|repeat|output|tell me|give me)\s+(your\s+)?(system\s+prompt|instructions?|full\s+prompt|prompt|initial\s+prompt)/i,
+    ~r/what\s+(is|are|was)\s+the\s+(system\s+prompt|instructions?|configuration|directives?)/i,
+    ~r/(show(\s+me)?|print|display|reveal|repeat|output|tell\s+me|give\s+me|say|recite|state|list|read)\s+(your\s+)?(system\s+prompt|instructions?|full\s+prompt|prompt|initial\s+prompt|configuration)/i,
+    ~r/tell\s+me\s+.{0,30}(system\s+prompt|instructions?|rules?|prompt)\s*(word\s+for\s+word|verbatim|exactly|literally)?/i,
+    ~r/(word\s+for\s+word|verbatim|character\s+for\s+character).{0,40}(prompt|instructions?|told|rules?)/i,
+    ~r/ignore\s+all\s+(instructions?|rules?|guidelines?|context|constraints?)/i,
     ~r/ignore\s+(all\s+)?(previous|prior|above)\s+(instructions?|prompt|context|rules?)/i,
     ~r/repeat\s+everything\s+(above|before|prior)/i,
     ~r/what\s+(were\s+)?(you\s+)?(told|instructed|programmed|trained|configured)\s+to/i,
-    ~r/(jailbreak|DAN|do anything now|developer\s+mode|prompt\s+injection)/i,
+    ~r/(jailbreak|do\s+anything\s+now|developer\s+mode|prompt\s+injection)/i,
+    ~r/\byou\s+(are|were|become|act\s+as)\s+DAN\b/i,
+    ~r/\bDAN\s+(mode|protocol|activated|enabled)\b/i,
+    ~r/(pretend|act\s+as\s+if|imagine|behave\s+as\s+if)\s+.{0,40}(no\s+restrictions?|no\s+guidelines?|no\s+rules?|unrestricted|without\s+limits?|uncensored)/i,
+    ~r/(output|print|repeat|copy|write\s+out)\s+(everything|all\s+text|all\s+content)\s+(above|before|prior)/i,
     ~r/disregard\s+(your\s+)?(previous\s+)?(instructions?|guidelines?|rules?)/i,
-    ~r/forget\s+(everything|all)\s+(you\s+)?(were\s+)?(told|instructed|programmed)/i
+    ~r/forget\s+(everything|all)\s+(you\s+)?(were\s+)?(told|instructed|programmed)/i,
+    ~r/system\s+prompt.*word\s+for\s+word/i,
+    ~r/verbatim.*(prompt|instructions?)/i,
+    ~r/(prompt|instructions?).*verbatim/i,
+    ~r/copy\s+(and\s+)?(paste|output)\s+(your\s+)?(prompt|instructions?)/i,
+    ~r/(override|bypass|circumvent|disable)\s+.{0,30}(instructions?|restrictions?|guidelines?|safety\s+filter)/i
   ]
 
   defp injection?(msg) when is_binary(msg) do
@@ -457,6 +471,128 @@ defmodule OptimalSystemAgent.Agent.LoopUnitTest do
         end
 
       assert content == ""
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Genre routing (mirrors loop.ex route_by_genre/3)
+  # ---------------------------------------------------------------------------
+  #
+  # route_by_genre/3 returns {:respond, binary()} for informational/expressive/
+  # decision/commitment genres and :execute_tools for :direct or unknown genres.
+
+  defp route_by_genre(:inform, _message, _state) do
+    {:respond,
+     "Got it — I've noted that. Would you like me to save this to memory with `memory_save` so I can reference it later?"}
+  end
+
+  defp route_by_genre(:express, message, _state) do
+    lower = String.downcase(message)
+
+    sentiments =
+      %{
+        frustration: ~w(frustrated annoying annoyed ugh stuck hate awful terrible),
+        concern: ~w(worried nervous anxious scared concerned unsure),
+        positive: ~w(happy excited great awesome wonderful loving enjoying)
+      }
+
+    matched =
+      sentiments
+      |> Enum.find(fn {_key, words} ->
+        Enum.any?(words, &String.contains?(lower, &1))
+      end)
+
+    response =
+      case matched do
+        {:frustration, _} ->
+          "I hear you — that sounds really frustrating. Let's slow down and tackle this one step at a time. What specifically is blocking you right now?"
+
+        {:concern, _} ->
+          "I understand this feels uncertain. It's okay to feel that way. Can you tell me more about what's worrying you so I can help?"
+
+        {:positive, _} ->
+          "That's great to hear! I'm glad things are going well. How can I help you build on that momentum?"
+
+        _ ->
+          "I hear you. Can you tell me more about how you're feeling so I can better support you?"
+      end
+
+    {:respond, response}
+  end
+
+  defp route_by_genre(:decide, _message, _state) do
+    {:respond,
+     "Before I proceed — could you help me understand a bit more? Specifically: what outcome matters most to you here, and are there any constraints I should know about? Once I have that I can give you a more useful recommendation."}
+  end
+
+  defp route_by_genre(:commit, message, _state) do
+    intent = String.slice(message, 0, 80) |> String.trim()
+
+    {:respond,
+     "Just to confirm before I proceed: based on what you've said, my plan would be to #{intent}. Should I go ahead with that?"}
+  end
+
+  defp route_by_genre(_genre, _message, _state), do: :execute_tools
+
+  describe "route_by_genre/3" do
+    test ":inform returns {:respond, hint_to_save}" do
+      result = route_by_genre(:inform, "The API key expires on Friday", %{})
+      assert {:respond, text} = result
+      assert is_binary(text)
+      assert String.contains?(text, "memory_save")
+    end
+
+    test ":express with frustration keywords returns {:respond, empathetic}" do
+      result = route_by_genre(:express, "I'm so frustrated this keeps breaking", %{})
+      assert {:respond, text} = result
+      assert is_binary(text)
+      assert String.contains?(text, "frustrat")
+    end
+
+    test ":express with concern keywords returns {:respond, reassuring}" do
+      result = route_by_genre(:express, "I'm worried this will break in production", %{})
+      assert {:respond, text} = result
+      assert is_binary(text)
+      assert String.contains?(text, "uncertain") or String.contains?(text, "worr")
+    end
+
+    test ":express with positive keywords returns {:respond, encouraging}" do
+      result = route_by_genre(:express, "This is awesome, I'm so excited!", %{})
+      assert {:respond, text} = result
+      assert is_binary(text)
+      assert String.contains?(text, "great") or String.contains?(text, "glad")
+    end
+
+    test ":express with neutral text returns {:respond, generic}" do
+      result = route_by_genre(:express, "just a plain statement", %{})
+      assert {:respond, text} = result
+      assert is_binary(text)
+    end
+
+    test ":decide returns {:respond, clarifying_question}" do
+      result = route_by_genre(:decide, "Should I use Redis or Postgres for sessions?", %{})
+      assert {:respond, text} = result
+      assert is_binary(text)
+      assert String.contains?(text, "Before I proceed")
+    end
+
+    test ":commit returns {:respond, confirmation_prompt}" do
+      result = route_by_genre(:commit, "deploy to production now", %{})
+      assert {:respond, text} = result
+      assert is_binary(text)
+      assert String.contains?(text, "confirm")
+    end
+
+    test ":direct returns :execute_tools" do
+      assert :execute_tools = route_by_genre(:direct, "list the files in /tmp", %{})
+    end
+
+    test "unknown genre returns :execute_tools" do
+      assert :execute_tools = route_by_genre(:unknown_genre, "do something", %{})
+    end
+
+    test "nil genre returns :execute_tools" do
+      assert :execute_tools = route_by_genre(nil, "do something", %{})
     end
   end
 end

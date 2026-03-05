@@ -82,9 +82,17 @@ defmodule OptimalSystemAgent.Intelligence.ConversationTracker do
     {:ok, %{}}
   end
 
+  # Decay depth toward :working after 30 minutes of inactivity
+  @inactivity_decay_ms 30 * 60 * 1_000
+
   @impl true
   def handle_call({:record_turn, session_id, message}, _from, state) do
     session = load_session(session_id)
+    now_ms = System.monotonic_time(:millisecond)
+
+    # Apply decay if session has been idle
+    session = maybe_decay_depth(session, now_ms)
+
     complexity = compute_complexity(message)
 
     new_turn_count = session.turn_count + 1
@@ -94,7 +102,8 @@ defmodule OptimalSystemAgent.Intelligence.ConversationTracker do
     updated = %{
       depth: new_depth,
       turn_count: new_turn_count,
-      total_complexity: new_total
+      total_complexity: new_total,
+      last_turn_ms: now_ms
     }
 
     :ets.insert(@table, {session_id, updated})
@@ -109,7 +118,26 @@ defmodule OptimalSystemAgent.Intelligence.ConversationTracker do
   defp load_session(session_id) do
     case :ets.lookup(@table, session_id) do
       [{^session_id, s}] -> s
-      [] -> %{depth: :casual, turn_count: 0, total_complexity: 0.0}
+      [] -> %{depth: :casual, turn_count: 0, total_complexity: 0.0, last_turn_ms: nil}
+    end
+  end
+
+  # If the session has been idle for more than @inactivity_decay_ms,
+  # decay depth back to :working (one step toward casual but not all the way).
+  defp maybe_decay_depth(%{last_turn_ms: nil} = session, _now_ms), do: session
+
+  defp maybe_decay_depth(session, now_ms) do
+    if now_ms - session.last_turn_ms > @inactivity_decay_ms do
+      decayed_depth =
+        case session.depth do
+          :strategic -> :working
+          :deep -> :working
+          other -> other
+        end
+
+      %{session | depth: decayed_depth}
+    else
+      session
     end
   end
 
