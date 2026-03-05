@@ -180,7 +180,7 @@ defmodule OptimalSystemAgent.Tools.Registry do
             "- **#{name}**: #{skill.description}"
           end)
 
-        "## Custom Skills\n\nThe following user-created skills are available:\n#{lines}"
+        "## Custom Skills\n\nThe following skills are available:\n#{lines}"
       end
     end
   rescue
@@ -266,6 +266,64 @@ defmodule OptimalSystemAgent.Tools.Registry do
         end
     end
   end
+
+  @doc """
+  Same as `active_skills_context/0` but also injects the full workflow instructions
+  for any skills whose trigger keywords match the given message.
+
+  When a user message matches a skill's triggers, the agent receives the full
+  SKILL.md instruction body in the system prompt for that turn — no file_read needed.
+  """
+  @spec active_skills_context(String.t() | nil) :: String.t() | nil
+  def active_skills_context(nil), do: active_skills_context()
+  def active_skills_context(""), do: active_skills_context()
+
+  def active_skills_context(message) when is_binary(message) do
+    base = active_skills_context()
+    matched = match_skill_triggers(message)
+
+    injected =
+      Enum.flat_map(matched, fn {_name, skill} ->
+        inst = skill.instructions |> to_string() |> String.trim()
+        if inst != "", do: ["### Active Skill: #{skill.name}\n\n#{inst}"], else: []
+      end)
+      |> Enum.join("\n\n")
+
+    cond do
+      is_nil(base) and injected == "" -> nil
+      is_nil(base) -> injected
+      injected == "" -> base
+      true -> base <> "\n\n" <> injected
+    end
+  rescue
+    _ -> active_skills_context()
+  end
+
+  @doc """
+  Match a message against all loaded skill trigger keywords.
+
+  Returns a list of `{name, skill}` pairs from the skills map whose trigger
+  keywords appear anywhere in the (case-insensitive) message text.
+  Skips skills with a wildcard trigger `"*"` to avoid injecting everything.
+  """
+  @spec match_skill_triggers(String.t()) :: [{String.t(), map()}]
+  def match_skill_triggers(message) when is_binary(message) do
+    skills = :persistent_term.get({__MODULE__, :skills}, %{})
+    message_lower = String.downcase(message)
+
+    Enum.filter(skills, fn {_name, skill} ->
+      triggers = Map.get(skill, :triggers, [])
+
+      Enum.any?(triggers, fn t ->
+        t = to_string(t)
+        t != "*" and t != "" and String.contains?(message_lower, String.downcase(t))
+      end)
+    end)
+  rescue
+    _ -> []
+  end
+
+  def match_skill_triggers(_), do: []
 
   @doc "Search existing tools and skills by keyword matching against names and descriptions."
   @spec search(String.t()) :: list({String.t(), String.t(), float()})

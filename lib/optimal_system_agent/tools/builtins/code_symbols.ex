@@ -143,11 +143,13 @@ defmodule OptimalSystemAgent.Tools.Builtins.CodeSymbols do
       stripped = String.trim_leading(line)
 
       cond do
-        match = Regex.run(~r/^defmodule\s+(\S+)/, stripped) ->
-          [%{line: num, kind: "module", name: Enum.at(match, 1)}]
+        Regex.match?(~r/^defmodule\s+/, stripped) ->
+          [_, name] = Regex.run(~r/^defmodule\s+(\S+)/, stripped)
+          [%{line: num, kind: "module", name: name}]
 
-        match = Regex.run(~r/^def\s+(\w+[?!]?)/, stripped) ->
-          [%{line: num, kind: "def", name: Enum.at(match, 1)}]
+        Regex.match?(~r/^def\s+\w/, stripped) ->
+          [_, name] = Regex.run(~r/^def\s+(\w+[?!]?)/, stripped)
+          [%{line: num, kind: "def", name: name}]
 
         include_private && String.starts_with?(stripped, "defp ") ->
           case Regex.run(~r/^defp\s+(\w+[?!]?)/, stripped) do
@@ -155,11 +157,13 @@ defmodule OptimalSystemAgent.Tools.Builtins.CodeSymbols do
             _ -> []
           end
 
-        match = Regex.run(~r/^defmacro\s+(\w+[?!]?)/, stripped) ->
-          [%{line: num, kind: "defmacro", name: Enum.at(match, 1)}]
+        Regex.match?(~r/^defmacro\s+\w/, stripped) ->
+          [_, name] = Regex.run(~r/^defmacro\s+(\w+[?!]?)/, stripped)
+          [%{line: num, kind: "defmacro", name: name}]
 
-        match = Regex.run(~r/^@behaviour\s+(\S+)/, stripped) ->
-          [%{line: num, kind: "behaviour", name: Enum.at(match, 1)}]
+        Regex.match?(~r/^@behaviour\s+/, stripped) ->
+          [_, name] = Regex.run(~r/^@behaviour\s+(\S+)/, stripped)
+          [%{line: num, kind: "behaviour", name: name}]
 
         true ->
           []
@@ -175,16 +179,15 @@ defmodule OptimalSystemAgent.Tools.Builtins.CodeSymbols do
       stripped = String.trim_leading(line)
 
       cond do
-        match = Regex.run(~r/^func\s+(?:\([^)]+\)\s+)?(\w+)/, stripped) ->
-          name = Enum.at(match, 1)
+        Regex.match?(~r/^func\s/, stripped) ->
+          [_, name] = Regex.run(~r/^func\s+(?:\([^)]+\)\s+)?(\w+)/, stripped) || [nil, ""]
           exported = String.match?(name, ~r/^[A-Z]/)
           if include_private or exported,
             do: [%{line: num, kind: if(exported, do: "func", else: "func (priv)"), name: name}],
             else: []
 
-        match = Regex.run(~r/^type\s+(\w+)\s+(struct|interface)/, stripped) ->
-          name = Enum.at(match, 1)
-          kind = Enum.at(match, 2)
+        Regex.match?(~r/^type\s+\w+\s+(struct|interface)/, stripped) ->
+          [_, name, kind] = Regex.run(~r/^type\s+(\w+)\s+(struct|interface)/, stripped)
           exported = String.match?(name, ~r/^[A-Z]/)
           if include_private or exported,
             do: [%{line: num, kind: kind, name: name}],
@@ -204,11 +207,13 @@ defmodule OptimalSystemAgent.Tools.Builtins.CodeSymbols do
       stripped = String.trim_leading(line)
 
       cond do
-        match = Regex.run(~r/^export\s+(?:default\s+)?(?:async\s+)?(?:function|class)\s+(\w+)/, stripped) ->
-          [%{line: num, kind: "export", name: Enum.at(match, 1)}]
+        Regex.match?(~r/^export\s+(?:default\s+)?(?:async\s+)?(?:function|class)\s+\w/, stripped) ->
+          [_, name] = Regex.run(~r/^export\s+(?:default\s+)?(?:async\s+)?(?:function|class)\s+(\w+)/, stripped)
+          [%{line: num, kind: "export", name: name}]
 
-        match = Regex.run(~r/^export\s+(?:const|let|var)\s+(\w+)/, stripped) ->
-          [%{line: num, kind: "export const", name: Enum.at(match, 1)}]
+        Regex.match?(~r/^export\s+(?:const|let|var)\s+\w/, stripped) ->
+          [_, name] = Regex.run(~r/^export\s+(?:const|let|var)\s+(\w+)/, stripped)
+          [%{line: num, kind: "export const", name: name}]
 
         include_private && Regex.match?(~r/^(?:async\s+)?function\s+\w+/, stripped) ->
           case Regex.run(~r/^(?:async\s+)?function\s+(\w+)/, stripped) do
@@ -236,17 +241,18 @@ defmodule OptimalSystemAgent.Tools.Builtins.CodeSymbols do
       stripped = String.trim_leading(line)
 
       cond do
-        match = Regex.run(~r/^class\s+(\w+)/, stripped) ->
-          [%{line: num, kind: "class", name: Enum.at(match, 1)}]
+        Regex.match?(~r/^class\s+\w/, stripped) ->
+          [_, name] = Regex.run(~r/^class\s+(\w+)/, stripped)
+          [%{line: num, kind: "class", name: name}]
 
-        match = Regex.run(~r/^(?:async\s+)?def\s+(\w+)/, stripped) ->
-          name = Enum.at(match, 1)
+        Regex.match?(~r/^(?:async\s+)?def\s+\w/, stripped) ->
+          [_, name] = Regex.run(~r/^(?:async\s+)?def\s+(\w+)/, stripped)
           if include_private or not String.starts_with?(name, "_"),
             do: [%{line: num, kind: "def", name: name}],
             else: []
 
-        match = Regex.run(~r/^    (?:async\s+)?def\s+(\w+)/, line) ->
-          name = Enum.at(match, 1)
+        Regex.match?(~r/^    (?:async\s+)?def\s+\w/, line) ->
+          [_, name] = Regex.run(~r/^    (?:async\s+)?def\s+(\w+)/, line)
           if include_private or not String.starts_with?(name, "_"),
             do: [%{line: num, kind: "method", name: name}],
             else: []
@@ -265,21 +271,24 @@ defmodule OptimalSystemAgent.Tools.Builtins.CodeSymbols do
       stripped = String.trim_leading(line)
 
       cond do
-        match = Regex.run(~r/^(pub\s+)?(?:async\s+)?fn\s+(\w+)/, stripped) ->
-          is_pub = Enum.at(match, 1) |> to_string() |> String.trim() == "pub"
-          name = Enum.at(match, 2)
+        Regex.match?(~r/^(?:pub\s+)?(?:async\s+)?fn\s+\w/, stripped) ->
+          [_, pub, name] = Regex.run(~r/^(pub\s+)?(?:async\s+)?fn\s+(\w+)/, stripped) || [nil, "", ""]
+          is_pub = String.trim(to_string(pub)) == "pub"
           if include_private or is_pub,
             do: [%{line: num, kind: if(is_pub, do: "pub fn", else: "fn"), name: name}],
             else: []
 
-        match = Regex.run(~r/^(pub\s+)?struct\s+(\w+)/, stripped) ->
-          [%{line: num, kind: "struct", name: Enum.at(match, 2)}]
+        Regex.match?(~r/^(?:pub\s+)?struct\s+\w/, stripped) ->
+          [_, _, name] = Regex.run(~r/^(pub\s+)?struct\s+(\w+)/, stripped)
+          [%{line: num, kind: "struct", name: name}]
 
-        match = Regex.run(~r/^(pub\s+)?trait\s+(\w+)/, stripped) ->
-          [%{line: num, kind: "trait", name: Enum.at(match, 2)}]
+        Regex.match?(~r/^(?:pub\s+)?trait\s+\w/, stripped) ->
+          [_, _, name] = Regex.run(~r/^(pub\s+)?trait\s+(\w+)/, stripped)
+          [%{line: num, kind: "trait", name: name}]
 
-        match = Regex.run(~r/^(pub\s+)?enum\s+(\w+)/, stripped) ->
-          [%{line: num, kind: "enum", name: Enum.at(match, 2)}]
+        Regex.match?(~r/^(?:pub\s+)?enum\s+\w/, stripped) ->
+          [_, _, name] = Regex.run(~r/^(pub\s+)?enum\s+(\w+)/, stripped)
+          [%{line: num, kind: "enum", name: name}]
 
         true ->
           []

@@ -53,7 +53,10 @@ defmodule OptimalSystemAgent.Agent.Loop do
     turn_count: 0,
     last_meta: %{iteration_count: 0, tools_used: []},
     explored_files: MapSet.new(),
-    exploration_done: false
+    exploration_done: false,
+    # :full | :workspace | :read_only
+    # Controls which tools the agent is allowed to execute this session.
+    permission_tier: :full
   ]
 
   # --- Client API ---
@@ -106,7 +109,8 @@ defmodule OptimalSystemAgent.Agent.Loop do
       model: Keyword.get(opts, :model),
       messages: Keyword.get(opts, :messages, []),
       tools: Tools.list_tools_direct() ++ extra_tools,
-      plan_mode_enabled: Application.get_env(:optimal_system_agent, :plan_mode_enabled, false)
+      plan_mode_enabled: Application.get_env(:optimal_system_agent, :plan_mode_enabled, false),
+      permission_tier: Keyword.get(opts, :permission_tier, :full)
     }
 
     {:ok, state}
@@ -367,6 +371,15 @@ defmodule OptimalSystemAgent.Agent.Loop do
   def handle_call(:toggle_plan_mode, _from, state) do
     new_val = not state.plan_mode_enabled
     {:reply, {:ok, new_val}, %{state | plan_mode_enabled: new_val}}
+  end
+
+  def handle_call({:set_permission_tier, tier}, _from, state)
+      when tier in [:full, :workspace, :read_only] do
+    {:reply, {:ok, tier}, %{state | permission_tier: tier}}
+  end
+
+  def handle_call({:get_permission_tier}, _from, state) do
+    {:reply, {:ok, state.permission_tier}, state}
   end
 
   # --- Agent Loop ---
@@ -681,6 +694,28 @@ defmodule OptimalSystemAgent.Agent.Loop do
 
   defp tool_call_hint(_), do: ""
 
+  # --- Permission Tiers ---
+
+  # Tools allowed in :read_only mode (no side-effects, no writes)
+  @read_only_tools ~w(
+    file_read file_glob dir_list file_grep file_search
+    memory_recall session_search semantic_search
+    code_symbols web_fetch web_search
+    list_dir read_file grep_search
+  )
+
+  # Additional tools unlocked in :workspace mode (local writes only)
+  @workspace_tools ~w(
+    file_write file_edit multi_file_edit file_create file_delete file_move
+    git task_write memory_write
+  )
+
+  @doc false
+  def permission_tier_allows?(:full, _tool), do: true
+  def permission_tier_allows?(:read_only, tool), do: tool in @read_only_tools
+  def permission_tier_allows?(:workspace, tool), do: tool in (@read_only_tools ++ @workspace_tools)
+  def permission_tier_allows?(_, _), do: true
+
   # --- Parallel Tool Execution ---
 
   # Execute a single tool call — used by parallel Task.async_stream.
@@ -698,6 +733,10 @@ defmodule OptimalSystemAgent.Agent.Loop do
     }
 
     tool_result =
+      if not permission_tier_allows?(state.permission_tier, tool_call.name) do
+        Logger.warning("[loop] Permission denied: tier=#{state.permission_tier} blocked #{tool_call.name} (session: #{state.session_id})")
+        "Blocked: #{state.permission_tier} mode — #{tool_call.name} is not permitted at this permission level"
+      else
       case run_hooks(:pre_tool_use, pre_payload) do
         {:blocked, reason} ->
           "Blocked: #{reason}"
@@ -719,6 +758,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
             {:error, reason} ->
               "Error: #{reason}"
           end
+      end
       end
 
     tool_duration_ms = System.monotonic_time(:millisecond) - start_time_tool

@@ -127,7 +127,7 @@ defmodule OptimalSystemAgent.Commands do
       n when n in ~w(channels whatsapp) -> "channels"
       n when n in ~w(compact usage) -> "context"
       "cortex" -> "intelligence"
-      n when n in ~w(verbose think plan config) -> "config"
+      n when n in ~w(verbose think plan config tier) -> "config"
       n when n in ~w(agents tiers tier swarms swarm hooks learning) -> "agents"
       n when n in ~w(budget thinking export machines providers) -> "info"
       n when n in ~w(reload doctor setup create-command) -> "system"
@@ -272,6 +272,7 @@ defmodule OptimalSystemAgent.Commands do
       {"verbose", "Toggle verbose output", &Config.cmd_verbose/2},
       {"think", "Set reasoning depth", &Config.cmd_think/2},
       {"plan", "Toggle autonomous plan mode", &Config.cmd_plan/2},
+      {"tier", "Permission tier: full|workspace|read_only", &Config.cmd_tier/2},
       {"config", "Show runtime configuration", &Config.cmd_config/2},
 
       # ── Agents ──

@@ -736,9 +736,10 @@ defmodule OptimalSystemAgent.Agent.Context do
     """
   end
 
-  defp skills_block(_state) do
+  defp skills_block(state) do
     try do
-      OptimalSystemAgent.Tools.Registry.active_skills_context()
+      message = find_latest_user_message(state.messages)
+      OptimalSystemAgent.Tools.Registry.active_skills_context(message)
     rescue
       _ -> nil
     catch

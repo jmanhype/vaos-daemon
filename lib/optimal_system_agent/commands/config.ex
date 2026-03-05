@@ -180,4 +180,74 @@ defmodule OptimalSystemAgent.Commands.Config do
         "#{IO.ANSI.green()}[#{String.duplicate("█", filled)}#{String.duplicate("░", empty)}]#{IO.ANSI.reset()}"
     end
   end
+
+  @doc """
+  Handle the `/tier` command.
+
+  Sets the permission tier for the current session, controlling which tools
+  the agent is allowed to execute.
+
+      /tier             — show current tier
+      /tier full        — all tools enabled (default)
+      /tier workspace   — read + local file writes, no network/shell
+      /tier read_only   — read-only tools only, no writes
+
+  """
+  def cmd_tier(arg, session_id) do
+    raw = arg |> String.trim() |> String.downcase()
+
+    if raw == "" do
+      # Show current tier
+      case GenServer.call(
+             {:via, Registry, {OptimalSystemAgent.SessionRegistry, session_id}},
+             {:get_permission_tier},
+             5_000
+           ) do
+        {:ok, tier} ->
+          desc = tier_description(tier)
+          {:command, "Current permission tier: #{tier}\n#{desc}\n\nUsage: /tier full|workspace|read_only"}
+
+        _ ->
+          {:command, "Permission tier: full (default)\n\nUsage: /tier full|workspace|read_only"}
+      end
+    else
+      tier =
+        case raw do
+          "full" -> :full
+          "workspace" -> :workspace
+          "read_only" -> :read_only
+          "readonly" -> :read_only
+          _ -> :unknown
+        end
+
+      if tier == :unknown do
+        {:command, "Unknown tier: #{raw}\n\nUsage: /tier full|workspace|read_only"}
+      else
+        case GenServer.call(
+               {:via, Registry, {OptimalSystemAgent.SessionRegistry, session_id}},
+               {:set_permission_tier, tier},
+               5_000
+             ) do
+          {:ok, ^tier} ->
+            {:command, "Permission tier set to: #{tier}\n#{tier_description(tier)}"}
+
+          _ ->
+            {:command, "Failed to set permission tier — is there an active session?"}
+        end
+      end
+    end
+  rescue
+    _ -> {:command, "Permission tier change failed — no active session"}
+  end
+
+  defp tier_description(:full),
+    do: "  All tools enabled — no restrictions."
+
+  defp tier_description(:workspace),
+    do: "  Read + local file/git writes allowed. Network and shell tools are blocked."
+
+  defp tier_description(:read_only),
+    do: "  Read-only tools only. No writes, no network, no shell execution."
+
+  defp tier_description(_), do: ""
 end

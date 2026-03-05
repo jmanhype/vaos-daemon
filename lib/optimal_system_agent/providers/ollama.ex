@@ -81,7 +81,7 @@ defmodule OptimalSystemAgent.Providers.Ollama do
   def list_models(url \\ nil) do
     url = url || Application.get_env(:optimal_system_agent, :ollama_url, "http://localhost:11434")
 
-    case Req.get("#{url}/api/tags", [{:receive_timeout, 5_000}] ++ auth_headers()) do
+    case Req.get("#{url}/api/tags", [{:receive_timeout, 5_000}, {:retry, false}] ++ auth_headers()) do
       {:ok, %{status: 200, body: %{"models" => models}}} ->
         parsed =
           Enum.map(models, fn m ->
@@ -204,9 +204,10 @@ defmodule OptimalSystemAgent.Providers.Ollama do
     end
   end
 
-  # --- Private ---
+  # --- Private (exposed @doc false for unit testing) ---
 
-  defp pick_best_model(models) do
+  @doc false
+  def pick_best_model(models) do
     # Filter to tool-capable models (by prefix + size), sort by size descending
     tool_capable =
       models
@@ -302,7 +303,8 @@ defmodule OptimalSystemAgent.Providers.Ollama do
   end
 
   # Returns true for models known to enter unbounded thinking phases by default.
-  defp thinking_model?(model_name) do
+  @doc false
+  def thinking_model?(model_name) do
     name = String.downcase(model_name)
     String.contains?(name, "thinking") or String.starts_with?(name, "kimi")
   end
@@ -358,13 +360,15 @@ defmodule OptimalSystemAgent.Providers.Ollama do
   end
 
   # Split buffered data into complete NDJSON lines + partial remainder
-  defp split_ndjson(data) do
+  @doc false
+  def split_ndjson(data) do
     lines = String.split(data, "\n")
     {complete, [remainder]} = Enum.split(lines, -1)
     {Enum.reject(complete, &(&1 == "")), remainder}
   end
 
-  defp process_ndjson_line(line, callback, acc) do
+  @doc false
+  def process_ndjson_line(line, callback, acc) do
     case Jason.decode(line) do
       {:ok, %{"message" => %{"content" => text}}} when is_binary(text) and text != "" ->
         callback.({:text_delta, text})
