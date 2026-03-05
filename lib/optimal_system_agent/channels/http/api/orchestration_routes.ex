@@ -43,7 +43,10 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.OrchestrationRoutes do
 
         _ ->
           skip_plan = conn.body_params["skip_plan"] == true
-          Task.start(fn -> Loop.process_message(session_id, input, skip_plan: skip_plan) end)
+          working_dir = conn.body_params["working_dir"]
+          opts = [skip_plan: skip_plan]
+          opts = if is_binary(working_dir) and working_dir != "", do: Keyword.put(opts, :working_dir, working_dir), else: opts
+          Task.start(fn -> Loop.process_message(session_id, input, opts) end)
 
           body = Jason.encode!(%{session_id: session_id, status: "processing"})
 

@@ -195,8 +195,8 @@ defmodule OptimalSystemAgent.Agent.Explorer do
   Returns `{context_string, files_read_list}`.
   """
   @spec run_exploration(String.t(), map()) :: {String.t(), [String.t()]}
-  def run_exploration(message, _state) do
-    working_dir = detect_working_dir(message)
+  def run_exploration(message, state) do
+    working_dir = Map.get(state, :working_dir) || detect_working_dir(message)
     files_read = []
 
     # 1. List root directory

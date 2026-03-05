@@ -45,6 +45,8 @@ pub struct OrchestrateRequest {
     pub workspace_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skip_plan: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub working_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -89,6 +89,7 @@ pub struct App {
 
     // Session
     pub session_id: String,
+    pub working_dir: String,
 
     // Dimensions
     pub width: u16,
@@ -136,6 +137,12 @@ impl App {
         // Generate session ID
         let session_id = generate_session_id();
 
+        // Capture the CWD at startup — this is the directory the user launched from,
+        // not the backend's directory. Sent with every orchestrate request.
+        let working_dir = std::env::current_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+
         // Initialize theme
         let theme = crate::style::themes::by_name(&config.theme)
             .unwrap_or_else(crate::style::themes::dark);
@@ -145,8 +152,8 @@ impl App {
         let (init_w, init_h) = crossterm::terminal::size().unwrap_or((80, 24));
 
         info!(
-            "App initialized: session={}, url={}, term={}x{}",
-            session_id, config.base_url, init_w, init_h
+            "App initialized: session={}, url={}, term={}x{}, cwd={}",
+            session_id, config.base_url, init_w, init_h, working_dir
         );
 
         let mut sidebar = Sidebar::new();
@@ -184,6 +191,7 @@ impl App {
             sse_cancel: None,
 
             session_id,
+            working_dir,
 
             width: init_w,
             height: init_h,

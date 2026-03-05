@@ -269,6 +269,11 @@ impl App {
         let tx = self.event_tx.clone();
         let session_id = self.session_id.clone();
         let input = text.to_string();
+        let working_dir = if self.working_dir.is_empty() {
+            None
+        } else {
+            Some(self.working_dir.clone())
+        };
 
         tokio::spawn(async move {
             let req = crate::client::types::OrchestrateRequest {
@@ -277,6 +282,7 @@ impl App {
                 user_id: None,
                 workspace_id: None,
                 skip_plan: None,
+                working_dir,
             };
             let result = client.orchestrate(&req).await;
             let event = match result {

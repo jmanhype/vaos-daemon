@@ -41,6 +41,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
     :channel,
     :provider,
     :model,
+    :working_dir,
     messages: [],
     iteration: 0,
     overflow_retries: 0,
@@ -886,6 +887,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
     state
     |> maybe_override(:provider, Keyword.get(opts, :provider))
     |> maybe_override(:model, Keyword.get(opts, :model))
+    |> maybe_override(:working_dir, Keyword.get(opts, :working_dir))
   end
 
   defp maybe_override(state, _key, nil), do: state

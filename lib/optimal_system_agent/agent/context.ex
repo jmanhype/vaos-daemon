@@ -179,7 +179,7 @@ defmodule OptimalSystemAgent.Agent.Context do
 
   defp gather_dynamic_blocks(state) do
     [
-      {tool_process_block(), 1, "tool_process"},
+      {tool_process_block(state), 1, "tool_process"},
       {runtime_block(state), 1, "runtime"},
       {environment_block(state), 1, "environment"},
       {plan_mode_block(state), 1, "plan_mode"},
@@ -481,8 +481,8 @@ defmodule OptimalSystemAgent.Agent.Context do
 
   defp plan_mode_block(_), do: nil
 
-  defp tool_process_block do
-    cwd = File.cwd!()
+  defp tool_process_block(state) do
+    cwd = Map.get(state, :working_dir) || File.cwd!()
 
     """
     ## How to Use Tools
@@ -552,8 +552,8 @@ defmodule OptimalSystemAgent.Agent.Context do
     """
   end
 
-  defp environment_block(_state) do
-    cwd = File.cwd!()
+  defp environment_block(state) do
+    cwd = Map.get(state, :working_dir) || File.cwd!()
     git_info = cached_git_info()
     elixir_ver = System.version()
     otp_release = :erlang.system_info(:otp_release) |> to_string()
