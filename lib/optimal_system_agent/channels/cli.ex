@@ -10,6 +10,7 @@ defmodule OptimalSystemAgent.Channels.CLI do
 
   alias OptimalSystemAgent.Agent.{Loop, TaskTracker}
   alias OptimalSystemAgent.Channels.CLI.{LineEditor, Markdown, PlanReview, Spinner, TaskDisplay}
+  alias OptimalSystemAgent.Channels.NoiseFilter
   alias OptimalSystemAgent.Commands
   alias OptimalSystemAgent.Events.Bus
   alias OptimalSystemAgent.SDK.{Hook, Permission}
@@ -128,7 +129,17 @@ defmodule OptimalSystemAgent.Channels.CLI do
       cmd = String.trim_leading(input, "/")
       handle_command(cmd, session_id)
     else
-      send_to_agent(input, session_id)
+      filtered =
+        NoiseFilter.filter_and_reply(input, nil, fn ack ->
+          if ack != "" do
+            IO.puts("#{@dim}  #{ack}#{@reset}")
+          end
+        end)
+
+      unless filtered do
+        send_to_agent(input, session_id)
+      end
+
       session_id
     end
   end

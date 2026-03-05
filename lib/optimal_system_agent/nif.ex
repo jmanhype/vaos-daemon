@@ -6,12 +6,8 @@ defmodule OptimalSystemAgent.NIF do
   without Rust compiled. Set OSA_SKIP_NIF=true to bypass compilation.
   """
 
-  use Rustler,
-    otp_app: :optimal_system_agent,
-    crate: :osa_nif,
-    skip_compilation?: System.get_env("OSA_SKIP_NIF", "true") != "false"
-
-  # NIF stubs — replaced by Rust at load time
+  # OTP 28 compatibility: rustler removed from deps (incompatible with OTP 28 ~r regex compilation).
+  # These stubs always raise nif_not_loaded; safe_* wrappers below handle all fallbacks.
   def count_tokens(_text), do: :erlang.nif_error(:nif_not_loaded)
   def calculate_weight(_text), do: :erlang.nif_error(:nif_not_loaded)
   def word_count(_text), do: :erlang.nif_error(:nif_not_loaded)

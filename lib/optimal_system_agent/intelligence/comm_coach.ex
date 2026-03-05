@@ -15,6 +15,14 @@ defmodule OptimalSystemAgent.Intelligence.CommCoach do
   - >= 0.4  :needs_work
   - < 0.4   :poor
 
+  Channel defaults (overrides neutral baseline when no profile exists):
+  - :email   → formal, long
+  - :slack   → casual, short
+  - :cli     → technical, terse
+  - :discord → casual, medium
+  - :sms     → casual, short
+  - :api     → technical, medium
+
   Signal Theory — outbound message quality optimization.
   """
   use GenServer
@@ -25,15 +33,44 @@ defmodule OptimalSystemAgent.Intelligence.CommCoach do
   defstruct scores: [],
             total_scored: 0
 
+  # Channel defaults: {formality_float, preferred_length_atom, technical_depth_atom}
+  @channel_defaults %{
+    email:   %{formality: 0.8, preferred_length: :long,   technical_depth: :moderate},
+    slack:   %{formality: 0.2, preferred_length: :short,  technical_depth: :moderate},
+    cli:     %{formality: 0.5, preferred_length: :short,  technical_depth: :expert},
+    discord: %{formality: 0.2, preferred_length: :medium, technical_depth: :moderate},
+    sms:     %{formality: 0.2, preferred_length: :short,  technical_depth: :simple},
+    api:     %{formality: 0.5, preferred_length: :medium, technical_depth: :expert}
+  }
+
+  # Inbound clarity threshold — below this we ask the user to clarify
+  @inbound_clarity_threshold 0.4
+
   # ---------------------------------------------------------------------------
   # Public API
   # ---------------------------------------------------------------------------
 
   def start_link(_opts), do: GenServer.start_link(__MODULE__, %__MODULE__{}, name: __MODULE__)
 
-  @doc "Score an outbound message against the user's profile. Returns quality assessment."
-  def score(message, user_id \\ nil) do
-    GenServer.call(__MODULE__, {:score, message, user_id})
+  @doc """
+  Score an outbound message against the user's profile and optional channel.
+
+      CommCoach.score_response(message, user_id, channel)
+      CommCoach.score_response(message, user_id)   # channel defaults to :unknown
+
+  Returns `{:ok, result_map}`.
+  """
+  def score_response(message, user_id \\ nil, channel \\ :unknown) do
+    GenServer.call(__MODULE__, {:score_response, message, user_id, channel})
+  end
+
+  @doc """
+  Score an inbound user message for clarity.
+  Returns `{:ok, result_map}` where result includes `:clarification_needed` and
+  `:clarification_prompt` when the message scores below #{@inbound_clarity_threshold}.
+  """
+  def score_inbound(message, user_id \\ nil) do
+    GenServer.call(__MODULE__, {:score_inbound, message, user_id})
   end
 
   @doc "Get coaching statistics."
@@ -49,21 +86,18 @@ defmodule OptimalSystemAgent.Intelligence.CommCoach do
   def init(_opts), do: {:ok, %__MODULE__{}}
 
   @impl true
-  def handle_call({:score, message, user_id}, _from, state) do
-    profile = get_user_profile(user_id)
+  def handle_call({:score_response, message, user_id, channel}, _from, state) do
+    profile = build_effective_profile(user_id, channel)
 
     scores = %{
-      length: score_length(message, profile),
-      formality: score_formality(message, profile),
-      clarity: score_clarity(message),
+      length:        score_length(message, profile),
+      formality:     score_formality(message, profile),
+      clarity:       score_clarity(message),
       actionability: score_actionability(message),
-      empathy: score_empathy(message)
+      empathy:       score_empathy(message)
     }
 
-    avg = scores |> Map.values() |> Enum.sum() |> Kernel./(5)
-    avg = Float.round(avg, 4)
-
-    suggestions = generate_suggestions(scores, profile)
+    avg = scores |> Map.values() |> Enum.sum() |> Kernel./(5) |> Float.round(4)
 
     verdict =
       cond do
@@ -72,37 +106,75 @@ defmodule OptimalSystemAgent.Intelligence.CommCoach do
         true -> :poor
       end
 
+    suggestions = generate_suggestions(scores, profile)
+
     result = %{
-      score: Float.round(avg, 2),
+      score:       Float.round(avg, 2),
       suggestions: suggestions,
-      verdict: verdict,
-      details: scores
+      verdict:     verdict,
+      details:     scores,
+      channel:     channel
     }
 
-    Logger.debug(
-      "[CommCoach] scored message length=#{String.length(message)} avg=#{avg} verdict=#{verdict}"
-    )
+    Logger.debug("[CommCoach] outbound len=#{String.length(message)} avg=#{avg} verdict=#{verdict} channel=#{channel}")
 
-    new_state = %{
-      state
-      | total_scored: state.total_scored + 1,
-        scores: [avg | Enum.take(state.scores, 99)]
+    # Persist the score into the user's profile if we have a user_id
+    if user_id, do: CommProfiler.update_profile(user_id, %{score: avg})
+
+    new_state = %{state |
+      total_scored: state.total_scored + 1,
+      scores: [avg | Enum.take(state.scores, 99)]
     }
 
     {:reply, {:ok, result}, new_state}
   end
 
   @impl true
+  def handle_call({:score_inbound, message, user_id}, _from, state) do
+    clarity = score_clarity(message)
+    len = String.length(message)
+
+    # Very short messages with no punctuation are ambiguous
+    ambiguity_penalty =
+      if len < 15 and not Regex.match?(~r/[?!.]/, message), do: 0.2, else: 0.0
+
+    adjusted_clarity = max(0.0, clarity - ambiguity_penalty)
+
+    {clarification_needed, clarification_prompt} =
+      if adjusted_clarity < @inbound_clarity_threshold do
+        topic = extract_ambiguous_topic(message)
+        prompt = "Could you clarify what you mean by #{topic}?"
+        {true, prompt}
+      else
+        {false, nil}
+      end
+
+    result = %{
+      score:                adjusted_clarity,
+      clarification_needed: clarification_needed,
+      clarification_prompt: clarification_prompt,
+      user_id:              user_id
+    }
+
+    Logger.debug("[CommCoach] inbound len=#{len} clarity=#{adjusted_clarity} clarify=#{clarification_needed}")
+
+    # Record the inbound message for profile learning
+    if user_id, do: CommProfiler.record(user_id, message)
+
+    {:reply, {:ok, result}, state}
+  end
+
+  @impl true
   def handle_call(:stats, _from, state) do
     avg_score =
       case state.scores do
-        [] -> 0.0
+        []     -> 0.0
         scores -> Float.round(Enum.sum(scores) / length(scores), 2)
       end
 
     result = %{
       total_scored: state.total_scored,
-      avg_score: avg_score,
+      avg_score:    avg_score,
       common_issues: common_issues(state.scores)
     }
 
@@ -110,40 +182,65 @@ defmodule OptimalSystemAgent.Intelligence.CommCoach do
   end
 
   # ---------------------------------------------------------------------------
-  # Profile lookup
+  # Profile resolution: merge user profile + channel defaults
   # ---------------------------------------------------------------------------
 
-  defp get_user_profile(nil), do: nil
+  # Build an effective profile by starting from channel defaults (if any),
+  # then overlaying the user's learned preferences.
+  defp build_effective_profile(user_id, channel) do
+    channel_base = Map.get(@channel_defaults, channel, %{})
 
-  defp get_user_profile(user_id) do
-    case CommProfiler.get_profile(user_id) do
-      {:ok, profile} -> profile
-      _ -> nil
+    user_profile =
+      if user_id do
+        case CommProfiler.get_profile(user_id) do
+          {:ok, p} -> p
+          _ -> %{}
+        end
+      else
+        %{}
+      end
+
+    # Build a merged profile. User learned values take priority over channel defaults.
+    base = %{
+      avg_length:      Map.get(user_profile, :avg_length, 0),
+      message_count:   Map.get(user_profile, :message_count, 0),
+      formality:       formality_to_float(Map.get(user_profile, :formality, :neutral), channel_base),
+      preferred_length: Map.get(user_profile, :preferred_length, Map.get(channel_base, :preferred_length, :medium)),
+      technical_depth:  Map.get(user_profile, :technical_depth, Map.get(channel_base, :technical_depth, :moderate))
+    }
+
+    base
+  end
+
+  # If user has seen enough messages, use their learned formality; otherwise lean on channel.
+  defp formality_to_float(user_formality_atom, channel_base) do
+    channel_float = Map.get(channel_base, :formality, 0.5)
+
+    case user_formality_atom do
+      :casual  -> blend(0.2, channel_float)
+      :formal  -> blend(0.8, channel_float)
+      :neutral -> blend(0.5, channel_float)
+      _        -> channel_float
     end
   end
+
+  # 70% user learned, 30% channel default when both exist
+  defp blend(user_val, channel_val), do: user_val * 0.7 + channel_val * 0.3
 
   # ---------------------------------------------------------------------------
   # Scoring: Length Appropriateness
   # ---------------------------------------------------------------------------
-
-  # Score is based on two signals:
-  # 1. Signal mode hints embedded in the message (code block -> BUILD, numbered steps -> EXECUTE)
-  # 2. The user's avg_length from their profile (if available)
-  #
-  # The two signals are blended. When no profile exists, only mode heuristics apply.
 
   @execute_max 200
   @analyze_min 500
 
   defp score_length(message, profile) do
     len = String.length(message)
-
-    mode_score = infer_mode_length_score(message, len)
+    mode_score = infer_mode_length_score(message, len, profile.preferred_length)
 
     case profile do
       %{avg_length: avg_len} when is_number(avg_len) and avg_len > 0 ->
         profile_score = length_similarity(len, avg_len)
-        # Blend: 60% mode expectation, 40% profile similarity
         Float.round(mode_score * 0.6 + profile_score * 0.4, 4)
 
       _ ->
@@ -151,53 +248,47 @@ defmodule OptimalSystemAgent.Intelligence.CommCoach do
     end
   end
 
-  # Infer expected length from message content signals (mode heuristics)
-  defp infer_mode_length_score(message, len) do
+  defp infer_mode_length_score(message, len, preferred_length) do
     has_code_block? = String.contains?(message, "```")
-    has_steps? = Regex.match?(~r/^\d+\./m, message)
-    has_analysis? = Regex.match?(~r/\b(analysis|because|therefore|however|thus)\b/i, message)
+    has_steps?      = Regex.match?(~r/^\d+\./m, message)
+    has_analysis?   = Regex.match?(~r/\b(analysis|because|therefore|however|thus)\b/i, message)
+
+    # Channel/profile preferred length adjusts the target bands
+    {short_max, long_min} =
+      case preferred_length do
+        :short  -> {150, 400}
+        :long   -> {400, 800}
+        _       -> {200, 500}
+      end
 
     cond do
-      # EXECUTE / BUILD mode — expect short, direct response
-      has_steps? and len > @execute_max * 3 ->
-        penalise_ratio(len, @execute_max)
+      has_steps? and len > short_max * 3 ->
+        penalise_ratio(len, short_max)
 
-      # ANALYZE mode — expect detailed response
-      has_analysis? and len < @analyze_min ->
-        penalise_ratio(@analyze_min, len)
+      has_analysis? and len < long_min ->
+        penalise_ratio(long_min, len)
 
-      # Code responses — length is flexible, penalise only extreme brevity
       has_code_block? and len < 50 ->
         0.5
 
-      # Neutral — score based on absolute length bands
       true ->
         cond do
-          len < 10 -> 0.4
-          len < 20 -> 0.6
-          len < 2_000 -> 1.0
-          len < 4_000 -> 0.8
-          true -> 0.5
+          len < 10         -> 0.4
+          len < 20         -> 0.6
+          len < 2_000      -> 1.0
+          len < 4_000      -> 0.8
+          true             -> 0.5
         end
     end
   end
 
-  # Returns a similarity score between actual length and expected length.
-  # Score degrades if actual is more than 3x longer or 3x shorter than expected.
   defp length_similarity(actual, expected) when expected > 0 do
     ratio = actual / expected
 
     cond do
-      ratio > 3.0 ->
-        # Too long — penalise proportionally but floor at 0.2
-        max(0.2, 1.0 - (ratio - 3.0) * 0.1)
-
-      ratio < 1 / 3 ->
-        # Too short
-        max(0.2, ratio * 3.0)
-
-      true ->
-        1.0
+      ratio > 3.0 -> max(0.2, 1.0 - (ratio - 3.0) * 0.1)
+      ratio < 1 / 3 -> max(0.2, ratio * 3.0)
+      true -> 1.0
     end
   end
 
@@ -228,7 +319,6 @@ defmodule OptimalSystemAgent.Intelligence.CommCoach do
         Float.round(1.0 - diff, 4)
 
       _ ->
-        # No profile — neutral score; very extreme formality on either end penalised slightly
         mid_penalty = abs(response_formality - 0.5) * 0.2
         Float.round(1.0 - mid_penalty, 4)
     end
@@ -238,11 +328,10 @@ defmodule OptimalSystemAgent.Intelligence.CommCoach do
     lower = String.downcase(message)
     words = max(1, length(String.split(lower, ~r/\W+/, trim: true)))
 
-    formal_count = Enum.count(@formal_markers, &String.contains?(lower, &1))
+    formal_count   = Enum.count(@formal_markers, &String.contains?(lower, &1))
     informal_count = Enum.count(@informal_markers, &String.contains?(lower, &1))
 
-    # Normalise by word count so short messages aren't overly penalised
-    formal_density = min(formal_count / words * 10, 0.5)
+    formal_density   = min(formal_count / words * 10, 0.5)
     informal_density = min(informal_count / words * 10, 0.5)
 
     clamped = 0.5 + formal_density - informal_density
@@ -266,25 +355,19 @@ defmodule OptimalSystemAgent.Intelligence.CommCoach do
         word_count = s |> String.split(~r/\s+/, trim: true) |> length()
         word_count > 40
       end)
-      |> then(fn count -> count * 0.1 end)
+      |> then(&(&1 * 0.1))
 
     lower = String.downcase(message)
     words = max(1, length(String.split(lower, ~r/\W+/, trim: true)))
-    jargon_count = Enum.count(@jargon_words, &String.contains?(lower, &1))
+    jargon_count   = Enum.count(@jargon_words, &String.contains?(lower, &1))
     jargon_penalty = min(jargon_count / words * 5, 0.3)
 
-    # Wall of text — no paragraph break in a long message
     wall_penalty =
-      if len > 500 and not String.contains?(message, "\n\n") do
-        0.2
-      else
-        0.0
-      end
+      if len > 500 and not String.contains?(message, "\n\n"), do: 0.2, else: 0.0
 
-    # Structured output bonus — bullets, headers (# prefix), or numbered list
-    has_bullets? = Regex.match?(~r/^\s*[-*]\s+/m, message)
-    has_headers? = Regex.match?(~r/^#+\s+\S/m, message)
-    has_numbers? = Regex.match?(~r/^\d+\.\s+/m, message)
+    has_bullets?  = Regex.match?(~r/^\s*[-*]\s+/m, message)
+    has_headers?  = Regex.match?(~r/^#+\s+\S/m, message)
+    has_numbers?  = Regex.match?(~r/^\d+\.\s+/m, message)
     structure_bonus = if has_bullets? or has_headers? or has_numbers?, do: 0.1, else: 0.0
 
     score = 1.0 - long_sentence_penalty - jargon_penalty - wall_penalty + structure_bonus
@@ -292,7 +375,6 @@ defmodule OptimalSystemAgent.Intelligence.CommCoach do
   end
 
   defp split_sentences(message) do
-    # Simple sentence splitter — split on . ? ! followed by whitespace or end
     Regex.split(~r/(?<=[.?!])\s+/, message)
     |> Enum.reject(&(String.trim(&1) == ""))
   end
@@ -324,22 +406,19 @@ defmodule OptimalSystemAgent.Intelligence.CommCoach do
       end)
 
     has_numbered_steps? = Regex.match?(~r/^\d+\./m, message)
-    has_code_block? = String.contains?(message, "```")
+    has_code_block?     = String.contains?(message, "```")
 
-    vague_count =
-      Enum.count(@vague_phrases, fn phrase -> String.contains?(lower, phrase) end)
+    vague_count = Enum.count(@vague_phrases, &String.contains?(lower, &1))
 
     base =
       cond do
         has_numbered_steps? -> 0.9
-        has_code_block? -> 0.85
-        has_action_verb? -> 0.75
-        true -> 0.5
+        has_code_block?     -> 0.85
+        has_action_verb?    -> 0.75
+        true                -> 0.5
       end
 
-    vague_penalty = vague_count * 0.15
-
-    Float.round(max(0.0, min(1.0, base - vague_penalty)), 4)
+    Float.round(max(0.0, min(1.0, base - vague_count * 0.15)), 4)
   end
 
   # ---------------------------------------------------------------------------
@@ -347,55 +426,44 @@ defmodule OptimalSystemAgent.Intelligence.CommCoach do
   # ---------------------------------------------------------------------------
 
   @empathy_phrases [
-    "i understand",
-    "that makes sense",
-    "good point",
-    "i can see",
-    "i appreciate",
-    "that's valid",
-    "i hear you",
-    "fair enough",
-    "you're right"
+    "i understand", "that makes sense", "good point", "i can see",
+    "i appreciate", "that's valid", "i hear you", "fair enough", "you're right"
   ]
 
   @empathy_marker_words ~w(understand appreciate acknowledge)
-
   @dismissive_words ~w(just simply obviously clearly merely trivially)
 
   defp score_empathy(message) do
     lower = String.downcase(message)
 
     empathy_phrase_count =
-      Enum.count(@empathy_phrases, fn phrase -> String.contains?(lower, phrase) end)
+      Enum.count(@empathy_phrases, &String.contains?(lower, &1))
 
     empathy_word_count =
-      Enum.count(@empathy_marker_words, fn word ->
-        Regex.match?(~r/\b#{Regex.escape(word)}\b/, lower)
+      Enum.count(@empathy_marker_words, fn w ->
+        Regex.match?(~r/\b#{Regex.escape(w)}\b/, lower)
       end)
 
     dismissive_count =
-      Enum.count(@dismissive_words, fn word ->
-        Regex.match?(~r/\b#{Regex.escape(word)}\b/, lower)
+      Enum.count(@dismissive_words, fn w ->
+        Regex.match?(~r/\b#{Regex.escape(w)}\b/, lower)
       end)
 
     base =
       cond do
         empathy_phrase_count > 0 -> 0.9
-        empathy_word_count > 1 -> 0.75
-        empathy_word_count == 1 -> 0.65
-        true -> 0.6
+        empathy_word_count > 1   -> 0.75
+        empathy_word_count == 1  -> 0.65
+        true                     -> 0.6
       end
 
-    dismissive_penalty = dismissive_count * 0.1
-
-    Float.round(max(0.0, min(1.0, base - dismissive_penalty)), 4)
+    Float.round(max(0.0, min(1.0, base - dismissive_count * 0.1)), 4)
   end
 
   # ---------------------------------------------------------------------------
   # Suggestion Generation
   # ---------------------------------------------------------------------------
 
-  # Threshold below which a dimension triggers a suggestion
   @suggestion_threshold 0.6
 
   defp generate_suggestions(scores, profile) do
@@ -412,7 +480,7 @@ defmodule OptimalSystemAgent.Intelligence.CommCoach do
       hint =
         case profile do
           %{avg_length: avg} when is_number(avg) and avg > 0 ->
-            "Consider adjusting your response length — the user typically sends messages around #{round(avg)} characters"
+            "Consider adjusting your response length — the user typically sends ~#{round(avg)} character messages"
 
           _ ->
             "Consider shortening your response for clarity"
@@ -469,30 +537,42 @@ defmodule OptimalSystemAgent.Intelligence.CommCoach do
   end
 
   # ---------------------------------------------------------------------------
+  # Inbound: extract the most ambiguous fragment for clarification prompt
+  # ---------------------------------------------------------------------------
+
+  defp extract_ambiguous_topic(message) do
+    words = String.split(message, ~r/\W+/, trim: true)
+
+    # Prefer nouns/verbs that aren't stopwords
+    stopwords = ~w(the a an is are was were be been being have has had do does did will would could should may might must can this that these those i you he she we they it)
+
+    topic =
+      words
+      |> Enum.reject(&(String.downcase(&1) in stopwords))
+      |> Enum.take(3)
+      |> Enum.join(" ")
+
+    if topic == "", do: "\"#{String.slice(message, 0, 30)}\"", else: "\"#{topic}\""
+  end
+
+  # ---------------------------------------------------------------------------
   # Analytics helpers
   # ---------------------------------------------------------------------------
 
-  # Returns a summary of scoring issues based on aggregate score history.
   defp common_issues([]), do: []
 
   defp common_issues(scores) do
-    poor_count = Enum.count(scores, &(&1 < 0.4))
+    poor_count       = Enum.count(scores, &(&1 < 0.4))
     needs_work_count = Enum.count(scores, &(&1 >= 0.4 and &1 < 0.7))
 
     []
     |> then(fn acc ->
-      if poor_count > 0 do
-        ["#{poor_count} message(s) scored :poor overall" | acc]
-      else
-        acc
-      end
+      if poor_count > 0, do: ["#{poor_count} message(s) scored :poor overall" | acc], else: acc
     end)
     |> then(fn acc ->
-      if needs_work_count > 0 do
-        ["#{needs_work_count} message(s) scored :needs_work overall" | acc]
-      else
-        acc
-      end
+      if needs_work_count > 0,
+        do: ["#{needs_work_count} message(s) scored :needs_work overall" | acc],
+        else: acc
     end)
   end
 end

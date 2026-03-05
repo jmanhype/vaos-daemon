@@ -18,7 +18,7 @@ defmodule OptimalSystemAgent.MixProject do
       description: "Signal Theory-optimized proactive AI agent. Run locally. Elixir/OTP.",
       source_url: @source_url,
       docs: docs(),
-      rustler_crates: [osa_nif: []]
+      rustler_crates: []
     ]
   end
 
@@ -66,8 +66,8 @@ defmodule OptimalSystemAgent.MixProject do
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},
 
-      # Rust NIFs (optional — skipped when OSA_SKIP_NIF=true)
-      {:rustler, "~> 0.37", optional: true}
+      # OTP 28: rustler removed — nif.ex uses pure Elixir fallbacks
+      # {:rustler, "~> 0.37", optional: true}
     ]
   end
 

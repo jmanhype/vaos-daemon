@@ -155,14 +155,34 @@ defmodule OptimalSystemAgent.Agent.Loop do
     compacted = OptimalSystemAgent.Agent.Compactor.maybe_compact(state.messages)
     state = %{state | messages: compacted}
 
+    # Auto-extract insights from recent conversation history every 10 turns.
+    # This runs silently — no user-visible output.
+    if rem(state.turn_count, 10) == 0 and state.turn_count > 0 do
+      recent = Enum.take(state.messages, -20)
+      Task.start(fn -> Memory.extract_insights(recent) end)
+    end
+
     # Memory nudge every 10 turns (Phase 6)
+    # After complex tasks (>5 turns), also check for unsaved patterns to suggest saving.
     message_with_nudge =
-      if rem(state.turn_count, 10) == 0 and state.turn_count > 0 do
-        message <>
-          "\n\n[System: You've had #{state.turn_count} exchanges. " <>
-          "Consider saving important context with memory_save if you haven't recently.]"
-      else
-        message
+      cond do
+        rem(state.turn_count, 10) == 0 and state.turn_count > 0 ->
+          message <>
+            "\n\n[System: You've had #{state.turn_count} exchanges. " <>
+            "Consider saving important context with memory_save if you haven't recently.]"
+
+        state.turn_count > 5 ->
+          recent = Enum.take(state.messages, -10)
+          case Memory.maybe_pattern_nudge(state.turn_count, recent) do
+            {:nudge, nudge_text} ->
+              message <> "\n\n[System: #{nudge_text}]"
+
+            :no_nudge ->
+              message
+          end
+
+        true ->
+          message
       end
 
     # Inject an exploration directive before complex coding tasks so local models

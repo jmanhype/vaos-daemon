@@ -187,6 +187,86 @@ defmodule OptimalSystemAgent.Tools.Registry do
     _ -> nil
   end
 
+  @doc """
+  Filter the full tool list to only tools relevant to the current session context.
+
+  `context` is a map with optional keys:
+    - `:language`  — detected language (e.g. "python", "elixir", "javascript")
+    - `:framework` — detected framework (e.g. "phoenix", "react", "django")
+    - `:history`   — list of recently used tool names (strings)
+
+  Rules applied:
+  - Runtime-specific tools (e.g. shell_execute variants) are prioritised by language.
+  - Recently used tools are promoted (appear first in results).
+  - Unrelated language tools are deprioritised but never removed (graceful fallback).
+
+  Returns a list of tool maps in relevance order, same shape as `list_tools_direct/0`.
+  """
+  @spec filter_applicable_tools(map()) :: [map()]
+  def filter_applicable_tools(context \\ %{}) do
+    all_tools = list_tools_direct()
+    language = Map.get(context, :language, nil)
+    framework = Map.get(context, :framework, nil)
+    recent = Map.get(context, :history, []) |> MapSet.new()
+
+    # Score each tool for applicability given the context
+    scored =
+      Enum.map(all_tools, fn tool ->
+        score = tool_applicability_score(tool, language, framework, recent)
+        {tool, score}
+      end)
+
+    # Sort: highest score first; tools with same score keep stable order
+    scored
+    |> Enum.sort_by(fn {_tool, score} -> -score end)
+    |> Enum.map(fn {tool, _score} -> tool end)
+  end
+
+  @doc """
+  Suggest an alternative tool when `failed_tool` fails.
+
+  Returns `{:ok, alternative_tool_name}` when a known fallback exists,
+  or `:no_alternative` when no substitution is available.
+
+  Fallback map (ordered by preference):
+    shell_execute  → file_read (read-only inspection as a safer fallback)
+    web_search     → web_fetch
+    web_fetch      → web_search
+    file_write     → multi_file_edit
+    multi_file_edit → file_write
+    file_edit      → multi_file_edit
+    semantic_search → session_search
+    session_search  → memory_recall
+  """
+  @spec suggest_fallback_tool(String.t()) :: {:ok, String.t()} | :no_alternative
+  def suggest_fallback_tool(failed_tool) do
+    fallbacks = %{
+      "shell_execute" => "file_read",
+      "web_search" => "web_fetch",
+      "web_fetch" => "web_search",
+      "file_write" => "multi_file_edit",
+      "multi_file_edit" => "file_write",
+      "file_edit" => "multi_file_edit",
+      "semantic_search" => "session_search",
+      "session_search" => "memory_recall"
+    }
+
+    case Map.get(fallbacks, failed_tool) do
+      nil ->
+        :no_alternative
+
+      alt ->
+        builtin_tools = :persistent_term.get({__MODULE__, :builtin_tools}, %{})
+
+        if Map.has_key?(builtin_tools, alt) do
+          Logger.info("[Tools.Registry] Fallback for '#{failed_tool}': '#{alt}'")
+          {:ok, alt}
+        else
+          :no_alternative
+        end
+    end
+  end
+
   @doc "Search existing tools and skills by keyword matching against names and descriptions."
   @spec search(String.t()) :: list({String.t(), String.t(), float()})
   def search(query) do
@@ -673,6 +753,72 @@ defmodule OptimalSystemAgent.Tools.Registry do
     _ -> :ok
   end
 
+
+  # --- Tool Applicability Scoring ---
+
+  # Scores a tool for relevance given the session context.
+  # Higher = more relevant. Recently used tools get a +0.3 boost.
+  # Language/framework-specific tools get +0.4 or +0.2 for partial match.
+  # Unrelated language tools get -0.2 (deprioritised but still accessible).
+  defp tool_applicability_score(tool, language, framework, recent_set) do
+    name = tool.name
+    desc = String.downcase(tool.description)
+
+    recent_bonus = if MapSet.member?(recent_set, name), do: 0.3, else: 0.0
+
+    language_score =
+      cond do
+        is_nil(language) ->
+          0.0
+
+        String.contains?(desc, language) or String.contains?(name, language) ->
+          0.4
+
+        language_conflicts?(name, language) ->
+          -0.2
+
+        true ->
+          0.0
+      end
+
+    framework_score =
+      cond do
+        is_nil(framework) ->
+          0.0
+
+        String.contains?(desc, framework) or String.contains?(name, framework) ->
+          0.2
+
+        true ->
+          0.0
+      end
+
+    recent_bonus + language_score + framework_score
+  end
+
+  # Returns true when a tool name implies a language runtime that conflicts with
+  # the detected session language (e.g. node_execute when language is "python").
+  @language_tool_hints %{
+    "python" => ["python"],
+    "javascript" => ["node", "javascript", "js"],
+    "typescript" => ["node", "typescript", "ts"],
+    "ruby" => ["ruby"],
+    "elixir" => ["elixir", "mix"],
+    "go" => ["golang", "go_"],
+    "rust" => ["rust", "cargo"]
+  }
+
+  defp language_conflicts?(tool_name, language) do
+    lang_lower = String.downcase(language)
+    own_hints = Map.get(@language_tool_hints, lang_lower, [])
+
+    Enum.any?(@language_tool_hints, fn {lang, hints} ->
+      lang != lang_lower and
+        Enum.any?(hints, fn hint -> String.contains?(tool_name, hint) end) and
+        # Only flag conflict when we actually know our language's hints
+        own_hints != []
+    end)
+  end
 
   # --- Skill Search ---
 

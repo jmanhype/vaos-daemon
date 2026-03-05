@@ -32,3 +32,18 @@ __pycache__/
 
 # Go TUI compiled binary
 priv/go/tui/osa
+
+# Local OSA config/data
+.osa/
+
+# Crash dumps
+rebar3.crashdump
+erl_crash.dump
+
+# Agent-generated sandbox files (created during testing)
+todo-app/
+app.js
+index.html
+styles.css
+fibonacci.py
+reverse_string.py
