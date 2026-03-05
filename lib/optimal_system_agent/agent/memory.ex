@@ -236,8 +236,17 @@ defmodule OptimalSystemAgent.Agent.Memory do
     entry = "\n## [#{category}] #{timestamp}\n#{content}\n"
     File.write!(memory_file, entry, [:append, :utf8])
 
-    # Rebuild the index to include the new entry
-    build_index()
+    # Incrementally index only the new entry (O(keywords)) instead of full rebuild (O(n))
+    entry_id = generate_entry_id(category, timestamp, content)
+    importance = compute_importance(category, content)
+    parsed_entry = %{
+      id: entry_id,
+      category: category,
+      timestamp: timestamp,
+      content: content,
+      importance: importance
+    }
+    index_single_entry(entry_id, parsed_entry)
 
     {:noreply, state}
   end
@@ -832,6 +841,28 @@ defmodule OptimalSystemAgent.Agent.Memory do
     end
   end
 
+  # Incrementally index a single memory entry into ETS without a full rebuild.
+  # O(keywords) instead of O(n * keywords) for the full build_index path.
+  defp index_single_entry(entry_id, entry) do
+    ensure_ets_tables()
+    :ets.insert(@entry_table, {entry_id, entry})
+
+    keywords = extract_keywords(entry[:content] || "")
+    category_kw = if entry[:category], do: [String.downcase(entry[:category])], else: []
+
+    Enum.each(Enum.uniq(keywords ++ category_kw), fn keyword ->
+      existing =
+        case :ets.lookup(@index_table, keyword) do
+          [{^keyword, ids}] -> ids
+          [] -> []
+        end
+
+      :ets.insert(@index_table, {keyword, [entry_id | existing]})
+    end)
+  rescue
+    e -> Logger.warning("Failed to index memory entry incrementally: #{inspect(e)}")
+  end
+
   defp build_index do
     ensure_ets_tables()
 
@@ -976,9 +1007,15 @@ defmodule OptimalSystemAgent.Agent.Memory do
   @doc false
   def extract_keywords(message) do
     message
+    # Split camelCase: "myFunction" → "my Function"
+    |> String.replace(~r/([a-z])([A-Z])/, "\\1 \\2")
+    # Split acronym sequences: "XMLParser" → "XML Parser"
+    |> String.replace(~r/([A-Z]{2,})([A-Z][a-z])/, "\\1 \\2")
     |> String.downcase()
     |> String.replace(~r/[`"'{}()\[\]]/, " ")
-    |> String.split(~r/[\s,.\-:;!?\/\\|@#$%^&*+=<>~]+/, trim: true)
+    # Split on underscores, hyphens, and other separators
+    |> String.replace(~r/[_\-]/, " ")
+    |> String.split(~r/[\s,.:;!?\/\\|@#$%^&*+=<>~]+/, trim: true)
     |> Enum.reject(fn word -> MapSet.member?(@stop_words, word) end)
     |> Enum.filter(fn word -> String.length(word) > 2 end)
     |> Enum.reject(fn word -> Regex.match?(~r/^\d+$/, word) end)

@@ -139,6 +139,34 @@ func (m Model) submitInput(text string) (Model, tea.Cmd) {
 		}
 		m.chat.AddSystemMessage(strings.TrimRight(sb.String(), "\n"))
 		return m, nil
+
+	case text == "/swarms":
+		m.toasts.Add("Loading swarms...", toast.ToastInfo)
+		return m, tea.Batch(m.listSwarms(), m.tickCmd())
+
+	case strings.HasPrefix(text, "/swarm "):
+		arg := strings.TrimSpace(strings.TrimPrefix(text, "/swarm"))
+		task := arg
+		pattern := ""
+		if idx := strings.LastIndex(arg, " pattern:"); idx >= 0 {
+			pattern = strings.TrimSpace(arg[idx+len(" pattern:"):])
+			task = strings.TrimSpace(arg[:idx])
+		}
+		if task == "" {
+			m.chat.AddSystemMessage("Usage: /swarm <task> [pattern:<name>]\n  Patterns: code-analysis, full-stack, debug, security-audit, performance-audit")
+			return m, nil
+		}
+		m.toasts.Add("Launching swarm...", toast.ToastInfo)
+		return m, tea.Batch(m.launchSwarm(task, pattern), m.tickCmd())
+
+	case strings.HasPrefix(text, "/swarm-cancel "):
+		id := strings.TrimSpace(strings.TrimPrefix(text, "/swarm-cancel"))
+		if id == "" {
+			m.chat.AddSystemMessage("Usage: /swarm-cancel <swarm-id>")
+			return m, nil
+		}
+		m.toasts.Add(fmt.Sprintf("Cancelling swarm %s...", id), toast.ToastInfo)
+		return m, tea.Batch(m.cancelSwarm(id), m.tickCmd())
 	}
 
 	// Generic /command routing.

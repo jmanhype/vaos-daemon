@@ -278,6 +278,13 @@ func (m Model) Update(rawMsg tea.Msg) (tea.Model, tea.Cmd) {
 	case msg.SessionListResult:
 		return m.handleSessionList(v)
 
+	case msg.SwarmLaunchResult:
+		return m.handleSwarmLaunch(v)
+	case msg.SwarmListResult:
+		return m.handleSwarmList(v)
+	case msg.SwarmCancelResult:
+		return m.handleSwarmCancel(v)
+
 	case msg.SessionSwitchResult:
 		return m.handleSessionSwitch(v)
 

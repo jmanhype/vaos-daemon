@@ -267,6 +267,9 @@ func staticHelpText() string {
   /session new   Create new session
   /session <id>  Switch to session
   /bg            List background tasks
+  /swarm <task>  Launch a multi-agent swarm (optional: pattern:<name>)
+  /swarms        List active swarms
+  /swarm-cancel <id>  Cancel a running swarm
   /theme         List or switch themes
   /setup         Open setup wizard (re-configure provider, agent name, etc.)
   /clear         Clear chat history
