@@ -98,16 +98,19 @@ defmodule OptimalSystemAgent.Telemetry.Metrics do
     {:noreply, state}
   end
 
+  @impl true
   def handle_cast({:provider_call, provider, latency_ms, _success}, state) do
     update_provider_latency(provider, latency_ms)
     {:noreply, state}
   end
 
+  @impl true
   def handle_cast({:noise_filter, outcome}, state) do
     update_noise_filter(outcome)
     {:noreply, state}
   end
 
+  @impl true
   def handle_cast({:signal_weight, weight}, state) do
     update_signal_weight(weight)
     {:noreply, state}
@@ -313,7 +316,7 @@ defmodule OptimalSystemAgent.Telemetry.Metrics do
     try do
       String.to_existing_atom(provider)
     rescue
-      ArgumentError -> String.to_atom(provider)
+      ArgumentError -> :unknown
     end
   end
 

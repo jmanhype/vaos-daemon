@@ -64,6 +64,9 @@ defmodule OptimalSystemAgent.Intelligence.CommCoach do
     GenServer.call(__MODULE__, {:score_response, message, user_id, channel})
   end
 
+  @doc "Backward-compatible alias for score_response/3."
+  def score(message, user_id \\ nil), do: score_response(message, user_id)
+
   @doc """
   Score an inbound user message for clarity.
   Returns `{:ok, result_map}` where result includes `:clarification_needed` and

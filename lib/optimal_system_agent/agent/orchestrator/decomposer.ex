@@ -49,13 +49,12 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.Decomposer do
               :simple ->
                 {:ok,
                  [
-                   Explorer.build_explore_subtask(message),
                    %SubTask{
                      name: "execute",
                      description: message,
                      role: :builder,
                      tools_needed: ["file_read", "file_write", "shell_execute"],
-                     depends_on: ["explore"]
+                     depends_on: []
                    }
                  ]}
 
@@ -70,13 +69,12 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.Decomposer do
 
                   {:ok,
                    [
-                     Explorer.build_explore_subtask(message),
                      %SubTask{
                        name: "execute",
                        description: message,
                        role: :backend,
                        tools_needed: ["file_read", "file_write", "shell_execute"],
-                       depends_on: ["explore"]
+                       depends_on: []
                      }
                    ]}
                 end
@@ -86,13 +84,12 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.Decomposer do
 
             {:ok,
              [
-               Explorer.build_explore_subtask(message),
                %SubTask{
                  name: "execute",
                  description: message,
                  role: :backend,
                  tools_needed: ["file_read", "file_write", "shell_execute"],
-                 depends_on: ["explore"]
+                 depends_on: []
                }
              ]}
           end

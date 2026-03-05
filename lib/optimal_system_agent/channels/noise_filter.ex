@@ -35,7 +35,7 @@ defmodule OptimalSystemAgent.Channels.NoiseFilter do
     # Confirmations (case-insensitive, whole string)
     ~r/^(ok|okay|sure|yep|yeah|nope|got it|gotcha|alright|roger|copy that|ten four|affirmative)$/i,
     # Filler / reaction words
-    ~r/^(lol|lmao|lmfao|haha|hehe|heh|hmm|meh|wow|omg|wtf|smh|lol|rofl|brb|afk|gg|irl|imo|imho|fwiw|tl;?dr)$/i,
+    ~r/^(lol|lmao|lmfao|haha|hehe|heh|hmm|meh|wow|omg|wtf|smh|rofl|brb|afk|gg|irl|imo|imho|fwiw|tl;?dr)$/i,
     # Emoji-only (covers most emoji Unicode ranges)
     ~r/^[\x{1F000}-\x{1FFFF}\x{2600}-\x{27FF}\x{FE00}-\x{FE0F}\x{1F900}-\x{1F9FF}\x{231A}-\x{23FF}\x{25A0}-\x{25FF}\x{2700}-\x{27BF}\s]+$/u,
     # Ellipsis or trailing dots only
@@ -192,7 +192,7 @@ defmodule OptimalSystemAgent.Channels.NoiseFilter do
         Enum.random(["Understood.", "OK, no problem.", "Got it."])
 
       # Laughter / reactions
-      Regex.match?(~r/^(lol|lmao|lmfao|haha|hehe|rofl|lol)$/i, input) ->
+      Regex.match?(~r/^(lol|lmao|lmfao|haha|hehe|rofl)$/i, input) ->
         Enum.random(["Ha.", ":)", "Heh."])
 
       # Hmm / thinking sounds
