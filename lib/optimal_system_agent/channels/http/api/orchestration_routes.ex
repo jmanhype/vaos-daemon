@@ -24,6 +24,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.OrchestrationRoutes do
   alias OptimalSystemAgent.Channels.Session
   alias OptimalSystemAgent.Channels.NoiseFilter
   alias OptimalSystemAgent.Swarm.Orchestrator, as: Swarm
+  alias OptimalSystemAgent.Swarm.Patterns, as: SwarmPatterns
   alias OptimalSystemAgent.Agent.Orchestrator, as: TaskOrchestrator
   alias OptimalSystemAgent.Agent.Progress
 
@@ -307,16 +308,41 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.OrchestrationRoutes do
     }
   end
 
-  @valid_swarm_patterns ~w(parallel pipeline debate review)
+  # Execution patterns — how agents coordinate.
+  @execution_patterns ~w(parallel pipeline debate review)
 
   defp parse_swarm_pattern_opts(nil), do: {:ok, []}
 
   defp parse_swarm_pattern_opts(p) when is_binary(p) do
-    if p in @valid_swarm_patterns do
-      {:ok, [pattern: String.to_existing_atom(p)]}
-    else
-      {:error, :invalid_pattern,
-       "Invalid swarm pattern '#{p}'. Valid patterns: #{Enum.join(@valid_swarm_patterns, ", ")}"}
+    cond do
+      # Direct execution pattern override
+      p in @execution_patterns ->
+        {:ok, [pattern: String.to_existing_atom(p)]}
+
+      # Named preset from priv/swarms/patterns.json — look up its execution mode
+      true ->
+        case SwarmPatterns.get_pattern(p) do
+          {:ok, config} ->
+            pattern_atom =
+              case config["mode"] do
+                "parallel" -> :parallel
+                "pipeline" -> :pipeline
+                "sequential" -> :pipeline
+                "debate" -> :debate
+                "review" -> :review
+                _ -> nil
+              end
+
+            opts = if pattern_atom, do: [pattern: pattern_atom], else: []
+            {:ok, opts}
+
+          {:error, :not_found} ->
+            presets = SwarmPatterns.list_patterns() |> Enum.map_join(", ", &elem(&1, 0))
+            valid = Enum.join(@execution_patterns, ", ")
+
+            {:error, :invalid_pattern,
+             "Unknown pattern '#{p}'. Execution patterns: #{valid}. Named presets: #{presets}"}
+        end
     end
   end
 

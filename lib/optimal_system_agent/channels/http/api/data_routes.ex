@@ -95,6 +95,9 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.DataRoutes do
         Application.put_env(:optimal_system_agent, :ollama_model, model_name)
       end
 
+      # Persist selection to ~/.osa/config.json so it survives restarts.
+      persist_model_selection(prov_str, model_name)
+
       Logger.info("[Models] Switched to #{prov_str}/#{model_name}")
 
       body = Jason.encode!(%{provider: prov_str, model: model_name, status: "ok"})
@@ -273,5 +276,36 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.DataRoutes do
     conn
     |> put_resp_content_type("application/json")
     |> send_resp(200, body)
+  end
+
+  # Persist provider/model selection to ~/.osa/config.json so it survives restarts.
+  # Reads existing config (if any), merges the two keys, and writes back atomically.
+  defp persist_model_selection(provider, model) do
+    config_path =
+      Application.get_env(:optimal_system_agent, :bootstrap_dir, "~/.osa")
+      |> Path.expand()
+      |> Path.join("config.json")
+
+    existing =
+      with true <- File.exists?(config_path),
+           {:ok, content} <- File.read(config_path),
+           {:ok, parsed} <- Jason.decode(content) do
+        parsed
+      else
+        _ -> %{}
+      end
+
+    updated = Map.merge(existing, %{"provider" => provider, "model" => model})
+
+    case Jason.encode(updated, pretty: true) do
+      {:ok, json} ->
+        File.mkdir_p!(Path.dirname(config_path))
+        File.write!(config_path, json)
+
+      {:error, reason} ->
+        Logger.warning("[Models] Failed to persist model selection: #{inspect(reason)}")
+    end
+  rescue
+    e -> Logger.warning("[Models] Config persist error: #{Exception.message(e)}")
   end
 end

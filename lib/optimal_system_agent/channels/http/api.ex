@@ -27,12 +27,15 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
     /events      → ProtocolRoutes    POST /, GET /stream
     /oscp        → ProtocolRoutes    POST /
     /tasks       → ProtocolRoutes    GET /history
+    /classify    → inline            POST / (signal classification)
   """
   use Plug.Router
+  import OptimalSystemAgent.Channels.HTTP.API.Shared
   require Logger
 
   alias OptimalSystemAgent.Channels.HTTP.Auth
   alias OptimalSystemAgent.Channels.HTTP.API
+  alias OptimalSystemAgent.Signal.Classifier
 
   # ── Global error handler ────────────────────────────────────────────
 
@@ -102,6 +105,34 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
   forward "/oscp", to: API.ProtocolRoutes
   forward "/tasks", to: API.ProtocolRoutes
 
+  # ── Signal classification (inline — single endpoint) ─────────────────
+  post "/classify" do
+    with %{"message" => message} when is_binary(message) and message != "" <- conn.body_params do
+      channel = conn.body_params["channel"] || "http"
+      channel_atom = safe_channel_atom(channel)
+
+      signal = Classifier.classify(message, channel_atom)
+
+      body =
+        Jason.encode!(%{
+          signal: %{
+            mode: signal.mode,
+            genre: signal.genre,
+            type: signal.type,
+            format: signal.format,
+            weight: signal.weight
+          }
+        })
+
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.send_resp(200, body)
+    else
+      _ ->
+        json_error(conn, 400, "invalid_request", "Missing required field: message")
+    end
+  end
+
   # ── Catch-all ────────────────────────────────────────────────────────
   match _ do
     body = Jason.encode!(%{error: "not_found", details: "Endpoint not found"})
@@ -113,6 +144,12 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
 
   # ── JWT Authentication Plug ─────────────────────────────────────────
   # Auth routes and channel webhook routes bypass JWT.
+
+  @known_channels ~w(cli http tui telegram discord slack whatsapp signal matrix email qq dingtalk feishu)
+
+  defp safe_channel_atom(ch) when is_binary(ch) do
+    if ch in @known_channels, do: String.to_existing_atom(ch), else: :http
+  end
 
   defp authenticate(%{request_path: "/api/v1/auth/" <> _} = conn, _opts), do: conn
   defp authenticate(%{request_path: "/api/v1/channels/" <> _} = conn, _opts), do: conn
