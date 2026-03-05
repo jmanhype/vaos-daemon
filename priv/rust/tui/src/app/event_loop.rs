@@ -66,12 +66,15 @@ impl App {
                 crate::view::connecting::draw_connecting(frame, area);
             }
             _ => {
-                // Normal layout
+                // Normal layout — pass activity height so the chat Rect never
+                // overlaps the spinner.
+                let activity_lines = self.activity.height();
                 let areas = crate::view::main_layout::LayoutAreas::compute(
                     area,
                     &self.layout,
                     self.tasks.height(),
                     self.agents.height(),
+                    activity_lines,
                 );
 
                 // Header
@@ -95,14 +98,8 @@ impl App {
                     self.agents.draw(frame, agent_area);
                 }
 
-                // Activity (overlay on chat during processing)
-                if self.activity.is_active() {
-                    let activity_area = Rect::new(
-                        areas.chat.x,
-                        areas.chat.y + areas.chat.height.saturating_sub(2),
-                        areas.chat.width,
-                        2,
-                    );
+                // Activity spinner — dedicated area below agents, above status bar
+                if let Some(activity_area) = areas.activity {
                     self.activity.draw(frame, activity_area);
                 }
 

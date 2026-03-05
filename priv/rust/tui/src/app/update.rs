@@ -251,6 +251,7 @@ impl App {
             &self.layout,
             self.tasks.height(),
             self.agents.height(),
+            self.activity.height(),
         );
 
         match mouse.kind {

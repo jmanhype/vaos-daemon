@@ -269,7 +269,14 @@ impl Activity {
             .rev()
             .find(|e| e.name == name && e.duration_ms.is_none())
         {
-            entry.duration_ms = Some(duration_ms);
+            // If the backend sends 0 (missing or untracked), measure from the
+            // TUI-side start Instant so the display shows real elapsed time.
+            let effective_ms = if duration_ms == 0 {
+                entry.start.elapsed().as_millis() as u64
+            } else {
+                duration_ms
+            };
+            entry.duration_ms = Some(effective_ms);
             entry.success = Some(success);
         }
     }

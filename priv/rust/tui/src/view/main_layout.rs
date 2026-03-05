@@ -9,21 +9,35 @@ pub struct LayoutAreas {
     pub sidebar: Option<Rect>,
     pub tasks: Option<Rect>,
     pub agents: Option<Rect>,
+    /// Dedicated area for the activity spinner (below agents, above status).
+    /// None when activity is inactive (height == 0).
+    pub activity: Option<Rect>,
     pub status: Rect,
     pub input: Rect,
     pub toast: Rect,
 }
 
 impl LayoutAreas {
-    pub fn compute(area: Rect, layout: &Layout, task_lines: u16, agent_lines: u16) -> Self {
+    pub fn compute(
+        area: Rect,
+        layout: &Layout,
+        task_lines: u16,
+        agent_lines: u16,
+        activity_lines: u16,
+    ) -> Self {
         let mut y = area.y;
 
         // Header (2 lines: header + separator)
         let header = Rect::new(area.x, y, area.width, layout.header_height.min(area.height));
         y += layout.header_height;
 
-        // Compute fixed bottom sections first, give remainder to chat
-        let bottom_height = task_lines + agent_lines + layout.status_height + layout.input_height;
+        // Compute fixed bottom sections first, give remainder to chat.
+        // Activity lines are included so the chat Rect never overlaps the spinner.
+        let bottom_height = task_lines
+            + agent_lines
+            + activity_lines
+            + layout.status_height
+            + layout.input_height;
         let main_height = area
             .height
             .saturating_sub(layout.header_height + bottom_height)
@@ -62,6 +76,15 @@ impl LayoutAreas {
             None
         };
 
+        // Activity spinner — dedicated rows below agents, above status bar
+        let activity = if activity_lines > 0 {
+            let r = Rect::new(area.x, y, area.width, activity_lines);
+            y += activity_lines;
+            Some(r)
+        } else {
+            None
+        };
+
         // Status bar
         let status = Rect::new(area.x, y, area.width, layout.status_height);
         y += layout.status_height;
@@ -83,6 +106,7 @@ impl LayoutAreas {
             sidebar,
             tasks,
             agents,
+            activity,
             status,
             input,
             toast,
