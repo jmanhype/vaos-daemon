@@ -16,6 +16,7 @@ const (
 	StateSessions                 // Session browser dialog
 	StateModels                   // Enhanced model picker dialog
 	StateOnboarding               // First-run onboarding wizard
+	StateFilePicker               // File browser for /attach
 )
 
 func (s State) String() string {
@@ -44,6 +45,8 @@ func (s State) String() string {
 		return "models"
 	case StateOnboarding:
 		return "onboarding"
+	case StateFilePicker:
+		return "file_picker"
 	default:
 		return "unknown"
 	}

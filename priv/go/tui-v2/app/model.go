@@ -82,6 +82,7 @@ type Model struct {
 	quit        dialog.QuitModel
 	models      dialog.ModelsModel
 	onboarding  dialog.OnboardingModel
+	filePicker dialog.FilePickerModel
 
 	// Text selection + clipboard (Wave 6)
 	selection selection.Model
@@ -159,6 +160,7 @@ func New(c *client.Client) Model {
 		quit:        dialog.NewQuit(),
 		models:      dialog.NewModels(),
 		onboarding:  dialog.NewOnboarding(),
+		filePicker: dialog.NewFilePicker(),
 		selection:   selection.New(),
 		state:       StateConnecting,
 		layoutMode:  layoutMode,
