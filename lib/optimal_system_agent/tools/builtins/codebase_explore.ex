@@ -326,8 +326,14 @@ defmodule OptimalSystemAgent.Tools.Builtins.CodebaseExplore do
   defp cap(text) do
     max = 12_000
     if byte_size(text) > max do
-      truncated = String.slice(text, 0, max) |> String.trim_trailing()
-      truncated <> "\n[Output truncated]"
+      <<truncated::binary-size(max), _rest::binary>> = text
+      # Find last valid UTF-8 boundary by dropping trailing invalid bytes
+      truncated =
+        case String.chunk(truncated, :valid) do
+          [] -> ""
+          chunks -> Enum.filter(chunks, &String.valid?/1) |> Enum.join()
+        end
+      String.trim_trailing(truncated) <> "\n[Output truncated]"
     else
       text
     end

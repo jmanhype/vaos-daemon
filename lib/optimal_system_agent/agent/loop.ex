@@ -926,7 +926,8 @@ defmodule OptimalSystemAgent.Agent.Loop do
         |> Enum.map(fn tc -> tc.arguments["path"] end)
         |> Enum.filter(fn path ->
           is_binary(path) and File.exists?(path) and
-            not file_was_read?(state.session_id, path)
+            not file_was_read?(state.session_id, path) and
+            get_nudge_count(state.session_id, path) < 2
         end)
         |> Enum.uniq()
 
@@ -954,6 +955,18 @@ defmodule OptimalSystemAgent.Agent.Loop do
       end
     rescue
       ArgumentError -> false
+    end
+  end
+
+  defp get_nudge_count(session_id, path) do
+    try do
+      nudge_key = {session_id, :nudge_count, path}
+      case :ets.lookup(:osa_files_read, nudge_key) do
+        [{^nudge_key, n}] -> n
+        _ -> 0
+      end
+    rescue
+      ArgumentError -> 0
     end
   end
 

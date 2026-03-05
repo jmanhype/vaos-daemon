@@ -310,7 +310,7 @@ defmodule OptimalSystemAgent.Agent.Explorer do
   end
 
   defp detect_project_type(working_dir, root_entries) do
-    Enum.find_value(@project_configs, {"Unknown", nil}, fn {config_file, project_type} ->
+    Enum.find_value(@project_configs, fn {config_file, project_type} ->
       if config_file in root_entries do
         {project_type, config_file}
       end
@@ -462,7 +462,7 @@ defmodule OptimalSystemAgent.Agent.Explorer do
         {"", files_read}
     end
   rescue
-    _ -> {"", files_read}
+    e -> Logger.debug("[Explorer] MCTS failed: #{Exception.message(e)}"); {"", files_read}
   end
 
   defp build_context(working_dir, project_type, structure, config_summary,
@@ -484,9 +484,14 @@ defmodule OptimalSystemAgent.Agent.Explorer do
 
   defp cap_context(context, max_bytes) do
     if byte_size(context) > max_bytes do
-      # Truncate at a valid UTF-8 codepoint boundary
-      truncated = String.slice(context, 0, max_bytes) |> String.trim_trailing()
-      truncated <> "\n[Context truncated]"
+      <<truncated::binary-size(max_bytes), _rest::binary>> = context
+      # Find last valid UTF-8 boundary by dropping trailing invalid bytes
+      truncated =
+        case String.chunk(truncated, :valid) do
+          [] -> ""
+          chunks -> Enum.filter(chunks, &String.valid?/1) |> Enum.join()
+        end
+      String.trim_trailing(truncated) <> "\n[Context truncated]"
     else
       context
     end
