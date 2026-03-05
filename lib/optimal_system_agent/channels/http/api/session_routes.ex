@@ -2,11 +2,12 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.SessionRoutes do
   @moduledoc """
   Session management routes.
 
-    GET   /sessions
-    POST  /sessions
-    GET   /sessions/:id
-    GET   /sessions/:id/messages
-    POST  /sessions/:id/cancel
+    GET    /sessions
+    POST   /sessions
+    GET    /sessions/:id
+    GET    /sessions/:id/messages
+    POST   /sessions/:id/cancel
+    DELETE /sessions/:id
   """
   use Plug.Router
   import OptimalSystemAgent.Channels.HTTP.API.Shared
@@ -134,6 +135,37 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.SessionRoutes do
     conn
     |> put_resp_content_type("application/json")
     |> send_resp(200, body)
+  end
+
+  # ── DELETE /sessions/:id ───────────────────────────────────────────
+
+  delete "/:id" do
+    session_id = conn.params["id"]
+
+    # Cancel active loop if running (ignore if already stopped)
+    Loop.cancel(session_id)
+
+    # Remove the session JSONL file from disk
+    sessions_dir =
+      Application.get_env(:optimal_system_agent, :sessions_dir, "~/.osa/sessions")
+      |> Path.expand()
+
+    session_file = Path.join(sessions_dir, "#{session_id}.jsonl")
+
+    case File.rm(session_file) do
+      :ok ->
+        body = Jason.encode!(%{status: "deleted", session_id: session_id})
+
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(200, body)
+
+      {:error, :enoent} ->
+        json_error(conn, 404, "session_not_found", "Session #{session_id} not found")
+
+      {:error, reason} ->
+        json_error(conn, 500, "delete_failed", "Could not delete session: #{inspect(reason)}")
+    end
   end
 
   # ── POST /sessions/:id/cancel ──────────────────────────────────────

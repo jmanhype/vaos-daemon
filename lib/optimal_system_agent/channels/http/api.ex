@@ -10,7 +10,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
 
     /auth        → AuthRoutes        POST /login|logout|refresh
     /channels    → ChannelRoutes     GET /, POST /*/webhook (10 platforms)
-    /sessions    → SessionRoutes     GET|POST /, GET /:id, GET /:id/messages
+    /sessions    → SessionRoutes     GET|POST /, GET|DELETE /:id, GET /:id/messages, POST /:id/cancel
     /fleet       → FleetRoutes       POST /register|heartbeat|dispatch, GET /agents|/:id
     /orchestrate → OrchestrationRoutes  POST /|/complex, GET /tasks, GET /:id/progress
     /swarm       → OrchestrationRoutes  POST /launch, GET /|/:id, DELETE /:id
@@ -18,7 +18,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
     /tools       → ToolRoutes        GET /, POST /:name/execute
     /skills      → ToolRoutes        GET /, POST /create
     /commands    → ToolRoutes        GET /, POST /execute
-    /memory      → DataRoutes        POST /, GET /recall
+    /memory      → DataRoutes        POST /, GET /recall, GET /search
     /models      → DataRoutes        GET /, POST /switch
     /analytics   → DataRoutes        GET /
     /scheduler   → DataRoutes        GET /jobs, POST /reload

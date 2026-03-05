@@ -3,7 +3,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.DataRoutes do
   Data management routes forwarded from multiple prefixes.
 
   Forwarded prefixes → effective routes:
-    /memory     → GET /recall, POST /
+    /memory     → GET /recall, GET /search, POST /
     /models     → GET /, POST /switch
     /analytics  → GET /
     /scheduler  → GET /jobs, POST /reload
@@ -43,6 +43,41 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.DataRoutes do
     conn
     |> put_resp_content_type("application/json")
     |> send_resp(200, body)
+  end
+
+  # ── GET /search — memory search ────────────────────────────────────
+  # Query params: q (required), category (optional), limit (optional, default 10),
+  #               sort (optional: relevance|recency|importance), mode (optional: relevant|keyword)
+
+  get "/search" do
+    query = conn.query_params["q"]
+
+    if is_nil(query) or query == "" do
+      json_error(conn, 400, "invalid_request", "Missing required query param: q")
+    else
+      mode = conn.query_params["mode"] || "keyword"
+      limit = parse_int(conn.query_params["limit"]) || 10
+      category = conn.query_params["category"]
+      sort = parse_sort_atom(conn.query_params["sort"])
+
+      results =
+        if mode == "relevant" do
+          max_tokens = limit * 200
+          Memory.recall_relevant(query, max_tokens)
+        else
+          opts =
+            [limit: limit, sort: sort]
+            |> maybe_put(:category, category)
+
+          Memory.search(query, opts)
+        end
+
+      body = Jason.encode!(%{results: results, count: length(results), query: query})
+
+      conn
+      |> put_resp_content_type("application/json")
+      |> send_resp(200, body)
+    end
   end
 
   # ── GET /jobs — scheduler jobs ─────────────────────────────────────
@@ -280,6 +315,10 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.DataRoutes do
 
   # Persist provider/model selection to ~/.osa/config.json so it survives restarts.
   # Reads existing config (if any), merges the two keys, and writes back atomically.
+  defp parse_sort_atom("recency"), do: :recency
+  defp parse_sort_atom("importance"), do: :importance
+  defp parse_sort_atom(_), do: :relevance
+
   defp persist_model_selection(provider, model) do
     config_path =
       Application.get_env(:optimal_system_agent, :bootstrap_dir, "~/.osa")
