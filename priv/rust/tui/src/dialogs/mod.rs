@@ -1,3 +1,6 @@
+// Phase 2+: dialog action variants — some dialog actions not yet dispatched
+#![allow(dead_code)]
+
 pub mod command_palette;
 pub mod file_picker;
 pub mod model_picker;

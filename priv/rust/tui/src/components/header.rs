@@ -1,3 +1,6 @@
+// Phase 2+: workspace field — wired when multi-workspace support arrives
+#![allow(dead_code)]
+
 use ratatui::prelude::*;
 use ratatui::widgets::Paragraph;
 

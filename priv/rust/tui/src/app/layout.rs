@@ -12,7 +12,8 @@ pub enum LayoutMode {
     Sidebar,
 }
 
-// Layout metadata fields are computed for debugging/future use
+// Phase 2: metadata fields (mode, term dims, sidebar_height, compact_mode) exposed for future
+// responsive layout decisions and debug overlay — not yet read by render code
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Layout {

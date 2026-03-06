@@ -1,3 +1,6 @@
+// Phase 2+: active_form field — wired when task form tracking is added
+#![allow(dead_code)]
+
 use ratatui::prelude::*;
 use ratatui::widgets::Paragraph;
 

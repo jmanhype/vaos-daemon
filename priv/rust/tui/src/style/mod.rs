@@ -1,3 +1,6 @@
+// Phase 2+: theme fields for sidebar and input theming, used progressively as components mature
+#![allow(dead_code)]
+
 pub mod gradient;
 pub mod themes;
 

@@ -11,7 +11,6 @@ use super::{
 pub struct AgentRenderer;
 
 impl ToolRenderer for AgentRenderer {
-    #[allow(dead_code)]
     fn render(&self, _name: &str, args: &str, result: &str, opts: &RenderOpts) -> Vec<Line<'static>> {
         let theme = crate::style::theme();
 
@@ -159,7 +158,6 @@ fn parse_tree_line_prefix(
 pub struct DelegateRenderer;
 
 impl ToolRenderer for DelegateRenderer {
-    #[allow(dead_code)]
     fn render(&self, _name: &str, args: &str, result: &str, opts: &RenderOpts) -> Vec<Line<'static>> {
         let theme = crate::style::theme();
 

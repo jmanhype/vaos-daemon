@@ -7,7 +7,6 @@ use super::{Component, ComponentAction};
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-#[allow(dead_code)]
 struct SidebarSection {
     title: String,
     items: Vec<(String, String)>, // (label, value)
@@ -73,6 +72,7 @@ impl Sidebar {
 
     // ─── Configuration setters ────────────────────────────────────────────
 
+    // Phase 2: wired when sidebar supports dynamic resize from layout
     #[allow(dead_code)]
     pub fn set_width(&mut self, w: u16) {
         self.width = w;

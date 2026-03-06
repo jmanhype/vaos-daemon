@@ -1,3 +1,6 @@
+// Phase 2+: file attachment dialog — not yet wired to input flow
+#![allow(dead_code)]
+
 /// File/directory browser dialog.
 ///
 /// # Actions to add to `DialogAction` in mod.rs:

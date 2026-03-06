@@ -9,7 +9,6 @@ use super::{
 pub struct GenericRenderer;
 
 impl ToolRenderer for GenericRenderer {
-    #[allow(dead_code)]
     fn render(&self, name: &str, args: &str, result: &str, opts: &RenderOpts) -> Vec<Line<'static>> {
         let theme = crate::style::theme();
 

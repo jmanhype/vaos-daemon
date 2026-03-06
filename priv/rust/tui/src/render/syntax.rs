@@ -25,7 +25,6 @@ fn syntect_color_to_ratatui(c: syntect::highlighting::Color) -> Color {
 /// Highlight a code block with syntax coloring.
 /// Returns `Vec<Line<'static>>`. Falls back to plain dim rendering when the
 /// language is unknown or syntect cannot tokenize the input.
-#[allow(dead_code)]
 pub fn highlight(code: &str, language: &str) -> Vec<Line<'static>> {
     let ss = syntax_set();
     let ts = theme_set();

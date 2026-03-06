@@ -9,7 +9,6 @@ use super::{
 pub struct BashRenderer;
 
 impl ToolRenderer for BashRenderer {
-    #[allow(dead_code)]
     fn render(&self, _name: &str, args: &str, result: &str, opts: &RenderOpts) -> Vec<Line<'static>> {
         let theme = crate::style::theme();
 

@@ -1,3 +1,6 @@
+// Phase 2+: task checklist constants and tick() — wired when animation lands
+#![allow(dead_code)]
+
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 

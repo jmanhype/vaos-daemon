@@ -8,7 +8,6 @@ use super::{
 pub struct ReferencesRenderer;
 
 impl ToolRenderer for ReferencesRenderer {
-    #[allow(dead_code)]
     fn render(&self, _name: &str, args: &str, result: &str, opts: &RenderOpts) -> Vec<Line<'static>> {
         let theme = crate::style::theme();
 

@@ -10,7 +10,6 @@ use super::{
 pub struct WebFetchRenderer;
 
 impl ToolRenderer for WebFetchRenderer {
-    #[allow(dead_code)]
     fn render(&self, _name: &str, args: &str, result: &str, opts: &RenderOpts) -> Vec<Line<'static>> {
         let theme = crate::style::theme();
 
@@ -83,7 +82,6 @@ impl ToolRenderer for WebFetchRenderer {
 pub struct WebSearchRenderer;
 
 impl ToolRenderer for WebSearchRenderer {
-    #[allow(dead_code)]
     fn render(&self, _name: &str, args: &str, result: &str, opts: &RenderOpts) -> Vec<Line<'static>> {
         let theme = crate::style::theme();
 

@@ -1,3 +1,6 @@
+// Phase 2+: RenderOpts.truncated field — wired when tool output truncation indicator is added
+#![allow(dead_code)]
+
 pub mod agent;
 pub mod bash;
 pub mod diagnostics;
@@ -14,7 +17,6 @@ use ratatui::text::{Line, Span};
 
 // ─── Status ───────────────────────────────────────────────────────────────────
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ToolStatus {
     Pending,

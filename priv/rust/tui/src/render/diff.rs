@@ -10,7 +10,6 @@ use similar::{ChangeTag, TextDiff};
 ///   `+ added line`   — green (theme.colors.success)
 ///   `- removed line` — red   (theme.colors.error)
 ///   ` context line`  — muted (theme.colors.muted)
-#[allow(dead_code)]
 pub fn render_diff(old_text: &str, new_text: &str, _width: u16) -> Vec<Line<'static>> {
     let theme = crate::style::theme();
 

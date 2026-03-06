@@ -1,9 +1,13 @@
+// Phase 2+: survey dialog fields — wire when survey results are persisted
+#![allow(dead_code)]
+
 /// Multi-step survey dialog with single/multi-select questions and free-text input.
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     prelude::*,
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
+use unicode_width::UnicodeWidthStr;
 
 // ── Action ──────────────────────────────────────────────────────────────────
 
@@ -64,6 +68,7 @@ pub struct SurveyDialog {
     checked: Vec<bool>,
     focus: FocusMode,
     free_text_buf: String,
+    free_text_cursor: usize,
     answers: Vec<Option<QuestionAnswer>>,
 }
 
@@ -83,6 +88,7 @@ impl SurveyDialog {
             checked: initial_checked,
             focus: FocusMode::OptionList,
             free_text_buf: String::new(),
+            free_text_cursor: 0,
             answers: vec![None; num_questions],
         }
     }
@@ -139,6 +145,7 @@ impl SurveyDialog {
         self.cursor = 0;
         self.focus = FocusMode::OptionList;
         self.free_text_buf.clear();
+        self.free_text_cursor = 0;
 
         if let Some(Some(prev)) = self.answers.get(self.current_step) {
             // Restore previous selections
@@ -151,6 +158,7 @@ impl SurveyDialog {
             }
             if let Some(ref ft) = prev.free_text {
                 self.free_text_buf = ft.clone();
+                self.free_text_cursor = ft.len();
                 let ft_idx = q.options.len();
                 if ft_idx < self.checked.len() {
                     self.checked[ft_idx] = true;
@@ -285,11 +293,51 @@ impl SurveyDialog {
                 self.advance()
             }
             KeyCode::Backspace => {
-                self.free_text_buf.pop();
+                if self.free_text_cursor > 0 {
+                    let prev_len = self.free_text_buf[..self.free_text_cursor]
+                        .chars()
+                        .last()
+                        .map(|c| c.len_utf8())
+                        .unwrap_or(0);
+                    let new_cursor = self.free_text_cursor - prev_len;
+                    self.free_text_buf.drain(new_cursor..self.free_text_cursor);
+                    self.free_text_cursor = new_cursor;
+                }
+                None
+            }
+            KeyCode::Left => {
+                if self.free_text_cursor > 0 {
+                    let prev_len = self.free_text_buf[..self.free_text_cursor]
+                        .chars()
+                        .last()
+                        .map(|c| c.len_utf8())
+                        .unwrap_or(0);
+                    self.free_text_cursor -= prev_len;
+                }
+                None
+            }
+            KeyCode::Right => {
+                if self.free_text_cursor < self.free_text_buf.len() {
+                    let next_len = self.free_text_buf[self.free_text_cursor..]
+                        .chars()
+                        .next()
+                        .map(|c| c.len_utf8())
+                        .unwrap_or(0);
+                    self.free_text_cursor += next_len;
+                }
+                None
+            }
+            KeyCode::Home => {
+                self.free_text_cursor = 0;
+                None
+            }
+            KeyCode::End => {
+                self.free_text_cursor = self.free_text_buf.len();
                 None
             }
             KeyCode::Char(c) => {
-                self.free_text_buf.push(c);
+                self.free_text_buf.insert(self.free_text_cursor, c);
+                self.free_text_cursor += c.len_utf8();
                 None
             }
             _ => None,
@@ -460,7 +508,7 @@ impl SurveyDialog {
             // Free text input line
             if cy < option_area_bottom {
                 let ft_display = if self.focus == FocusMode::FreeText {
-                    format!("    {}_", self.free_text_buf)
+                    format!("    {}", self.free_text_buf)
                 } else if self.free_text_buf.is_empty() {
                     "    Type your answer...".to_string()
                 } else {
@@ -473,10 +521,23 @@ impl SurveyDialog {
                 } else {
                     Style::default().fg(theme.colors.dim)
                 };
+                let ft_area = Rect::new(inner.x, cy, inner.width, 1);
                 frame.render_widget(
                     Paragraph::new(ft_display).style(ft_style),
-                    Rect::new(inner.x, cy, inner.width, 1),
+                    ft_area,
                 );
+                // Position terminal cursor at the correct column when focused
+                if self.focus == FocusMode::FreeText {
+                    // 4 spaces indent + display width of text before cursor
+                    let prefix_width = 4u16;
+                    let text_before = &self.free_text_buf[..self.free_text_cursor];
+                    let text_width = UnicodeWidthStr::width(text_before) as u16;
+                    let cursor_x = ft_area.x + prefix_width + text_width;
+                    let cursor_y = ft_area.y;
+                    if cursor_x < ft_area.x + ft_area.width {
+                        frame.set_cursor_position(Position::new(cursor_x, cursor_y));
+                    }
+                }
             }
         }
 

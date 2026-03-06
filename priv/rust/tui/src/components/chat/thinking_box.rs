@@ -33,6 +33,7 @@ impl ThinkingBox {
         self.content.clear();
     }
 
+    // Phase 3: thinking panel expand/collapse via Ctrl+T keybind
     #[allow(dead_code)]
     pub fn toggle(&mut self) {
         self.expanded = !self.expanded;

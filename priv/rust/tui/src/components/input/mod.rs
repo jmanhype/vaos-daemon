@@ -1,3 +1,6 @@
+// Phase 2+: value() and set_content() — wired when external content injection is added
+#![allow(dead_code)]
+
 pub mod completions;
 pub mod history;
 pub mod textarea;
@@ -431,7 +434,15 @@ impl Component for InputComponent {
                         self.insert_char('\n');
                         return ComponentAction::Consumed;
                     }
-                    // Enter in multiline: also newline
+                    // Ctrl+Enter in multiline: submit
+                    (KeyCode::Enter, m) if self.multiline && m == KeyModifiers::CONTROL => {
+                        if self.content.trim().is_empty() {
+                            return ComponentAction::Consumed;
+                        }
+                        let text = self.submit();
+                        return ComponentAction::Emit(AppAction::Submit(text));
+                    }
+                    // Enter in multiline: insert newline
                     (KeyCode::Enter, KeyModifiers::NONE) if self.multiline => {
                         self.insert_char('\n');
                         return ComponentAction::Consumed;
@@ -466,11 +477,11 @@ impl Component for InputComponent {
                         return ComponentAction::Consumed;
                     }
                     // Home/End within input
-                    (KeyCode::Home, KeyModifiers::NONE) if !self.is_empty() => {
+                    (KeyCode::Home, KeyModifiers::NONE) => {
                         self.cursor = 0;
                         return ComponentAction::Consumed;
                     }
-                    (KeyCode::End, KeyModifiers::NONE) if !self.is_empty() => {
+                    (KeyCode::End, KeyModifiers::NONE) => {
                         self.cursor = self.content.len();
                         return ComponentAction::Consumed;
                     }
@@ -590,7 +601,7 @@ impl Component for InputComponent {
             // Right-aligned hints for multiline
             if self.multiline {
                 let line_count = self.content.lines().count();
-                let hint = format!("[{} lines \u{00b7} alt+enter newline]", line_count);
+                let hint = format!("[{} lines \u{00b7} ctrl+enter submit]", line_count);
                 let hint_width = hint.len() as u16;
                 if input_area.width > hint_width + 10 {
                     let hint_area = Rect::new(
@@ -656,7 +667,9 @@ impl Component for InputComponent {
 
         // Show cursor
         if self.focused {
-            let cursor_x = area.x + prompt_len as u16 + self.cursor as u16;
+            // Use character count (not byte offset) for cursor X position
+            let char_cols = self.content[..self.cursor].chars().count() as u16;
+            let cursor_x = area.x + prompt_len as u16 + char_cols;
             let cursor_y = area.y + 1;
             if cursor_x < area.x + area.width {
                 frame.set_cursor_position(Position::new(cursor_x, cursor_y));

@@ -1,3 +1,6 @@
+// Phase 2+: command palette is_open() method — wired when palette auto-close is added
+#![allow(dead_code)]
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     prelude::*,

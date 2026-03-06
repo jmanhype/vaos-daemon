@@ -262,6 +262,7 @@ impl Agents {
         groups
     }
 
+    // Phase 2: called when session resets wipe agent panel state
     #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.active = false;

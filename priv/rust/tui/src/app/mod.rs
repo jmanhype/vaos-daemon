@@ -51,7 +51,7 @@ use self::state::AppState;
 pub const HEALTH_RETRY_DELAY: Duration = Duration::from_secs(5);
 pub const MAX_MESSAGE_SIZE: usize = 100_000;
 
-// Phase 3+ fields are initialized but not yet read — suppress until wired
+// Some fields initialized but not yet read directly (accessed via render pipeline or Phase 3+)
 #[allow(dead_code)]
 pub struct App {
     // Components

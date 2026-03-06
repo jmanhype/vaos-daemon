@@ -1,3 +1,6 @@
+// Phase 2+: reasoning dialog — UI wired but some methods not yet called
+#![allow(dead_code)]
+
 /// Reasoning level selector — small centered modal with 4 levels.
 ///
 /// # Actions to add to `DialogAction` in mod.rs:

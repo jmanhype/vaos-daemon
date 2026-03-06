@@ -1,3 +1,6 @@
+// Phase 2+: config_path() — wired when config reload command is implemented
+#![allow(dead_code)]
+
 pub mod cli;
 
 use anyhow::Result;

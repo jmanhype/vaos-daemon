@@ -1,3 +1,6 @@
+// Phase 2+: ComponentAction variants and set_focused — wired when focus dispatch is added
+#![allow(dead_code)]
+
 pub mod activity;
 pub mod agents;
 pub mod chat;

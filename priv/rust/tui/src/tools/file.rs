@@ -10,7 +10,6 @@ use super::{
 pub struct FileViewRenderer;
 
 impl ToolRenderer for FileViewRenderer {
-    #[allow(dead_code)]
     fn render(&self, _name: &str, args: &str, result: &str, opts: &RenderOpts) -> Vec<Line<'static>> {
         let theme = crate::style::theme();
 
@@ -71,7 +70,6 @@ impl ToolRenderer for FileViewRenderer {
 pub struct FileWriteRenderer;
 
 impl ToolRenderer for FileWriteRenderer {
-    #[allow(dead_code)]
     fn render(&self, _name: &str, args: &str, result: &str, opts: &RenderOpts) -> Vec<Line<'static>> {
         let theme = crate::style::theme();
 
@@ -132,7 +130,6 @@ impl ToolRenderer for FileWriteRenderer {
 pub struct FileEditRenderer;
 
 impl ToolRenderer for FileEditRenderer {
-    #[allow(dead_code)]
     fn render(&self, name: &str, args: &str, result: &str, opts: &RenderOpts) -> Vec<Line<'static>> {
         let theme = crate::style::theme();
 

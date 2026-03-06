@@ -10,7 +10,6 @@ use super::{
 pub struct GlobRenderer;
 
 impl ToolRenderer for GlobRenderer {
-    #[allow(dead_code)]
     fn render(&self, _name: &str, args: &str, result: &str, opts: &RenderOpts) -> Vec<Line<'static>> {
         let theme = crate::style::theme();
 
@@ -63,7 +62,6 @@ impl ToolRenderer for GlobRenderer {
 pub struct GrepRenderer;
 
 impl ToolRenderer for GrepRenderer {
-    #[allow(dead_code)]
     fn render(&self, _name: &str, args: &str, result: &str, opts: &RenderOpts) -> Vec<Line<'static>> {
         let theme = crate::style::theme();
 
@@ -147,7 +145,6 @@ fn render_grep_line(
 pub struct LsRenderer;
 
 impl ToolRenderer for LsRenderer {
-    #[allow(dead_code)]
     fn render(&self, _name: &str, args: &str, result: &str, opts: &RenderOpts) -> Vec<Line<'static>> {
         let theme = crate::style::theme();
 

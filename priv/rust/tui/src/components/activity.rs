@@ -1,3 +1,6 @@
+// Phase 2+: activity panel — Synthesizing variant, set_thinking wired when agent mesh arrives
+#![allow(dead_code)]
+
 use ratatui::prelude::*;
 use ratatui::widgets::Paragraph;
 

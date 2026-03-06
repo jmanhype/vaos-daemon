@@ -1,3 +1,6 @@
+// Phase 2+: SSE wire format fields — parsed from JSON but not all fields consumed by UI yet
+#![allow(dead_code)]
+
 use crate::client::types::*;
 
 /// Agent info emitted during the spawning phase (before agents start running).

@@ -231,9 +231,12 @@ impl ModelPicker {
             KeyCode::Down | KeyCode::Char('j') => self.move_down(),
             KeyCode::Backspace => {
                 self.filter.pop();
-                self.scroll_offset = 0;
-                self.cursor = 0;
+                let old_cursor = self.cursor;
                 self.rebuild();
+                // Preserve cursor position rather than jumping to top
+                self.cursor = old_cursor.min(self.rows.len().saturating_sub(1));
+                self.ensure_on_model();
+                self.adjust_scroll();
             }
             KeyCode::Char(c) => {
                 self.filter.push(c);
@@ -307,6 +310,22 @@ impl ModelPicker {
 
         // List area
         let list_h = inner.height.saturating_sub(cy - inner.y + 2); // 2 = separator + help
+
+        // Empty state: show a centered message when the filter matches nothing
+        if self.model_count() == 0 {
+            if list_h > 0 {
+                let msg_y = cy + list_h / 2;
+                frame.render_widget(
+                    Paragraph::new(Span::styled(
+                        "No matching models",
+                        Style::default().fg(theme.colors.muted),
+                    ))
+                    .alignment(Alignment::Center),
+                    Rect::new(inner.x, msg_y, inner.width, 1),
+                );
+            }
+        }
+
         let visible_rows = self.rows.iter().skip(self.scroll_offset).take(list_h as usize);
 
         for (rel_i, row) in visible_rows.enumerate() {

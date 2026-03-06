@@ -1,3 +1,6 @@
+// Phase 2+: history reset_navigation — wired when history navigation is extended
+#![allow(dead_code)]
+
 /// Command history with navigation
 pub struct History {
     entries: Vec<String>,

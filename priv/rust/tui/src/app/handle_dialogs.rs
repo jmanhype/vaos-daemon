@@ -250,6 +250,13 @@ impl App {
                             "Permission granted".into(),
                             crate::components::toast::ToastLevel::Info,
                         );
+                        if let Some(ref d) = self.permissions {
+                            let client = self.client.clone();
+                            let request_id = d.request_id().to_string();
+                            tokio::spawn(async move {
+                                let _ = client.permission_response(&request_id, true).await;
+                            });
+                        }
                         self.permissions = None;
                     }
                     DialogAction::PermissionAllowSession => {
@@ -258,6 +265,13 @@ impl App {
                             "Permission granted for session".into(),
                             crate::components::toast::ToastLevel::Info,
                         );
+                        if let Some(ref d) = self.permissions {
+                            let client = self.client.clone();
+                            let request_id = d.request_id().to_string();
+                            tokio::spawn(async move {
+                                let _ = client.permission_response(&request_id, true).await;
+                            });
+                        }
                         self.permissions = None;
                     }
                     DialogAction::PermissionDeny => {
@@ -266,6 +280,13 @@ impl App {
                             "Permission denied".into(),
                             crate::components::toast::ToastLevel::Warning,
                         );
+                        if let Some(ref d) = self.permissions {
+                            let client = self.client.clone();
+                            let request_id = d.request_id().to_string();
+                            tokio::spawn(async move {
+                                let _ = client.permission_response(&request_id, false).await;
+                            });
+                        }
                         self.permissions = None;
                     }
                     _ => {}

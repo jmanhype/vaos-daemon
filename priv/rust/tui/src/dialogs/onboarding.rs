@@ -1,3 +1,6 @@
+// Phase 2+: onboarding wizard fields — channels field wired when onboarding step added
+#![allow(dead_code)]
+
 /// 8-step onboarding wizard dialog.
 ///
 /// # Actions to add to `DialogAction` in mod.rs:

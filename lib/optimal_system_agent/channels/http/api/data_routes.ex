@@ -250,9 +250,13 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.DataRoutes do
         _ -> []
       end
 
+    all_models =
+      (ollama_models ++ cloud_models)
+      |> Enum.sort_by(& &1.context_window, :desc)
+
     body =
       Jason.encode!(%{
-        models: ollama_models ++ cloud_models,
+        models: all_models,
         current: to_string(current_model),
         provider: to_string(provider)
       })

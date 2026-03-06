@@ -1,3 +1,6 @@
+// Phase 2+: generic picker dialog — not yet wired to a caller
+#![allow(dead_code)]
+
 use std::cell::Cell;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};

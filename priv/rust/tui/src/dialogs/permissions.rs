@@ -1,3 +1,6 @@
+// Phase 2+: permissions set_diff() — wired when permission review shows diffs
+#![allow(dead_code)]
+
 use std::cell::Cell;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -29,7 +32,8 @@ const MIN_H: u16 = 10;
 pub struct Permissions {
     pub tool_name: String,
     pub tool_args: String,
-    pub description: String,
+    /// Opaque identifier echoed back to the backend when the user responds.
+    request_id: String,
     pub diff_old: Option<String>,
     pub diff_new: Option<String>,
     /// 0 = Allow, 1 = Allow Session, 2 = Deny
@@ -45,7 +49,7 @@ impl Permissions {
         Self {
             tool_name: String::new(),
             tool_args: String::new(),
-            description: String::new(),
+            request_id: String::new(),
             diff_old: None,
             diff_new: None,
             selected: 0,
@@ -54,15 +58,20 @@ impl Permissions {
         }
     }
 
-    /// Set the tool being requested.
-    pub fn set_tool(&mut self, name: String, args: String, description: String) {
+    /// Set the tool being requested and the backend-assigned request identifier.
+    pub fn set_tool(&mut self, name: String, args: String, request_id: String) {
         self.tool_name = name;
         self.tool_args = args;
-        self.description = description;
+        self.request_id = request_id;
         self.diff_old = None;
         self.diff_new = None;
         self.scroll = 0;
         self.selected = 0;
+    }
+
+    /// Returns the opaque request identifier assigned by the backend.
+    pub fn request_id(&self) -> &str {
+        &self.request_id
     }
 
     /// Attach a diff for display in the viewport.
@@ -184,22 +193,6 @@ impl Permissions {
             ]);
             frame.render_widget(
                 Paragraph::new(tool_line),
-                Rect::new(inner.x, cursor_y, inner.width, 1),
-            );
-            cursor_y += 1;
-        }
-
-        // ── Description (if non-empty) ────────────────────────────────────
-        if !self.description.is_empty() && cursor_y < inner.y + inner.height {
-            let desc_line = Line::from(vec![
-                Span::styled("  Desc:  ", Style::default().fg(theme.colors.muted)),
-                Span::styled(
-                    self.description.clone(),
-                    Style::default().fg(theme.colors.dim),
-                ),
-            ]);
-            frame.render_widget(
-                Paragraph::new(desc_line),
                 Rect::new(inner.x, cursor_y, inner.width, 1),
             );
             cursor_y += 1;

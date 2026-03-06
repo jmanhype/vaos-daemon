@@ -1,9 +1,12 @@
+// Phase 2+: add_tool_message (legacy path) — kept for compatibility, replaced by rich path
+#![allow(dead_code)]
+
 pub mod message;
 pub mod thinking_box;
 pub mod welcome;
 
 use ratatui::prelude::*;
-use ratatui::widgets::{Scrollbar, ScrollbarOrientation, ScrollbarState};
+use ratatui::widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
 
 use crate::client::types::Signal;
 use crate::event::Event;
@@ -115,6 +118,7 @@ impl Chat {
             tool_data: None,
             survey_data: Some(SurveyQAData { survey_id, pairs }),
             cached_height: None,
+            timestamp: None,
         });
         self.has_messages = true;
         self.scroll_offset = 0;
@@ -362,6 +366,29 @@ impl Component for Chat {
                 .track_style(theme.scrollbar_track());
 
             frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+        }
+
+        // Scroll position indicator -- shown only when scrolled up (scroll_offset > 0).
+        // scroll_offset equals the number of lines hidden below the current viewport.
+        if self.scroll_offset > 0 && area.height >= 1 {
+            let lines_below = self.scroll_offset;
+            let label = format!(" ↓ {} more ", lines_below);
+            let label_width = label.len() as u16;
+
+            // Position: bottom-right of chat area, 1 col left of the scrollbar track.
+            // Guard against label wider than the usable area.
+            if label_width < area.width.saturating_sub(1) {
+                let indicator_x = area.x + area.width - label_width - 1;
+                let indicator_y = area.y + area.height - 1;
+                let indicator_area = Rect::new(indicator_x, indicator_y, label_width, 1);
+
+                let indicator_style = Style::default()
+                    .fg(theme.colors.button_active_text)
+                    .bg(theme.colors.tooltip_bg)
+                    .add_modifier(Modifier::BOLD);
+
+                frame.render_widget(Paragraph::new(label).style(indicator_style), indicator_area);
+            }
         }
     }
 }

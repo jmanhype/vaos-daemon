@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use anyhow::Result;
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
@@ -20,7 +18,7 @@ mod render;
 mod style;
 mod view;
 mod dialogs;
-#[allow(dead_code)]
+mod util;
 mod tools;
 
 fn main() -> Result<()> {

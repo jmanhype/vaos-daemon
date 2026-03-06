@@ -8,7 +8,6 @@ use super::{
 pub struct DiagnosticsRenderer;
 
 impl ToolRenderer for DiagnosticsRenderer {
-    #[allow(dead_code)]
     fn render(&self, _name: &str, _args: &str, result: &str, opts: &RenderOpts) -> Vec<Line<'static>> {
         let theme = crate::style::theme();
 

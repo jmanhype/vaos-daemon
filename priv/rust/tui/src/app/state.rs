@@ -1,6 +1,5 @@
 /// App states — 10-state machine with validated transitions
 // PlanReview + Permissions have handlers but no SSE trigger events yet
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppState {
     Connecting,

@@ -45,6 +45,7 @@ impl SseClient {
     }
 
     /// Returns a cancellation token that can be used to stop the SSE stream.
+    // Phase 2: expose for external cancel control (e.g., reconnect-on-session-switch)
     #[allow(dead_code)]
     pub fn cancel_token(&self) -> CancellationToken {
         self.cancel.clone()

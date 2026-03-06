@@ -434,6 +434,22 @@ impl ApiClient {
         Ok(resp.json().await?)
     }
 
+    // -- Permissions --
+
+    /// POST /api/v1/permissions/respond — send Allow/Deny decision back to backend.
+    ///
+    /// TODO: backend endpoint `/api/v1/permissions/respond` does not yet exist.
+    /// This sends the correct payload; wire backend when the route is implemented.
+    pub async fn permission_response(&self, request_id: &str, allowed: bool) -> Result<()> {
+        let body = serde_json::json!({
+            "request_id": request_id,
+            "allowed": allowed,
+        });
+        // Best-effort: ignore errors if the backend endpoint isn't yet present.
+        let _ = self.post("/api/v1/permissions/respond", &body).await;
+        Ok(())
+    }
+
     // =========================================================================
     // HTTP helpers
     // =========================================================================

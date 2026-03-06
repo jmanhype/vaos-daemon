@@ -1,3 +1,6 @@
+// Phase 2+: completions category field — used when completions are grouped by type
+#![allow(dead_code)]
+
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
