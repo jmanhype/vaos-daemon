@@ -59,6 +59,7 @@ func (m Model) View() tea.View {
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	v.ReportFocus = true
+	// BracketedPaste is enabled by default in bubbletea v2 (DisableBracketedPasteMode defaults to false)
 	return v
 }
 

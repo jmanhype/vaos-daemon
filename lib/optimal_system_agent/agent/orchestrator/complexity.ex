@@ -12,6 +12,40 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.Complexity do
   alias OptimalSystemAgent.Providers.Registry, as: Providers
 
   @doc """
+  Fast heuristic check — no LLM call.
+
+  Returns `:likely_simple` or `:possibly_complex`.
+  Use this to decide whether to run the full `analyze/1` call.
+  """
+  @spec quick_check(String.t()) :: :likely_simple | :possibly_complex
+  def quick_check(message) do
+    # Long messages with multiple sentences/requests are usually complex.
+    len = String.length(message)
+
+    multi_task_patterns = [
+      ~r/\band\s+also\b/i,
+      ~r/\bthen\s+(also\s+)?(please\s+)?/i,
+      ~r/\badditionally\b/i,
+      ~r/\bmultiple\b/i,
+      ~r/\bcomprehensive\b/i,
+      ~r/\bfull\s+(feature|refactor|implementation|migration|overhaul)\b/i,
+      ~r/\brefactor\s+and\b/i,
+      ~r/\bmigrate\s+and\b/i,
+      ~r/^\s*\d+\.\s+.+\n\s*\d+\.\s+/ms,
+      ~r/^(\s*[-*]\s+.+\n){3,}/ms
+    ]
+
+    has_multi_task = Enum.any?(multi_task_patterns, &Regex.match?(&1, message))
+    long_enough = len > 400
+
+    if (has_multi_task and long_enough) or (len > 800) do
+      :possibly_complex
+    else
+      :likely_simple
+    end
+  end
+
+  @doc """
   Analyze a task message for complexity.
 
   Returns `:simple` or `{:complex, [SubTask.t()]}`.

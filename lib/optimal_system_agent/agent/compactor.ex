@@ -58,7 +58,7 @@ defmodule OptimalSystemAgent.Agent.Compactor do
   alias OptimalSystemAgent.PromptLoader
 
   defp max_tokens, do: Application.get_env(:optimal_system_agent, :max_context_tokens, 128_000)
-  defp tier1_threshold, do: Application.get_env(:optimal_system_agent, :compaction_warn, 0.80)
+  defp tier1_threshold, do: Application.get_env(:optimal_system_agent, :compaction_warn, 0.85)
 
   defp tier2_threshold,
     do: Application.get_env(:optimal_system_agent, :compaction_aggressive, 0.85)
@@ -67,8 +67,8 @@ defmodule OptimalSystemAgent.Agent.Compactor do
     do: Application.get_env(:optimal_system_agent, :compaction_emergency, 0.95)
 
   # Zone boundaries (counted from the end of the non-system message list)
-  @hot_zone_size 10
-  @warm_zone_end 30
+  @hot_zone_size 20
+  @warm_zone_end 50
 
   # Acknowledgment patterns — these get compressed first
   @ack_patterns ~r/\A\s*(ok|okay|sure|thanks|thank you|got it|yes|no|yep|nope|k|kk|alright|cool|nice|great|perfect|noted|ack|roger|👍|👌)\s*[\.\!\?]?\s*\z/iu

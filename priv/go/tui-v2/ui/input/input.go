@@ -244,9 +244,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.resetTab()
 		}
 
-	// Completions popup: item selected → fill input.
+	// Completions popup: item selected → fill input with trailing space so
+	// the user can immediately type the argument without pressing Space.
 	case completions.SelectedMsg:
-		m.ta.SetValue(msg.Item.Name)
+		m.ta.SetValue(msg.Item.Name + " ")
 		m.updateHeight()
 		m.completions.Hide()
 		return m, nil

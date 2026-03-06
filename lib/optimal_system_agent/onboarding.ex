@@ -197,6 +197,16 @@ defmodule OptimalSystemAgent.Onboarding do
         Application.put_env(:optimal_system_agent, key_atom, value)
       end
 
+      # Working directory — only apply if not already set via OSA_WORKING_DIR env var
+      if System.get_env("OSA_WORKING_DIR") == nil do
+        case get_in(config, ["workspace", "default_dir"]) do
+          dir when is_binary(dir) and dir != "" ->
+            Application.put_env(:optimal_system_agent, :working_dir, Path.expand(dir))
+          _ ->
+            :ok
+        end
+      end
+
       # Rebuild fallback chain from newly applied config
       # (runtime.exs ran before config.json existed on first run)
       rebuild_fallback_chain()

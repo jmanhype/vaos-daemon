@@ -271,4 +271,11 @@ config :optimal_system_agent,
   thinking_budget_tokens: parse_int.(System.get_env("OSA_THINKING_BUDGET"), 5_000),
 
   # Quiet hours for heartbeat
-  quiet_hours: System.get_env("OSA_QUIET_HOURS")
+  quiet_hours: System.get_env("OSA_QUIET_HOURS"),
+
+  # Default working directory for the agent (e.g. a project you want OSA to work on).
+  # Set OSA_WORKING_DIR=~/Desktop/BOS to point OSA at the BOS codebase by default.
+  working_dir: (case System.get_env("OSA_WORKING_DIR") do
+    nil -> nil
+    path -> Path.expand(path)
+  end)
