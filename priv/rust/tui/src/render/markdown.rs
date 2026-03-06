@@ -142,15 +142,18 @@ pub fn render_markdown(input: &str, width: u16) -> Text<'static> {
             continue;
         }
 
-        // ── Blockquotes ───────────────────────────────────────────────────────
+        // ── Blockquotes (word-wrapped) ────────────────────────────────────────
         if raw_line.starts_with("> ") {
-            let content = raw_line[2..].to_owned();
+            let content = &raw_line[2..];
             let style = Style::default()
                 .fg(theme.colors.muted)
                 .add_modifier(Modifier::ITALIC);
-            let border = Span::styled("│ ".to_owned(), Style::default().fg(theme.colors.dim));
-            let text_span = Span::styled(content, style);
-            lines.push(Line::from(vec![border, text_span]));
+            let wrapped = wrap_text(content, width.saturating_sub(4) as usize);
+            for wline in wrapped {
+                let border = Span::styled("│ ".to_owned(), Style::default().fg(theme.colors.dim));
+                let text_span = Span::styled(wline, style);
+                lines.push(Line::from(vec![border, text_span]));
+            }
             continue;
         }
 
@@ -180,7 +183,7 @@ pub fn render_markdown(input: &str, width: u16) -> Text<'static> {
             continue;
         }
 
-        // ── Unordered lists (indent-aware) ──────────────────────────────────
+        // ── Unordered lists (indent-aware, word-wrapped) ─────────────────────
         if trimmed.starts_with("- ") || trimmed.starts_with("* ") || trimmed.starts_with("+ ") {
             let text = &trimmed[2..];
             let indent = raw_line.len() - raw_line.trim_start().len();
@@ -191,11 +194,21 @@ pub fn render_markdown(input: &str, width: u16) -> Text<'static> {
                 1 => "◦ ",
                 _ => "▪ ",
             };
-            let mut spans = vec![
-                Span::styled(format!("{}{}", indent_str, bullet), Style::default().fg(theme.colors.muted)),
-            ];
-            spans.extend(parse_inline(text, &theme));
-            lines.push(Line::from(spans));
+            let prefix = format!("{}{}", indent_str, bullet);
+            let prefix_len = prefix.len();
+            let wrap_width = (width as usize).saturating_sub(prefix_len);
+            let wrapped = wrap_text(text, wrap_width);
+            for (i, wline) in wrapped.iter().enumerate() {
+                let mut spans = vec![];
+                if i == 0 {
+                    spans.push(Span::styled(prefix.clone(), Style::default().fg(theme.colors.muted)));
+                } else {
+                    // Continuation lines get same indent
+                    spans.push(Span::styled(" ".repeat(prefix_len), Style::default()));
+                }
+                spans.extend(parse_inline(wline, &theme));
+                lines.push(Line::from(spans));
+            }
             continue;
         }
 
@@ -222,9 +235,12 @@ pub fn render_markdown(input: &str, width: u16) -> Text<'static> {
             continue;
         }
 
-        // ── Plain paragraph / inline formatting ───────────────────────────────
-        let spans = parse_inline(raw_line, &theme);
-        lines.push(Line::from(spans));
+        // ── Plain paragraph / inline formatting (word-wrapped) ─────────────────
+        let wrapped = wrap_text(raw_line, width as usize);
+        for wline in wrapped {
+            let spans = parse_inline(&wline, &theme);
+            lines.push(Line::from(spans));
+        }
     }
 
     // If we hit EOF still inside a code block, flush what we have.
@@ -365,6 +381,54 @@ fn detect_checkbox(line: &str) -> Option<(bool, &str)> {
 }
 
 // ─── Inline span parser ───────────────────────────────────────────────────────
+
+// ─── Word wrapper ───────────────────────────────────────────────────────────
+
+/// Word-wrap a string to fit within `max_width` columns.
+/// Breaks on word boundaries (spaces), preserving words intact when possible.
+/// Lines longer than `max_width` with no spaces are force-broken.
+fn wrap_text(input: &str, max_width: usize) -> Vec<String> {
+    if max_width == 0 || input.len() <= max_width {
+        return vec![input.to_string()];
+    }
+
+    let mut result: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut col = 0;
+
+    for word in input.split_inclusive(' ') {
+        let word_len = word.len();
+        if col + word_len > max_width && col > 0 {
+            result.push(current.trim_end().to_string());
+            current = String::new();
+            col = 0;
+        }
+        // Force-break words longer than max_width
+        if word_len > max_width && col == 0 {
+            let mut remaining = word;
+            while remaining.len() > max_width {
+                let (chunk, rest) = remaining.split_at(max_width);
+                result.push(chunk.to_string());
+                remaining = rest;
+            }
+            current.push_str(remaining);
+            col = remaining.len();
+        } else {
+            current.push_str(word);
+            col += word_len;
+        }
+    }
+
+    if !current.trim().is_empty() {
+        result.push(current.trim_end().to_string());
+    }
+
+    if result.is_empty() {
+        vec![input.to_string()]
+    } else {
+        result
+    }
+}
 
 /// Walk `input` character-by-character, emitting styled [`Span`]s for inline
 /// Markdown constructs: `` `code` ``, `**bold**`, `*italic*`, `[text](url)`.
