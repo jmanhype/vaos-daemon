@@ -1,0 +1,48 @@
+{
+  "name": "Performance Optimization",
+  "description": "Profile, identify bottlenecks, and optimize application performance — backend, database, and frontend",
+  "steps": [
+    {
+      "name": "Establish Baseline Metrics",
+      "description": "Run benchmarks, load tests, and profiling on the current system. Record p50, p95, p99 latencies, throughput, memory usage, and CPU utilization. Document the current state before touching anything.",
+      "signal_mode": "EXECUTE",
+      "tools_needed": ["shell_execute", "file_write"],
+      "acceptance_criteria": "Baseline performance metrics recorded: response times, throughput, memory, CPU under load"
+    },
+    {
+      "name": "Profile the Hot Paths",
+      "description": "Use profiling tools to find where the app actually spends time. Focus on the top 3 slowest operations. Check for N+1 queries, slow DB calls, blocking I/O, and unnecessary computation.",
+      "signal_mode": "ANALYZE",
+      "tools_needed": ["shell_execute", "file_read"],
+      "acceptance_criteria": "Top bottlenecks identified with profiler evidence, not guesses — specific functions, queries, or paths named"
+    },
+    {
+      "name": "Database Optimization",
+      "description": "Analyze slow query logs, check EXPLAIN plans, add missing indexes, fix N+1 queries, batch operations, and optimize schema if needed. Check connection pool sizing.",
+      "signal_mode": "BUILD",
+      "tools_needed": ["shell_execute", "file_read", "file_write"],
+      "acceptance_criteria": "Slow queries optimized, indexes added, N+1 issues resolved, connection pool tuned"
+    },
+    {
+      "name": "Application-Level Optimization",
+      "description": "Fix computational bottlenecks: replace O(n²) with O(n), add caching for expensive repeated operations, reduce allocations in hot loops, and parallelize independent work.",
+      "signal_mode": "BUILD",
+      "tools_needed": ["file_write", "file_read"],
+      "acceptance_criteria": "Hot path code optimized, caching added where appropriate, algorithmic improvements applied"
+    },
+    {
+      "name": "Frontend & Network Optimization",
+      "description": "Reduce bundle size, add lazy loading, optimize images, enable compression, add CDN caching headers, and remove render-blocking resources. Run Lighthouse audit.",
+      "signal_mode": "BUILD",
+      "tools_needed": ["file_write", "shell_execute", "file_read"],
+      "acceptance_criteria": "Lighthouse score improved, bundle size reduced, key resources lazy-loaded, caching headers set"
+    },
+    {
+      "name": "Verify Improvements",
+      "description": "Re-run the same benchmarks from step 1 against the same load. Compare before/after. Confirm improvements are real and no regressions were introduced.",
+      "signal_mode": "EXECUTE",
+      "tools_needed": ["shell_execute", "file_write"],
+      "acceptance_criteria": "Before/after comparison documented, target improvements met, full test suite still passing"
+    }
+  ]
+}

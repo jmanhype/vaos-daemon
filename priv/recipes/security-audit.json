@@ -1,0 +1,55 @@
+{
+  "name": "Security Audit",
+  "description": "Full application security audit: map attack surface, test OWASP Top 10, check dependencies, review auth, and produce a prioritized findings report",
+  "steps": [
+    {
+      "name": "Map Attack Surface",
+      "description": "Enumerate all entry points: HTTP endpoints, CLI commands, file inputs, environment variables, third-party integrations, and data stores. Document what data flows where.",
+      "signal_mode": "ANALYZE",
+      "tools_needed": ["file_read", "shell_execute"],
+      "acceptance_criteria": "Complete attack surface map with all input vectors, data flows, and trust boundaries documented"
+    },
+    {
+      "name": "Authentication & Session Review",
+      "description": "Check auth implementation: password hashing algorithm, session token entropy, token expiry, refresh token rotation, logout behavior, and brute-force protection.",
+      "signal_mode": "ANALYZE",
+      "tools_needed": ["file_read"],
+      "acceptance_criteria": "Auth mechanisms reviewed, any weak hashing/entropy/expiry issues documented with severity"
+    },
+    {
+      "name": "Injection & Input Validation",
+      "description": "Test for SQL injection, command injection, XSS, SSTI, path traversal, and XXE. Check every input that reaches a database, shell, template engine, or file system.",
+      "signal_mode": "ANALYZE",
+      "tools_needed": ["file_read", "shell_execute"],
+      "acceptance_criteria": "All input paths audited, injection vulnerabilities identified with reproduction steps"
+    },
+    {
+      "name": "Authorization & Access Control",
+      "description": "Verify that every protected resource checks authorization, not just authentication. Test for IDOR, privilege escalation, and missing object-level checks.",
+      "signal_mode": "ANALYZE",
+      "tools_needed": ["file_read"],
+      "acceptance_criteria": "All authorization checks verified, IDOR risks and privilege escalation vectors identified"
+    },
+    {
+      "name": "Dependency Vulnerability Scan",
+      "description": "Run dependency audit tools (mix audit, npm audit, cargo audit, pip-audit). Check for known CVEs in all direct and transitive dependencies. Flag anything with CVSS >= 7.0.",
+      "signal_mode": "EXECUTE",
+      "tools_needed": ["shell_execute", "file_read"],
+      "acceptance_criteria": "Audit run, all high/critical CVEs listed with affected versions and available fixes"
+    },
+    {
+      "name": "Secrets & Configuration Audit",
+      "description": "Scan for hardcoded secrets, API keys, and credentials in source code, config files, and git history. Verify secrets are loaded from environment, not committed.",
+      "signal_mode": "ANALYZE",
+      "tools_needed": ["shell_execute", "file_read"],
+      "acceptance_criteria": "No secrets in source, all credentials via environment variables, git history scanned"
+    },
+    {
+      "name": "Findings Report",
+      "description": "Compile all findings into a prioritized security report. Categorize by CRITICAL/HIGH/MEDIUM/LOW using CVSS scoring. Provide remediation steps for each finding.",
+      "signal_mode": "ASSIST",
+      "tools_needed": ["file_write"],
+      "acceptance_criteria": "Security report written with all findings, CVSS scores, and concrete remediation steps for each issue"
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "name": "Migrate Database",
+  "description": "Plan and execute a safe database migration: schema changes, data transformation, rollback plan, and zero-downtime deployment",
+  "steps": [
+    {
+      "name": "Audit Current Schema",
+      "description": "Document the current schema: all tables, columns, types, indexes, constraints, and foreign keys. Identify which tables are large, frequently written to, or have complex dependencies.",
+      "signal_mode": "ANALYZE",
+      "tools_needed": ["shell_execute", "file_read", "file_write"],
+      "acceptance_criteria": "Current schema fully documented, large/hot tables identified, dependency graph understood"
+    },
+    {
+      "name": "Design Target Schema",
+      "description": "Define the target state. Write the migration SQL or schema diff. Identify data transformations needed, columns to drop, and constraints to add.",
+      "signal_mode": "BUILD",
+      "tools_needed": ["file_write"],
+      "acceptance_criteria": "Target schema defined, migration SQL written, data transformation logic planned"
+    },
+    {
+      "name": "Write Rollback Plan",
+      "description": "For every migration step, write the undo operation. Test that rollback SQL is valid. Identify any destructive operations (DROP COLUMN) that cannot be rolled back and plan accordingly.",
+      "signal_mode": "BUILD",
+      "tools_needed": ["file_write"],
+      "acceptance_criteria": "Rollback script written for every migration step, destructive operations flagged with manual recovery plan"
+    },
+    {
+      "name": "Test Migration on Staging",
+      "description": "Run the migration against a staging database with production-like data volume. Measure execution time, lock duration, and row counts. Verify data integrity after migration.",
+      "signal_mode": "EXECUTE",
+      "tools_needed": ["shell_execute", "file_write"],
+      "acceptance_criteria": "Migration runs cleanly on staging, execution time measured, data counts match before/after"
+    },
+    {
+      "name": "Coordinate Zero-Downtime Deploy",
+      "description": "Plan the deployment order: expand (add new columns), migrate (backfill data), contract (remove old columns). Deploy app code that handles both old and new schema during transition.",
+      "signal_mode": "ANALYZE",
+      "tools_needed": ["file_write", "file_read"],
+      "acceptance_criteria": "Deployment plan written with expand/migrate/contract phases, app code handles dual-schema period"
+    },
+    {
+      "name": "Execute & Verify",
+      "description": "Run the migration on production. Monitor for errors, lock contention, and replication lag. Verify row counts and data spot-checks after each phase. Keep rollback ready.",
+      "signal_mode": "EXECUTE",
+      "tools_needed": ["shell_execute", "file_write"],
+      "acceptance_criteria": "Migration executed successfully, data integrity verified, no unexpected locks or errors, rollback not needed"
+    }
+  ]
+}
