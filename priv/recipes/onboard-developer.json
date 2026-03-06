@@ -1,0 +1,41 @@
+{
+  "name": "Onboard New Developer",
+  "description": "Prepare everything a new developer needs to be productive on day one: environment setup, codebase tour, first task, and mentorship plan",
+  "steps": [
+    {
+      "name": "Audit Onboarding Prerequisites",
+      "description": "Check that the repo has a working README, setup script, and .env.example. Verify that a new machine can run the app by following the existing docs. Note any gaps.",
+      "signal_mode": "ANALYZE",
+      "tools_needed": ["file_read", "shell_execute"],
+      "acceptance_criteria": "Setup docs verified, gaps in README or setup scripts identified and documented"
+    },
+    {
+      "name": "Write Day-One Setup Guide",
+      "description": "Create a step-by-step guide from zero to running: install dependencies, clone repo, configure environment, run tests, and start the app. Include expected output at each step.",
+      "signal_mode": "BUILD",
+      "tools_needed": ["file_write", "file_read"],
+      "acceptance_criteria": "Setup guide written that a new developer with the required skills can follow to a running app in under 30 minutes"
+    },
+    {
+      "name": "Codebase Tour Document",
+      "description": "Write a codebase tour: folder structure overview, key modules and their responsibilities, data flow diagram, naming conventions, and where to find things.",
+      "signal_mode": "BUILD",
+      "tools_needed": ["file_write", "file_read"],
+      "acceptance_criteria": "Codebase tour written covering structure, key modules, data flow, and conventions"
+    },
+    {
+      "name": "Prepare First Task",
+      "description": "Identify a well-scoped, non-critical first task: a good-first-issue or a small improvement. Write a detailed task description with context, acceptance criteria, and hints.",
+      "signal_mode": "BUILD",
+      "tools_needed": ["file_write"],
+      "acceptance_criteria": "First task written with clear scope, context, acceptance criteria, and pointers to relevant code"
+    },
+    {
+      "name": "30-60-90 Day Plan",
+      "description": "Write a 30/60/90 day ramp plan: what to learn, what to own, and what to contribute at each milestone. Include key people to meet and processes to understand.",
+      "signal_mode": "ASSIST",
+      "tools_needed": ["file_write"],
+      "acceptance_criteria": "30-60-90 day plan written with concrete milestones, learning goals, and ownership targets at each stage"
+    }
+  ]
+}

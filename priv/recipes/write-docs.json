@@ -1,0 +1,48 @@
+{
+  "name": "Write Technical Documentation",
+  "description": "Produce complete technical documentation for a codebase: architecture overview, API reference, setup guide, and developer runbook",
+  "steps": [
+    {
+      "name": "Understand the Codebase",
+      "description": "Read the main entry points, module structure, configuration, and data flow. Understand what the system does, who uses it, and how it's deployed.",
+      "signal_mode": "ANALYZE",
+      "tools_needed": ["file_read", "shell_execute"],
+      "acceptance_criteria": "System purpose, main components, data flow, and deployment model understood and noted"
+    },
+    {
+      "name": "Architecture Overview",
+      "description": "Write a high-level architecture document: system diagram description, component responsibilities, data flow, external dependencies, and design decisions with rationale.",
+      "signal_mode": "BUILD",
+      "tools_needed": ["file_write", "file_read"],
+      "acceptance_criteria": "Architecture doc written with system overview, component descriptions, data flow, and key design decisions"
+    },
+    {
+      "name": "Setup & Installation Guide",
+      "description": "Write step-by-step setup instructions: prerequisites, installation, environment variables, database setup, and how to run locally. Test the instructions mentally against the code.",
+      "signal_mode": "BUILD",
+      "tools_needed": ["file_write", "file_read"],
+      "acceptance_criteria": "Setup guide written that a new developer could follow from zero to running locally"
+    },
+    {
+      "name": "API Reference",
+      "description": "Document every public API endpoint or function: parameters, types, return values, errors, and example requests/responses. Generate OpenAPI spec if it's an HTTP API.",
+      "signal_mode": "BUILD",
+      "tools_needed": ["file_write", "file_read"],
+      "acceptance_criteria": "All public APIs documented with types, parameters, examples, and error cases"
+    },
+    {
+      "name": "Developer Runbook",
+      "description": "Write operational runbook: how to run tests, how to deploy, common debugging steps, how to roll back, and answers to the top 5 questions a new developer would ask.",
+      "signal_mode": "BUILD",
+      "tools_needed": ["file_write"],
+      "acceptance_criteria": "Runbook covers test/deploy/rollback/debug workflows and FAQ for new developers"
+    },
+    {
+      "name": "Review & Polish",
+      "description": "Read all docs as if you are a new developer. Fix gaps, unclear explanations, and missing cross-references. Ensure consistent tone and formatting throughout.",
+      "signal_mode": "ANALYZE",
+      "tools_needed": ["file_read", "file_write"],
+      "acceptance_criteria": "All docs are consistent, gaps filled, cross-referenced, and readable by a developer unfamiliar with the system"
+    }
+  ]
+}

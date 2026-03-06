@@ -1,0 +1,48 @@
+{
+  "name": "Add Feature",
+  "description": "Ship a new feature end-to-end: clarify requirements, design, implement, test, and prepare for release",
+  "steps": [
+    {
+      "name": "Clarify Requirements",
+      "description": "Define exactly what the feature does, what it does NOT do, and why. Write acceptance criteria in testable terms. Identify edge cases and states the feature must handle.",
+      "signal_mode": "ANALYZE",
+      "tools_needed": ["file_write"],
+      "acceptance_criteria": "Requirements doc with scope, acceptance criteria, edge cases, and out-of-scope items clearly stated"
+    },
+    {
+      "name": "Design the Solution",
+      "description": "Plan the implementation: data model changes, API surface, UI changes, and affected modules. Identify what needs to change and what must stay the same for backward compatibility.",
+      "signal_mode": "ANALYZE",
+      "tools_needed": ["file_read", "file_write"],
+      "acceptance_criteria": "Design doc with implementation plan, list of files to change, and backward compatibility notes"
+    },
+    {
+      "name": "Write Failing Tests",
+      "description": "Write tests that describe the target behavior but fail on current code. This defines done and prevents scope creep. Include unit, integration, and edge case tests.",
+      "signal_mode": "BUILD",
+      "tools_needed": ["file_write", "shell_execute"],
+      "acceptance_criteria": "Tests written that clearly fail on current code and will pass once feature is implemented"
+    },
+    {
+      "name": "Implement the Feature",
+      "description": "Write the production code to make the tests pass. Keep changes focused — no unrelated refactoring. Follow existing patterns and conventions in the codebase.",
+      "signal_mode": "BUILD",
+      "tools_needed": ["file_write", "file_read", "shell_execute"],
+      "acceptance_criteria": "All tests passing, feature works as specified, no unrelated changes"
+    },
+    {
+      "name": "Integration Check",
+      "description": "Run the full test suite. Manually verify the feature in context. Check that nothing adjacent was broken. Test the happy path and the 2-3 most likely failure modes.",
+      "signal_mode": "EXECUTE",
+      "tools_needed": ["shell_execute"],
+      "acceptance_criteria": "Full test suite passing, feature manually verified, no regressions in related functionality"
+    },
+    {
+      "name": "Prepare for Release",
+      "description": "Update changelog, add migration notes if needed, update relevant documentation, and write a clear commit message summarizing what was added and why.",
+      "signal_mode": "ASSIST",
+      "tools_needed": ["file_write", "file_read"],
+      "acceptance_criteria": "Changelog updated, docs reflect new feature, migration notes written if applicable"
+    }
+  ]
+}

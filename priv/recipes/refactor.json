@@ -1,0 +1,48 @@
+{
+  "name": "Refactor Module",
+  "description": "Systematically refactor a module or component: understand current design, identify smells, plan changes, implement safely, and verify no regressions",
+  "steps": [
+    {
+      "name": "Understand Current Design",
+      "description": "Read all files in the target module. Map the data flow, dependencies, public API surface, and any side effects. Note what callers depend on.",
+      "signal_mode": "ANALYZE",
+      "tools_needed": ["file_read", "shell_execute"],
+      "acceptance_criteria": "Current design understood, dependency map created, public API surface documented"
+    },
+    {
+      "name": "Identify Code Smells",
+      "description": "Find specific refactoring targets: long functions, deep nesting, duplicated logic, poor naming, god objects, primitive obsession, and feature envy. Prioritize by impact.",
+      "signal_mode": "ANALYZE",
+      "tools_needed": ["file_read"],
+      "acceptance_criteria": "Prioritized list of code smells with specific file/line references and refactoring techniques to apply"
+    },
+    {
+      "name": "Plan Refactoring",
+      "description": "Design the target state. Define new module boundaries, function signatures, and data structures. Ensure backward compatibility or plan the migration path for callers.",
+      "signal_mode": "ANALYZE",
+      "tools_needed": ["file_write"],
+      "acceptance_criteria": "Refactoring plan documented with before/after structure, list of files to change, and migration notes"
+    },
+    {
+      "name": "Write Tests First",
+      "description": "Before changing any code, write or verify tests that capture current behavior. These are your regression safety net. Run them to confirm they pass on current code.",
+      "signal_mode": "BUILD",
+      "tools_needed": ["file_write", "shell_execute"],
+      "acceptance_criteria": "Tests written covering current behavior, all tests passing before refactoring begins"
+    },
+    {
+      "name": "Implement Refactoring",
+      "description": "Apply the refactoring in small, safe steps. Commit after each step. Do not mix refactoring with feature changes. Run tests after every individual change.",
+      "signal_mode": "BUILD",
+      "tools_needed": ["file_write", "file_read", "shell_execute"],
+      "acceptance_criteria": "All planned refactoring applied, code is cleaner, all tests still pass"
+    },
+    {
+      "name": "Verify and Review",
+      "description": "Run the full test suite, linter, and type checker. Compare the before and after. Confirm no behavior changes leaked in. Update documentation if public API changed.",
+      "signal_mode": "ANALYZE",
+      "tools_needed": ["shell_execute", "file_write"],
+      "acceptance_criteria": "All tests pass, linter clean, no unintended behavior changes, docs updated if needed"
+    }
+  ]
+}

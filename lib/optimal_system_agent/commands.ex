@@ -236,7 +236,7 @@ defmodule OptimalSystemAgent.Commands do
 
   defp builtin_commands do
     alias OptimalSystemAgent.Commands.{Info, Session, Channels, Agents, SchedulerCmd, System}
-    alias OptimalSystemAgent.Commands.{Config, Auth, Data}
+    alias OptimalSystemAgent.Commands.{Config, Auth, Data, Dev}
     alias OptimalSystemAgent.Commands.Model
 
     [
@@ -296,6 +296,11 @@ defmodule OptimalSystemAgent.Commands do
       {"doctor", "System diagnostics", &System.cmd_doctor/2},
       {"setup", "Run channel setup wizard", &System.cmd_setup/2},
       {"create-command", "Create a new command", &System.cmd_create/2},
+
+      # ── Development Automation ──
+      {"autofix", "Auto-fix test/lint/compile errors", &Dev.cmd_autofix/2},
+      {"recipe", "Run multi-step workflows", &Dev.cmd_recipe/2},
+      {"recipe-create", "Create a new recipe", &Dev.cmd_recipe_create/2},
 
       # ── Workflow ──
       {"commit", "Generate a proper git commit", &System.cmd_workflow/2},
