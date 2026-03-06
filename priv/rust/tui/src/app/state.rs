@@ -1,5 +1,5 @@
-/// App states — 10-state machine with validated transitions
-// PlanReview + Permissions have handlers but no SSE trigger events yet
+/// App states — 12-state machine with validated transitions
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppState {
     Connecting,
@@ -13,6 +13,7 @@ pub enum AppState {
     Sessions,
     Onboarding,
     Survey,
+    Recording,
 }
 
 impl AppState {
@@ -34,6 +35,9 @@ impl AppState {
                 | (Idle, Quit)
                 | (Idle, Sessions)
                 | (Idle, Onboarding)
+                | (Idle, Recording)
+                // Recording transitions
+                | (Recording, Idle)
                 // Processing transitions
                 | (Processing, Idle)
                 | (Processing, PlanReview)
@@ -74,7 +78,7 @@ impl AppState {
     }
 
     pub fn allows_input(&self) -> bool {
-        matches!(self, AppState::Idle | AppState::Processing)
+        matches!(self, AppState::Idle | AppState::Processing | AppState::Recording)
     }
 
     pub fn is_processing(&self) -> bool {
@@ -96,6 +100,7 @@ impl std::fmt::Display for AppState {
             AppState::Sessions => write!(f, "Sessions"),
             AppState::Onboarding => write!(f, "Onboarding"),
             AppState::Survey => write!(f, "Survey"),
+            AppState::Recording => write!(f, "Recording"),
         }
     }
 }

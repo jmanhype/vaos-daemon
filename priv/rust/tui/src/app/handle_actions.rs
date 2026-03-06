@@ -602,4 +602,127 @@ impl App {
             }
         }
     }
+
+    // ── Voice input ──────────────────────────────────────────────
+
+    pub(crate) fn start_recording(&mut self) {
+        if self.voice.recording {
+            return;
+        }
+
+        match crate::voice::VoiceCapture::start() {
+            Ok(capture) => {
+                self.voice.recording = true;
+                self.voice.started_at = Some(std::time::Instant::now());
+                self.voice.capture = Some(capture);
+                self.transition(AppState::Recording);
+                self.status.set_recording(true);
+                info!("Voice recording started");
+            }
+            Err(e) => {
+                error!("Failed to start recording: {}", e);
+                self.toasts.push(
+                    format!("Mic error: {}", e),
+                    crate::components::toast::ToastLevel::Error,
+                );
+            }
+        }
+    }
+
+    pub(crate) fn stop_recording(&mut self) {
+        if !self.voice.recording {
+            return;
+        }
+
+        self.voice.recording = false;
+        self.status.set_recording(false);
+
+        let capture = match self.voice.capture.take() {
+            Some(c) => c,
+            None => {
+                if self.state == AppState::Recording {
+                    self.transition(AppState::Idle);
+                }
+                return;
+            }
+        };
+
+        let buffer = capture.stop();
+        self.voice.started_at = None;
+
+        if buffer.duration_secs() < 0.3 {
+            self.toasts.push(
+                "Recording too short".into(),
+                crate::components::toast::ToastLevel::Warning,
+            );
+            if self.state == AppState::Recording {
+                self.transition(AppState::Idle);
+            }
+            return;
+        }
+
+        // Transcribe in background
+        let tx = self.event_tx.clone();
+        let provider_debug = format!("{:?}", self.voice.provider);
+        info!("Transcribing with {}", provider_debug);
+
+        self.toasts.push(
+            "Transcribing...".into(),
+            crate::components::toast::ToastLevel::Info,
+        );
+
+        // Spawn transcription based on provider type
+        let is_cloud = matches!(self.voice.provider, crate::voice::VoiceProvider::Cloud(_));
+
+        if is_cloud {
+            let api_key = match &self.voice.provider {
+                crate::voice::VoiceProvider::Cloud(c) => c.api_key().to_string(),
+                _ => unreachable!(),
+            };
+            tokio::spawn(async move {
+                let transcriber = crate::voice::CloudTranscriber::new(api_key);
+                let result = transcriber.transcribe(buffer).await;
+                let event = match result {
+                    Ok(text) => crate::event::VoiceEvent::TranscriptionReady(text),
+                    Err(e) => crate::event::VoiceEvent::TranscriptionError(e.to_string()),
+                };
+                let _ = tx.send(crate::event::Event::Voice(event));
+            });
+        } else {
+            tokio::spawn(async move {
+                let result = crate::voice::VoiceProvider::local_or_unavailable()
+                    .transcribe(buffer)
+                    .await;
+                let event = match result {
+                    Ok(text) => crate::event::VoiceEvent::TranscriptionReady(text),
+                    Err(e) => crate::event::VoiceEvent::TranscriptionError(e.to_string()),
+                };
+                let _ = tx.send(crate::event::Event::Voice(event));
+            });
+        }
+    }
+
+    pub(crate) fn cancel_recording(&mut self) {
+        if !self.voice.recording {
+            return;
+        }
+
+        self.voice.recording = false;
+        self.voice.started_at = None;
+        self.status.set_recording(false);
+
+        // Drop capture, discarding audio
+        if let Some(capture) = self.voice.capture.take() {
+            drop(capture);
+        }
+
+        if self.state == AppState::Recording {
+            self.transition(AppState::Idle);
+        }
+        self.toasts.push(
+            "Recording cancelled".into(),
+            crate::components::toast::ToastLevel::Info,
+        );
+        info!("Voice recording cancelled");
+    }
 }

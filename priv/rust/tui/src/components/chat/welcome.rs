@@ -89,7 +89,7 @@ pub fn draw_welcome_with_tools(
 
     // Help tips
     lines.push(Line::from(Span::styled(
-        "Type a message to get started  \u{00b7}  /help for commands  \u{00b7}  Ctrl+K for palette",
+        "Type a message  \u{00b7}  /help for commands  \u{00b7}  Ctrl+K palette  \u{00b7}  click \u{25C9} to speak",
         theme.welcome_tip(),
     )));
 

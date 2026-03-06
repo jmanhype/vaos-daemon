@@ -21,6 +21,7 @@ pub struct StatusBar {
     active: bool,
     bg_count: usize,
     width: u16,
+    recording: bool,
 }
 
 impl StatusBar {
@@ -39,6 +40,7 @@ impl StatusBar {
             active: false,
             bg_count: 0,
             width: 0,
+            recording: false,
         }
     }
 
@@ -77,6 +79,10 @@ impl StatusBar {
 
     pub fn set_width(&mut self, width: u16) {
         self.width = width;
+    }
+
+    pub fn set_recording(&mut self, recording: bool) {
+        self.recording = recording;
     }
 
     pub fn context_utilization(&self) -> f64 {
@@ -128,6 +134,20 @@ impl Component for StatusBar {
 
     fn draw(&self, frame: &mut Frame, area: Rect) {
         let theme = style::theme();
+
+        // Recording indicator takes priority over everything
+        if self.recording {
+            let spans = vec![
+                Span::styled(
+                    "\u{25C9} Recording",
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(" \u{2014} click \u{25C9} to stop \u{00b7} Esc cancel", theme.faint()),
+            ];
+            let line = Line::from(spans);
+            frame.render_widget(Paragraph::new(line), area);
+            return;
+        }
 
         if self.active {
             // Active: show model · signal pill · iteration · tokens · context

@@ -46,6 +46,7 @@ use self::focus::FocusStack;
 use self::keys::KeyMap;
 use self::layout::Layout;
 use self::state::AppState;
+use crate::voice::VoiceState;
 
 /// Constants
 pub const HEALTH_RETRY_DELAY: Duration = Duration::from_secs(5);
@@ -125,6 +126,9 @@ pub struct App {
 
     // Commands from backend
     pub command_entries: Vec<crate::client::types::CommandEntry>,
+
+    // Voice input
+    pub voice: VoiceState,
 }
 
 impl App {
@@ -219,6 +223,8 @@ impl App {
             backend_spawn_attempted: false,
             health_retry_count: 0,
             command_entries: Vec::new(),
+
+            voice: VoiceState::new(),
         })
     }
 

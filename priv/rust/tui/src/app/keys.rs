@@ -48,6 +48,7 @@ pub struct KeyMap {
     pub new_session: KeyBinding,
     pub palette: KeyBinding,
     pub copy_message: KeyBinding,
+    pub voice_toggle: KeyBinding,
 }
 
 impl Default for KeyMap {
@@ -110,6 +111,11 @@ impl Default for KeyMap {
                 KeyCode::Char('y'),
                 KeyModifiers::NONE,
                 "copy last message",
+            ),
+            voice_toggle: KeyBinding::new(
+                KeyCode::Char('g'),
+                KeyModifiers::CONTROL,
+                "voice input",
             ),
         }
     }

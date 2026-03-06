@@ -48,6 +48,10 @@ impl App {
             }
             Event::Terminal(_) => false,
             Event::Backend(backend_event) => self.handle_backend_event(backend_event),
+            Event::Voice(voice_event) => {
+                self.handle_voice_event(voice_event);
+                false
+            }
             Event::Tick => {
                 self.handle_tick();
                 false
@@ -80,6 +84,7 @@ impl App {
             AppState::Survey => self.handle_survey_key(key),
             AppState::Idle => self.handle_idle_key(key),
             AppState::Processing => self.handle_processing_key(key),
+            AppState::Recording => self.handle_recording_key(key),
             _ => false,
         }
     }
@@ -99,6 +104,10 @@ impl App {
             (KeyCode::Char('d'), KeyModifiers::CONTROL) if input_empty => true,
             (KeyCode::F(1), _) => {
                 self.show_help();
+                false
+            }
+            (KeyCode::Char('g'), KeyModifiers::CONTROL) => {
+                self.start_recording();
                 false
             }
             (KeyCode::Char('n'), KeyModifiers::CONTROL) => {
@@ -246,6 +255,59 @@ impl App {
         }
     }
 
+    fn handle_recording_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        match (key.code, key.modifiers) {
+            (KeyCode::Char('g'), KeyModifiers::CONTROL) => {
+                self.stop_recording();
+                false
+            }
+            (KeyCode::Esc, _) => {
+                self.cancel_recording();
+                false
+            }
+            (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                self.cancel_recording();
+                false
+            }
+            _ => false,
+        }
+    }
+
+    fn handle_voice_event(&mut self, event: crate::event::VoiceEvent) {
+        use crate::event::VoiceEvent;
+        match event {
+            VoiceEvent::TranscriptionReady(text) => {
+                if !text.is_empty() {
+                    self.input.insert_str(&text);
+                    self.toasts.push(
+                        "Voice transcribed \u{2014} review and press Enter".into(),
+                        crate::components::toast::ToastLevel::Info,
+                    );
+                } else {
+                    self.toasts.push(
+                        "No speech detected".into(),
+                        crate::components::toast::ToastLevel::Warning,
+                    );
+                }
+                if self.state == AppState::Recording {
+                    self.transition(AppState::Idle);
+                }
+            }
+            VoiceEvent::TranscriptionError(err) => {
+                self.toasts.push(
+                    format!("Voice error: {}", err),
+                    crate::components::toast::ToastLevel::Error,
+                );
+                if self.state == AppState::Recording {
+                    self.transition(AppState::Idle);
+                }
+            }
+            VoiceEvent::RecordingStopped => {
+                self.stop_recording();
+            }
+        }
+    }
+
     fn handle_mouse(&mut self, mouse: crossterm::event::MouseEvent) {
         let areas = crate::view::main_layout::LayoutAreas::compute(
             ratatui::prelude::Rect::new(0, 0, self.width, self.height),
@@ -271,6 +333,19 @@ impl App {
                 }
             }
             MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+                // Mic button click
+                if let Some(mic) = self.input.mic_area() {
+                    if mouse.column >= mic.x && mouse.column < mic.x + mic.width
+                        && mouse.row >= mic.y && mouse.row < mic.y + mic.height
+                    {
+                        if self.voice.recording {
+                            self.stop_recording();
+                        } else {
+                            self.start_recording();
+                        }
+                        return;
+                    }
+                }
                 if mouse.row >= areas.input.y
                     && mouse.row < areas.input.y + areas.input.height
                 {

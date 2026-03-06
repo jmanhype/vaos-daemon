@@ -8,6 +8,7 @@ pub mod textarea;
 use crossterm::event::{Event as CrosstermEvent, KeyCode, KeyModifiers};
 use ratatui::prelude::*;
 use ratatui::widgets::Paragraph;
+use std::cell::Cell;
 
 use crate::event::Event;
 use crate::style;
@@ -47,6 +48,8 @@ pub struct InputComponent {
     file_search_start: usize,
     /// Completions popup for slash commands
     completions: Completions,
+    /// Mic button area for click detection
+    mic_area: Cell<Option<Rect>>,
 }
 
 impl InputComponent {
@@ -68,6 +71,7 @@ impl InputComponent {
             file_match_index: 0,
             file_search_start: 0,
             completions: Completions::new(),
+            mic_area: Cell::new(None),
         }
     }
 
@@ -665,6 +669,25 @@ impl Component for InputComponent {
             }
         }
 
+        // Mic button — always visible, clickable
+        if !self.processing && input_area.width > 10 {
+            let btn = " \u{25C9} ";
+            let btn_width = 4u16;
+            let mic_rect = Rect::new(
+                input_area.x + input_area.width - btn_width,
+                input_area.y,
+                btn_width,
+                1,
+            );
+            self.mic_area.set(Some(mic_rect));
+            frame.render_widget(
+                Paragraph::new(Span::styled(btn, Style::default().fg(Color::Yellow))),
+                mic_rect,
+            );
+        } else {
+            self.mic_area.set(None);
+        }
+
         // Show cursor
         if self.focused {
             // Use character count (not byte offset) for cursor X position
@@ -679,5 +702,12 @@ impl Component for InputComponent {
 
     fn set_focused(&mut self, focused: bool) {
         self.focused = focused;
+    }
+}
+
+impl InputComponent {
+    /// Returns the rect of the mic button if it was drawn, for click detection
+    pub fn mic_area(&self) -> Option<Rect> {
+        self.mic_area.get()
     }
 }

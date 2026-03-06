@@ -20,6 +20,7 @@ mod view;
 mod dialogs;
 mod util;
 mod tools;
+mod voice;
 
 fn main() -> Result<()> {
     // Parse CLI args
