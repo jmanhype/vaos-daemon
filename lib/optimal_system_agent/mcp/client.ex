@@ -58,6 +58,12 @@ defmodule OptimalSystemAgent.MCP.Client do
   Start all configured MCP servers under `OptimalSystemAgent.MCP.Supervisor`.
 
   Skips servers that fail to start so one broken config doesn't kill the rest.
+  
+  Config supports:
+    - `command` — executable path
+    - `args` — list of string arguments
+    - `env` — map of env vars (supports `${ENV_VAR}` interpolation)
+    - `allowed_tools` — optional list of tool names to expose (omit for all)
   """
   def start_servers do
     servers = load_servers()
@@ -67,7 +73,8 @@ defmodule OptimalSystemAgent.MCP.Client do
         name: name,
         command: Map.get(config, "command", ""),
         args: Map.get(config, "args", []),
-        env: Map.get(config, "env", %{})
+        env: Map.get(config, "env", %{}),
+        allowed_tools: Map.get(config, "allowed_tools", nil)
       }
 
       spec = {Server, child_config}
