@@ -26,6 +26,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.OrchestrationRoutes do
   alias OptimalSystemAgent.Swarm.Orchestrator, as: Swarm
   alias OptimalSystemAgent.Swarm.Patterns, as: SwarmPatterns
   alias OptimalSystemAgent.Agent.Orchestrator, as: TaskOrchestrator
+  alias OptimalSystemAgent.Agent.Orchestrator.Complexity
   alias OptimalSystemAgent.Agent.Progress
 
   plug :match
@@ -72,15 +73,66 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.OrchestrationRoutes do
             _ ->
               skip_plan = conn.body_params["skip_plan"] == true
               working_dir = conn.body_params["working_dir"]
-              opts = [skip_plan: skip_plan]
-              opts = if is_binary(working_dir) and working_dir != "", do: Keyword.put(opts, :working_dir, working_dir), else: opts
-              Task.start(fn -> Loop.process_message(session_id, input, opts) end)
+              auto_dispatch = conn.body_params["auto_dispatch"] != false
 
-              body = Jason.encode!(%{session_id: session_id, status: "processing"})
+              # Auto-dispatch: detect complexity and route to multi-agent orchestrator when needed.
+              # Uses a cheap heuristic first; only calls the LLM analyser when the heuristic
+              # flags the input as possibly complex.
+              route =
+                if auto_dispatch do
+                  case Complexity.quick_check(input) do
+                    :possibly_complex ->
+                      case Complexity.analyze(input) do
+                        {:complex, _sub_tasks} -> :multi_agent
+                        :simple -> :single_agent
+                      end
 
-              conn
-              |> put_resp_content_type("application/json")
-              |> send_resp(202, body)
+                    :likely_simple ->
+                      :single_agent
+                  end
+                else
+                  :single_agent
+                end
+
+              case route do
+                :multi_agent ->
+                  case TaskOrchestrator.execute(input, session_id, strategy: "auto") do
+                    {:ok, task_id} ->
+                      body = Jason.encode!(%{
+                        session_id: session_id,
+                        task_id: task_id,
+                        status: "processing",
+                        mode: "multi_agent"
+                      })
+
+                      conn
+                      |> put_resp_content_type("application/json")
+                      |> send_resp(202, body)
+
+                    {:error, _reason} ->
+                      # Fallback to single agent on orchestrator failure
+                      opts = [skip_plan: skip_plan]
+                      opts = if is_binary(working_dir) and working_dir != "", do: Keyword.put(opts, :working_dir, working_dir), else: opts
+                      Task.start(fn -> Loop.process_message(session_id, input, opts) end)
+
+                      body = Jason.encode!(%{session_id: session_id, status: "processing", mode: "single_agent"})
+
+                      conn
+                      |> put_resp_content_type("application/json")
+                      |> send_resp(202, body)
+                  end
+
+                :single_agent ->
+                  opts = [skip_plan: skip_plan]
+                  opts = if is_binary(working_dir) and working_dir != "", do: Keyword.put(opts, :working_dir, working_dir), else: opts
+                  Task.start(fn -> Loop.process_message(session_id, input, opts) end)
+
+                  body = Jason.encode!(%{session_id: session_id, status: "processing"})
+
+                  conn
+                  |> put_resp_content_type("application/json")
+                  |> send_resp(202, body)
+              end
           end
       end
     else
