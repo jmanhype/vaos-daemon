@@ -1,0 +1,8 @@
+.git
+_build
+deps
+.elixir_ls
+.superset
+node_modules
+*.log
+priv/rust/tui/target

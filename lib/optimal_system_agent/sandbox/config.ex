@@ -13,7 +13,7 @@ defmodule OptimalSystemAgent.Sandbox.Config do
   defstruct [
     # Master switch — false by default (opt-in)
     enabled: false,
-    # :docker | :beam | :wasm (process-only fallback)
+    # :docker | :beam | :wasm | :sprites (process-only fallback)
     mode: :docker,
     # Allow network access inside container
     network: false,
@@ -36,12 +36,17 @@ defmodule OptimalSystemAgent.Sandbox.Config do
     # Mount the container root filesystem read-only
     read_only_root: true,
     # Prevent privilege escalation via setuid/setgid
-    no_new_privileges: true
+    no_new_privileges: true,
+    # Sprites.dev settings
+    sprites_token: nil,
+    sprites_api_url: "https://api.sprites.dev",
+    sprites_default_cpu: 1,
+    sprites_default_memory_gb: 1
   ]
 
   @type t :: %__MODULE__{
           enabled: boolean(),
-          mode: :docker | :beam | :wasm,
+          mode: :docker | :beam | :wasm | :sprites,
           network: boolean(),
           max_memory: String.t(),
           max_cpu: String.t(),
@@ -52,7 +57,11 @@ defmodule OptimalSystemAgent.Sandbox.Config do
           capabilities_drop: [String.t()],
           capabilities_add: [String.t()],
           read_only_root: boolean(),
-          no_new_privileges: boolean()
+          no_new_privileges: boolean(),
+          sprites_token: String.t() | nil,
+          sprites_api_url: String.t(),
+          sprites_default_cpu: pos_integer(),
+          sprites_default_memory_gb: pos_integer()
         }
 
   @doc """
@@ -77,6 +86,8 @@ defmodule OptimalSystemAgent.Sandbox.Config do
         "beam" -> :beam
         :wasm -> :wasm
         "wasm" -> :wasm
+        :sprites -> :sprites
+        "sprites" -> :sprites
         _ -> :docker
       end
 
@@ -105,7 +116,11 @@ defmodule OptimalSystemAgent.Sandbox.Config do
       capabilities_drop: Application.get_env(app, :sandbox_capabilities_drop, ["ALL"]),
       capabilities_add: Application.get_env(app, :sandbox_capabilities_add, []),
       read_only_root: Application.get_env(app, :sandbox_read_only_root, true),
-      no_new_privileges: Application.get_env(app, :sandbox_no_new_privileges, true)
+      no_new_privileges: Application.get_env(app, :sandbox_no_new_privileges, true),
+      sprites_token: Application.get_env(app, :sprites_token),
+      sprites_api_url: Application.get_env(app, :sprites_api_url, "https://api.sprites.dev"),
+      sprites_default_cpu: Application.get_env(app, :sprites_default_cpu, 1),
+      sprites_default_memory_gb: Application.get_env(app, :sprites_default_memory_gb, 1)
     }
 
     if config.enabled do

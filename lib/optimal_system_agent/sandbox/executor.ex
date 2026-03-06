@@ -31,7 +31,7 @@ defmodule OptimalSystemAgent.Sandbox.Executor do
 
   require Logger
 
-  alias OptimalSystemAgent.Sandbox.{Config, Docker, Wasm}
+  alias OptimalSystemAgent.Sandbox.{Config, Docker, Sprites, Wasm}
 
   @type exec_result ::
           {:ok, output :: String.t()}
@@ -75,6 +75,16 @@ defmodule OptimalSystemAgent.Sandbox.Executor do
         {:error,
          "Docker sandbox enabled but Docker is not available. " <>
            "Either start Docker or set OSA_SANDBOX_ENABLED=false."}
+
+      config.enabled and config.mode == :sprites and Sprites.available?() ->
+        Logger.debug("[Sandbox.Executor] Routing to Sprites sandbox")
+        Sprites.execute(command, opts)
+
+      config.enabled and config.mode == :sprites ->
+        Logger.error("[Sandbox.Executor] Sprites sandbox enabled but SPRITES_TOKEN not set")
+
+        {:error,
+         "Sprites sandbox enabled but SPRITES_TOKEN not set. Set SPRITES_TOKEN or change OSA_SANDBOX_MODE."}
 
       config.enabled and config.mode == :wasm and Wasm.available?() ->
         Logger.debug("[Sandbox.Executor] Routing to WASM sandbox")

@@ -24,9 +24,13 @@ defmodule OptimalSystemAgent.Sandbox.Supervisor do
   def init(_opts) do
     Logger.info("[Sandbox.Supervisor] Starting sandbox infrastructure")
 
-    children = [
-      OptimalSystemAgent.Sandbox.Pool
-    ]
+    config = OptimalSystemAgent.Sandbox.Config.from_config()
+
+    children =
+      [OptimalSystemAgent.Sandbox.Pool, OptimalSystemAgent.Sandbox.Registry] ++
+        if config.mode == :sprites and config.sprites_token,
+          do: [OptimalSystemAgent.Sandbox.Sprites],
+          else: []
 
     Supervisor.init(children, strategy: :one_for_one)
   end

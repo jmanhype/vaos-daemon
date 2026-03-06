@@ -4,6 +4,7 @@ use crate::event::Event;
 use tracing::{debug, error, info, warn};
 
 use super::App;
+use crate::util::truncate_str;
 
 impl App {
     pub(super) fn handle_health_result(
@@ -32,7 +33,10 @@ impl App {
                     self.status.set_context(0.0, 0, ctx);
                 }
                 // Skip banner — go straight to Idle (no jarring screen switch)
-                self.transition(AppState::Idle);
+                if self.state == AppState::Connecting {
+                    self.transition(AppState::Idle);
+                }
+                self.health_retry_count = 0;
 
                 // Start auth + SSE
                 self.do_login();
@@ -85,6 +89,8 @@ impl App {
             }
             Err(e) => {
                 warn!("Login failed: {}", e);
+                // Clear stale tokens so subsequent requests don't send them
+                crate::client::auth::clear_tokens(&self.client.profile_dir);
                 self.toasts.push(
                     format!("Login failed: {}", e),
                     crate::components::toast::ToastLevel::Error,
@@ -115,7 +121,7 @@ impl App {
     ) {
         // Truncate if too long
         let display_response = if response.len() > super::MAX_MESSAGE_SIZE {
-            let truncated = &response[..super::MAX_MESSAGE_SIZE];
+            let truncated = truncate_str(&response, super::MAX_MESSAGE_SIZE);
             format!(
                 "{}\n\n... (response truncated at {}KB)",
                 truncated,
@@ -532,6 +538,7 @@ impl App {
         self.tasks.clear();
         self.stream_buf.clear();
         self.thinking_buf.clear();
+        self.pending_tool_args.clear();
         self.activity.stop();
         self.status.set_active(false);
 
@@ -558,7 +565,7 @@ impl App {
         self.start_sse();
 
         self.toasts.push(
-            format!("Switched to session {}", &session_id[..session_id.len().min(16)]),
+            format!("Switched to session {}", truncate_str(session_id, 16)),
             crate::components::toast::ToastLevel::Info,
         );
     }

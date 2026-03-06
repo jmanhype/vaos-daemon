@@ -24,6 +24,8 @@ defmodule OptimalSystemAgent.Sandbox.Docker do
 
   require Logger
 
+  @behaviour OptimalSystemAgent.Sandbox.Behaviour
+
   @type exec_result ::
           {:ok, output :: String.t(), exit_code :: non_neg_integer()}
           | {:error, reason :: String.t()}

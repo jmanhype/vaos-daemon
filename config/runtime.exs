@@ -202,6 +202,10 @@ config :optimal_system_agent,
   wallet_address: System.get_env("OSA_WALLET_ADDRESS"),
   wallet_rpc_url: System.get_env("OSA_WALLET_RPC_URL"),
 
+  # Sprites.dev sandbox
+  sprites_token: System.get_env("SPRITES_TOKEN"),
+  sprites_api_url: System.get_env("SPRITES_API_URL") || "https://api.sprites.dev",
+
   # OTA updates
   update_enabled: System.get_env("OSA_UPDATE_ENABLED") == "true",
   update_url: System.get_env("OSA_UPDATE_URL"),

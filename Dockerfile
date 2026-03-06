@@ -13,6 +13,7 @@ COPY config config
 COPY lib lib
 COPY priv priv
 COPY rel rel
+COPY VERSION ./
 
 # Build Go tokenizer
 RUN cd priv/go/tokenizer && CGO_ENABLED=0 go build -o osa-tokenizer .
@@ -29,5 +30,9 @@ WORKDIR /app
 COPY --from=builder /app/_build/prod/rel/osagent ./
 
 ENV MIX_ENV=prod
+
+EXPOSE 8089
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8089/health || exit 1
 
 CMD ["bin/osagent", "serve"]

@@ -27,6 +27,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
     /events      → ProtocolRoutes    POST /, GET /stream
     /oscp        → ProtocolRoutes    POST /
     /tasks       → ProtocolRoutes    GET /history
+    /command-center → CommandCenterRoutes  GET /|/agents|/tiers|/patterns|/metrics|/events, POST /sandboxes
     /classify    → inline            POST / (signal classification)
   """
   use Plug.Router
@@ -100,6 +101,9 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
   forward "/webhooks", to: API.DataRoutes
   forward "/machines", to: API.DataRoutes
 
+  # ── Command Center ───────────────────────────────────────────────────
+  forward "/command-center", to: API.CommandCenterRoutes
+
   # ── Protocol ─────────────────────────────────────────────────────────
   forward "/events", to: API.ProtocolRoutes
   forward "/oscp", to: API.ProtocolRoutes
@@ -164,11 +168,20 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
             |> assign(:workspace_id, claims["workspace_id"])
             |> assign(:claims, claims)
 
-          {:error, _reason} ->
-            conn
-            |> put_resp_content_type("application/json")
-            |> send_resp(401, Jason.encode!(%{error: "unauthorized", code: "INVALID_TOKEN"}))
-            |> halt()
+          {:error, reason} ->
+            if Application.get_env(:optimal_system_agent, :require_auth, false) do
+              conn
+              |> put_resp_content_type("application/json")
+              |> send_resp(401, Jason.encode!(%{error: "unauthorized", code: "INVALID_TOKEN"}))
+              |> halt()
+            else
+              Logger.warning("Invalid/expired token ignored (require_auth=false): #{inspect(reason)}")
+
+              conn
+              |> assign(:user_id, "anonymous")
+              |> assign(:workspace_id, nil)
+              |> assign(:claims, %{})
+            end
         end
 
       _ ->

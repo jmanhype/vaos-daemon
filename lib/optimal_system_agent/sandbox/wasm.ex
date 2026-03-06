@@ -8,6 +8,8 @@ defmodule OptimalSystemAgent.Sandbox.Wasm do
 
   require Logger
 
+  @behaviour OptimalSystemAgent.Sandbox.Behaviour
+
   @default_timeout 30_000
   @default_fuel 1_000_000_000
 

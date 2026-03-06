@@ -18,7 +18,7 @@ pub struct ApiClient {
     http: HttpClient,
     base_url: String,
     auth: Arc<RwLock<AuthState>>,
-    profile_dir: PathBuf,
+    pub(crate) profile_dir: PathBuf,
 }
 
 impl ApiClient {
@@ -438,7 +438,7 @@ impl ApiClient {
     // HTTP helpers
     // =========================================================================
 
-    /// GET with auth header.
+    /// GET with auth header (auto-retries on 401 after token refresh).
     async fn get(&self, path: &str) -> Result<reqwest::Response> {
         let url = format!("{}{}", self.base_url, path);
         let mut req = self.http.get(&url);
@@ -446,12 +446,81 @@ impl ApiClient {
             req = req.header("Authorization", format!("Bearer {}", token));
         }
         let resp = req.send().await?;
+
+        // Auto-refresh on 401: try refresh_token, then retry unauthenticated
+        if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+            debug!("Got 401 from {}, attempting token refresh", path);
+
+            if self.try_refresh_token().await {
+                let mut retry_req = self.http.get(&url);
+                if let Ok(token) = self.auth.read().await.require_token() {
+                    retry_req = retry_req.header("Authorization", format!("Bearer {}", token));
+                }
+                let retry_resp = retry_req.send().await?;
+                if retry_resp.status().is_success() {
+                    return Ok(retry_resp);
+                }
+            }
+
+            // Refresh failed or retry still 401 — clear tokens and retry unauthenticated
+            debug!("Token refresh failed, clearing tokens and retrying unauthenticated");
+            auth::clear_tokens(&self.profile_dir);
+            *self.auth.write().await = AuthState::Unauthenticated;
+
+            let retry_resp = self.http.get(&url).send().await?;
+            if !retry_resp.status().is_success() {
+                let status = retry_resp.status();
+                let body = retry_resp.text().await.unwrap_or_default();
+                anyhow::bail!("HTTP {} from {}: {}", status, path, body);
+            }
+            return Ok(retry_resp);
+        }
+
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             anyhow::bail!("HTTP {} from {}: {}", status, path, body);
         }
         Ok(resp)
+    }
+
+    /// Attempt to refresh the auth token using the refresh_token.
+    async fn try_refresh_token(&self) -> bool {
+        let refresh_token = {
+            let auth = self.auth.read().await;
+            match auth.refresh_token() {
+                Some(rt) => rt.to_string(),
+                None => return false,
+            }
+        };
+
+        let url = format!("{}/api/v1/auth/refresh", self.base_url);
+        let resp = self.http
+            .post(&url)
+            .json(&serde_json::json!({ "refresh_token": refresh_token }))
+            .send()
+            .await;
+
+        match resp {
+            Ok(r) if r.status().is_success() => {
+                if let Ok(body) = r.json::<serde_json::Value>().await {
+                    if let (Some(token), Some(refresh)) = (
+                        body.get("token").and_then(|t| t.as_str()),
+                        body.get("refresh_token").and_then(|t| t.as_str()),
+                    ) {
+                        let _ = auth::save_tokens(&self.profile_dir, token, refresh);
+                        *self.auth.write().await = AuthState::Authenticated {
+                            token: token.to_string(),
+                            refresh_token: refresh.to_string(),
+                        };
+                        debug!("Token refreshed successfully");
+                        return true;
+                    }
+                }
+                false
+            }
+            _ => false,
+        }
     }
 
     /// GET without auth header (for unauthenticated endpoints like /health).
