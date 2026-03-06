@@ -36,6 +36,14 @@ defmodule OptimalSystemAgent.Providers.Ollama do
     Application.get_env(:optimal_system_agent, :ollama_model, "llama3.2:latest")
   end
 
+  @impl true
+  def available_models do
+    case list_models() do
+      {:ok, models} -> Enum.map(models, & &1.name)
+      {:error, _} -> [default_model()]
+    end
+  end
+
   @doc """
   Auto-detect the best available Ollama model and set it as the active model.
   Called at application boot when provider is :ollama and no explicit model override.
