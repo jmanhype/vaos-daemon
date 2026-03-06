@@ -10,6 +10,29 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 ## [Unreleased]
 
 ### Added
+- **Dynamic Agent Scaling (1-50)**: ComplexityScaler maps complexity score (1-10) to Fibonacci agent counts. User intent detection ("use 25 agents") overrides auto-scaling. Removed hardcoded 10-agent caps.
+- **3-Tier Graduated Confidence Routing** (`agent/orchestrator/agent_runner.ex`): HIGH (>=4.0) uses named agent prompt, MEDIUM (2.0-4.0) blends dynamic framing with agent expertise, LOW (<2.0) generates pure dynamic prompt. All agents get ALL tools, skills, environment context, memory, and dependency context.
+- **Complexity Scoring** (`agent/orchestrator/complexity.ex`): Returns numeric 1-10 score instead of binary simple/complex. New return shapes: `{:simple, score}` and `{:complex, score, sub_tasks}`.
+- **Bus→Trigger Bridge** (`agent/scheduler.ex`): Triggers with an `"event"` field auto-register as bus event handlers. Internal events now fire triggers.
+- **ProactiveMonitor Auto-Dispatch**: Critical alerts automatically spawn agents via `Agent.Loop.process_message` (max 3 to avoid flood).
+- **Ollama Cloud Frontrunner Models**: kimi-k2.5:cloud (elite), qwen3-coder:480b-cloud (specialist), qwen3:8b-cloud (utility) in tier system.
+- **Ollama `available_models/0`**: Model selector now shows ALL installed Ollama models instead of just the auto-detected default.
+- **LLM Retry with Backoff** (`agent_runner.ex`): Exponential backoff for transient failures (429, 500, 502, 503, timeouts). Safe tool execution wrapping.
+- **TUI Word Wrapping** (`render/markdown.rs`): Plain paragraphs, list items, and blockquotes now word-wrap to terminal width instead of overflowing.
+- **Integration Stress Tests** (27 tests): Real LLM tests covering math reasoning, structured JSON, code gen, multi-turn context, instruction following, safety, complexity analysis, agent prompts, scaling pipeline, tier mapping, agent selection quality.
+
+### Fixed
+- HTTP 500 on `/api/v1/models` — `context_window` ETS lookup crash wrapped in try/rescue
+- Atom table exhaustion risk in `scheduler.ex` — `String.to_atom` replaced with `String.to_existing_atom` for user-supplied event names
+- Unused module attributes in `comm_coach.ex` removed (fixes `--warnings-as-errors`)
+- Stale `:builder` role in `decomposer.ex` → `:backend`
+
+### Changed
+- Tier ceilings raised: elite→50, specialist→30, utility→10 (was 10/6/3)
+- `Roster.max_agents/0` now configurable via `:max_agents` app env (default 50, was hardcoded 10)
+- `Complexity.analyze/2` accepts opts including `:max_agents`
+- `Decomposer.decompose_task/2` accepts opts, returns `complexity_score` in metadata
+
 - **Parallel Tool Execution** (`agent/loop.ex`): Tool calls from a single LLM response now execute concurrently via `Task.async_stream` (max 10 concurrency, 60s timeout). Results are collected and appended in original order. Pre-tool hooks (security_check, spend_guard) run synchronously per-tool inside each parallel task; post-tool hooks fire async.
 - **Doom Loop Detection** (`agent/loop.ex`): Agent tracks `consecutive_failures` and `last_tool_signature`. If the same set of tools fails 3 consecutive iterations, the agent halts with an explanation instead of looping indefinitely. Emits `:doom_loop_detected` system event for observability.
 - **Destructive Git Protection** (`security/shell_policy.ex`): 7 new regex patterns block `git push --force/-f`, `git reset --hard`, `git clean -f*`, `git checkout -- .`, `git branch -D`, and `--no-verify` flags. Safe git operations (push, commit, checkout branch) remain allowed.

@@ -234,9 +234,6 @@ defmodule OptimalSystemAgent.Intelligence.CommCoach do
   # Scoring: Length Appropriateness
   # ---------------------------------------------------------------------------
 
-  @execute_max 200
-  @analyze_min 500
-
   defp score_length(message, profile) do
     len = String.length(message)
     mode_score = infer_mode_length_score(message, len, profile.preferred_length)

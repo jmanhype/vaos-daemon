@@ -476,14 +476,26 @@ defmodule OptimalSystemAgent.Agent.Scheduler do
           is_binary(event) and event != "",
           reduce: [] do
         acc ->
-          event_atom = String.to_atom(event)
+          # Use to_existing_atom to prevent atom table exhaustion from
+          # user-supplied event names. Only known event atoms are valid.
+          event_atom =
+            try do
+              String.to_existing_atom(event)
+            rescue
+              ArgumentError -> nil
+            end
 
-          ref =
-            Bus.register_handler(event_atom, fn payload ->
-              __MODULE__.fire_trigger(trigger["id"], payload)
-            end)
+          if event_atom do
+            ref =
+              Bus.register_handler(event_atom, fn payload ->
+                __MODULE__.fire_trigger(trigger["id"], payload)
+              end)
 
-          [{event_atom, ref} | acc]
+            [{event_atom, ref} | acc]
+          else
+            Logger.warning("[Scheduler] Unknown event '#{event}' — skipping trigger #{trigger["id"]}")
+            acc
+          end
       end
 
     Process.put(:trigger_bus_refs, refs)
