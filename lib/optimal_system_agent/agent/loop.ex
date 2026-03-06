@@ -113,7 +113,8 @@ defmodule OptimalSystemAgent.Agent.Loop do
       messages: Keyword.get(opts, :messages, []),
       tools: Tools.filter_applicable_tools(%{history: []}) ++ extra_tools,
       plan_mode_enabled: Application.get_env(:optimal_system_agent, :plan_mode_enabled, false),
-      permission_tier: Keyword.get(opts, :permission_tier, :full)
+      permission_tier: Keyword.get(opts, :permission_tier, :full),
+      working_dir: Keyword.get(opts, :working_dir) || Application.get_env(:optimal_system_agent, :working_dir)
     }
 
     {:ok, state}
