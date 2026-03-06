@@ -1,19 +1,22 @@
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 
 /// Convert a Markdown string to a ratatui [`Text`] value.
 ///
 /// Supported constructs:
-///   - Headers  `# H1`, `## H2`, `### H3`  — bold, primary color
+///   - Headers  `# H1` … `###### H6`  — styled per level
 ///   - Fenced code blocks  ` ``` [lang] ` … ` ``` ` — syntax-highlighted via [`crate::render::syntax`]
 ///   - Inline code `` `expr` `` — dim style
 ///   - **Bold**  `**text**`
 ///   - *Italic*  `*text*`
-///   - Unordered lists  `- item` / `* item`
-///   - Ordered lists    `1. item`
+///   - ~~Strikethrough~~ `~~text~~`
+///   - Task checkboxes  `- [ ] todo` / `- [x] done` — green checkmark or muted circle
+///   - Unordered lists  `- item` / `* item` / `+ item` — nested with indent-aware bullets
+///   - Ordered lists    `1. item` — nested with indentation
 ///   - Links  `[text](url)` — text in cyan+underline, URL dropped
 ///   - Blockquotes  `> text` — muted italic with `│ ` prefix
 ///   - Horizontal rules  `---` / `***` — full-width `─`
+///   - GFM pipe tables  `| H1 | H2 |` — styled with box-drawing borders
 ///   - Plain text — unstyled
 pub fn render_markdown(input: &str, width: u16) -> Text<'static> {
     let theme = crate::style::theme();
@@ -23,6 +26,10 @@ pub fn render_markdown(input: &str, width: u16) -> Text<'static> {
     let mut in_code_block = false;
     let mut code_lang = String::new();
     let mut code_lines: Vec<String> = Vec::new();
+
+    // Table accumulator state.
+    let mut in_table = false;
+    let mut table_buf: Vec<String> = Vec::new();
 
     for raw_line in input.lines() {
         // ── Fenced code block boundary ──────────────────────────────────────
@@ -49,7 +56,57 @@ pub fn render_markdown(input: &str, width: u16) -> Text<'static> {
             continue;
         }
 
+        // ── GFM pipe tables ─────────────────────────────────────────────────
+        let trimmed_for_table = raw_line.trim();
+        let is_table_line = trimmed_for_table.starts_with('|') && trimmed_for_table.ends_with('|');
+        let is_separator_line = trimmed_for_table.starts_with('|') && trimmed_for_table.contains("---");
+
+        if is_table_line || is_separator_line {
+            if !in_table {
+                in_table = true;
+                table_buf.clear();
+            }
+            table_buf.push(trimmed_for_table.to_string());
+            continue;
+        }
+
+        // Flush table when we hit a non-table line
+        if in_table {
+            in_table = false;
+            let table_lines = render_table(&table_buf, width, &theme);
+            lines.extend(table_lines);
+            table_buf.clear();
+            // Fall through to process current line normally
+        }
+
         // ── Headers ─────────────────────────────────────────────────────────
+        if raw_line.starts_with("###### ") {
+            let text = &raw_line[7..];
+            let spans = parse_inline(text, &theme);
+            let styled_spans: Vec<Span> = spans.into_iter().map(|s| {
+                Span::styled(s.content, Style::default().fg(theme.colors.muted).add_modifier(Modifier::ITALIC))
+            }).collect();
+            lines.push(Line::from(styled_spans));
+            continue;
+        }
+        if raw_line.starts_with("##### ") {
+            let text = &raw_line[6..];
+            let spans = parse_inline(text, &theme);
+            let styled_spans: Vec<Span> = spans.into_iter().map(|s| {
+                Span::styled(s.content, Style::default().fg(theme.colors.muted))
+            }).collect();
+            lines.push(Line::from(styled_spans));
+            continue;
+        }
+        if raw_line.starts_with("#### ") {
+            let text = &raw_line[5..];
+            let spans = parse_inline(text, &theme);
+            let styled_spans: Vec<Span> = spans.into_iter().map(|s| {
+                Span::styled(s.content, Style::default().fg(theme.colors.secondary).add_modifier(Modifier::BOLD))
+            }).collect();
+            lines.push(Line::from(styled_spans));
+            continue;
+        }
         if raw_line.starts_with("### ") {
             let text = raw_line[4..].to_owned();
             let style = Style::default()
@@ -97,26 +154,66 @@ pub fn render_markdown(input: &str, width: u16) -> Text<'static> {
             continue;
         }
 
-        // ── Unordered lists ───────────────────────────────────────────────────
-        if raw_line.starts_with("- ") || raw_line.starts_with("* ") {
-            let content = &raw_line[2..];
-            let bullet = Span::styled("• ".to_owned(), Style::default().fg(theme.colors.muted));
-            let mut spans = vec![bullet];
-            spans.extend(parse_inline(content, &theme));
+        // ── Task checkboxes ──────────────────────────────────────────────────
+        if let Some((checked, text)) = detect_checkbox(trimmed) {
+            let indent = raw_line.len() - raw_line.trim_start().len();
+            let indent_level = indent / 2;
+            let indent_str = "  ".repeat(indent_level);
+
+            let icon = if checked {
+                Span::styled(format!("{}✓ ", indent_str), Style::default().fg(Color::Green))
+            } else {
+                Span::styled(format!("{}○ ", indent_str), theme.faint())
+            };
+
+            let mut spans = vec![icon];
+            let text_style = if checked {
+                theme.faint().add_modifier(Modifier::CROSSED_OUT)
+            } else {
+                Style::default()
+            };
+            let inline_spans = parse_inline(text, &theme);
+            for s in inline_spans {
+                spans.push(Span::styled(s.content, text_style));
+            }
             lines.push(Line::from(spans));
             continue;
         }
 
-        // ── Ordered lists ─────────────────────────────────────────────────────
-        if let Some(rest) = strip_ordered_prefix(raw_line) {
-            // Find the period to extract the number label.
-            let dot = raw_line.find('.').unwrap_or(1);
-            let num_str = format!("{}. ", &raw_line[..dot]);
-            let num_span = Span::styled(num_str, Style::default().fg(theme.colors.muted));
-            let mut spans = vec![num_span];
-            spans.extend(parse_inline(rest, &theme));
+        // ── Unordered lists (indent-aware) ──────────────────────────────────
+        if trimmed.starts_with("- ") || trimmed.starts_with("* ") || trimmed.starts_with("+ ") {
+            let text = &trimmed[2..];
+            let indent = raw_line.len() - raw_line.trim_start().len();
+            let indent_level = indent / 2;
+            let indent_str = "  ".repeat(indent_level);
+            let bullet = match indent_level {
+                0 => "• ",
+                1 => "◦ ",
+                _ => "▪ ",
+            };
+            let mut spans = vec![
+                Span::styled(format!("{}{}", indent_str, bullet), Style::default().fg(theme.colors.muted)),
+            ];
+            spans.extend(parse_inline(text, &theme));
             lines.push(Line::from(spans));
             continue;
+        }
+
+        // ── Ordered lists (indent-aware) ─────────────────────────────────────
+        if let Some(pos) = trimmed.find(". ") {
+            let num_part = &trimmed[..pos];
+            if !num_part.is_empty() && num_part.chars().all(|c| c.is_ascii_digit()) {
+                let text = &trimmed[pos + 2..];
+                let indent = raw_line.len() - raw_line.trim_start().len();
+                let indent_level = indent / 2;
+                let indent_str = "  ".repeat(indent_level);
+                let mut spans = vec![
+                    Span::styled(format!("{}{}. ", indent_str, num_part), Style::default().fg(theme.colors.muted)),
+                ];
+                spans.extend(parse_inline(text, &theme));
+                lines.push(Line::from(spans));
+                continue;
+            }
         }
 
         // ── Empty lines ───────────────────────────────────────────────────────
@@ -137,33 +234,134 @@ pub fn render_markdown(input: &str, width: u16) -> Text<'static> {
         lines.extend(highlighted);
     }
 
+    // If we hit EOF still inside a table, flush what we have.
+    if in_table {
+        let table_lines = render_table(&table_buf, width, &theme);
+        lines.extend(table_lines);
+    }
+
     Text::from(lines)
 }
 
-// ─── Ordered-list prefix detector ────────────────────────────────────────────
+// ─── GFM pipe table renderer ─────────────────────────────────────────────────
 
-/// Returns `Some(rest)` when `line` starts with `<digits>. `, else `None`.
-fn strip_ordered_prefix(line: &str) -> Option<&str> {
-    let mut chars = line.char_indices().peekable();
-    let mut digit_count = 0;
-    while let Some((_, ch)) = chars.peek() {
-        if ch.is_ascii_digit() {
-            digit_count += 1;
-            chars.next();
-        } else {
-            break;
+/// Render a GFM pipe table as styled [`Line`]s with box-drawing borders.
+fn render_table(rows: &[String], width: u16, theme: &crate::style::Theme) -> Vec<Line<'static>> {
+    if rows.is_empty() {
+        return vec![];
+    }
+
+    let mut result = Vec::new();
+
+    // Parse cells from each row, skipping separator rows (contain ---)
+    let parsed: Vec<Vec<String>> = rows
+        .iter()
+        .filter(|r| !r.contains("---"))
+        .map(|r| {
+            r.trim_matches('|')
+                .split('|')
+                .map(|cell| cell.trim().to_string())
+                .collect()
+        })
+        .collect();
+
+    if parsed.is_empty() {
+        return vec![];
+    }
+
+    let num_cols = parsed[0].len();
+
+    // Calculate column widths (max content per column)
+    let mut col_widths: Vec<usize> = vec![0; num_cols];
+    for row in &parsed {
+        for (i, cell) in row.iter().enumerate() {
+            if i < num_cols {
+                col_widths[i] = col_widths[i].max(cell.len());
+            }
         }
     }
-    if digit_count == 0 {
-        return None;
-    }
-    // Expect ". "
-    if let Some((idx, '.')) = chars.next() {
-        if let Some((_, ' ')) = chars.next() {
-            return Some(&line[idx + 2..]);
+
+    // Cap total width to available width
+    let total = col_widths.iter().sum::<usize>() + (num_cols + 1) + (num_cols.saturating_sub(1)) * 3;
+    if total > width as usize && width > 10 {
+        let max_per_col = (width as usize).saturating_sub(num_cols + 1) / num_cols.max(1);
+        for w in col_widths.iter_mut() {
+            *w = (*w).min(max_per_col);
         }
     }
-    None
+
+    let muted = theme.faint();
+
+    // Render header row (first row, bold + primary)
+    if let Some(header) = parsed.first() {
+        let mut spans = Vec::new();
+        spans.push(Span::styled("│ ".to_string(), muted));
+        for (i, cell) in header.iter().enumerate() {
+            let w = col_widths.get(i).copied().unwrap_or(10);
+            let padded = format!("{:<width$}", cell, width = w);
+            spans.push(Span::styled(
+                padded,
+                Style::default()
+                    .fg(theme.colors.primary)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            if i < header.len() - 1 {
+                spans.push(Span::styled(" │ ".to_string(), muted));
+            }
+        }
+        spans.push(Span::styled(" │".to_string(), muted));
+        result.push(Line::from(spans));
+    }
+
+    // Render separator line
+    {
+        let mut sep = String::from("├─");
+        for (i, w) in col_widths.iter().enumerate() {
+            sep.push_str(&"─".repeat(*w));
+            if i < col_widths.len() - 1 {
+                sep.push_str("─┼─");
+            }
+        }
+        sep.push_str("─┤");
+        result.push(Line::from(Span::styled(sep, muted)));
+    }
+
+    // Render data rows (skip header)
+    for row in parsed.iter().skip(1) {
+        let mut spans = Vec::new();
+        spans.push(Span::styled("│ ".to_string(), muted));
+        for (i, cell) in row.iter().enumerate() {
+            let w = col_widths.get(i).copied().unwrap_or(10);
+            let padded = format!("{:<width$}", cell, width = w);
+            spans.push(Span::styled(padded, Style::default()));
+            if i < row.len() - 1 {
+                spans.push(Span::styled(" │ ".to_string(), muted));
+            }
+        }
+        spans.push(Span::styled(" │".to_string(), muted));
+        result.push(Line::from(spans));
+    }
+
+    result
+}
+
+// ─── Task checkbox detector ──────────────────────────────────────────────────
+
+/// Detects GFM task checkboxes: `- [ ] text`, `- [x] text`, `* [X] text`, etc.
+/// Returns `Some((checked, remaining_text))` if the line is a checkbox item.
+fn detect_checkbox(line: &str) -> Option<(bool, &str)> {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with("- [x] ") || trimmed.starts_with("- [X] ") {
+        Some((true, &trimmed[6..]))
+    } else if trimmed.starts_with("- [ ] ") {
+        Some((false, &trimmed[6..]))
+    } else if trimmed.starts_with("* [x] ") || trimmed.starts_with("* [X] ") {
+        Some((true, &trimmed[6..]))
+    } else if trimmed.starts_with("* [ ] ") {
+        Some((false, &trimmed[6..]))
+    } else {
+        None
+    }
 }
 
 // ─── Inline span parser ───────────────────────────────────────────────────────
@@ -263,6 +461,41 @@ fn parse_inline(input: &str, theme: &crate::style::Theme) -> Vec<Span<'static>> 
                         plain.push('*');
                         plain.push_str(&content);
                     }
+                }
+            }
+
+            // ── Strikethrough: ~~text~~ ───────────────────────────────────
+            '~' => {
+                chars.next(); // consume first `~`
+                if chars.peek() == Some(&'~') {
+                    chars.next(); // consume second `~`
+                    let mut content = String::new();
+                    let mut closed = false;
+                    while let Some(&nc) = chars.peek() {
+                        if nc == '~' {
+                            chars.next(); // consume this `~`
+                            if chars.peek() == Some(&'~') {
+                                chars.next(); // consume second closing `~`
+                                closed = true;
+                                break;
+                            }
+                            content.push('~');
+                        } else {
+                            chars.next();
+                            content.push(nc);
+                        }
+                    }
+                    if closed && !content.is_empty() {
+                        flush_plain!();
+                        let style = Style::default().add_modifier(Modifier::CROSSED_OUT);
+                        spans.push(Span::styled(content, style));
+                    } else {
+                        plain.push_str("~~");
+                        plain.push_str(&content);
+                    }
+                } else {
+                    // Single `~` — treat as literal.
+                    plain.push('~');
                 }
             }
 

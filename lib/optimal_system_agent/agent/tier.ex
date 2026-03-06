@@ -115,7 +115,14 @@ defmodule OptimalSystemAgent.Agent.Tier do
       utility: "doubao-lite-32k"
     },
 
-    # --- Local providers (dynamic) ---
+    # --- Ollama Cloud (remote inference via Ollama API with auth) ---
+    ollama_cloud: %{
+      elite: "kimi-k2.5:cloud",
+      specialist: "qwen3-coder:480b-cloud",
+      utility: "qwen3:8b-cloud"
+    },
+
+    # --- Local providers (dynamic, auto-detect best installed) ---
     ollama: %{
       elite: :auto,
       specialist: :auto,
@@ -231,9 +238,9 @@ defmodule OptimalSystemAgent.Agent.Tier do
   Elite tasks get more agents since they're more complex.
   """
   @spec max_agents(tier()) :: non_neg_integer()
-  def max_agents(:elite), do: 10
-  def max_agents(:specialist), do: 6
-  def max_agents(:utility), do: 3
+  def max_agents(:elite), do: 50
+  def max_agents(:specialist), do: 30
+  def max_agents(:utility), do: 10
 
   @doc """
   Get the temperature setting for a tier.

@@ -10,6 +10,14 @@ use super::{Component, ComponentAction};
 use entry::{AgentEntry, SwarmInfo, SwarmStatus, SynthesisState, WaveInfo};
 pub use entry::AgentStatus;
 
+// ─── Batch grouping ──────────────────────────────────────────────────────────
+
+pub(super) struct BatchGroup {
+    pub batch_id: Option<String>,
+    pub entries: Vec<usize>, // indices into Agents.entries
+}
+
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 pub struct Agents {
@@ -41,8 +49,8 @@ impl Agents {
         self.active
     }
 
-    /// Total render height: 0 when inactive, else header + 2*agents + optional synth + swarm.
-    /// Capped at 24 to prevent degenerate cases.
+    /// Total render height: 0 when inactive, else header + 2*agents + batch headers + optional synth + swarm.
+    /// Capped at 30 to prevent degenerate cases.
     pub fn height(&self) -> u16 {
         if !self.active {
             return 0;
@@ -51,15 +59,21 @@ impl Agents {
             return 1;
         }
         let agent_lines = (self.entries.len() as u16) * 2; // 2 rows per agent
+        let batch_header_lines = {
+            let groups = self.grouped_entries();
+            // Only show batch headers if any entry has a batch_id
+            let has_batches = groups.iter().any(|g| g.batch_id.is_some());
+            if has_batches { groups.len() as u16 } else { 0 }
+        };
         let synth_lines = if matches!(self.synthesis, SynthesisState::Synthesizing { .. }) {
             1u16
         } else {
             0
         };
         let swarm_lines = if self.swarm.is_some() { 1u16 } else { 0 };
-        // 1 header + agents + synth + swarm
-        let total = 1 + agent_lines + synth_lines + swarm_lines;
-        total.min(24)
+        // 1 header + batch headers + agents + synth + swarm
+        let total = 1 + batch_header_lines + agent_lines + synth_lines + swarm_lines;
+        total.min(30)
     }
 
     /// Advance spinner animation frame.
@@ -92,6 +106,7 @@ impl Agents {
                     current_action: String::new(),
                     tool_uses: 0,
                     tokens_used: 0,
+                    batch_id: None,
                 });
             }
         }
@@ -104,6 +119,7 @@ impl Agents {
         role: impl Into<String>,
         model: impl Into<String>,
         subject: impl Into<String>,
+        batch_id: Option<String>,
     ) {
         let name = name.into();
         let subject = subject.into();
@@ -118,6 +134,9 @@ impl Agents {
             entry.current_action = String::new();
             entry.tool_uses = 0;
             entry.tokens_used = 0;
+            if batch_id.is_some() {
+                entry.batch_id = batch_id;
+            }
         } else {
             self.entries.push(AgentEntry {
                 name,
@@ -128,6 +147,7 @@ impl Agents {
                 current_action: String::new(),
                 tool_uses: 0,
                 tokens_used: 0,
+                batch_id,
             });
         }
         self.active = true;
@@ -223,6 +243,23 @@ impl Agents {
                 s.status = SwarmStatus::Failed;
             }
         }
+    }
+
+    /// Group entries by batch_id, preserving order of first appearance.
+    /// Entries with `batch_id: None` go in a single "default" group.
+    pub(super) fn grouped_entries(&self) -> Vec<BatchGroup> {
+        let mut groups: Vec<BatchGroup> = Vec::new();
+        for (i, entry) in self.entries.iter().enumerate() {
+            if let Some(group) = groups.iter_mut().find(|g| g.batch_id == entry.batch_id) {
+                group.entries.push(i);
+            } else {
+                groups.push(BatchGroup {
+                    batch_id: entry.batch_id.clone(),
+                    entries: vec![i],
+                });
+            }
+        }
+        groups
     }
 
     #[allow(dead_code)]

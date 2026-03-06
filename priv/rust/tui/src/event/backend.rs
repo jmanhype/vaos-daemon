@@ -69,6 +69,7 @@ pub enum BackendEvent {
         role: String,
         model: String,
         subject: String,
+        batch_id: Option<String>,
     },
     OrchestratorAgentProgress {
         agent_name: String,
@@ -113,6 +114,10 @@ pub enum BackendEvent {
         task_id: String,
         status: String,
     },
+    TaskChecklistShow {
+        tasks: Vec<crate::client::types::ChecklistTaskWire>,
+    },
+    TaskChecklistHide,
 
     // === Swarm ===
     SwarmStarted {
@@ -197,6 +202,17 @@ pub enum BackendEvent {
     PlanProposed {
         plan: String,
         request_id: String,
+    },
+    /// Backend asking the user a survey / multi-question form.
+    AskUserQuestion {
+        survey_id: String,
+        questions: Vec<crate::client::types::SurveyQuestionWire>,
+        skippable: bool,
+    },
+    /// Survey answers have been submitted and acknowledged.
+    SurveyAnswered {
+        survey_id: String,
+        summary: Vec<(String, String)>, // (question, answer_text) pairs
     },
 
     // === Cancel ===

@@ -688,8 +688,6 @@ defmodule OptimalSystemAgent.Agent.Roster do
   # 17 roles: 8 original swarm roles + 9 agent-dispatch roles.
   # Orchestrator, Swarm.Worker, and Swarm.Planner all delegate here.
 
-  @max_agents 10
-
   @role_prompts %{
     # ── Wave 0: Explorer (always runs first) ────────────────────────
     explorer: """
@@ -876,8 +874,8 @@ defmodule OptimalSystemAgent.Agent.Roster do
     """
   }
 
-  @doc "Maximum concurrent agents for orchestration."
-  def max_agents, do: @max_agents
+  @doc "Maximum concurrent agents for orchestration. Configurable via :max_agents app env."
+  def max_agents, do: Application.get_env(:optimal_system_agent, :max_agents, 50)
 
   # ── Swarm Pattern Presets ─────────────────────────────────────────
 
@@ -1080,6 +1078,40 @@ defmodule OptimalSystemAgent.Agent.Roster do
     |> Enum.filter(fn {_name, score} -> score > 0 end)
     |> Enum.sort_by(fn {_name, score} -> score end, :desc)
     |> Enum.map(fn {name, _score} -> name end)
+  end
+
+  @doc """
+  Like `select_for_task/1` but returns `[{name, score}]` pairs so callers
+  can apply quality thresholds.
+  """
+  @spec select_for_task_scored(String.t()) :: [{String.t(), float()}]
+  def select_for_task_scored(task_description) do
+    input_lower = String.downcase(task_description)
+    words = String.split(input_lower, ~r/\s+/)
+
+    all()
+    |> Enum.map(fn {name, agent} ->
+      trigger_score =
+        Enum.count(agent.triggers, fn trigger ->
+          trigger_lower = String.downcase(trigger)
+          String.contains?(input_lower, trigger_lower)
+        end)
+
+      desc_words = agent.description |> String.downcase() |> String.split(~r/\s+/)
+      desc_score = length(words -- (words -- desc_words))
+
+      tier_bonus =
+        case agent.tier do
+          :elite -> 0.5
+          :specialist -> 0.3
+          :utility -> 0.1
+        end
+
+      total = trigger_score * 2 + desc_score + tier_bonus
+      {name, total}
+    end)
+    |> Enum.filter(fn {_name, score} -> score > 0 end)
+    |> Enum.sort_by(fn {_name, score} -> score end, :desc)
   end
 
   @doc "Get the system prompt for a given role atom."

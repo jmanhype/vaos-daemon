@@ -27,6 +27,10 @@ impl App {
                     &health.model,
                     self.header.tool_count(),
                 );
+                // Seed context bar with model's max context window
+                if let Some(ctx) = health.context_window {
+                    self.status.set_context(0.0, 0, ctx);
+                }
                 // Skip banner — go straight to Idle (no jarring screen switch)
                 self.transition(AppState::Idle);
 

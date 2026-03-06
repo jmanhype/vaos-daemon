@@ -1014,7 +1014,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
 
   # Emit context window pressure event so the CLI can display utilization
   defp emit_context_pressure(state) do
-    max_tok = Application.get_env(:optimal_system_agent, :max_context_tokens, 128_000)
+    max_tok = OptimalSystemAgent.Providers.Registry.context_window(state.model)
     estimated = OptimalSystemAgent.Agent.Compactor.estimate_tokens(state.messages)
     utilization = if max_tok > 0, do: Float.round(estimated / max_tok * 100, 1), else: 0.0
 
@@ -1311,5 +1311,76 @@ defmodule OptimalSystemAgent.Agent.Loop do
     has_write = Enum.any?(names, &(&1 in @write_tools))
     has_read = Enum.any?(names, &(&1 in @read_tools))
     has_write and not has_read
+  end
+
+  # --- Ask User Question (Survey Dialog) ---
+
+  @survey_table :osa_survey_answers
+
+  @doc """
+  Ask the user interactive questions via the TUI survey dialog.
+  Blocks the calling process until the user responds or timeout (120s).
+
+  Returns `{:ok, answers}` | `{:skipped}` | `{:error, :timeout}` | `{:error, :cancelled}`.
+
+  ## Question format
+
+      %{
+        text: "Which editor do you use most?",
+        multi_select: false,
+        options: [
+          %{label: "Neovim", description: "Fast keyboard-driven workflow"},
+          %{label: "VS Code", description: "Feature-rich and extensible"}
+        ],
+        skippable: true
+      }
+  """
+  @spec ask_user_question(String.t(), String.t(), list(map()), keyword()) ::
+          {:ok, term()} | {:skipped} | {:error, :timeout} | {:error, :cancelled}
+  def ask_user_question(session_id, survey_id, questions, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, 120_000)
+
+    # Emit SSE event for TUI to display the survey dialog
+    Bus.emit(:system_event, %{
+      event: :ask_user_question,
+      session_id: session_id,
+      data: %{
+        survey_id: survey_id,
+        questions: questions,
+        skippable: Keyword.get(opts, :skippable, true)
+      }
+    })
+
+    # Poll ETS for response
+    poll_survey_answer(session_id, survey_id, timeout)
+  end
+
+  defp poll_survey_answer(_session_id, _survey_id, timeout) when timeout <= 0 do
+    {:error, :timeout}
+  end
+
+  defp poll_survey_answer(session_id, survey_id, timeout) do
+    # Check if session was cancelled
+    case :ets.lookup(@cancel_table, session_id) do
+      [{_, true}] ->
+        {:error, :cancelled}
+
+      _ ->
+        key = {session_id, survey_id}
+
+        case :ets.lookup(@survey_table, key) do
+          [{^key, :skipped}] ->
+            :ets.delete(@survey_table, key)
+            {:skipped}
+
+          [{^key, answers}] ->
+            :ets.delete(@survey_table, key)
+            {:ok, answers}
+
+          [] ->
+            Process.sleep(200)
+            poll_survey_answer(session_id, survey_id, timeout - 200)
+        end
+    end
   end
 end

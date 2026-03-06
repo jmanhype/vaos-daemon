@@ -18,6 +18,7 @@ pub struct AgentEntry {
     pub current_action: String,
     pub tool_uses: u32,
     pub tokens_used: u32,
+    pub batch_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]

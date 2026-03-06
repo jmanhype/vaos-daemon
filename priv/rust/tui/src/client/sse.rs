@@ -415,6 +415,8 @@ fn parse_sse_event(event_type: &str, data: &[u8]) -> Option<BackendEvent> {
         | "context_pressure"
         | "task_created"
         | "task_updated"
+        | "task_checklist_show"
+        | "task_checklist_hide"
         | "swarm_started"
         | "swarm_completed"
         | "swarm_failed"
@@ -428,7 +430,9 @@ fn parse_sse_event(event_type: &str, data: &[u8]) -> Option<BackendEvent> {
         | "budget_warning"
         | "budget_exceeded"
         | "permission_required"
-        | "plan_proposed" => parse_system_event(data),
+        | "plan_proposed"
+        | "ask_user_question"
+        | "survey_answered" => parse_system_event(data),
 
         "" => None,
 
@@ -510,6 +514,8 @@ fn parse_system_event(data: &[u8]) -> Option<BackendEvent> {
                 model: String,
                 #[serde(default)]
                 description: String,
+                #[serde(default)]
+                batch_id: Option<String>,
             }
             let ev: Ev = serde_json::from_slice(data).ok()?;
             Some(BackendEvent::OrchestratorAgentStarted {
@@ -517,6 +523,7 @@ fn parse_system_event(data: &[u8]) -> Option<BackendEvent> {
                 role: ev.role,
                 model: ev.model,
                 subject: ev.description,
+                batch_id: ev.batch_id,
             })
         }
 
@@ -698,6 +705,27 @@ fn parse_system_event(data: &[u8]) -> Option<BackendEvent> {
                 task_id: ev.task_id,
                 status: ev.status,
             })
+        }
+
+        "task_checklist_show" => {
+            #[derive(serde::Deserialize)]
+            struct Ev {
+                #[serde(default)]
+                data: ChecklistData,
+            }
+            #[derive(serde::Deserialize, Default)]
+            struct ChecklistData {
+                #[serde(default)]
+                tasks: Vec<crate::client::types::ChecklistTaskWire>,
+            }
+            let ev: Ev = serde_json::from_slice(data).ok()?;
+            Some(BackendEvent::TaskChecklistShow {
+                tasks: ev.data.tasks,
+            })
+        }
+
+        "task_checklist_hide" => {
+            Some(BackendEvent::TaskChecklistHide)
         }
 
         "swarm_started" => {
@@ -948,6 +976,43 @@ fn parse_system_event(data: &[u8]) -> Option<BackendEvent> {
             Some(BackendEvent::PlanProposed {
                 plan: ev.plan,
                 request_id: ev.request_id,
+            })
+        }
+
+        "ask_user_question" => {
+            use crate::client::types::SurveyQuestionWire;
+            #[derive(serde::Deserialize)]
+            struct Ev {
+                survey_id: String,
+                questions: Vec<SurveyQuestionWire>,
+                #[serde(default)]
+                skippable: bool,
+            }
+            let ev: Ev = match serde_json::from_slice(data) {
+                Ok(e) => e,
+                Err(e) => return Some(parse_warning("ask_user_question", e)),
+            };
+            Some(BackendEvent::AskUserQuestion {
+                survey_id: ev.survey_id,
+                questions: ev.questions,
+                skippable: ev.skippable,
+            })
+        }
+
+        "survey_answered" => {
+            #[derive(serde::Deserialize)]
+            struct Ev {
+                survey_id: String,
+                #[serde(default)]
+                summary: Vec<(String, String)>,
+            }
+            let ev: Ev = match serde_json::from_slice(data) {
+                Ok(e) => e,
+                Err(e) => return Some(parse_warning("survey_answered", e)),
+            };
+            Some(BackendEvent::SurveyAnswered {
+                survey_id: ev.survey_id,
+                summary: ev.summary,
             })
         }
 

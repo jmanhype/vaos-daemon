@@ -52,7 +52,7 @@ impl StatusBar {
     }
 
     pub fn set_context(&mut self, utilization: f64, estimated: u64, max: u64) {
-        self.context_utilization = utilization;
+        self.context_utilization = utilization.clamp(0.0, 1.0);
         self.context_estimated = estimated;
         self.context_max = max;
     }
@@ -163,10 +163,12 @@ impl Component for StatusBar {
             }
 
             if self.context_max > 0 {
-                let pct = (self.context_utilization * 100.0) as u32;
+                let pct = (self.context_utilization * 100.0).round() as u32;
                 spans.push(Span::styled(" \u{00b7} ", theme.faint()));
                 spans.push(Span::styled(
-                    format!("ctx {}%", pct),
+                    format!("ctx {}% ({}/{})", pct,
+                        Self::format_tokens(self.context_estimated),
+                        Self::format_tokens(self.context_max)),
                     theme.progress_label(),
                 ));
             }
@@ -199,18 +201,21 @@ impl Component for StatusBar {
                 let bar_width = 15u16;
                 let (bar, bar_style) =
                     theme.render_context_bar(self.context_utilization, bar_width);
-                let pct = (self.context_utilization * 100.0) as u32;
+                let pct = (self.context_utilization * 100.0).round() as u32;
+                let ctx_label = format!(" {}% ({}/{})", pct,
+                    Self::format_tokens(self.context_estimated),
+                    Self::format_tokens(self.context_max));
 
                 // Calculate padding
                 let left_len: usize = spans.iter().map(|s| s.width()).sum();
-                let right_text_len = 1 + bar.len() + 1 + format!("{}%", pct).len();
+                let right_text_len = 1 + bar.len() + ctx_label.len();
                 let total = left_len + right_text_len;
                 if area.width as usize > total {
                     let padding = area.width as usize - total;
                     spans.push(Span::raw(" ".repeat(padding)));
                 }
                 spans.push(Span::styled(bar, bar_style));
-                spans.push(Span::styled(format!(" {}%", pct), theme.progress_label()));
+                spans.push(Span::styled(ctx_label, theme.progress_label()));
             }
 
             let line = Line::from(spans);

@@ -350,6 +350,51 @@ impl App {
         );
     }
 
+    pub(super) fn handle_survey_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        use crate::dialogs::survey::SurveyAction;
+
+        if let Some(ref mut survey) = self.survey {
+            if let Some(action) = survey.handle_key(key) {
+                match action {
+                    SurveyAction::Submit(result) => {
+                        let session_id = self.session_id.clone();
+                        let client = self.client.clone();
+                        let request = crate::client::types::SurveyAnswerRequest {
+                            survey_id: result.survey_id.clone(),
+                            answers: result.answers.iter().map(|a| {
+                                crate::client::types::SurveyAnswerEntry {
+                                    question_index: a.question_index,
+                                    question_text: a.question_text.clone(),
+                                    selected: a.selected.clone(),
+                                    free_text: a.free_text.clone(),
+                                }
+                            }).collect(),
+                            session_id: session_id.clone(),
+                        };
+                        tokio::spawn(async move {
+                            let _ = client.submit_survey_answer(&session_id, request).await;
+                        });
+                        self.survey = None;
+                        let target = self.prev_state.unwrap_or(AppState::Idle);
+                        self.transition(target);
+                    }
+                    SurveyAction::Skip => {
+                        let session_id = self.session_id.clone();
+                        let client = self.client.clone();
+                        let survey_id = survey.survey_id.clone();
+                        tokio::spawn(async move {
+                            let _ = client.skip_survey(&session_id, &survey_id).await;
+                        });
+                        self.survey = None;
+                        let target = self.prev_state.unwrap_or(AppState::Idle);
+                        self.transition(target);
+                    }
+                }
+            }
+        }
+        false
+    }
+
     pub(super) fn open_command_palette(&mut self) {
         let items: Vec<PaletteItem> = self
             .command_entries

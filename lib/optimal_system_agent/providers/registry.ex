@@ -466,6 +466,127 @@ defmodule OptimalSystemAgent.Providers.Registry do
   end
 
   @doc """
+  Return the context window size (in tokens) for a given model.
+
+  Falls back to `:max_context_tokens` app env, then 128_000.
+  Ollama models use `num_ctx` from the model info endpoint when available,
+  otherwise fall back to a conservative 8_192.
+  """
+  @model_context_windows %{
+    # Anthropic — all Claude 4.x models have 1M context
+    "claude-opus-4-6" => 1_000_000,
+    "claude-sonnet-4-6" => 1_000_000,
+    "claude-haiku-4-5" => 200_000,
+    # Older Claude models
+    "claude-3-5-sonnet-20241022" => 200_000,
+    "claude-3-5-haiku-20241022" => 200_000,
+    "claude-3-opus-20240229" => 200_000,
+    # OpenAI
+    "gpt-4.1" => 1_047_576,
+    "gpt-4.1-mini" => 1_047_576,
+    "gpt-4.1-nano" => 1_047_576,
+    "gpt-4o" => 128_000,
+    "gpt-4o-mini" => 128_000,
+    "o3" => 200_000,
+    "o3-mini" => 200_000,
+    "o4-mini" => 200_000,
+    # Google
+    "gemini-2.5-pro" => 1_048_576,
+    "gemini-2.5-flash" => 1_048_576,
+    "gemini-2.0-flash" => 1_048_576,
+    # DeepSeek
+    "deepseek-chat" => 128_000,
+    "deepseek-reasoner" => 128_000,
+    # Groq (context varies by model)
+    "llama-3.3-70b-versatile" => 128_000,
+    "llama-3.1-8b-instant" => 131_072,
+    "mixtral-8x7b-32768" => 32_768,
+    # Mistral
+    "mistral-large-latest" => 128_000,
+    "mistral-small-latest" => 128_000,
+    # Cohere
+    "command-r-plus" => 128_000,
+    "command-r" => 128_000,
+  }
+
+  @spec context_window(String.t()) :: pos_integer()
+  def context_window(model) when is_binary(model) do
+    case Map.get(@model_context_windows, model) do
+      nil ->
+        # Try prefix match for Ollama models and variants
+        matched =
+          Enum.find(@model_context_windows, fn {key, _v} ->
+            String.starts_with?(model, key)
+          end)
+
+        case matched do
+          {_key, size} -> size
+          nil ->
+            # Check Ollama model info for num_ctx
+            case get_ollama_context(model) do
+              {:ok, ctx} -> ctx
+              _ -> Application.get_env(:optimal_system_agent, :max_context_tokens, 128_000)
+            end
+        end
+
+      size ->
+        size
+    end
+  end
+
+  def context_window(_), do: Application.get_env(:optimal_system_agent, :max_context_tokens, 128_000)
+
+  defp get_ollama_context(model) do
+    # Check ETS cache first
+    case :ets.whereis(:osa_context_cache) do
+      :undefined -> :ok
+      _ ->
+        case :ets.lookup(:osa_context_cache, model) do
+          [{^model, cached_ctx}] -> return_cached(cached_ctx)
+          _ -> :ok
+        end
+    end
+    |> case do
+      {:ok, _ctx} = hit -> hit
+      _ -> fetch_ollama_context(model)
+    end
+  end
+
+  defp return_cached(ctx), do: {:ok, ctx}
+
+  defp fetch_ollama_context(model) do
+    url = Application.get_env(:optimal_system_agent, :ollama_url, "http://localhost:11434")
+
+    case Req.post("#{url}/api/show", json: %{name: model}, receive_timeout: 3_000, retry: false) do
+      {:ok, %{status: 200, body: %{"model_info" => info}}} ->
+        # Ollama returns context length in model_info under various keys
+        ctx =
+          info
+          |> Enum.find_value(fn
+            {k, v} when is_integer(v) and v > 0 ->
+              if String.contains?(k, "context_length"), do: v
+            _ -> nil
+          end)
+
+        if ctx do
+          # Cache the result
+          case :ets.whereis(:osa_context_cache) do
+            :undefined -> :ok
+            _ -> :ets.insert(:osa_context_cache, {model, ctx})
+          end
+          {:ok, ctx}
+        else
+          :error
+        end
+
+      _ ->
+        :error
+    end
+  rescue
+    _ -> :error
+  end
+
+  @doc """
   Returns true if the provider has a configured API key (or is Ollama, which needs none
   but must be reachable). Ollama reachability is checked via TCP probe with 1s timeout.
   """

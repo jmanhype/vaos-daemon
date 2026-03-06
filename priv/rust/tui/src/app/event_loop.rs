@@ -161,6 +161,11 @@ impl App {
                                 review.draw(frame, area);
                             }
                         }
+                        crate::app::state::AppState::Survey => {
+                            if let Some(ref survey) = self.survey {
+                                survey.draw(frame, area);
+                            }
+                        }
                         _ => {}
                     }
                 }

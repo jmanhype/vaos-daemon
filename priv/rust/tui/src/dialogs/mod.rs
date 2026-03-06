@@ -8,6 +8,7 @@ pub mod plan_review;
 pub mod quit_confirm;
 pub mod reasoning;
 pub mod sessions;
+pub mod survey;
 
 /// Actions produced by dialog event handling that bubble up to the app layer.
 #[derive(Debug, Clone)]

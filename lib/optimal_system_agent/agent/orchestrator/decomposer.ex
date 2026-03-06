@@ -33,37 +33,37 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.Decomposer do
   For complex tasks, returns the LLM-generated decomposition with an
   Explorer as Wave 0 so all agents have codebase context before acting.
   """
-  @spec decompose_task(String.t()) :: {:ok, [SubTask.t()], map()} | {:error, term()}
-  def decompose_task(message) do
+  @spec decompose_task(String.t(), keyword()) :: {:ok, [SubTask.t()], map()} | {:error, term()}
+  def decompose_task(message, opts \\ []) do
     try do
       # 1. Check if a matching skill exists — prefer skill execution over decomposition
       case find_relevant_skill(message) do
         {:ok, skill} ->
           Logger.info("[Decomposer] Matched skill '#{skill.name}' — using skill execution instead of decomposition")
           sub_tasks = [build_skill_subtask(message, skill)]
-          {:ok, sub_tasks, %{estimated_tokens: estimate_tokens(message, sub_tasks)}}
+          {:ok, sub_tasks, %{estimated_tokens: estimate_tokens(message, sub_tasks), complexity_score: 2}}
 
         :no_match ->
           # 2. Heuristic: skip LLM decomposition call for tasks that clearly don't need it
           if should_decompose?(message) do
-            case Complexity.analyze(message) do
-              :simple ->
+            case Complexity.analyze(message, opts) do
+              {:simple, score} ->
                 sub_tasks = [
                   %SubTask{
                     name: "execute",
                     description: message,
-                    role: :builder,
+                    role: :backend,
                     tools_needed: ["file_read", "file_write", "shell_execute"],
                     depends_on: []
                   }
                 ]
-                {:ok, sub_tasks, %{estimated_tokens: estimate_tokens(message, sub_tasks)}}
+                {:ok, sub_tasks, %{estimated_tokens: estimate_tokens(message, sub_tasks), complexity_score: score}}
 
-              {:complex, sub_tasks} ->
+              {:complex, score, sub_tasks} ->
                 # 3. Estimate cost before committing to multi-agent execution
                 if cost_justified?(message, sub_tasks) do
                   final_tasks = Explorer.inject_explore_phase(sub_tasks, message)
-                  {:ok, final_tasks, %{estimated_tokens: estimate_tokens(message, final_tasks)}}
+                  {:ok, final_tasks, %{estimated_tokens: estimate_tokens(message, final_tasks), complexity_score: score}}
                 else
                   Logger.info(
                     "[Decomposer] Multi-agent cost not justified (#{length(sub_tasks)} sub-tasks) — keeping as single agent"
@@ -78,7 +78,7 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.Decomposer do
                       depends_on: []
                     }
                   ]
-                  {:ok, single, %{estimated_tokens: estimate_tokens(message, single)}}
+                  {:ok, single, %{estimated_tokens: estimate_tokens(message, single), complexity_score: score}}
                 end
             end
           else
@@ -93,7 +93,7 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.Decomposer do
                 depends_on: []
               }
             ]
-            {:ok, sub_tasks, %{estimated_tokens: estimate_tokens(message, sub_tasks)}}
+            {:ok, sub_tasks, %{estimated_tokens: estimate_tokens(message, sub_tasks), complexity_score: 2}}
           end
       end
     rescue
@@ -237,6 +237,87 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.Decomposer do
       tools_needed: ["file_read"] ++ (skill[:tools] || []),
       depends_on: []
     }
+  end
+
+  @doc """
+  Generate clarifying questions for complex tasks.
+  Returns a list of question maps for the survey dialog.
+  """
+  @spec generate_questions(String.t()) :: [map()]
+  def generate_questions(message) when is_binary(message) do
+    base_questions = [
+      %{
+        text: "What is the primary goal of this task?",
+        multi_select: false,
+        options: [
+          %{label: "Build new feature", description: "Create something that doesn't exist yet"},
+          %{label: "Fix a bug", description: "Resolve an existing issue or error"},
+          %{label: "Refactor/improve", description: "Restructure or optimize existing code"},
+          %{label: "Research/explore", description: "Investigate or analyze without making changes"}
+        ],
+        skippable: true
+      },
+      %{
+        text: "What's your quality priority?",
+        multi_select: false,
+        options: [
+          %{label: "Speed", description: "Get it working fast, iterate later"},
+          %{label: "Quality", description: "Production-ready with tests and error handling"},
+          %{label: "Balanced", description: "Reasonable quality without over-engineering"}
+        ],
+        skippable: true
+      }
+    ]
+
+    if cross_domain_task?(message) do
+      base_questions ++
+        [
+          %{
+            text: "Which areas should agents focus on?",
+            multi_select: true,
+            options: detect_domain_options(message),
+            skippable: true
+          }
+        ]
+    else
+      base_questions
+    end
+  end
+
+  defp cross_domain_task?(message) do
+    domains = ~w(frontend backend database api ui test deploy infra)
+    msg = String.downcase(message)
+    Enum.count(domains, fn d -> String.contains?(msg, d) end) >= 2
+  end
+
+  defp detect_domain_options(message) do
+    msg = String.downcase(message)
+
+    all_options = [
+      {"Frontend/UI", "frontend", "Components, styling, client-side logic"},
+      {"Backend/API", "backend", "Server logic, endpoints, business rules"},
+      {"Database", "database", "Schema changes, migrations, queries"},
+      {"Testing", "test", "Unit tests, integration tests, E2E"},
+      {"Infrastructure", "infra", "Docker, CI/CD, deployment"},
+      {"Documentation", "doc", "README, API docs, comments"}
+    ]
+
+    matched =
+      all_options
+      |> Enum.filter(fn {_label, keyword, _desc} -> String.contains?(msg, keyword) end)
+      |> Enum.map(fn {label, _kw, desc} -> %{label: label, description: desc} end)
+
+    case matched do
+      [] ->
+        [
+          %{label: "Frontend/UI", description: "Components, styling, client-side logic"},
+          %{label: "Backend/API", description: "Server logic, endpoints, business rules"},
+          %{label: "Testing", description: "Unit tests, integration tests, E2E"}
+        ]
+
+      opts ->
+        opts
+    end
   end
 
   @doc """

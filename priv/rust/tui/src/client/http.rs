@@ -384,6 +384,39 @@ impl ApiClient {
         Ok(())
     }
 
+    // -- Survey --
+
+    /// POST /api/v1/sessions/:id/survey/answer
+    pub async fn submit_survey_answer(
+        &self,
+        session_id: &str,
+        request: crate::client::types::SurveyAnswerRequest,
+    ) -> Result<()> {
+        let _ = self
+            .post(
+                &format!("/api/v1/sessions/{}/survey/answer", session_id),
+                &request,
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// POST /api/v1/sessions/:id/survey/skip
+    pub async fn skip_survey(
+        &self,
+        session_id: &str,
+        survey_id: &str,
+    ) -> Result<()> {
+        let body = serde_json::json!({ "survey_id": survey_id });
+        let _ = self
+            .post(
+                &format!("/api/v1/sessions/{}/survey/skip", session_id),
+                &body,
+            )
+            .await?;
+        Ok(())
+    }
+
     // -- Onboarding --
 
     /// GET /onboarding/status

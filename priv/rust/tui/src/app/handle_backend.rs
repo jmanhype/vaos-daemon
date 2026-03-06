@@ -141,20 +141,49 @@ impl App {
                 estimated_tokens,
                 max_tokens,
             } => {
-                self.status
-                    .set_context(utilization, estimated_tokens, max_tokens);
-                self.sidebar.set_context(utilization);
+                // Normalize at the handler level: backend sends 0-100 percentage
+                let ratio = if utilization > 1.0 { utilization / 100.0 } else { utilization };
+                self.status.set_context(ratio, estimated_tokens, max_tokens);
+                self.sidebar.set_context(ratio);
             }
             BackendEvent::TaskCreated {
                 task_id,
                 subject,
-                active_form: _,
+                active_form,
             } => {
-                self.tasks.add(task_id.clone(), subject, String::new());
+                self.tasks.add(task_id.clone(), subject.clone(), String::new());
+                self.task_checklist.add(task_id, subject, Some(active_form));
                 self.recompute_layout();
             }
             BackendEvent::TaskUpdated { task_id, status } => {
                 self.tasks.update(&task_id, &status);
+                let checklist_status = match status.as_str() {
+                    "completed" => crate::components::task_checklist::ChecklistStatus::Completed,
+                    "in_progress" => crate::components::task_checklist::ChecklistStatus::InProgress,
+                    "failed" => crate::components::task_checklist::ChecklistStatus::Failed,
+                    _ => crate::components::task_checklist::ChecklistStatus::Pending,
+                };
+                self.task_checklist.update(&task_id, checklist_status);
+            }
+            BackendEvent::TaskChecklistShow { tasks } => {
+                self.task_checklist.clear();
+                for task in tasks {
+                    let status = match task.status.as_str() {
+                        "completed" => crate::components::task_checklist::ChecklistStatus::Completed,
+                        "in_progress" => crate::components::task_checklist::ChecklistStatus::InProgress,
+                        "failed" => crate::components::task_checklist::ChecklistStatus::Failed,
+                        _ => crate::components::task_checklist::ChecklistStatus::Pending,
+                    };
+                    let id = task.id.clone();
+                    self.task_checklist.add(task.id, task.subject, task.active_form);
+                    self.task_checklist.update(&id, status);
+                }
+                self.task_checklist.show();
+                self.recompute_layout();
+            }
+            BackendEvent::TaskChecklistHide => {
+                self.task_checklist.hide();
+                self.recompute_layout();
             }
             BackendEvent::CommandsLoaded(result) => match result {
                 Ok(commands) => {
@@ -213,6 +242,10 @@ impl App {
                         &resp.model,
                         self.header.tool_count(),
                     );
+                    // Reset context bar with new model's window size
+                    if let Some(ctx) = resp.context_window {
+                        self.status.set_context(0.0, 0, ctx);
+                    }
                     self.toasts.push(
                         format!("Model: {}/{}", resp.provider, resp.model),
                         crate::components::toast::ToastLevel::Info,
@@ -290,8 +323,8 @@ impl App {
             BackendEvent::OrchestratorTaskAppraised { .. } => {
                 // Appraisal info is informational only; no UI state change needed.
             }
-            BackendEvent::OrchestratorAgentStarted { agent_name, role, model, subject } => {
-                self.agents.agent_started(&agent_name, &role, &model, &subject);
+            BackendEvent::OrchestratorAgentStarted { agent_name, role, model, subject, batch_id } => {
+                self.agents.agent_started(&agent_name, &role, &model, &subject, batch_id);
                 let display = if role.is_empty() { agent_name.clone() } else { format!("{}/{}", agent_name, role) };
                 self.sidebar.set_current_agent(display);
                 self.recompute_layout();
@@ -739,6 +772,29 @@ impl App {
                     );
                 }
             },
+
+            // Survey events
+            BackendEvent::AskUserQuestion { survey_id, questions, skippable } => {
+                use crate::dialogs::survey::{SurveyDialog, SurveyQuestion, SurveyOption};
+                let qs: Vec<SurveyQuestion> = questions.into_iter().map(|q| {
+                    SurveyQuestion {
+                        text: q.text,
+                        multi_select: q.multi_select,
+                        options: q.options.into_iter().map(|o| SurveyOption {
+                            label: o.label,
+                            description: o.description,
+                        }).collect(),
+                        skippable: q.skippable,
+                    }
+                }).collect();
+                self.survey = Some(SurveyDialog::new(survey_id, qs, skippable));
+                if self.state.can_transition_to(AppState::Survey) {
+                    self.transition(AppState::Survey);
+                }
+            }
+            BackendEvent::SurveyAnswered { survey_id, summary } => {
+                self.chat.add_survey_summary(survey_id, summary);
+            }
         }
         false
     }

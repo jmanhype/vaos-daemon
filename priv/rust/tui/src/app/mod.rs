@@ -26,6 +26,7 @@ use crate::components::header::Header;
 use crate::components::input::InputComponent;
 use crate::components::sidebar::Sidebar;
 use crate::components::status_bar::StatusBar;
+use crate::components::task_checklist::TaskChecklist;
 use crate::components::tasks::Tasks;
 use crate::components::toast::Toasts;
 use crate::config::cli::Cli;
@@ -62,6 +63,7 @@ pub struct App {
     pub sidebar: Sidebar,
     pub thinking_box: ThinkingBox,
     pub tasks: Tasks,
+    pub task_checklist: TaskChecklist,
     pub agents: Agents,
     pub toasts: Toasts,
 
@@ -75,6 +77,7 @@ pub struct App {
     pub permissions: Option<Permissions>,
     pub reasoning_selector: Option<ReasoningSelector>,
     pub file_picker: Option<FilePicker>,
+    pub survey: Option<crate::dialogs::survey::SurveyDialog>,
 
     // State
     pub state: AppState,
@@ -168,6 +171,7 @@ impl App {
             sidebar,
             thinking_box: ThinkingBox::new(),
             tasks: Tasks::new(),
+            task_checklist: TaskChecklist::new(),
             agents: Agents::new(),
             toasts: Toasts::new(),
 
@@ -180,6 +184,7 @@ impl App {
             permissions: None,
             reasoning_selector: None,
             file_picker: None,
+            survey: None,
 
             state: AppState::Connecting,
             prev_state: None,

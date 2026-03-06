@@ -93,13 +93,16 @@ defmodule OptimalSystemAgent.Channels.HTTP do
 
     uptime = System.system_time(:second) - Application.get_env(:optimal_system_agent, :start_time, System.system_time(:second))
 
+    context_window = OptimalSystemAgent.Providers.Registry.context_window(model_name)
+
     body =
       Jason.encode!(%{
         status: "ok",
         version: version,
         uptime_seconds: uptime,
         provider: provider,
-        model: model_name
+        model: model_name,
+        context_window: context_window
       })
 
     conn

@@ -4,6 +4,7 @@ pub mod chat;
 pub mod header;
 pub mod input;
 pub mod status_bar;
+pub mod task_checklist;
 pub mod tasks;
 pub mod toast;
 pub mod sidebar;

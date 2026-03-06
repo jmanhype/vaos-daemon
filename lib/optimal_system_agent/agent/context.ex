@@ -44,6 +44,7 @@ defmodule OptimalSystemAgent.Agent.Context do
   @response_reserve 8_192
 
   defp max_tokens, do: Application.get_env(:optimal_system_agent, :max_context_tokens, 128_000)
+  defp max_tokens(model), do: OptimalSystemAgent.Providers.Registry.context_window(model)
 
   # ---------------------------------------------------------------------------
   # Public API
@@ -62,7 +63,11 @@ defmodule OptimalSystemAgent.Agent.Context do
     conversation = state.messages || []
     conversation_tokens = estimate_tokens_messages(conversation)
 
-    max_tok = max_tokens()
+    max_tok = case Map.get(state, :model) do
+      nil -> max_tokens()
+      "" -> max_tokens()
+      model -> max_tokens(model)
+    end
 
     # Tier 1: Cached static base
     static_base = Soul.static_base()

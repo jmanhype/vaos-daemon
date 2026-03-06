@@ -13,6 +13,7 @@ pub enum MessageType {
     SystemError,
     ToolCall,
     Help,
+    SurveyQA,
 }
 
 /// Number of rendered lines for the Help message (must match `build_help_lines`).
@@ -30,6 +31,13 @@ pub struct ToolCallData {
     pub lines: Vec<Line<'static>>,
 }
 
+/// Stored survey Q&A data for summary rendering.
+#[derive(Clone)]
+pub struct SurveyQAData {
+    pub survey_id: String,
+    pub pairs: Vec<(String, String)>, // (question, answer)
+}
+
 /// A chat message
 pub struct Message {
     pub msg_type: MessageType,
@@ -37,8 +45,10 @@ pub struct Message {
     pub signal: Option<Signal>,
     /// Rich tool call data (only for ToolCall messages)
     pub tool_data: Option<ToolCallData>,
+    /// Survey Q&A data (only for SurveyQA messages)
+    pub survey_data: Option<SurveyQAData>,
     /// Cached height for given width
-    cached_height: Option<(u16, u16)>,
+    pub cached_height: Option<(u16, u16)>,
 }
 
 impl Message {
@@ -48,6 +58,7 @@ impl Message {
             content,
             signal,
             tool_data: None,
+            survey_data: None,
             cached_height: None,
         }
     }
@@ -58,6 +69,7 @@ impl Message {
             msg_type: MessageType::ToolCall,
             content: String::new(), // not used for rich tool calls
             tool_data: Some(data),
+            survey_data: None,
             signal: None,
             cached_height: None,
         }
@@ -76,6 +88,11 @@ impl Message {
         // Tool call messages with rich data — use line count directly.
         if let Some(ref td) = self.tool_data {
             return (td.lines.len() as u16).max(1);
+        }
+
+        // Survey Q&A: 2 lines per pair + 2 for border (top + bottom)
+        if let Some(ref sd) = self.survey_data {
+            return (sd.pairs.len() as u16 * 2).saturating_add(2);
         }
 
         if let Some((cached_w, cached_h)) = self.cached_height {
@@ -141,6 +158,9 @@ impl Message {
             }
             MessageType::Help => {
                 self.draw_help(frame, area, &theme)
+            }
+            MessageType::SurveyQA => {
+                self.draw_survey_qa(frame, area, &theme)
             }
         }
     }
@@ -259,6 +279,47 @@ impl Message {
         .block(block)
         .wrap(Wrap { trim: false });
         frame.render_widget(paragraph, area);
+    }
+
+    fn draw_survey_qa(&self, frame: &mut Frame, area: Rect, theme: &style::Theme) {
+        let sd = match self.survey_data {
+            Some(ref d) => d,
+            None => return,
+        };
+
+        let block = Block::default()
+            .title(Span::styled(
+                " Survey Complete ",
+                Style::default()
+                    .fg(theme.colors.secondary)
+                    .add_modifier(Modifier::BOLD),
+            ))
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(theme.colors.secondary));
+
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        let muted_style = Style::default().fg(theme.colors.muted);
+        let answer_style = Style::default()
+            .fg(theme.colors.primary)
+            .add_modifier(Modifier::BOLD);
+
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        for (q, a) in &sd.pairs {
+            lines.push(Line::from(Span::styled(
+                format!("  Q: {}", q),
+                muted_style,
+            )));
+            lines.push(Line::from(Span::styled(
+                format!("  A: {}", a),
+                answer_style,
+            )));
+        }
+
+        let paragraph = Paragraph::new(lines);
+        frame.render_widget(paragraph, inner);
     }
 
     fn draw_help(&self, frame: &mut Frame, area: Rect, theme: &style::Theme) {

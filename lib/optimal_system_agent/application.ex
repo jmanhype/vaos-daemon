@@ -48,6 +48,14 @@ defmodule OptimalSystemAgent.Application do
     # per session so the pre_tool_use hook can nudge when writing unread files.
     :ets.new(:osa_files_read, [:named_table, :public, :set])
 
+    # ETS table for ask_user_question survey answers — the HTTP endpoint writes
+    # answers here, Loop.ask_user_question/4 polls and consumes them.
+    :ets.new(:osa_survey_answers, [:set, :public, :named_table])
+
+    # ETS table for caching Ollama model context window sizes — avoids repeated
+    # /api/show HTTP calls since context_length doesn't change without re-pull.
+    :ets.new(:osa_context_cache, [:set, :public, :named_table])
+
     children =
       [
         # Process registry for agent sessions

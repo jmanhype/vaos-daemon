@@ -7,6 +7,8 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.SessionRoutes do
     GET    /sessions/:id
     GET    /sessions/:id/messages
     POST   /sessions/:id/cancel
+    POST   /sessions/:id/survey/answer
+    POST   /sessions/:id/survey/skip
     DELETE /sessions/:id
   """
   use Plug.Router
@@ -184,6 +186,72 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.SessionRoutes do
       {:error, :not_running} ->
         json_error(conn, 404, "not_running", "No active agent loop for session #{session_id}")
     end
+  end
+
+  # ── POST /sessions/:id/survey/answer ──────────────────────────────
+
+  post "/:id/survey/answer" do
+    session_id = conn.params["id"]
+    body = conn.body_params
+
+    survey_id = body["survey_id"]
+    answers = body["answers"]
+
+    unless survey_id && answers do
+      conn
+      |> put_resp_content_type("application/json")
+      |> send_resp(400, Jason.encode!(%{error: "missing survey_id or answers"}))
+      |> halt()
+    end
+
+    key = {session_id, survey_id}
+    :ets.insert(:osa_survey_answers, {key, answers})
+
+    OptimalSystemAgent.Events.Bus.emit(:system_event, %{
+      event: :survey_answered,
+      session_id: session_id,
+      data: %{
+        survey_id: survey_id,
+        summary:
+          Enum.map(answers, fn a ->
+            answer_text =
+              case a do
+                %{"free_text" => ft} when is_binary(ft) and ft != "" -> ft
+                %{"selected" => selected} -> Enum.join(selected, ", ")
+                _ -> ""
+              end
+
+            {a["question_text"] || "", answer_text}
+          end)
+      }
+    })
+
+    conn
+    |> put_resp_content_type("application/json")
+    |> send_resp(200, Jason.encode!(%{status: "ok"}))
+  end
+
+  # ── POST /sessions/:id/survey/skip ───────────────────────────────
+
+  post "/:id/survey/skip" do
+    session_id = conn.params["id"]
+    body = conn.body_params
+
+    survey_id = body["survey_id"]
+
+    unless survey_id do
+      conn
+      |> put_resp_content_type("application/json")
+      |> send_resp(400, Jason.encode!(%{error: "missing survey_id"}))
+      |> halt()
+    end
+
+    key = {session_id, survey_id}
+    :ets.insert(:osa_survey_answers, {key, :skipped})
+
+    conn
+    |> put_resp_content_type("application/json")
+    |> send_resp(200, Jason.encode!(%{status: "skipped"}))
   end
 
   match _ do

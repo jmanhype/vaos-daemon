@@ -83,8 +83,8 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.OrchestrationRoutes do
                   case Complexity.quick_check(input) do
                     :possibly_complex ->
                       case Complexity.analyze(input) do
-                        {:complex, _sub_tasks} -> :multi_agent
-                        :simple -> :single_agent
+                        {:complex, _score, _sub_tasks} -> :multi_agent
+                        {:simple, _score} -> :single_agent
                       end
 
                     :likely_simple ->
@@ -96,7 +96,10 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.OrchestrationRoutes do
 
               case route do
                 :multi_agent ->
-                  case TaskOrchestrator.execute(input, session_id, strategy: "auto") do
+                  execute_opts = [strategy: "auto"]
+                  execute_opts = maybe_put(execute_opts, :max_agents, conn.body_params["max_agents"])
+
+                  case TaskOrchestrator.execute(input, session_id, execute_opts) do
                     {:ok, task_id} ->
                       body = Jason.encode!(%{
                         session_id: session_id,
@@ -167,7 +170,10 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.OrchestrationRoutes do
       session_id = conn.body_params["session_id"] || generate_session_id()
       blocking = conn.body_params["blocking"] == true
 
-      case TaskOrchestrator.execute(task, session_id, strategy: strategy) do
+      execute_opts = [strategy: strategy]
+      execute_opts = maybe_put(execute_opts, :max_agents, conn.body_params["max_agents"])
+
+      case TaskOrchestrator.execute(task, session_id, execute_opts) do
         {:ok, task_id} ->
           if blocking do
             case await_orchestration_http(task_id, 300_000) do

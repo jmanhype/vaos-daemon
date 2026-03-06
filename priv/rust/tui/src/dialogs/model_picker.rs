@@ -351,6 +351,17 @@ impl ModelPicker {
                         }
                     });
 
+                    // Context window badge
+                    let ctx_badge = m.context_window.map(|tokens| {
+                        if tokens >= 1_000_000 {
+                            format!(" {}M ctx", tokens / 1_000_000)
+                        } else if tokens >= 1_000 {
+                            format!(" {}K ctx", tokens / 1_000)
+                        } else {
+                            format!(" {} ctx", tokens)
+                        }
+                    });
+
                     // Reasoning badge — detect by name suffix
                     let has_reasoning = m.name.contains("reasoning")
                         || m.name.contains("think")
@@ -376,6 +387,13 @@ impl ModelPicker {
                     ];
 
                     if let Some(badge) = &size_badge {
+                        spans.push(Span::styled(
+                            badge.clone(),
+                            Style::default().fg(theme.colors.dim),
+                        ));
+                    }
+
+                    if let Some(badge) = &ctx_badge {
                         spans.push(Span::styled(
                             badge.clone(),
                             Style::default().fg(theme.colors.dim),

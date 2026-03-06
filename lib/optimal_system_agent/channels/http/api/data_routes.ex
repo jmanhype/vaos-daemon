@@ -135,7 +135,8 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.DataRoutes do
 
       Logger.info("[Models] Switched to #{prov_str}/#{model_name}")
 
-      body = Jason.encode!(%{provider: prov_str, model: model_name, status: "ok"})
+      context_window = Providers.Registry.context_window(model_name)
+      body = Jason.encode!(%{provider: prov_str, model: model_name, status: "ok", context_window: context_window})
 
       conn
       |> put_resp_content_type("application/json")
@@ -208,7 +209,8 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.DataRoutes do
               name: m.name,
               provider: "ollama",
               size: m.size,
-              active: to_string(provider) == "ollama" and m.name == current_model
+              active: to_string(provider) == "ollama" and m.name == current_model,
+              context_window: Providers.Registry.context_window(m.name)
             }
           end)
 
@@ -228,7 +230,8 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.DataRoutes do
                 name: model_name,
                 provider: to_string(p),
                 size: 0,
-                active: provider == p and model_name == current_model
+                active: provider == p and model_name == current_model,
+                context_window: Providers.Registry.context_window(model_name)
               }
             end)
 

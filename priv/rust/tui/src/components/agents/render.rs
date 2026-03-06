@@ -75,90 +75,136 @@ impl Agents {
             return;
         }
 
-        // ── Agent rows (tree-view) ──────────────────────────────────────────
-        let agent_count = self.entries.len();
-        for (i, entry) in self.entries.iter().enumerate() {
+        // ── Agent rows (tree-view, with optional batch grouping) ──────────
+        let groups = self.grouped_entries();
+        let has_batches = groups.iter().any(|g| g.batch_id.is_some());
+
+        for (group_idx, group) in groups.iter().enumerate() {
             if y + 1 >= area.y + area.height {
                 break;
             }
 
-            let is_last = i == agent_count - 1;
-            let connector = if is_last { "└─ " } else { "├─ " };
-            let continuation = if is_last { "   " } else { "│  " };
-
-            // Row 1: connector + spinner + subject + stats
-            let (icon, icon_style) = self.agent_icon(entry);
-            let subject = if entry.subject.is_empty() {
-                entry.name.clone()
-            } else {
-                entry.subject.clone()
-            };
-
-            // Truncate subject to fit
-            let stats_str = format!(
-                " · {} tool use{} · {} tokens",
-                entry.tool_uses,
-                if entry.tool_uses == 1 { "" } else { "s" },
-                fmt_tokens(entry.tokens_used)
-            );
-            let prefix_len = connector.len() + 2 + 1; // connector + icon + space
-            let max_subject = (area.width as usize)
-                .saturating_sub(prefix_len + stats_str.len())
-                .max(8);
-            let subject_display = truncate_str(&subject, max_subject);
-
-            let row1 = Line::from(vec![
-                Span::styled(connector, theme.faint()),
-                Span::styled(format!("{} ", icon), icon_style),
-                Span::styled(subject_display, theme.agent_name()),
-                Span::styled(stats_str, theme.faint()),
-            ]);
-            frame.render_widget(
-                Paragraph::new(row1),
-                Rect::new(area.x, y, area.width, 1),
-            );
-            y += 1;
-
-            // Row 2: continuation + action line
-            if y < area.y + area.height {
-                let action_display = match entry.status {
-                    AgentStatus::Completed => "Done".to_string(),
-                    AgentStatus::Failed => {
-                        if entry.current_action.is_empty() {
-                            "Failed".to_string()
-                        } else {
-                            entry.current_action.clone()
-                        }
-                    }
-                    _ => {
-                        if entry.current_action.is_empty() {
-                            "Starting…".to_string()
-                        } else {
-                            entry.current_action.clone()
-                        }
-                    }
+            // Render batch header if any entries use batch_id
+            if has_batches {
+                let label = match &group.batch_id {
+                    Some(id) => format!("─── Batch {}: {} ", group_idx + 1, id),
+                    None => "─── Ungrouped ".to_string(),
                 };
-
-                let action_style = match entry.status {
-                    AgentStatus::Completed => theme.task_done(),
-                    AgentStatus::Failed => theme.error_text(),
-                    _ => theme.faint(),
-                };
-
-                // Truncate action
-                let max_action = (area.width as usize).saturating_sub(continuation.len() + 4).max(8);
-                let action_truncated = truncate_str(&action_display, max_action);
-
-                let row2 = Line::from(vec![
-                    Span::styled(continuation, theme.faint()),
-                    Span::styled("└─ ", theme.faint()),
-                    Span::styled(action_truncated, action_style),
-                ]);
+                let pad_len = (area.width as usize).saturating_sub(label.len());
+                let padded = format!("{}{}", label, "─".repeat(pad_len));
                 frame.render_widget(
-                    Paragraph::new(row2),
+                    Paragraph::new(Line::from(Span::styled(padded, theme.faint()))),
                     Rect::new(area.x, y, area.width, 1),
                 );
                 y += 1;
+            }
+
+            let group_len = group.entries.len();
+            for (pos, &idx) in group.entries.iter().enumerate() {
+                if y + 1 >= area.y + area.height {
+                    break;
+                }
+                let entry = &self.entries[idx];
+
+                let is_last = pos == group_len - 1;
+                let connector = if is_last { "└─ " } else { "├─ " };
+                let continuation = if is_last { "   " } else { "│  " };
+
+                // Row 1: connector + spinner + subject + stats
+                let (icon, icon_style) = self.agent_icon(entry);
+                let subject = if entry.subject.is_empty() {
+                    entry.name.clone()
+                } else {
+                    entry.subject.clone()
+                };
+
+                // Build optional role/model tag strings
+                let role_str = if entry.role.is_empty() {
+                    String::new()
+                } else {
+                    format!(" [{}]", entry.role)
+                };
+                let model_str = if entry.model.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", shorten_model_name(&entry.model))
+                };
+
+                // Truncate subject to fit
+                let stats_str = format!(
+                    " · {} tool use{} · {} tokens",
+                    entry.tool_uses,
+                    if entry.tool_uses == 1 { "" } else { "s" },
+                    fmt_tokens(entry.tokens_used)
+                );
+                let prefix_len = connector.len() + 2 + 1; // connector + icon + space
+                let tags_len = role_str.len() + model_str.len();
+                let max_subject = (area.width as usize)
+                    .saturating_sub(prefix_len + tags_len + stats_str.len())
+                    .max(8);
+                let subject_display = truncate_str(&subject, max_subject);
+
+                let mut row1_spans = vec![
+                    Span::styled(connector, theme.faint()),
+                    Span::styled(format!("{} ", icon), icon_style),
+                    Span::styled(subject_display, theme.agent_name()),
+                ];
+                if !role_str.is_empty() {
+                    row1_spans.push(Span::styled(role_str, theme.role_tag()));
+                }
+                if !model_str.is_empty() {
+                    row1_spans.push(Span::styled(model_str, theme.model_tag()));
+                }
+                row1_spans.push(Span::styled(stats_str, theme.faint()));
+
+                let row1 = Line::from(row1_spans);
+                frame.render_widget(
+                    Paragraph::new(row1),
+                    Rect::new(area.x, y, area.width, 1),
+                );
+                y += 1;
+
+                // Row 2: continuation + action line
+                if y < area.y + area.height {
+                    let action_display = match entry.status {
+                        AgentStatus::Completed => "Done".to_string(),
+                        AgentStatus::Failed => {
+                            if entry.current_action.is_empty() {
+                                "Failed".to_string()
+                            } else {
+                                entry.current_action.clone()
+                            }
+                        }
+                        _ => {
+                            if entry.current_action.is_empty() {
+                                "Starting…".to_string()
+                            } else {
+                                entry.current_action.clone()
+                            }
+                        }
+                    };
+
+                    let action_style = match entry.status {
+                        AgentStatus::Completed => theme.task_done(),
+                        AgentStatus::Failed => theme.error_text(),
+                        _ => theme.faint(),
+                    };
+
+                    // Truncate action
+                    let max_action = (area.width as usize).saturating_sub(continuation.len() + 4).max(8);
+                    let action_truncated = truncate_str(&action_display, max_action);
+
+                    let row2 = Line::from(vec![
+                        Span::styled(continuation, theme.faint()),
+                        Span::styled("└─ ", theme.faint()),
+                        Span::styled(action_truncated, action_style),
+                    ]);
+                    frame.render_widget(
+                        Paragraph::new(row2),
+                        Rect::new(area.x, y, area.width, 1),
+                    );
+                    y += 1;
+                }
             }
         }
 
@@ -228,6 +274,15 @@ fn fmt_tokens(n: u32) -> String {
         format!("{:.1}k", n as f64 / 1000.0)
     } else {
         n.to_string()
+    }
+}
+
+/// Shorten model names by stripping the "claude-" prefix.
+fn shorten_model_name(model: &str) -> &str {
+    if let Some(rest) = model.strip_prefix("claude-") {
+        rest
+    } else {
+        model
     }
 }
 

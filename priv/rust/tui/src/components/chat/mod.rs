@@ -10,7 +10,7 @@ use crate::event::Event;
 use crate::style;
 
 use super::{Component, ComponentAction};
-use message::{Message, MessageType, ToolCallData};
+use message::{Message, MessageType, SurveyQAData, ToolCallData};
 
 /// Chat viewport managing a scrollable list of messages
 pub struct Chat {
@@ -104,6 +104,20 @@ impl Chat {
         self.messages.push(Message::new_tool_call(data));
         self.has_messages = true;
         self.scroll_to_bottom();
+    }
+
+    /// Add a survey Q&A summary to the chat.
+    pub fn add_survey_summary(&mut self, survey_id: String, pairs: Vec<(String, String)>) {
+        self.messages.push(Message {
+            msg_type: MessageType::SurveyQA,
+            content: String::new(),
+            signal: None,
+            tool_data: None,
+            survey_data: Some(SurveyQAData { survey_id, pairs }),
+            cached_height: None,
+        });
+        self.has_messages = true;
+        self.scroll_offset = 0;
     }
 
     /// Attach result data to the last matching tool call (for expand toggle).

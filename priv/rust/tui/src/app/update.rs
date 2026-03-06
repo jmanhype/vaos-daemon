@@ -77,6 +77,7 @@ impl App {
             AppState::Onboarding => self.handle_onboarding_key(key),
             AppState::PlanReview => self.handle_plan_review_key(key),
             AppState::Permissions => self.handle_permissions_key(key),
+            AppState::Survey => self.handle_survey_key(key),
             AppState::Idle => self.handle_idle_key(key),
             AppState::Processing => self.handle_processing_key(key),
             _ => false,

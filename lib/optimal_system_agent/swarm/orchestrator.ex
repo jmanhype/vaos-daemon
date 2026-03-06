@@ -29,10 +29,10 @@ defmodule OptimalSystemAgent.Swarm.Orchestrator do
 
   alias OptimalSystemAgent.Swarm.{Worker, Mailbox, Planner, Patterns}
   alias OptimalSystemAgent.Providers.Registry, as: Providers
+  alias OptimalSystemAgent.Agent.Roster
   alias OptimalSystemAgent.Events.Bus
 
   @max_swarms 10
-  @max_agents 10
   # 5 minutes
   @default_timeout_ms 300_000
   @valid_patterns [:parallel, :pipeline, :debate, :review]
@@ -52,7 +52,7 @@ defmodule OptimalSystemAgent.Swarm.Orchestrator do
   Options:
     - `:pattern`    — override automatic pattern selection (:parallel | :pipeline | :debate | :review)
     - `:timeout_ms` — swarm-level timeout in ms (default: #{@default_timeout_ms})
-    - `:max_agents` — cap the number of agents (default: #{@max_agents})
+    - `:max_agents` — cap the number of agents (default: Roster.max_agents())
 
   Returns `{:ok, swarm_id}` or `{:error, reason}`.
   """
@@ -296,7 +296,7 @@ defmodule OptimalSystemAgent.Swarm.Orchestrator do
   defp do_launch_validated(task, opts, state) do
     swarm_id = generate_id()
     timeout_ms = Keyword.get(opts, :timeout_ms, @default_timeout_ms)
-    max_agents = Keyword.get(opts, :max_agents, @max_agents)
+    max_agents = Keyword.get(opts, :max_agents, Roster.max_agents())
     session_id = Keyword.get(opts, :session_id)
 
     # 1. Decompose task into a plan (LLM-powered, with fallback)

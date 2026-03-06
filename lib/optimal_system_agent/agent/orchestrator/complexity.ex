@@ -46,12 +46,58 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.Complexity do
   end
 
   @doc """
+  Fast heuristic score — no LLM call. Returns an integer 1-10.
+
+  Uses word count, keyword density, and structural signals to estimate
+  complexity without burning an LLM call. Suitable for gating decisions
+  like whether to ask clarifying questions.
+  """
+  @spec quick_score(String.t()) :: integer()
+  def quick_score(message) do
+    lower = String.downcase(message)
+    words = String.split(message)
+    word_count = length(words)
+
+    # Base score from length
+    length_score = cond do
+      word_count > 200 -> 4
+      word_count > 100 -> 3
+      word_count > 50  -> 2
+      true             -> 1
+    end
+
+    # Cross-domain keywords
+    domain_keywords = ~w(frontend backend database api deploy test migrate refactor integrate infrastructure)
+    domain_hits = Enum.count(domain_keywords, &String.contains?(lower, &1))
+    domain_score = min(domain_hits, 4)
+
+    # Multi-step markers
+    step_patterns = [~r/\d+\.\s+/, ~r/\bfirst\b/, ~r/\bthen\b/, ~r/\bfinally\b/, ~r/\bafter\b/]
+    step_hits = Enum.count(step_patterns, &Regex.match?(&1, lower))
+    step_score = min(step_hits, 3)
+
+    # Complexity indicators
+    complex_words = ~w(comprehensive full overhaul migration rewrite architecture)
+    complex_hits = Enum.count(complex_words, &String.contains?(lower, &1))
+    complex_score = min(complex_hits * 2, 4)
+
+    total = length_score + domain_score + step_score + complex_score
+    min(max(total, 1), 10)
+  end
+
+  @doc """
   Analyze a task message for complexity.
 
-  Returns `:simple` or `{:complex, [SubTask.t()]}`.
+  Returns `{:simple, score}` or `{:complex, score, [SubTask.t()]}`.
+  Score is 1-10 (1=trivial, 10=massive cross-system refactor).
+
+  Options:
+    - `:max_agents` — override the maximum sub-task count (default: `Roster.max_agents()`)
   """
-  @spec analyze(String.t()) :: :simple | {:complex, [SubTask.t()]}
-  def analyze(message) do
+  @spec analyze(String.t(), keyword()) :: {:simple, integer()} | {:complex, integer(), [SubTask.t()]}
+  def analyze(message, opts \\ []) do
+    max_agents = Keyword.get(opts, :max_agents, Roster.max_agents())
+
     prompt = """
     Analyze this task's complexity. Respond ONLY with valid JSON, no markdown fences.
 
@@ -59,8 +105,9 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.Complexity do
 
     Determine:
     1. complexity: "simple" (one agent can handle) or "complex" (needs multiple parallel agents)
-    2. If complex, decompose into parallel sub-tasks (max #{Roster.max_agents()})
-    3. For each sub-task, specify:
+    2. complexity_score: integer 1-10 (1=trivial single-step, 5=moderate multi-file, 10=massive cross-system refactor)
+    3. If complex, decompose into parallel sub-tasks (max #{max_agents})
+    4. For each sub-task, specify:
        - name: short identifier (snake_case)
        - description: what this agent should do
        - role: one of the 9 specialist roles below
@@ -86,9 +133,9 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.Complexity do
       Wave 5 (synthesis):  lead — depends on everything
 
     JSON format:
-    {"complexity":"simple","reasoning":"This is a straightforward task"}
+    {"complexity":"simple","complexity_score":2,"reasoning":"This is a straightforward task"}
     OR
-    {"complexity":"complex","reasoning":"This task requires...","sub_tasks":[{"name":"schema_design","description":"...","role":"data","tools_needed":["file_read"],"depends_on":[]},{"name":"api_handlers","description":"...","role":"backend","tools_needed":["file_read","file_write"],"depends_on":["schema_design"]}]}
+    {"complexity":"complex","complexity_score":7,"reasoning":"This task requires...","sub_tasks":[{"name":"schema_design","description":"...","role":"data","tools_needed":["file_read"],"depends_on":[]},{"name":"api_handlers","description":"...","role":"backend","tools_needed":["file_read","file_write"],"depends_on":["schema_design"]}]}
     """
 
     messages = [%{role: "user", content: prompt}]
@@ -99,19 +146,19 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.Complexity do
 
       {:ok, _} ->
         Logger.warning("[Orchestrator] Empty LLM response for complexity analysis")
-        :simple
+        {:simple, 3}
 
       {:error, reason} ->
         Logger.error(
           "[Orchestrator] LLM call failed during complexity analysis: #{inspect(reason)}"
         )
 
-        :simple
+        {:simple, 3}
     end
   end
 
   @doc "Parse a raw LLM response into complexity result."
-  @spec parse_response(String.t()) :: :simple | {:complex, [SubTask.t()]}
+  @spec parse_response(String.t()) :: {:simple, integer()} | {:complex, integer(), [SubTask.t()]}
   def parse_response(content) do
     cleaned =
       content
@@ -120,10 +167,13 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.Complexity do
       |> String.trim()
 
     case Jason.decode(cleaned) do
-      {:ok, %{"complexity" => "simple"}} ->
-        :simple
+      {:ok, %{"complexity" => "simple"} = json} ->
+        score = parse_complexity_score(json, 3)
+        {:simple, score}
 
-      {:ok, %{"complexity" => "complex", "sub_tasks" => sub_tasks}} when is_list(sub_tasks) ->
+      {:ok, %{"complexity" => "complex", "sub_tasks" => sub_tasks} = json} when is_list(sub_tasks) ->
+        score = parse_complexity_score(json, 6)
+
         parsed =
           Enum.map(sub_tasks, fn st ->
             %SubTask{
@@ -135,15 +185,22 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.Complexity do
             }
           end)
 
-        {:complex, parsed}
+        {:complex, score, parsed}
 
       {:ok, _} ->
         Logger.warning("[Orchestrator] Unexpected complexity response format")
-        :simple
+        {:simple, 3}
 
       {:error, reason} ->
         Logger.warning("[Orchestrator] Failed to parse complexity JSON: #{inspect(reason)}")
-        :simple
+        {:simple, 3}
+    end
+  end
+
+  defp parse_complexity_score(json, default) do
+    case json["complexity_score"] do
+      n when is_integer(n) and n >= 1 and n <= 10 -> n
+      _ -> default
     end
   end
 

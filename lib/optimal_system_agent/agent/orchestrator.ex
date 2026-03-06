@@ -21,8 +21,8 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
   use GenServer
   require Logger
 
-  alias OptimalSystemAgent.Agent.{Appraiser, Roster, TaskQueue}
-  alias OptimalSystemAgent.Agent.Orchestrator.{SkillManager, Decomposer, AgentRunner, WaveExecutor, GitVersioning}
+  alias OptimalSystemAgent.Agent.{Appraiser, Loop, Roster, TaskQueue}
+  alias OptimalSystemAgent.Agent.Orchestrator.{Complexity, SkillManager, Decomposer, AgentRunner, WaveExecutor, GitVersioning, ComplexityScaler}
   alias OptimalSystemAgent.Events.Bus
   alias OptimalSystemAgent.Providers.Registry, as: Providers
 
@@ -175,17 +175,60 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
       message_preview: String.slice(message, 0, 200)
     })
 
+    # For complex tasks (score >= 7), ask clarifying questions before decomposition
+    message_with_context =
+      case Complexity.quick_score(message) do
+        score when score >= 7 ->
+          survey_id = "orchestrator-#{task_id}"
+          questions = Decomposer.generate_questions(message)
+
+          case Loop.ask_user_question(session_id, survey_id, questions,
+                 skippable: true,
+                 timeout: 60_000
+               ) do
+            {:ok, answers} ->
+              context =
+                answers
+                |> Enum.map(fn a ->
+                  selected = Map.get(a, "selected", []) |> Enum.join(", ")
+                  free = Map.get(a, "free_text", "")
+                  text = if free != "", do: free, else: selected
+                  "#{Map.get(a, "question_text", "")}: #{text}"
+                end)
+                |> Enum.join("\n")
+
+              message <> "\n\n## User Preferences\n" <> context
+
+            {:skipped} ->
+              message
+
+            {:error, _} ->
+              message
+          end
+
+        _ ->
+          message
+      end
+
+    # Detect user intent for agent count override
+    user_override = ComplexityScaler.detect_agent_count_intent(message_with_context)
+    decompose_opts = if user_override, do: [max_agents: user_override], else: []
+
     # Decompose is sync (needs LLM), but execution is async via handle_continue
-    case Decomposer.decompose_task(message) do
-      {:ok, sub_tasks, %{estimated_tokens: estimated_tokens}} when is_list(sub_tasks) and length(sub_tasks) > 0 ->
-        sub_tasks = Enum.take(sub_tasks, Roster.max_agents())
+    case Decomposer.decompose_task(message_with_context, decompose_opts) do
+      {:ok, sub_tasks, %{estimated_tokens: estimated_tokens, complexity_score: complexity_score}} when is_list(sub_tasks) and length(sub_tasks) > 0 ->
+        tier = Keyword.get(opts, :tier, :specialist)
+        optimal = ComplexityScaler.optimal_agent_count(complexity_score, tier, user_override)
+        sub_tasks = Enum.take(sub_tasks, optimal)
 
         Bus.emit(:system_event, %{
           event: :orchestrator_task_decomposed,
           task_id: task_id,
           session_id: session_id,
           sub_task_count: length(sub_tasks),
-          estimated_tokens: estimated_tokens
+          estimated_tokens: estimated_tokens,
+          complexity_score: complexity_score,
+          optimal_agent_count: optimal
         })
 
         # Estimate task value via Appraiser (best-effort)
@@ -539,19 +582,21 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
         {:noreply, state, {:continue, {:synthesize, task_id}}}
 
       %{pending_waves: [wave | rest]} = task_state ->
-        total_waves = task_state.current_wave + 1 + length(rest)
+        wave_number = task_state.current_wave + 1
+        total_waves = wave_number + length(rest)
 
         Bus.emit(:system_event, %{
           event: :orchestrator_wave_started,
           task_id: task_id,
           session_id: task_state.session_id,
-          wave_number: task_state.current_wave + 1,
+          wave_number: wave_number,
           total_waves: total_waves,
           agent_count: length(wave)
         })
 
         session_id = task_state.session_id
         cached_tools = task_state.cached_tools
+        batch_id = "wave-#{wave_number}"
 
         # Spawn all agents in this wave, collecting refs and agent states
         spawn_results =
@@ -560,7 +605,7 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
             sub_task_with_context = %{sub_task | context: dep_context}
 
             {agent_id, agent_state, task_ref} =
-              AgentRunner.spawn_agent(sub_task_with_context, task_id, session_id, cached_tools)
+              AgentRunner.spawn_agent(sub_task_with_context, task_id, session_id, cached_tools, batch_id: batch_id)
 
             subtask_id = "#{task_id}_#{sub_task.name}"
             {agent_id, agent_state, task_ref, sub_task.name, subtask_id}
@@ -581,7 +626,7 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
         task_state = %{
           task_state
           | pending_waves: rest,
-            current_wave: task_state.current_wave + 1,
+            current_wave: wave_number,
             wave_refs: wave_refs,
             agents: updated_agents
         }

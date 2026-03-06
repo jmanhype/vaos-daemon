@@ -15,6 +15,8 @@ pub struct HealthResponse {
     pub uptime_seconds: i64,
     pub provider: String,
     pub model: String,
+    #[serde(default)]
+    pub context_window: Option<u64>,
 }
 
 // === Auth ===
@@ -162,6 +164,8 @@ pub struct ModelEntry {
     pub size: Option<i64>,
     #[serde(default)]
     pub active: Option<bool>,
+    #[serde(default)]
+    pub context_window: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -182,6 +186,8 @@ pub struct ModelSwitchResponse {
     pub provider: String,
     pub model: String,
     pub status: String,
+    #[serde(default)]
+    pub context_window: Option<u64>,
 }
 
 // === Classify ===
@@ -449,6 +455,47 @@ pub struct OnboardingSetupResponse {
     pub status: String,
     pub provider: String,
     pub model: String,
+}
+
+// === Survey ===
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct SurveyOptionWire {
+    pub label: String,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct SurveyQuestionWire {
+    pub text: String,
+    #[serde(default)]
+    pub multi_select: bool,
+    pub options: Vec<SurveyOptionWire>,
+    #[serde(default)]
+    pub skippable: bool,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ChecklistTaskWire {
+    pub id: String,
+    pub subject: String,
+    pub status: String,
+    pub active_form: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct SurveyAnswerRequest {
+    pub survey_id: String,
+    pub answers: Vec<SurveyAnswerEntry>,
+    pub session_id: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct SurveyAnswerEntry {
+    pub question_index: usize,
+    pub question_text: String,
+    pub selected: Vec<String>,
+    pub free_text: Option<String>,
 }
 
 // === Error ===

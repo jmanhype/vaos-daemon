@@ -177,6 +177,18 @@ impl Theme {
         Style::default().fg(self.colors.muted)
     }
 
+    pub fn role_tag(&self) -> Style {
+        Style::default()
+            .fg(self.colors.secondary)
+            .add_modifier(Modifier::DIM)
+    }
+
+    pub fn model_tag(&self) -> Style {
+        Style::default()
+            .fg(self.colors.muted)
+            .add_modifier(Modifier::DIM)
+    }
+
     pub fn wave_label(&self) -> Style {
         Style::default()
             .fg(self.colors.primary)

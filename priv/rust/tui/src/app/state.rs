@@ -13,6 +13,7 @@ pub enum AppState {
     Quit,
     Sessions,
     Onboarding,
+    Survey,
 }
 
 impl AppState {
@@ -30,6 +31,7 @@ impl AppState {
                 | (Idle, ModelPicker)
                 | (Idle, Palette)
                 | (Idle, Permissions)
+                | (Idle, Survey)
                 | (Idle, Quit)
                 | (Idle, Sessions)
                 | (Idle, Onboarding)
@@ -37,6 +39,10 @@ impl AppState {
                 | (Processing, Idle)
                 | (Processing, PlanReview)
                 | (Processing, Permissions)
+                | (Processing, Survey)
+                // Survey
+                | (Survey, Processing)
+                | (Survey, Idle)
                 // PlanReview
                 | (PlanReview, Processing)
                 | (PlanReview, Idle)
@@ -64,6 +70,7 @@ impl AppState {
                 | AppState::Sessions
                 | AppState::Onboarding
                 | AppState::ModelPicker
+                | AppState::Survey
         )
     }
 
@@ -89,6 +96,7 @@ impl std::fmt::Display for AppState {
             AppState::Quit => write!(f, "Quit"),
             AppState::Sessions => write!(f, "Sessions"),
             AppState::Onboarding => write!(f, "Onboarding"),
+            AppState::Survey => write!(f, "Survey"),
         }
     }
 }

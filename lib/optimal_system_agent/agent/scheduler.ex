@@ -55,6 +55,7 @@ defmodule OptimalSystemAgent.Agent.Scheduler do
   require Logger
 
   alias OptimalSystemAgent.Agent.Scheduler.{CronEngine, Persistence, JobExecutor, Heartbeat}
+  alias OptimalSystemAgent.Events.Bus
 
   defp heartbeat_interval, do: Application.get_env(:optimal_system_agent, :heartbeat_interval, 1_800_000)
 
@@ -451,7 +452,42 @@ defmodule OptimalSystemAgent.Agent.Scheduler do
 
   # ── CRONS/TRIGGERS I/O (delegated to Scheduler.Persistence) ────────
   defp load_crons(state), do: Persistence.load_crons(state)
-  defp load_triggers(state), do: Persistence.load_triggers(state)
+
+  defp load_triggers(state) do
+    state = Persistence.load_triggers(state)
+    register_event_triggers(state.triggers_raw)
+    state
+  end
+
+  # ── Bus→Trigger Bridge ──────────────────────────────────────────────
+  # Registers bus event handlers for triggers that have an "event" field.
+  # When a bus event fires, the matching trigger is invoked automatically.
+
+  defp register_event_triggers(triggers) do
+    # Unregister old handlers
+    for {event_type, ref} <- Process.get(:trigger_bus_refs, []) do
+      Bus.unregister_handler(event_type, ref)
+    end
+
+    refs =
+      for trigger <- triggers,
+          trigger["enabled"] != false,
+          event = trigger["event"],
+          is_binary(event) and event != "",
+          reduce: [] do
+        acc ->
+          event_atom = String.to_atom(event)
+
+          ref =
+            Bus.register_handler(event_atom, fn payload ->
+              __MODULE__.fire_trigger(trigger["id"], payload)
+            end)
+
+          [{event_atom, ref} | acc]
+      end
+
+    Process.put(:trigger_bus_refs, refs)
+  end
 
   # ── Cron Check ────────────────────────────────────────────────────────
 

@@ -96,6 +96,30 @@ defmodule OptimalSystemAgent.Agent.TaskTracker do
     GenServer.call(server, {:clear_tasks, session_id})
   end
 
+  @doc "Emit a task_checklist_show event with all current tasks for the session."
+  def show_checklist(session_id, server \\ __MODULE__) do
+    tasks = get_tasks(session_id, server)
+
+    safe_emit(:system_event, %{
+      event: :task_checklist_show,
+      session_id: session_id,
+      data: %{tasks: Enum.map(tasks, &task_to_map/1)}
+    })
+
+    :ok
+  end
+
+  @doc "Emit a task_checklist_hide event."
+  def hide_checklist(session_id) do
+    safe_emit(:system_event, %{
+      event: :task_checklist_hide,
+      session_id: session_id,
+      data: %{}
+    })
+
+    :ok
+  end
+
   @doc "Record token usage against a specific task."
   def record_tokens(session_id, task_id, count, server \\ __MODULE__) do
     GenServer.cast(server, {:record_tokens, session_id, task_id, count})
@@ -174,7 +198,7 @@ defmodule OptimalSystemAgent.Agent.TaskTracker do
       event: :task_created,
       task_id: task.id,
       subject: title,
-      active_form: title,
+      active_form: task.metadata[:active_form] || title,
       session_id: session_id
     })
 
@@ -204,7 +228,7 @@ defmodule OptimalSystemAgent.Agent.TaskTracker do
         event: :task_created,
         task_id: t.id,
         subject: t.title,
-        active_form: t.title,
+        active_form: t.metadata[:active_form] || t.title,
         session_id: session_id
       })
     end)
@@ -465,6 +489,15 @@ defmodule OptimalSystemAgent.Agent.TaskTracker do
   end
 
   # ── Private ────────────────────────────────────────────────────────
+
+  defp task_to_map(%Task{} = task) do
+    %{
+      id: task.id,
+      subject: task.title,
+      status: to_string(task.status),
+      active_form: task.metadata[:active_form]
+    }
+  end
 
   defp safe_emit(event_type, payload) do
     # Spawn to isolate from goldrush/Bus crashes in test environment
