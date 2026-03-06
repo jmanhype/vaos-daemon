@@ -45,20 +45,38 @@ func (c *Client) Health() (*HealthResponse, error) {
 	return &health, nil
 }
 
+const orchestrateMaxRetries = 3
+
 func (c *Client) Orchestrate(req OrchestrateRequest) (*OrchestrateResponse, error) {
-	resp, err := c.postJSON("/api/v1/orchestrate", req)
-	if err != nil {
-		return nil, fmt.Errorf("orchestrate: %w", err)
+	for attempt := 0; attempt <= orchestrateMaxRetries; attempt++ {
+		resp, err := c.postJSON("/api/v1/orchestrate", req)
+		if err != nil {
+			return nil, fmt.Errorf("orchestrate: %w", err)
+		}
+		if resp.StatusCode == http.StatusTooManyRequests {
+			retryAfter, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
+			resp.Body.Close()
+			if attempt == orchestrateMaxRetries {
+				return nil, &RateLimitError{RetryAfter: retryAfter}
+			}
+			wait := time.Duration(retryAfter) * time.Second
+			if wait <= 0 {
+				wait = time.Duration(1<<uint(attempt)) * time.Second // 1s, 2s, 4s
+			}
+			time.Sleep(wait)
+			continue
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+			return nil, c.parseError(resp)
+		}
+		var result OrchestrateResponse
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			return nil, fmt.Errorf("decode orchestrate: %w", err)
+		}
+		return &result, nil
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
-		return nil, c.parseError(resp)
-	}
-	var result OrchestrateResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode orchestrate: %w", err)
-	}
-	return &result, nil
+	return nil, &RateLimitError{}
 }
 
 func (c *Client) ListTools() ([]ToolEntry, error) {
@@ -536,13 +554,47 @@ func (c *Client) CompleteOnboarding(req OnboardingSetupRequest) (*OnboardingSetu
 
 // -- HTTP helpers -------------------------------------------------------------
 
-func (c *Client) get(path string) (*http.Response, error) {
-	req, err := http.NewRequest("GET", c.BaseURL+path, nil)
-	if err != nil {
-		return nil, err
+const maxRetries = 3
+
+// doWithRetry executes fn, retrying on HTTP 429 up to maxRetries times.
+// It honours the Retry-After response header; falls back to exponential
+// backoff (1s, 2s, 4s) when the header is absent or unparseable.
+func (c *Client) doWithRetry(fn func() (*http.Response, error)) (*http.Response, error) {
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		resp, err := fn()
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode != http.StatusTooManyRequests {
+			return resp, nil
+		}
+		// 429 — determine how long to wait before retrying.
+		wait := time.Duration(1<<attempt) * time.Second // 1s, 2s, 4s
+		if secs, parseErr := strconv.Atoi(resp.Header.Get("Retry-After")); parseErr == nil && secs > 0 {
+			d := time.Duration(secs) * time.Second
+			if d > 60*time.Second {
+				d = 60 * time.Second
+			}
+			wait = d
+		}
+		resp.Body.Close()
+		if attempt == maxRetries {
+			return nil, &RateLimitError{RetryAfter: int(wait.Seconds())}
+		}
+		time.Sleep(wait)
 	}
-	c.setHeaders(req)
-	return c.HTTPClient.Do(req)
+	return nil, &RateLimitError{} // unreachable
+}
+
+func (c *Client) get(path string) (*http.Response, error) {
+	return c.doWithRetry(func() (*http.Response, error) {
+		req, err := http.NewRequest("GET", c.BaseURL+path, nil)
+		if err != nil {
+			return nil, err
+		}
+		c.setHeaders(req)
+		return c.HTTPClient.Do(req)
+	})
 }
 
 func (c *Client) postJSON(path string, body any) (*http.Response, error) {
@@ -550,22 +602,26 @@ func (c *Client) postJSON(path string, body any) (*http.Response, error) {
 	if err != nil {
 		return nil, fmt.Errorf("marshal: %w", err)
 	}
-	req, err := http.NewRequest("POST", c.BaseURL+path, bytes.NewReader(data))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	c.setHeaders(req)
-	return c.HTTPClient.Do(req)
+	return c.doWithRetry(func() (*http.Response, error) {
+		req, err := http.NewRequest("POST", c.BaseURL+path, bytes.NewReader(data))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		c.setHeaders(req)
+		return c.HTTPClient.Do(req)
+	})
 }
 
 func (c *Client) delete(path string) (*http.Response, error) {
-	req, err := http.NewRequest("DELETE", c.BaseURL+path, nil)
-	if err != nil {
-		return nil, err
-	}
-	c.setHeaders(req)
-	return c.HTTPClient.Do(req)
+	return c.doWithRetry(func() (*http.Response, error) {
+		req, err := http.NewRequest("DELETE", c.BaseURL+path, nil)
+		if err != nil {
+			return nil, err
+		}
+		c.setHeaders(req)
+		return c.HTTPClient.Do(req)
+	})
 }
 
 func (c *Client) setHeaders(req *http.Request) {
