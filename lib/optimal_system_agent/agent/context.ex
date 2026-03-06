@@ -485,198 +485,28 @@ defmodule OptimalSystemAgent.Agent.Context do
     cwd = Map.get(state, :working_dir) || File.cwd!()
 
     """
-    ## How to Use Tools
-
-    You have tools available. Use them proactively to accomplish tasks. Follow this process:
-
-    ### Process
-
-    1. **Read the user's request.** Understand what they need.
-    2. **Decide if tools are needed.** Simple conversation = no tools. Tasks involving files, commands, search, or memory = use tools.
-    3. **Call ONE tool at a time.** Wait for the result before deciding what to do next.
-    4. **Use the result.** Read the tool output, then decide: call another tool, or respond to the user.
-    5. **Respond when done.** Summarize what you did and the results.
-
-    ### Tool Routing Rules (CRITICAL)
-
-    - Use **file_read** — NOT shell_execute with cat/head/tail
-    - Use **file_edit** for surgical changes — NOT shell_execute with sed/awk. NEVER file_write for small edits.
-    - Use **mcts_index** — for finding relevant files in a large/unfamiliar codebase. Faster and smarter than file_glob loops.
-    - Use **file_glob** — for specific pattern-based file search when you know what you're looking for.
-    - Use **file_grep** — NOT shell_execute with grep/rg for content search
-    - Use **dir_list** — NOT shell_execute with ls for directory listing
-    - Use **web_fetch** — NOT shell_execute with curl for fetching URLs
-    - Reserve **shell_execute** for system commands only (git, mix, npm, docker, make, etc.)
-
-    ### When to Use Each Tool
-
-    - **file_read** — Read file content. Always read before modifying.
-    - **file_write** — Create new files or completely rewrite existing ones. Read first if file exists.
-    - **file_edit** — Surgical string replacement in existing files. old_string must be unique. Preferred over file_write for modifications.
-    - **file_glob** — Find files by pattern (e.g. '**/*.ex', 'lib/**/*.ts').
-    - **file_grep** — Search file contents by regex. Returns file:line:content matches.
-    - **dir_list** — List directory contents with types and sizes.
-    - **shell_execute** — Run system commands: git, mix test, npm, docker, compile, etc.
-    - **web_search** — Search the web for current information or documentation.
-    - **web_fetch** — Fetch and read a specific URL's content.
-    - **memory_save** — Save important information to persistent memory.
-    - **orchestrate** — Spawn parallel sub-agents for complex multi-part tasks.
-    - **mcts_index** — MCTS-powered codebase indexer. Use when you need to find relevant files in a large codebase efficiently. Ranks files by relevance to your goal using Monte Carlo Tree Search.
-
-    ### When NOT to Use Tools
-
-    - Greetings and casual conversation ("hey", "thanks", "what's up")
-    - Questions you can answer from your training knowledge
-    - Opinions or recommendations that don't require looking at files
-
-    ### Important Rules
-
-    - **Always read before writing.** Never modify a file you haven't read first.
-    - **Use file_edit for surgical changes.** Only use file_write for new files or complete rewrites.
-    - **One tool call per turn.** Call one tool, get the result, then decide the next step.
-    - **Use absolute paths.** The current working directory is: #{cwd}
-    - **Be proactive.** If the user asks to "fix" something, read → find → fix → verify.
-
-    ### Brevity
-
-    - Answer concisely. Fewer than 4 lines unless detail is requested.
-    - No preamble. No postamble. Direct answers.
-    - Don't add features, refactor, or improve beyond what was asked.
-
-    ### Code Safety
-
-    - ALWAYS read a file before editing it.
-    - Use file_edit for surgical changes. Only use file_write for new files or complete rewrites.
-    - Don't add error handling for impossible scenarios.
-    - Don't create abstractions for one-time operations.
+    ## Tools
+    Use tools proactively. Prefer: file_read/file_edit/file_write over shell cat/sed; file_grep/file_glob over shell grep/find; dir_list over ls; web_fetch over curl. Use shell_execute for git, mix, npm, docker, make. Use mcts_index to find relevant files in large codebases. Use orchestrate for parallel sub-agents.
+    Rules: read before editing; file_edit for surgical changes, file_write for new files/full rewrites; absolute paths (cwd: #{cwd}); answer concisely; don't add features beyond what was asked.
     """
   end
 
   defp environment_block(state) do
     cwd = Map.get(state, :working_dir) || File.cwd!()
     git_info = cached_git_info()
-    elixir_ver = System.version()
-    otp_release = :erlang.system_info(:otp_release) |> to_string()
-    {os_family, os_name} = :os.type()
     date = Date.utc_today() |> Date.to_iso8601()
     provider = Application.get_env(:optimal_system_agent, :default_provider, :unknown)
     model = get_active_model(provider)
-    workspace = Path.expand("~/.osa/workspace")
 
     """
     ## Environment
     - Working directory: #{cwd}
-    - User workspace: #{workspace}
     - Date: #{date}
-    - OS: #{os_family}/#{os_name}
-    - Elixir #{elixir_ver} / OTP #{otp_release}
     - Provider: #{provider} / #{model}
     #{git_info}
     """
   rescue
     _ -> nil
-  end
-
-  defp cached_workspace_overview(workspace) do
-    case Process.get(:osa_workspace_overview_cache) do
-      nil ->
-        overview = build_workspace_overview(workspace)
-        Process.put(:osa_workspace_overview_cache, overview)
-        overview
-
-      cached ->
-        cached
-    end
-  end
-
-  defp build_workspace_overview(workspace) do
-    unless File.dir?(workspace), do: "", else: do_build_workspace_overview(workspace)
-  rescue
-    _ -> ""
-  end
-
-  defp do_build_workspace_overview(workspace) do
-    project_type = detect_project_type(workspace)
-    file_count = count_workspace_files(workspace)
-    tree = compact_workspace_tree(workspace)
-
-    tree_line = if tree != "", do: "- Structure:\n#{tree}\n", else: ""
-
-    "- Workspace project: #{project_type} (#{file_count} files)\n#{tree_line}"
-  end
-
-  defp detect_project_type(dir) do
-    cond do
-      File.exists?(Path.join(dir, "mix.exs")) -> "Elixir/OTP"
-      File.exists?(Path.join(dir, "go.mod")) -> "Go"
-      File.exists?(Path.join(dir, "Cargo.toml")) -> "Rust"
-      File.exists?(Path.join(dir, "package.json")) -> "Node.js"
-      File.exists?(Path.join(dir, "pyproject.toml")) or
-          File.exists?(Path.join(dir, "requirements.txt")) -> "Python"
-      File.exists?(Path.join(dir, "pom.xml")) -> "Java"
-      true -> "Generic"
-    end
-  end
-
-  defp count_workspace_files(dir) do
-    case System.cmd("git", ["ls-files", "--cached", "--others", "--exclude-standard"],
-           cd: dir,
-           stderr_to_stdout: true
-         ) do
-      {output, 0} ->
-        output |> String.split("\n") |> Enum.reject(&(&1 == "")) |> length()
-
-      _ ->
-        Path.wildcard(Path.join(dir, "**/*")) |> Enum.count(&File.regular?/1)
-    end
-  rescue
-    _ -> 0
-  end
-
-  @workspace_skip ~w(node_modules _build deps .git __pycache__ dist build target .elixir_ls ebin)
-
-  defp compact_workspace_tree(dir) do
-    case File.ls(dir) do
-      {:ok, entries} ->
-        entries
-        |> Enum.reject(fn e -> e in @workspace_skip or String.starts_with?(e, ".") end)
-        |> Enum.sort()
-        |> Enum.take(12)
-        |> Enum.map(fn entry ->
-          path = Path.join(dir, entry)
-
-          if File.dir?(path) do
-            count = count_dir_summary(path)
-            "    #{entry}/ (#{count})"
-          else
-            "    #{entry}"
-          end
-        end)
-        |> Enum.join("\n")
-
-      _ ->
-        ""
-    end
-  end
-
-  defp count_dir_summary(dir) do
-    case File.ls(dir) do
-      {:ok, entries} ->
-        files = Enum.count(entries, &File.regular?(Path.join(dir, &1)))
-        dirs = Enum.count(entries, fn e ->
-          File.dir?(Path.join(dir, e)) and e not in @workspace_skip
-        end)
-
-        cond do
-          files > 0 and dirs > 0 -> "#{files} files, #{dirs} dirs"
-          files > 0 -> "#{files} files"
-          dirs > 0 -> "#{dirs} dirs"
-          true -> "empty"
-        end
-
-      _ ->
-        "?"
-    end
   end
 
   @git_cache_table :osa_git_info_cache
@@ -723,7 +553,7 @@ defmodule OptimalSystemAgent.Agent.Context do
       _ -> parts
     end
 
-    parts = case System.cmd("git", ["log", "--oneline", "-5"], stderr_to_stdout: true) do
+    parts = case System.cmd("git", ["log", "--oneline", "-3"], stderr_to_stdout: true) do
       {l, 0} -> ["- Recent commits:\n#{String.trim(l)}" | parts]
       _ -> parts
     end
