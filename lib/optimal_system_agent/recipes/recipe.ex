@@ -38,7 +38,8 @@ defmodule OptimalSystemAgent.Recipes.Recipe do
   Recipes are resolved in order:
   1. Custom recipes in `~/.osa/recipes/`
   2. Project recipes in `.osa/recipes/`
-  3. Built-in recipes in `examples/workflows/`
+  3. Built-in recipes in `priv/recipes/`
+  4. Examples fallback in `examples/workflows/`
   """
 
   require Logger
@@ -89,7 +90,10 @@ defmodule OptimalSystemAgent.Recipes.Recipe do
       # Built-in recipes
       Path.join(:code.priv_dir(:optimal_system_agent), "recipes"),
       # Examples (fallback)
-      Path.join(File.cwd!(), "examples/workflows")
+      case File.cwd() do
+        {:ok, cwd} -> Path.join(cwd, "examples/workflows")
+        _ -> "examples/workflows"
+      end
     ]
   end
 
@@ -103,8 +107,7 @@ defmodule OptimalSystemAgent.Recipes.Recipe do
     recipe_paths()
     |> Enum.flat_map(fn path ->
       if File.dir?(path) do
-        path
-        |> File.ls!()
+        (case File.ls(path) do {:ok, files} -> files; _ -> [] end)
         |> Enum.filter(&String.ends_with?(&1, ".json"))
         |> Enum.map(fn file ->
           full_path = Path.join(path, file)
@@ -138,8 +141,8 @@ defmodule OptimalSystemAgent.Recipes.Recipe do
   """
   @spec load(String.t()) :: {:ok, recipe()} | {:error, String.t()}
   def load(name) do
-    # Clean the name
-    slug = name |> String.downcase() |> String.replace(" ", "-")
+    # Strict slug sanitization — strip everything except alphanumeric and hyphens
+    slug = name |> String.downcase() |> String.replace(~r/[^a-z0-9\-]+/, "")
     filename = "#{slug}.json"
 
     result =
@@ -164,23 +167,27 @@ defmodule OptimalSystemAgent.Recipes.Recipe do
     end
   end
 
-  @doc """
-  Load a recipe from a file path.
-  """
+  @doc "Load and validate a recipe from a file path."
   @spec load_file(String.t()) :: {:ok, recipe()} | {:error, String.t()}
   def load_file(path) do
-    case File.read(path) do
-      {:ok, content} ->
-        case Jason.decode(content) do
-          {:ok, data} ->
-            validate_recipe(data, path)
+    expanded = Path.expand(path)
+    # Reject paths containing traversal segments
+    if String.contains?(expanded, "..") do
+      {:error, "Rejected: path contains traversal segments"}
+    else
+      case File.read(path) do
+        {:ok, content} ->
+          case Jason.decode(content) do
+            {:ok, data} ->
+              validate_recipe(data, path)
 
-          {:error, reason} ->
-            {:error, "Invalid JSON in #{path}: #{inspect(reason)}"}
-        end
+            {:error, reason} ->
+              {:error, "Invalid JSON in #{path}: #{inspect(reason)}"}
+          end
 
-      {:error, reason} ->
-        {:error, "Failed to read #{path}: #{inspect(reason)}"}
+        {:error, reason} ->
+          {:error, "Failed to read #{path}: #{inspect(reason)}"}
+      end
     end
   end
 
@@ -330,7 +337,7 @@ defmodule OptimalSystemAgent.Recipes.Recipe do
        success: true,
        steps_completed: length(recipe.steps),
        total_steps: length(recipe.steps),
-       step_results: state.step_results,
+       step_results: Enum.reverse(state.step_results),
        error: nil
      }}
   end
@@ -369,7 +376,7 @@ defmodule OptimalSystemAgent.Recipes.Recipe do
         state = %{
           state
           | step_index: state.step_index + 1,
-            step_results: state.step_results ++ [%{step: step.name, success: true, output: result}]
+            step_results: [%{step: step.name, success: true, output: result} | state.step_results]
         }
 
         run_steps(state)
@@ -388,7 +395,7 @@ defmodule OptimalSystemAgent.Recipes.Recipe do
            success: false,
            steps_completed: state.step_index,
            total_steps: length(state.recipe.steps),
-           step_results: state.step_results ++ [%{step: step.name, success: false, error: reason}],
+           step_results: Enum.reverse([%{step: step.name, success: false, error: reason} | state.step_results]),
            error: "Step '#{step.name}' failed: #{reason}"
          }}
     end

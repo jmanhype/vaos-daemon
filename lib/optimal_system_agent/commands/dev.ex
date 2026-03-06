@@ -177,7 +177,7 @@ defmodule OptimalSystemAgent.Commands.Dev do
     end
   end
 
-  defp run_recipe(name, context, _session_id) do
+  defp run_recipe(name, context, session_id) do
     case Recipe.load(name) do
       {:ok, recipe} ->
         # One concise line per step — keeps prompt well under 150 tokens
@@ -187,7 +187,8 @@ defmodule OptimalSystemAgent.Commands.Dev do
 
         prompt =
           "Run recipe: #{recipe.name}.#{context_section} " <>
-            "Steps in order: #{steps_desc}. Start with step 1."
+            "Steps in order: #{steps_desc}. Start with step 1. " <>
+            "Session: #{session_id}."
 
         {:new_session_prompt, prompt}
 

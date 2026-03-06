@@ -83,7 +83,7 @@ defmodule OptimalSystemAgent.MCP.Server do
     # Interpolate env vars: ${VAR_NAME} -> System.get_env("VAR_NAME")
     env = interpolate_env(raw_env)
 
-    Logger.info("[MCP] Starting server: #{name} (#{command} #{Enum.join(args, " ")})")
+    Logger.info("[MCP] Starting server: #{name} (#{command} #{Enum.join(redact_args(args), " ")})")
 
     case open_port(command, args, env) do
       {:ok, port} ->
@@ -370,8 +370,13 @@ defmodule OptimalSystemAgent.MCP.Server do
   end
 
   defp interpolate_value(value) when is_binary(value) do
-    Regex.replace(~r/\$\{([A-Z_][A-Z0-9_]*)\}/, value, fn _, var_name ->
-      System.get_env(var_name) || ""
+    Regex.replace(~r/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/, value, fn _, var_name ->
+      case System.get_env(var_name) do
+        nil ->
+          Logger.warning("[MCP] Env var #{var_name} not found during interpolation")
+          ""
+        val -> val
+      end
     end)
   end
 
@@ -400,7 +405,8 @@ defmodule OptimalSystemAgent.MCP.Server do
 
   defp validate_schema(_value, _schema), do: true
 
-  defp type_valid?(value, "string"), do: is_binary(value)
+  defp type_valid?(value, "string") when is_binary(value), do: true
+  defp type_valid?(_value, "string"), do: false
   defp type_valid?(value, "number"), do: is_number(value)
   defp type_valid?(value, "integer"), do: is_integer(value)
   defp type_valid?(value, "boolean"), do: is_boolean(value)
@@ -419,26 +425,68 @@ defmodule OptimalSystemAgent.MCP.Server do
     Enum.all?(props, fn {key, prop_schema} ->
       case Map.get(value, key) do
         nil -> true  # Missing optional property is OK
-        prop_value -> validate_schema(prop_value, prop_schema)
+        prop_value -> validate_schema(prop_value, prop_schema) and string_constraints_valid?(prop_value, prop_schema)
       end
     end)
   end
 
   defp properties_valid?(_value, _schema), do: true
 
+  # Enforce maxLength/minLength on strings when schema specifies them
+  defp string_constraints_valid?(value, schema) when is_binary(value) do
+    max_ok = case Map.get(schema, "maxLength") do
+      nil -> true
+      max when is_integer(max) -> String.length(value) <= max
+      _ -> true
+    end
+
+    min_ok = case Map.get(schema, "minLength") do
+      nil -> true
+      min when is_integer(min) -> String.length(value) >= min
+      _ -> true
+    end
+
+    max_ok and min_ok
+  end
+
+  defp string_constraints_valid?(_value, _schema), do: true
+
+  @secret_flags ~w[--token --key --secret --password --api-key --apikey]
+
+  defp redact_args(args) when is_list(args) do
+    args
+    |> Enum.chunk_every(2, 1, [:_end])
+    |> Enum.flat_map(fn
+      [flag, _val] when is_binary(flag) ->
+        if String.downcase(flag) in @secret_flags, do: [flag, "[REDACTED]"], else: [flag]
+      [last, :_end] -> [last]
+      other -> other
+    end)
+  end
+
+  defp redact_args(args), do: args
+
   # Audit logging for forensics
   defp audit_log(server_name, tool_name, arguments, status, reason) do
-    args_hash = :erlang.phash2(arguments)
+    args_hash = Base.encode16(:crypto.hash(:sha256, :erlang.term_to_binary(arguments)), case: :lower)
 
     log_entry = %{
       timestamp: DateTime.utc_now() |> DateTime.to_iso8601(),
       server: server_name,
-      tool: tool_name,
+      tool: sanitize_for_log(tool_name),
       args_hash: args_hash,
-      status: status,
-      reason: reason
+      status: status
     }
 
+    log_entry = if reason, do: Map.put(log_entry, :reason, sanitize_for_log(to_string(reason))), else: log_entry
     Logger.info("[MCP Audit] #{inspect(log_entry)}")
   end
+
+  defp sanitize_for_log(value) when is_binary(value) do
+    value
+    |> String.replace(~r/[\r\n\t]/, " ")
+    |> String.slice(0, 128)
+  end
+
+  defp sanitize_for_log(value), do: sanitize_for_log(to_string(value))
 end

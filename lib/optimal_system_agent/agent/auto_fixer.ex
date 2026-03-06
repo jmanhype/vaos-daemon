@@ -99,7 +99,7 @@ defmodule OptimalSystemAgent.Agent.AutoFixer do
     
     type = opts[:type] || :test
     session_id = opts[:session_id]
-    max_iterations = opts[:max_iterations] || @default_max_iterations
+    max_iterations = min(opts[:max_iterations] || @default_max_iterations, 20)
     timeout = opts[:timeout_ms] || @default_timeout_ms
     cwd = opts[:cwd] || Workspace.get_cwd()
     stale_only = opts[:stale_only] || false
@@ -158,8 +158,14 @@ defmodule OptimalSystemAgent.Agent.AutoFixer do
   # ── Private Functions ──────────────────────────────────────────────
   
   defp ensure_cache_table do
-    if :ets.whereis(@cache_table) == :undefined do
-      :ets.new(@cache_table, [:set, :public, :named_table])
+    case :ets.whereis(@cache_table) do
+      :undefined ->
+        try do
+          :ets.new(@cache_table, [:set, :public, :named_table])
+        rescue
+          ArgumentError -> :ok  # Another process won the race
+        end
+      _ -> :ok
     end
   end
   
