@@ -179,6 +179,8 @@ config :optimal_system_agent, OptimalSystemAgent.Store.Repo,
 
 config :optimal_system_agent, ecto_repos: [OptimalSystemAgent.Store.Repo]
 
+config :miosa_budget, event_emitter: OptimalSystemAgent.BudgetEmitter
+
 config :logger,
   level: :warning
 

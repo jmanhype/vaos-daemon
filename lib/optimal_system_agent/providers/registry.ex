@@ -43,7 +43,7 @@ defmodule OptimalSystemAgent.Providers.Registry do
   require Logger
 
   alias OptimalSystemAgent.Providers
-  alias OptimalSystemAgent.Providers.HealthChecker
+  alias MiosaLLM.HealthChecker
 
   # Consolidated compat provider — one module handles 13 OpenAI-compatible APIs
   @compat Providers.OpenAICompatProvider

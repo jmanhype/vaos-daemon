@@ -269,7 +269,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.DataRoutes do
   defp handle_analytics(conn) do
     budget =
       try do
-        case OptimalSystemAgent.Agent.Budget.get_status() do
+        case MiosaBudget.Budget.get_status() do
           {:ok, data} -> data
           data when is_map(data) -> data
           _ -> %{}

@@ -391,7 +391,7 @@ defmodule OptimalSystemAgent.Commands.System do
 
       budget_line =
         try do
-          {:ok, status} = OptimalSystemAgent.Agent.Budget.get_status()
+          {:ok, status} = MiosaBudget.Budget.get_status()
           "  Tokens used:          #{status.tokens_used} / #{status.tokens_limit}"
         rescue
           _ -> "  Budget tracker not available"

@@ -80,6 +80,12 @@ defmodule OptimalSystemAgent.MixProject do
 
       # OTP 28: rustler removed — nif.ex uses pure Elixir fallbacks
       # {:rustler, "~> 0.37", optional: true}
+
+      # Extracted LLM provider utilities (circuit breaker, rate limiter)
+      {:miosa_llm, path: "../miosa_llm"},
+
+      # Extracted budget tracking package
+      {:miosa_budget, path: "../miosa_budget"}
     ]
   end
 

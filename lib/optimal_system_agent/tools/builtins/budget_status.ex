@@ -1,7 +1,7 @@
 defmodule OptimalSystemAgent.Tools.Builtins.BudgetStatus do
   @behaviour OptimalSystemAgent.Tools.Behaviour
 
-  alias OptimalSystemAgent.Agent.Budget
+  alias MiosaBudget.Budget
 
   @impl true
   def name, do: "budget_status"

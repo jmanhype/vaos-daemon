@@ -1,8 +1,10 @@
 defmodule OptimalSystemAgent.Commands.Agents do
   @moduledoc """
   Agent ecosystem commands: /agents, /tiers, /tier, /swarms, /hooks, /learning,
-  /budget, /thinking, /machines.
+  /budget, /thinking, /machines, /strategy.
   """
+
+  alias OptimalSystemAgent.Events.Bus
 
   @doc "Handle the `/agents` command."
   def cmd_agents(arg, _session_id) do
@@ -315,7 +317,7 @@ defmodule OptimalSystemAgent.Commands.Agents do
   @doc "Handle the `/budget` command."
   def cmd_budget(_arg, _session_id) do
     try do
-      {:ok, status} = OptimalSystemAgent.Agent.Budget.get_status()
+      {:ok, status} = MiosaBudget.Budget.get_status()
 
       daily_pct =
         if status.daily_limit > 0,
@@ -463,4 +465,55 @@ defmodule OptimalSystemAgent.Commands.Agents do
   end
 
   defp format_number(n), do: "#{n}"
+
+  # ── /strategy ──────────────────────────────────────────────────
+
+  @doc "Handle the `/strategy` command — list strategies or show current."
+  def cmd_strategy(arg, _session_id) do
+    alias OptimalSystemAgent.Agent.Strategy
+
+    arg = String.trim(arg)
+
+    if arg == "" do
+      strategies = Strategy.all()
+
+      lines =
+        Enum.map_join(strategies, "\n", fn %{name: name, module: mod} ->
+          desc =
+            case Code.fetch_docs(mod) do
+              {:docs_v1, _, _, _, %{"en" => doc}, _, _} ->
+                doc |> String.split("\n") |> List.first() |> String.trim()
+
+              _ ->
+                "#{name} strategy"
+            end
+
+          "  #{String.pad_trailing(to_string(name), 20)} #{desc}"
+        end)
+
+      output = """
+      Reasoning Strategies (#{length(strategies)} available)
+
+      #{lines}
+
+      Usage: /strategy <name> — switch strategy for current session
+      """
+
+      {:command, String.trim(output)}
+    else
+      case Strategy.resolve_by_name(String.to_existing_atom(arg)) do
+        {:ok, mod} ->
+          Bus.emit(:strategy_changed, %{strategy: mod.name(), requested_by: :command})
+          {:action, {:set_strategy, mod.name()}, "Strategy set to #{mod.name()}"}
+
+        {:error, :unknown_strategy} ->
+          names = OptimalSystemAgent.Agent.Strategy.names() |> Enum.map_join(", ", &to_string/1)
+          {:command, "Unknown strategy: #{arg}\nAvailable: #{names}"}
+      end
+    end
+  rescue
+    ArgumentError ->
+      names = OptimalSystemAgent.Agent.Strategy.names() |> Enum.map_join(", ", &to_string/1)
+      {:command, "Unknown strategy: #{arg}\nAvailable: #{names}"}
+  end
 end

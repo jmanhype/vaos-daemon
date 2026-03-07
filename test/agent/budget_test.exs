@@ -1,7 +1,7 @@
 defmodule OptimalSystemAgent.Agent.BudgetTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Agent.Budget
+  alias MiosaBudget.Budget
 
   # ---------------------------------------------------------------------------
   # Helpers

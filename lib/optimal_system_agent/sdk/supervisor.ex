@@ -68,7 +68,7 @@ defmodule OptimalSystemAgent.SDK.Supervisor do
 
         # Agent processes — full set needed by Loop + Orchestrator
         OptimalSystemAgent.Agent.Memory,
-        OptimalSystemAgent.Agent.Budget,
+        MiosaBudget.Budget,
         OptimalSystemAgent.Agent.TaskQueue,
         OptimalSystemAgent.Agent.Workflow,
         OptimalSystemAgent.Agent.Orchestrator,

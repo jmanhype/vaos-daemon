@@ -21,7 +21,7 @@ defmodule OptimalSystemAgent.Agent.Hooks do
     - Registration goes through GenServer (serialized writes)
     - Hook data stored in ETS `:osa_hooks` (bag, read_concurrency: true)
     - Execution reads from ETS in caller's process (no GenServer bottleneck)
-    - Metrics tracked in GenServer state
+    - Metrics tracked in ETS `:osa_hooks_metrics` (atomic counters, write_concurrency: true)
   """
 
   use GenServer
@@ -46,8 +46,7 @@ defmodule OptimalSystemAgent.Agent.Hooks do
         }
 
   @hooks_table :osa_hooks
-
-  defstruct metrics: %{}
+  @metrics_table :osa_hooks_metrics
 
   # ── Client API ────────────────────────────────────────────────────
 
@@ -75,8 +74,7 @@ defmodule OptimalSystemAgent.Agent.Hooks do
     started_at = System.monotonic_time(:microsecond)
     result = run_chain(hooks, payload, event)
     elapsed_us = System.monotonic_time(:microsecond) - started_at
-    # Fire-and-forget metrics update to GenServer
-    GenServer.cast(__MODULE__, {:update_metrics, event, elapsed_us, result})
+    update_metrics_ets(event, elapsed_us, result)
     result
   end
 
@@ -91,7 +89,7 @@ defmodule OptimalSystemAgent.Agent.Hooks do
       started_at = System.monotonic_time(:microsecond)
       result = run_chain(hooks, payload, event)
       elapsed_us = System.monotonic_time(:microsecond) - started_at
-      GenServer.cast(__MODULE__, {:update_metrics, event, elapsed_us, result})
+      update_metrics_ets(event, elapsed_us, result)
     end)
     :ok
   end
@@ -119,7 +117,21 @@ defmodule OptimalSystemAgent.Agent.Hooks do
   @doc "Get hook execution metrics."
   @spec metrics() :: map()
   def metrics do
-    GenServer.call(__MODULE__, :metrics)
+    @metrics_table
+    |> :ets.tab2list()
+    |> Enum.group_by(fn {{event, _metric}, _val} -> event end)
+    |> Enum.map(fn {event, entries} ->
+      kv = Map.new(entries, fn {{_event, metric}, val} -> {metric, val} end)
+      calls = Map.get(kv, :calls, 0)
+      total_us = Map.get(kv, :total_us, 0)
+      blocks = Map.get(kv, :blocks, 0)
+      avg_us = if calls > 0, do: div(total_us, calls), else: 0
+
+      {event, %{calls: calls, total_us: total_us, blocks: blocks, avg_us: avg_us}}
+    end)
+    |> Map.new()
+  rescue
+    ArgumentError -> %{}
   end
 
   # ── ETS Helpers (public for testing) ─────────────────────────────
@@ -131,16 +143,14 @@ defmodule OptimalSystemAgent.Agent.Hooks do
 
   @impl true
   def init(_opts) do
-    state = %__MODULE__{metrics: %{}}
-
     # ETS table for hook definitions (read from caller process, written via GenServer)
     if :ets.whereis(@hooks_table) == :undefined do
       :ets.new(@hooks_table, [:named_table, :bag, :public, {:read_concurrency, true}])
     end
 
-    # ETS table for hot-path counters (guard against re-creation on restart)
-    if :ets.whereis(:osa_hooks_counters) == :undefined do
-      :ets.new(:osa_hooks_counters, [:named_table, :public, :set])
+    # ETS table for metrics counters (atomic updates from any process, no GenServer bottleneck)
+    if :ets.whereis(@metrics_table) == :undefined do
+      :ets.new(@metrics_table, [:named_table, :public, :set, {:write_concurrency, true}])
     end
 
     # Register built-in hooks
@@ -154,7 +164,7 @@ defmodule OptimalSystemAgent.Agent.Hooks do
       end
 
     Logger.info("[Hooks] Pipeline initialized with #{hook_count} hooks")
-    {:ok, state}
+    {:ok, %{}}
   end
 
   @impl true
@@ -163,16 +173,6 @@ defmodule OptimalSystemAgent.Agent.Hooks do
     {:noreply, state}
   end
 
-  @impl true
-  def handle_cast({:update_metrics, event, elapsed_us, result}, state) do
-    state = update_metrics(state, event, elapsed_us, result)
-    {:noreply, state}
-  end
-
-  @impl true
-  def handle_call(:metrics, _from, state) do
-    {:reply, state.metrics, state}
-  end
 
   # ── Hook Chain Execution (runs in caller process) ──────────────
 
@@ -324,7 +324,7 @@ defmodule OptimalSystemAgent.Agent.Hooks do
   # Spend guard — check budget limits before tool execution
   defp spend_guard(payload) do
     try do
-      case OptimalSystemAgent.Agent.Budget.check_budget() do
+      case MiosaBudget.Budget.check_budget() do
         {:ok, _remaining} ->
           {:ok, payload}
 
@@ -348,7 +348,7 @@ defmodule OptimalSystemAgent.Agent.Hooks do
       session_id = Map.get(payload, :session_id, "unknown")
 
       if tokens_in > 0 or tokens_out > 0 do
-        OptimalSystemAgent.Agent.Budget.record_cost(
+        MiosaBudget.Budget.record_cost(
           provider,
           model,
           tokens_in,
@@ -519,22 +519,14 @@ defmodule OptimalSystemAgent.Agent.Hooks do
 
   # ── Helpers ────────────────────────────────────────────────────────
 
-  defp update_metrics(state, event, elapsed_us, result) do
-    event_metrics = Map.get(state.metrics, event, %{calls: 0, total_us: 0, blocks: 0})
+  defp update_metrics_ets(event, elapsed_us, result) do
+    :ets.update_counter(@metrics_table, {event, :calls}, {2, 1}, {{event, :calls}, 0})
+    :ets.update_counter(@metrics_table, {event, :total_us}, {2, elapsed_us}, {{event, :total_us}, 0})
 
-    blocks =
-      case result do
-        {:blocked, _} -> event_metrics.blocks + 1
-        _ -> event_metrics.blocks
-      end
-
-    updated = %{
-      calls: event_metrics.calls + 1,
-      total_us: event_metrics.total_us + elapsed_us,
-      blocks: blocks,
-      avg_us: div(event_metrics.total_us + elapsed_us, event_metrics.calls + 1)
-    }
-
-    %{state | metrics: Map.put(state.metrics, event, updated)}
+    if match?({:blocked, _}, result) do
+      :ets.update_counter(@metrics_table, {event, :blocks}, {2, 1}, {{event, :blocks}, 0})
+    end
+  rescue
+    ArgumentError -> :ok
   end
 end

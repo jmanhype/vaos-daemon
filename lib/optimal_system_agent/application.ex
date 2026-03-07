@@ -67,6 +67,7 @@ defmodule OptimalSystemAgent.Application do
         # Core infrastructure
         {Phoenix.PubSub, name: OptimalSystemAgent.PubSub},
         OptimalSystemAgent.Events.Bus,
+        OptimalSystemAgent.Events.DLQ,
         OptimalSystemAgent.Bridge.PubSub,
         OptimalSystemAgent.Store.Repo,
       ] ++
@@ -77,7 +78,7 @@ defmodule OptimalSystemAgent.Application do
         OptimalSystemAgent.Telemetry.Metrics,
 
         # Provider health / circuit breaker — must start before Registry
-        OptimalSystemAgent.Providers.HealthChecker,
+        MiosaLLM.HealthChecker,
 
         # LLM providers (goldrush-compiled :osa_provider_router)
         OptimalSystemAgent.Providers.Registry,
@@ -99,6 +100,9 @@ defmodule OptimalSystemAgent.Application do
         # Channel adapters
         {DynamicSupervisor, name: OptimalSystemAgent.Channels.Supervisor, strategy: :one_for_one},
 
+        # Event stream registry — per-session event streams (must start before SessionSupervisor)
+        {Registry, keys: :unique, name: OptimalSystemAgent.EventStreamRegistry},
+
         # Session supervisor — DynamicSupervisor for agent Loop processes.
         # Must start before any code that creates sessions (CLI, HTTP, SDK).
         {DynamicSupervisor, name: OptimalSystemAgent.SessionSupervisor, strategy: :one_for_one},
@@ -107,7 +111,7 @@ defmodule OptimalSystemAgent.Application do
         OptimalSystemAgent.Agent.Memory,
         OptimalSystemAgent.Agent.HeartbeatState,
         OptimalSystemAgent.Agent.Workflow,
-        OptimalSystemAgent.Agent.Budget,
+        MiosaBudget.Budget,
         OptimalSystemAgent.Agent.TaskQueue,
         OptimalSystemAgent.Agent.Orchestrator,
         OptimalSystemAgent.Agent.Progress,

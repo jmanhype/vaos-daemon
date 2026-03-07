@@ -5,7 +5,7 @@ defmodule OptimalSystemAgent.SDK.Budget do
   Provides token/cost tracking, budget enforcement, and spend visibility.
   """
 
-  alias OptimalSystemAgent.Agent.Budget
+  alias MiosaBudget.Budget
 
   @doc """
   Check if current spending is within budget limits.
