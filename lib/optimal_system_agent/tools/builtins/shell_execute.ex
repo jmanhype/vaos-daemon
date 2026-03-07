@@ -13,6 +13,9 @@ defmodule OptimalSystemAgent.Tools.Builtins.ShellExecute do
   @default_timeout_ms 300_000
 
   @impl true
+  def safety, do: :terminal
+
+  @impl true
   def name, do: "shell_execute"
 
   @impl true
@@ -23,14 +26,15 @@ defmodule OptimalSystemAgent.Tools.Builtins.ShellExecute do
     %{
       "type" => "object",
       "properties" => %{
-        "command" => %{"type" => "string", "description" => "Shell command to execute"}
+        "command" => %{"type" => "string", "description" => "Shell command to execute"},
+        "cwd" => %{"type" => "string", "description" => "Working directory for the command. Optional; defaults to ~/.osa/workspace."}
       },
       "required" => ["command"]
     }
   end
 
   @impl true
-  def execute(%{"command" => command}) do
+  def execute(%{"command" => command} = params) when is_binary(command) do
     # Strip trailing & (background operator) to force foreground execution
     command = Regex.replace(~r/\s*&\s*$/, command, "")
 
@@ -47,18 +51,37 @@ defmodule OptimalSystemAgent.Tools.Builtins.ShellExecute do
           workspace = Path.expand("~/.osa/workspace")
           File.mkdir_p(workspace)
 
-          Logger.debug("[ShellExecute] Dispatching command via Sandbox.Executor")
+          # Resolve working directory: explicit cwd param or default workspace
+          effective_cwd =
+            case params["cwd"] do
+              nil -> workspace
+              "" -> workspace
+              cwd_path ->
+                expanded_cwd = Path.expand(cwd_path)
 
-          timeout =
-            case System.get_env("OSA_SHELL_TIMEOUT_MS") do
-              nil -> @default_timeout_ms
-              s -> String.to_integer(s)
+                if File.dir?(expanded_cwd) do
+                  expanded_cwd
+                else
+                  :invalid
+                end
             end
 
-          case Executor.execute(trimmed, workspace: workspace, cwd: workspace, timeout: timeout) do
-            {:ok, output, 0} -> {:ok, maybe_truncate(output)}
-            {:ok, output, code} -> {:error, "Exit #{code}:\n#{maybe_truncate(output)}"}
-            {:error, reason} -> {:error, reason}
+          if effective_cwd == :invalid do
+            {:error, "cwd does not exist: #{params["cwd"]}"}
+          else
+            Logger.debug("[ShellExecute] Dispatching command via Sandbox.Executor (cwd=#{effective_cwd})")
+
+            timeout =
+              case System.get_env("OSA_SHELL_TIMEOUT_MS") do
+                nil -> @default_timeout_ms
+                s -> String.to_integer(s)
+              end
+
+            case Executor.execute(trimmed, workspace: workspace, cwd: effective_cwd, timeout: timeout) do
+              {:ok, output, 0} -> {:ok, maybe_truncate(output)}
+              {:ok, output, code} -> {:error, "Exit #{code}:\n#{maybe_truncate(output)}"}
+              {:error, reason} -> {:error, reason}
+            end
           end
 
         {:error, reason} ->
@@ -83,6 +106,9 @@ defmodule OptimalSystemAgent.Tools.Builtins.ShellExecute do
       ShellPolicy.validate(command)
     end
   end
+
+  def execute(%{"command" => _}), do: {:error, "command must be a string"}
+  def execute(_), do: {:error, "Missing required parameter: command"}
 
   defp cd_outside_osa?(command) do
     # Match any `cd <path>` where path is not under ~/.osa/

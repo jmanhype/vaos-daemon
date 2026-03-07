@@ -12,7 +12,7 @@ defmodule OptimalSystemAgent.SDK.Session do
   alias OptimalSystemAgent.Agent.Loop
   alias OptimalSystemAgent.Agent.Memory
 
-  @supervisor OptimalSystemAgent.Channels.Supervisor
+  @supervisor OptimalSystemAgent.SessionSupervisor
 
   @doc """
   Create a new session with a unique ID.

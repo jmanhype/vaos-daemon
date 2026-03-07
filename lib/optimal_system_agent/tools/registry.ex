@@ -97,8 +97,60 @@ defmodule OptimalSystemAgent.Tools.Registry do
         end
 
       mod ->
-        mod.execute(arguments)
+        case validate_arguments(mod, arguments) do
+          :ok ->
+            mod.execute(arguments)
+
+          {:error, _reason} = error ->
+            error
+        end
     end
+  end
+
+  @doc """
+  Validate tool arguments against the module's JSON Schema (from `parameters/0`).
+
+  Returns `:ok` when arguments conform to the schema, or
+  `{:error, message}` with a structured description of all validation failures.
+  """
+  @spec validate_arguments(module(), map()) :: :ok | {:error, String.t()}
+  def validate_arguments(mod, arguments) do
+    schema = mod.parameters()
+
+    try do
+      resolved = ExJsonSchema.Schema.resolve(schema)
+
+      case ExJsonSchema.Validator.validate(resolved, arguments) do
+        :ok ->
+          :ok
+
+        {:error, errors} ->
+          message = format_validation_errors(mod.name(), errors)
+          {:error, message}
+      end
+    rescue
+      e ->
+        Logger.warning("[Tools.Registry] Schema validation error for #{mod.name()}: #{inspect(e)}")
+        # Fail open: if the schema itself is malformed, let the tool handle its own args
+        :ok
+    end
+  end
+
+  # Format ExJsonSchema validation errors into a structured, LLM-readable message.
+  defp format_validation_errors(tool_name, errors) do
+    details =
+      Enum.map_join(errors, "\n", fn
+        {message, "#" <> path} ->
+          "  - #{path}: #{message}"
+
+        {message, path} when is_binary(path) ->
+          "  - #{path}: #{message}"
+
+        {message, _} ->
+          "  - #{message}"
+      end)
+
+    "Tool '#{tool_name}' argument validation failed:\n#{details}"
   end
 
   @doc """
@@ -637,7 +689,10 @@ defmodule OptimalSystemAgent.Tools.Registry do
           end
 
         mod ->
-          mod.execute(arguments)
+          case validate_arguments(mod, arguments) do
+            :ok -> mod.execute(arguments)
+            {:error, _reason} = error -> error
+          end
       end
 
     {:reply, result, state}
@@ -674,7 +729,12 @@ defmodule OptimalSystemAgent.Tools.Registry do
       "github" => OptimalSystemAgent.Tools.Builtins.Github,
       "multi_file_edit" => OptimalSystemAgent.Tools.Builtins.MultiFileEdit,
       "semantic_search" => OptimalSystemAgent.Tools.Builtins.SemanticSearch,
-      "codebase_explore" => OptimalSystemAgent.Tools.Builtins.CodebaseExplore
+      "codebase_explore" => OptimalSystemAgent.Tools.Builtins.CodebaseExplore,
+      "diff" => OptimalSystemAgent.Tools.Builtins.Diff,
+      "notebook_edit" => OptimalSystemAgent.Tools.Builtins.NotebookEdit,
+      "computer_use" => OptimalSystemAgent.Tools.Builtins.ComputerUse,
+      "browser" => OptimalSystemAgent.Tools.Builtins.Browser,
+      "code_sandbox" => OptimalSystemAgent.Tools.Builtins.CodeSandbox
     }
   end
 

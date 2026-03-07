@@ -27,17 +27,43 @@ defmodule OptimalSystemAgent.Events.Bus do
   use GenServer
   require Logger
 
-  @event_types ~w(user_message llm_request llm_response tool_call tool_result agent_response system_event channel_connected channel_disconnected channel_error ask_user_question survey_answered)a
+  alias OptimalSystemAgent.Events.Event
+
+  @event_types ~w(user_message llm_request llm_response tool_call tool_result agent_response system_event channel_connected channel_disconnected channel_error ask_user_question survey_answered algedonic_alert)a
 
   def start_link(_opts) do
     GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
   end
 
-  @doc "Emit an event through the goldrush-compiled router."
-  def emit(event_type, payload \\ %{}) when event_type in @event_types do
-    # Create goldrush event from proplist
-    fields = [{:type, event_type}, {:timestamp, System.monotonic_time()} | Map.to_list(payload)]
-    event = :gre.make(fields, [:list])
+  @doc """
+  Emit an event through the goldrush-compiled router.
+
+  Wraps the payload in an `Event` struct with UUID, timestamp, and tracing fields
+  before dispatching to goldrush. Returns `{:ok, event}` with the created Event.
+
+  ## Options
+
+    * `:source` - origin string (default: `"bus"`)
+    * `:parent_id` - parent event ID for causality chains
+    * `:session_id` - session identifier
+    * `:correlation_id` - groups related events
+    * `:signal_mode` - Signal Theory mode
+    * `:signal_genre` - Signal Theory genre
+    * `:signal_sn` - signal-to-noise ratio (0.0-1.0)
+  """
+  def emit(event_type, payload \\ %{}, opts \\ []) when event_type in @event_types do
+    source = Keyword.get(opts, :source, "bus")
+    typed_event = Event.new(event_type, source, payload, opts)
+
+    # Build goldrush proplist from the Event struct.
+    # :type must be at the top level for goldrush's compiled filter.
+    gre_fields =
+      typed_event
+      |> Event.to_map()
+      |> Map.put(:timestamp, System.monotonic_time())
+      |> Map.to_list()
+
+    gre_event = :gre.make(gre_fields, [:list])
 
     # Route through the compiled :osa_event_router module.
     # Dispatch via a supervised Task — goldrush's compiled module can call
@@ -45,11 +71,46 @@ defmodule OptimalSystemAgent.Events.Bus do
     # ETS tables are in a bad state. An event bus must never block the caller.
     Task.Supervisor.start_child(OptimalSystemAgent.Events.TaskSupervisor, fn ->
       try do
-        :glc.handle(:osa_event_router, event)
+        :glc.handle(:osa_event_router, gre_event)
       catch
         _, _ -> :ok
       end
     end)
+
+    {:ok, typed_event}
+  end
+
+  @doc """
+  Emit an algedonic alert — an urgent bypass signal in Beer's VSM.
+
+  Algedonic signals propagate immediately, bypassing normal event channels.
+  Use for critical system health issues that need immediate attention.
+
+  ## Parameters
+
+    * `severity` - `:critical`, `:high`, `:medium`, or `:low`
+    * `message` - human-readable description of the alert
+
+  ## Options
+
+    * `:source` - origin string (default: `"algedonic"`)
+    * `:metadata` - additional context map
+    * All options from `emit/3`
+  """
+  @spec emit_algedonic(atom(), String.t(), keyword()) :: {:ok, Event.t()}
+  def emit_algedonic(severity, message, opts \\ [])
+      when severity in [:critical, :high, :medium, :low] and is_binary(message) do
+    metadata = Keyword.get(opts, :metadata, %{})
+    source = Keyword.get(opts, :source, "algedonic")
+
+    payload = %{
+      signal: :pain,
+      severity: severity,
+      message: message,
+      metadata: metadata
+    }
+
+    emit(:algedonic_alert, payload, Keyword.put(opts, :source, source))
   end
 
   @doc """
@@ -125,9 +186,12 @@ defmodule OptimalSystemAgent.Events.Bus do
 
   # Called by the goldrush compiled module when an event passes all filters.
   # Looks up registered handlers in ETS and dispatches asynchronously.
+  # Handlers receive a map containing all Event struct fields plus goldrush metadata.
   defp dispatch_event(event) do
     type = :gre.fetch(:type, event)
-    # Convert gre event to an Elixir map for handler consumption
+    # Convert gre event to an Elixir map for handler consumption.
+    # This map contains all Event struct fields (id, type, source, time, etc.)
+    # plus the goldrush monotonic timestamp.
     payload = event |> :gre.pairs() |> Map.new()
 
     try do

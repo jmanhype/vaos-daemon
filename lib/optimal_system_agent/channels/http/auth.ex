@@ -110,7 +110,9 @@ defmodule OptimalSystemAgent.Channels.HTTP.Auth do
   defp validate_algorithm(_), do: {:error, "Missing algorithm in JWT header"}
 
   defp shared_secret do
-    Application.get_env(:optimal_system_agent, :shared_secret) ||
+    Application.get_env(:optimal_system_agent, :jwt_secret) ||
+      Application.get_env(:optimal_system_agent, :shared_secret) ||
+      System.get_env("JWT_SECRET") ||
       System.get_env("OSA_SHARED_SECRET") ||
       generated_dev_secret()
   end

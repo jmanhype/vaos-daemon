@@ -44,6 +44,9 @@ defmodule OptimalSystemAgent.MixProject do
       # JSON
       {:jason, "~> 1.4"},
 
+      # JSON Schema validation (tool argument validation)
+      {:ex_json_schema, "~> 0.11"},
+
       # PubSub for internal event fan-out (standalone, no Phoenix framework)
       {:phoenix_pubsub, "~> 2.1"},
 
@@ -60,6 +63,15 @@ defmodule OptimalSystemAgent.MixProject do
       # Database — Ecto + SQLite3
       {:ecto_sql, "~> 3.12"},
       {:ecto_sqlite3, "~> 0.17"},
+
+      # Platform database — PostgreSQL for multi-tenant data
+      {:postgrex, "~> 0.19"},
+
+      # Password hashing
+      {:bcrypt_elixir, "~> 3.0"},
+
+      # AMQP — RabbitMQ publisher for Go worker events
+      {:amqp, "~> 4.1"},
 
       # Telemetry
       {:telemetry, "~> 1.2"},

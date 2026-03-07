@@ -109,6 +109,10 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
   forward "/oscp", to: API.ProtocolRoutes
   forward "/tasks", to: API.ProtocolRoutes
 
+  # ── Platform (multi-tenant auth + CRUD) ─────────────────────────────
+  forward "/platform/auth", to: API.PlatformAuthRoutes
+  forward "/platform", to: API.PlatformRoutes
+
   # ── Signal classification (inline — single endpoint) ─────────────────
   post "/classify" do
     with %{"message" => message} when is_binary(message) and message != "" <- conn.body_params do

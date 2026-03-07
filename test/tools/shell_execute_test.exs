@@ -346,6 +346,35 @@ defmodule OptimalSystemAgent.Tools.Builtins.ShellExecuteTest do
   end
 
   # ---------------------------------------------------------------------------
+  # Custom working directory (cwd parameter)
+  # ---------------------------------------------------------------------------
+
+  describe "cwd parameter" do
+    test "cwd sets the working directory for the command" do
+      assert {:ok, output} = ShellExecute.execute(%{"command" => "pwd", "cwd" => "/tmp"})
+      # The output should reflect /tmp (or its resolved path, e.g. /private/tmp on macOS)
+      trimmed = String.trim(output)
+      assert trimmed =~ "tmp"
+    end
+
+    test "nonexistent cwd returns error" do
+      assert {:error, msg} = ShellExecute.execute(%{"command" => "pwd", "cwd" => "/tmp/osa_nonexistent_dir_999"})
+      assert msg =~ "cwd does not exist"
+    end
+
+    test "empty cwd falls back to default workspace" do
+      assert {:ok, output} = ShellExecute.execute(%{"command" => "pwd", "cwd" => ""})
+      trimmed = String.trim(output)
+      assert trimmed =~ ~r/.osa\/workspace/i
+    end
+
+    test "parameters schema includes cwd" do
+      params = ShellExecute.parameters()
+      assert Map.has_key?(params["properties"], "cwd")
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # Metadata
   # ---------------------------------------------------------------------------
 

@@ -31,7 +31,10 @@ defmodule OptimalSystemAgent.Channels.CLI do
     print_banner()
 
     session_id = "cli_" <> Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
-    {:ok, _pid} = Loop.start_link(session_id: session_id, channel: :cli)
+    {:ok, _pid} = DynamicSupervisor.start_child(
+      OptimalSystemAgent.SessionSupervisor,
+      {Loop, session_id: session_id, channel: :cli}
+    )
     register_permission_hook(session_id)
 
     # Register event handlers for CLI feedback
@@ -320,7 +323,10 @@ defmodule OptimalSystemAgent.Channels.CLI do
     stop_session(old_session_id)
 
     new_session_id = "cli_#{:rand.uniform(999_999)}"
-    {:ok, _pid} = Loop.start_link(session_id: new_session_id, channel: :cli)
+    {:ok, _pid} = DynamicSupervisor.start_child(
+      OptimalSystemAgent.SessionSupervisor,
+      {Loop, session_id: new_session_id, channel: :cli}
+    )
     register_permission_hook(new_session_id)
     IO.puts("#{@dim}  session: #{new_session_id}#{@reset}\n")
     new_session_id
@@ -329,7 +335,10 @@ defmodule OptimalSystemAgent.Channels.CLI do
   defp handle_action({:resume_session, target_id, messages}, old_session_id) do
     stop_session(old_session_id)
 
-    {:ok, _pid} = Loop.start_link(session_id: target_id, channel: :cli, messages: messages)
+    {:ok, _pid} = DynamicSupervisor.start_child(
+      OptimalSystemAgent.SessionSupervisor,
+      {Loop, session_id: target_id, channel: :cli, messages: messages}
+    )
     register_permission_hook(target_id)
     IO.puts("#{@dim}  resumed: #{target_id} (#{length(messages)} messages restored)#{@reset}\n")
     target_id

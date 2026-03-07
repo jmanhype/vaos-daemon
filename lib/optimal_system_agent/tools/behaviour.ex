@@ -50,6 +50,16 @@ defmodule OptimalSystemAgent.Tools.Behaviour do
   call, new tools become available immediately without restarting the BEAM VM.
   """
 
+  @typedoc """
+  Tool safety classification.
+
+  - `:read_only`         — no side effects (file reads, searches, queries)
+  - `:write_safe`        — creates/modifies files in user workspace
+  - `:write_destructive` — irreversible mutations (git push, delete, reset)
+  - `:terminal`          — arbitrary shell execution, highest risk
+  """
+  @type tool_safety :: :read_only | :write_safe | :write_destructive | :terminal
+
   @callback name() :: String.t()
   @callback description() :: String.t()
   @callback parameters() :: map()
@@ -63,5 +73,14 @@ defmodule OptimalSystemAgent.Tools.Behaviour do
   """
   @callback available?() :: boolean()
 
-  @optional_callbacks [available?: 0]
+  @doc """
+  Optional callback — classify the tool's side-effect risk level.
+
+  Used by the dispatch pipeline to enforce safety policies (e.g., requiring
+  confirmation for destructive tools). Defaults to `:write_safe` when not
+  implemented.
+  """
+  @callback safety() :: tool_safety()
+
+  @optional_callbacks [available?: 0, safety: 0]
 end

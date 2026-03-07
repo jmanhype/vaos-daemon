@@ -44,8 +44,8 @@ defmodule OptimalSystemAgent.Security.ShellPolicy do
     ~r/rm\s+-rf\s+\//,
     # dd with input file specified (hooks.ex — more targeted than bare \bdd\b)
     ~r/dd\s+if=/,
-    # Fork bomb (hooks.ex)
-    ~r/:()\{.*\|.*&\s*\};:/,
+    # Fork bomb (hooks.ex) — match with optional whitespace around braces
+    ~r/:\(\)\s*\{.*\|.*&\s*\}\s*;\s*:/,
 
     # ── Output redirection to system paths ───────────────────────────────
     ~r/>\s*\/etc\//,

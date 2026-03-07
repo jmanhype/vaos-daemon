@@ -16,6 +16,12 @@ defmodule OptimalSystemAgent.Agent.Hooks do
     :skip              — skip this hook silently
 
   Hooks run in priority order (lower = first). If any hook blocks, the chain stops.
+
+  Architecture:
+    - Registration goes through GenServer (serialized writes)
+    - Hook data stored in ETS `:osa_hooks` (bag, read_concurrency: true)
+    - Execution reads from ETS in caller's process (no GenServer bottleneck)
+    - Metrics tracked in GenServer state
   """
 
   use GenServer
@@ -39,7 +45,9 @@ defmodule OptimalSystemAgent.Agent.Hooks do
           priority: integer()
         }
 
-  defstruct hooks: %{}, metrics: %{}
+  @hooks_table :osa_hooks
+
+  defstruct metrics: %{}
 
   # ── Client API ────────────────────────────────────────────────────
 
@@ -59,10 +67,17 @@ defmodule OptimalSystemAgent.Agent.Hooks do
 
   @doc """
   Run all hooks for an event. Returns the final payload or a block reason.
+  Executes in the caller's process by reading from ETS — no GenServer call.
   """
   @spec run(hook_event(), map()) :: {:ok, map()} | {:blocked, String.t()}
   def run(event, payload) do
-    GenServer.call(__MODULE__, {:run, event, payload}, 10_000)
+    hooks = hooks_for_event(event)
+    started_at = System.monotonic_time(:microsecond)
+    result = run_chain(hooks, payload, event)
+    elapsed_us = System.monotonic_time(:microsecond) - started_at
+    # Fire-and-forget metrics update to GenServer
+    GenServer.cast(__MODULE__, {:update_metrics, event, elapsed_us, result})
+    result
   end
 
   @doc """
@@ -71,13 +86,34 @@ defmodule OptimalSystemAgent.Agent.Hooks do
   """
   @spec run_async(hook_event(), map()) :: :ok
   def run_async(event, payload) do
-    GenServer.cast(__MODULE__, {:run_async, event, payload})
+    Task.start(fn ->
+      hooks = hooks_for_event(event)
+      started_at = System.monotonic_time(:microsecond)
+      result = run_chain(hooks, payload, event)
+      elapsed_us = System.monotonic_time(:microsecond) - started_at
+      GenServer.cast(__MODULE__, {:update_metrics, event, elapsed_us, result})
+    end)
+    :ok
   end
 
   @doc "List registered hooks."
   @spec list_hooks() :: %{hook_event() => [%{name: String.t(), priority: integer()}]}
   def list_hooks do
-    GenServer.call(__MODULE__, :list_hooks)
+    all_hooks = :ets.tab2list(@hooks_table)
+
+    all_hooks
+    |> Enum.group_by(fn {event, _name, _priority, _handler} -> event end)
+    |> Enum.map(fn {event, entries} ->
+      hooks =
+        entries
+        |> Enum.sort_by(fn {_event, _name, priority, _handler} -> priority end)
+        |> Enum.map(fn {_event, name, priority, _handler} -> %{name: name, priority: priority} end)
+
+      {event, hooks}
+    end)
+    |> Map.new()
+  rescue
+    ArgumentError -> %{}
   end
 
   @doc "Get hook execution metrics."
@@ -86,11 +122,21 @@ defmodule OptimalSystemAgent.Agent.Hooks do
     GenServer.call(__MODULE__, :metrics)
   end
 
+  # ── ETS Helpers (public for testing) ─────────────────────────────
+
+  @doc false
+  def hooks_table_name, do: @hooks_table
+
   # ── GenServer Callbacks ─────────────────────────────────────────
 
   @impl true
   def init(_opts) do
-    state = %__MODULE__{hooks: %{}, metrics: %{}}
+    state = %__MODULE__{metrics: %{}}
+
+    # ETS table for hook definitions (read from caller process, written via GenServer)
+    if :ets.whereis(@hooks_table) == :undefined do
+      :ets.new(@hooks_table, [:named_table, :bag, :public, {:read_concurrency, true}])
+    end
 
     # ETS table for hot-path counters (guard against re-creation on restart)
     if :ets.whereis(:osa_hooks_counters) == :undefined do
@@ -98,55 +144,29 @@ defmodule OptimalSystemAgent.Agent.Hooks do
     end
 
     # Register built-in hooks
-    state = register_builtins(state)
+    register_builtins()
 
-    Logger.info("[Hooks] Pipeline initialized with #{count_hooks(state)} hooks")
+    hook_count =
+      try do
+        :ets.info(@hooks_table, :size)
+      rescue
+        _ -> 0
+      end
+
+    Logger.info("[Hooks] Pipeline initialized with #{hook_count} hooks")
     {:ok, state}
   end
 
   @impl true
   def handle_cast({:register, event, name, handler, priority}, state) do
-    entry = %{name: name, event: event, handler: handler, priority: priority}
-
-    hooks_for_event = Map.get(state.hooks, event, [])
-    updated = [entry | hooks_for_event] |> Enum.sort_by(& &1.priority)
-
-    {:noreply, %{state | hooks: Map.put(state.hooks, event, updated)}}
-  end
-
-  @impl true
-  def handle_cast({:run_async, event, payload}, state) do
-    hooks = Map.get(state.hooks, event, [])
-    started_at = System.monotonic_time(:microsecond)
-    {result, state} = run_chain(hooks, payload, event, state)
-    elapsed_us = System.monotonic_time(:microsecond) - started_at
-    state = update_metrics(state, event, elapsed_us, result)
+    :ets.insert(@hooks_table, {event, name, priority, handler})
     {:noreply, state}
   end
 
   @impl true
-  def handle_call({:run, event, payload}, _from, state) do
-    hooks = Map.get(state.hooks, event, [])
-    started_at = System.monotonic_time(:microsecond)
-
-    {result, state} = run_chain(hooks, payload, event, state)
-
-    elapsed_us = System.monotonic_time(:microsecond) - started_at
+  def handle_cast({:update_metrics, event, elapsed_us, result}, state) do
     state = update_metrics(state, event, elapsed_us, result)
-
-    {:reply, result, state}
-  end
-
-  @impl true
-  def handle_call(:list_hooks, _from, state) do
-    listing =
-      state.hooks
-      |> Enum.map(fn {event, hooks} ->
-        {event, Enum.map(hooks, fn h -> %{name: h.name, priority: h.priority} end)}
-      end)
-      |> Map.new()
-
-    {:reply, listing, state}
+    {:noreply, state}
   end
 
   @impl true
@@ -154,15 +174,27 @@ defmodule OptimalSystemAgent.Agent.Hooks do
     {:reply, state.metrics, state}
   end
 
-  # ── Hook Chain Execution ──────────────────────────────────────────
+  # ── Hook Chain Execution (runs in caller process) ──────────────
 
-  defp run_chain([], payload, _event, state), do: {{:ok, payload}, state}
+  defp hooks_for_event(event) do
+    entries = :ets.lookup(@hooks_table, event)
 
-  defp run_chain([hook | rest], payload, event, state) do
+    entries
+    |> Enum.sort_by(fn {_event, _name, priority, _handler} -> priority end)
+    |> Enum.map(fn {_event, name, priority, handler} ->
+      %{name: name, priority: priority, handler: handler}
+    end)
+  rescue
+    ArgumentError -> []
+  end
+
+  defp run_chain([], payload, _event), do: {:ok, payload}
+
+  defp run_chain([hook | rest], payload, event) do
     try do
       case hook.handler.(payload) do
         {:ok, updated_payload} ->
-          run_chain(rest, updated_payload, event, state)
+          run_chain(rest, updated_payload, event)
 
         {:block, reason} ->
           Logger.warning("[Hooks] #{hook.name} blocked #{event}: #{reason}")
@@ -175,26 +207,26 @@ defmodule OptimalSystemAgent.Agent.Hooks do
             session_id: Map.get(payload, :session_id, "unknown")
           })
 
-          {{:blocked, reason}, state}
+          {:blocked, reason}
 
         :skip ->
-          run_chain(rest, payload, event, state)
+          run_chain(rest, payload, event)
 
         other ->
           Logger.warning("[Hooks] #{hook.name} returned unexpected: #{inspect(other)}")
-          run_chain(rest, payload, event, state)
+          run_chain(rest, payload, event)
       end
     rescue
       e ->
         Logger.error("[Hooks] #{hook.name} crashed: #{Exception.message(e)}")
         # Don't let a broken hook crash the pipeline
-        run_chain(rest, payload, event, state)
+        run_chain(rest, payload, event)
     end
   end
 
   # ── Built-in Hooks ────────────────────────────────────────────────
 
-  defp register_builtins(state) do
+  defp register_builtins do
     builtins = [
       # Spend guard — blocks when budget exceeded (pre_tool_use, priority 8)
       %{
@@ -272,10 +304,8 @@ defmodule OptimalSystemAgent.Agent.Hooks do
       }
     ]
 
-    Enum.reduce(builtins, state, fn hook, acc ->
-      hooks_for_event = Map.get(acc.hooks, hook.event, [])
-      updated = [hook | hooks_for_event] |> Enum.sort_by(& &1.priority)
-      %{acc | hooks: Map.put(acc.hooks, hook.event, updated)}
+    Enum.each(builtins, fn hook ->
+      :ets.insert(@hooks_table, {hook.event, hook.name, hook.priority, hook.handler})
     end)
   end
 
@@ -488,10 +518,6 @@ defmodule OptimalSystemAgent.Agent.Hooks do
   defp mcp_cache_post(payload), do: {:ok, payload}
 
   # ── Helpers ────────────────────────────────────────────────────────
-
-  defp count_hooks(state) do
-    state.hooks |> Map.values() |> Enum.map(&length/1) |> Enum.sum()
-  end
 
   defp update_metrics(state, event, elapsed_us, result) do
     event_metrics = Map.get(state.metrics, event, %{calls: 0, total_us: 0, blocks: 0})

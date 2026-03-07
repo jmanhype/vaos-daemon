@@ -283,3 +283,24 @@ config :optimal_system_agent,
     nil -> nil
     path -> Path.expand(path)
   end)
+
+# ── Platform (multi-tenant PostgreSQL + AMQP) ────────────────────────
+# These are optional — OSA works standalone without them.
+# Set DATABASE_URL to enable Platform.Repo (PostgreSQL for users, tenants, OS instances).
+# Set AMQP_URL to enable event publishing to Go workers.
+# Set JWT_SECRET to share JWT signing key with the Go backend.
+
+if database_url = System.get_env("DATABASE_URL") do
+  config :optimal_system_agent, OptimalSystemAgent.Platform.Repo,
+    url: database_url,
+    pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10")
+end
+
+if System.get_env("DATABASE_URL") do
+  config :optimal_system_agent, ecto_repos: [OptimalSystemAgent.Store.Repo, OptimalSystemAgent.Platform.Repo]
+end
+
+config :optimal_system_agent,
+  jwt_secret: System.get_env("JWT_SECRET"),
+  amqp_url: System.get_env("AMQP_URL"),
+  platform_enabled: System.get_env("DATABASE_URL") != nil

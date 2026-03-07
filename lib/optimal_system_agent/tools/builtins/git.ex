@@ -6,6 +6,9 @@ defmodule OptimalSystemAgent.Tools.Builtins.Git do
   @default_allowed_paths ["~", "/tmp"]
 
   @impl true
+  def safety, do: :write_destructive
+
+  @impl true
   def name, do: "git"
 
   @impl true

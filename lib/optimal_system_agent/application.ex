@@ -69,6 +69,9 @@ defmodule OptimalSystemAgent.Application do
         OptimalSystemAgent.Events.Bus,
         OptimalSystemAgent.Bridge.PubSub,
         OptimalSystemAgent.Store.Repo,
+      ] ++
+        platform_repo_children() ++
+        [
 
         # Telemetry — subscribes to Events.Bus; must start after Bus + TaskSupervisor
         OptimalSystemAgent.Telemetry.Metrics,
@@ -95,6 +98,10 @@ defmodule OptimalSystemAgent.Application do
 
         # Channel adapters
         {DynamicSupervisor, name: OptimalSystemAgent.Channels.Supervisor, strategy: :one_for_one},
+
+        # Session supervisor — DynamicSupervisor for agent Loop processes.
+        # Must start before any code that creates sessions (CLI, HTTP, SDK).
+        {DynamicSupervisor, name: OptimalSystemAgent.SessionSupervisor, strategy: :one_for_one},
 
         # Agent processes
         OptimalSystemAgent.Agent.Memory,
@@ -127,6 +134,7 @@ defmodule OptimalSystemAgent.Application do
         sandbox_children() ++
         wallet_children() ++
         updater_children() ++
+        amqp_children() ++
         [
           # HTTP channel — Plug/Bandit on port 8089 (SDK API surface)
           # Started LAST so all agent processes are ready before accepting requests
@@ -272,6 +280,26 @@ defmodule OptimalSystemAgent.Application do
   # starting the supervisor is cheap and keeps them ready for future integration.
   defp intelligence_children do
     [OptimalSystemAgent.Intelligence.Supervisor]
+  end
+
+  # Platform PostgreSQL repo — opt-in via DATABASE_URL
+  defp platform_repo_children do
+    if Application.get_env(:optimal_system_agent, :platform_enabled, false) do
+      Logger.info("[Application] Platform enabled — starting Platform.Repo")
+      [OptimalSystemAgent.Platform.Repo]
+    else
+      []
+    end
+  end
+
+  # AMQP publisher — opt-in via AMQP_URL
+  defp amqp_children do
+    if Application.get_env(:optimal_system_agent, :amqp_url) do
+      Logger.info("[Application] AMQP enabled — starting Platform.AMQP publisher")
+      [OptimalSystemAgent.Platform.AMQP]
+    else
+      []
+    end
   end
 
   defp http_port do

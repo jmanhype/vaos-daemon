@@ -21,6 +21,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
   alias OptimalSystemAgent.Agent.Explorer
   alias OptimalSystemAgent.Agent.Memory
   alias OptimalSystemAgent.Agent.Hooks
+  alias OptimalSystemAgent.Agent.Scratchpad
   alias OptimalSystemAgent.Providers.Registry, as: Providers
   alias OptimalSystemAgent.Tools.Registry, as: Tools
   alias OptimalSystemAgent.Events.Bus
@@ -64,6 +65,21 @@ defmodule OptimalSystemAgent.Agent.Loop do
 
   # --- Client API ---
 
+  @doc """
+  Override child_spec to use `:transient` restart strategy.
+  Loop processes should only restart on crash, not on normal exit.
+  """
+  def child_spec(opts) do
+    session_id = Keyword.fetch!(opts, :session_id)
+
+    %{
+      id: {__MODULE__, session_id},
+      start: {__MODULE__, :start_link, [opts]},
+      restart: :transient,
+      type: :worker
+    }
+  end
+
   def start_link(opts) do
     session_id = Keyword.fetch!(opts, :session_id)
     user_id = Keyword.get(opts, :user_id)
@@ -103,19 +119,35 @@ defmodule OptimalSystemAgent.Agent.Loop do
   @impl true
   def init(opts) do
     extra_tools = Keyword.get(opts, :extra_tools, [])
+    session_id = Keyword.fetch!(opts, :session_id)
+
+    # Attempt checkpoint restore — if this session crashed, pick up where it left off
+    restored = restore_checkpoint(session_id)
+
+    messages = Keyword.get(opts, :messages) || Map.get(restored, :messages, [])
+    iteration = Map.get(restored, :iteration, 0)
+    plan_mode = Map.get(restored, :plan_mode, false)
+    turn_count = Map.get(restored, :turn_count, 0)
 
     state = %__MODULE__{
-      session_id: Keyword.fetch!(opts, :session_id),
+      session_id: session_id,
       user_id: Keyword.get(opts, :user_id),
       channel: Keyword.get(opts, :channel, :cli),
       provider: Keyword.get(opts, :provider),
       model: Keyword.get(opts, :model),
-      messages: Keyword.get(opts, :messages, []),
+      messages: messages,
+      iteration: iteration,
+      plan_mode: plan_mode,
+      turn_count: turn_count,
       tools: Tools.filter_applicable_tools(%{history: []}) ++ extra_tools,
       plan_mode_enabled: Application.get_env(:optimal_system_agent, :plan_mode_enabled, false),
       permission_tier: Keyword.get(opts, :permission_tier, :full),
       working_dir: Keyword.get(opts, :working_dir) || Application.get_env(:optimal_system_agent, :working_dir)
     }
+
+    if restored != %{} do
+      Logger.info("[loop] Restored checkpoint for session #{session_id} — iteration=#{iteration}, messages=#{length(messages)}")
+    end
 
     {:ok, state}
   end
@@ -461,6 +493,17 @@ defmodule OptimalSystemAgent.Agent.Loop do
         # from small local models sometimes return whitespace-only responses).
         content = if is_nil(content) or String.trim(content) == "", do: "...", else: content
 
+        # Scratchpad: extract <think> blocks for non-Anthropic providers
+        content =
+          if Scratchpad.inject?(state.provider) do
+            Scratchpad.process_response(content, state.session_id)
+          else
+            content
+          end
+
+        # Re-guard after scratchpad extraction (thinking-only responses)
+        content = if String.trim(content) == "", do: "...", else: content
+
         cond do
           state.auto_continues < 2 and wants_to_continue?(content) ->
             Logger.info("[loop] Auto-continue: model described intent without tool calls (nudge #{state.auto_continues + 1}/2)")
@@ -494,6 +537,23 @@ defmodule OptimalSystemAgent.Agent.Loop do
             }
             run_loop(state)
 
+          needs_verification_gate?(state) ->
+            Logger.info("[loop] Verification gate: iteration #{state.iteration}, task context present, zero successful tools — injecting verification")
+            verification = %{
+              role: "system",
+              content: "[System: VERIFICATION REQUIRED — You completed #{state.iteration} iterations with a task/goal " <>
+                "but executed zero tools successfully. Before returning a final response, verify your answer: " <>
+                "use at least one tool (e.g. file_read, dir_list, shell_execute) to confirm your response is accurate. " <>
+                "Do NOT return a final answer without tool-backed evidence.]"
+            }
+            state = %{state |
+              messages: state.messages ++ [%{role: "assistant", content: content}, verification],
+              iteration: state.iteration + 1,
+              # Burn the auto_continues budget so this fires at most once
+              auto_continues: 2
+            }
+            run_loop(state)
+
           true ->
             {content, state}
         end
@@ -501,6 +561,14 @@ defmodule OptimalSystemAgent.Agent.Loop do
       {:ok, %{content: content, tool_calls: tool_calls} = resp} when is_list(tool_calls) ->
         # Execute tool calls
         state = %{state | iteration: state.iteration + 1}
+
+        # Scratchpad: strip <think> blocks from assistant content in tool-call responses
+        content =
+          if Scratchpad.inject?(state.provider) do
+            Scratchpad.process_response(content, state.session_id)
+          else
+            content
+          end
 
         # Append assistant message with tool calls (+ thinking blocks for preservation)
         assistant_msg = %{role: "assistant", content: content, tool_calls: tool_calls}
@@ -536,6 +604,9 @@ defmodule OptimalSystemAgent.Agent.Loop do
         # Append all tool messages in original order
         tool_messages = Enum.map(results, fn {_tc, {tool_msg, _result_str}} -> tool_msg end)
         state = %{state | messages: state.messages ++ tool_messages}
+
+        # Checkpoint after tool results — crash recovery can resume from here
+        checkpoint_state(state)
 
         # Read-before-write nudge — check if any file_edit/file_write targeted an unread file
         state = inject_read_nudges(state, tool_calls)
@@ -687,6 +758,119 @@ defmodule OptimalSystemAgent.Agent.Loop do
       String.contains?(reason, "max_tokens") or
       String.contains?(reason, "maximum context length") or
       String.contains?(reason, "token limit")
+  end
+
+  # ── Checkpoint / Restore ─────────────────────────────────────────────
+  # Persists enough state after each completed tool-result cycle so that
+  # a crash-restarted Loop can resume without losing conversation context.
+
+  defp checkpoint_dir do
+    Application.get_env(:optimal_system_agent, :checkpoint_dir, "~/.osa/checkpoints")
+    |> Path.expand()
+  end
+
+  defp checkpoint_path(session_id) do
+    Path.join(checkpoint_dir(), "#{session_id}.json")
+  end
+
+  @doc false
+  def checkpoint_state(%__MODULE__{} = state) do
+    data = %{
+      session_id: state.session_id,
+      messages: state.messages,
+      iteration: state.iteration,
+      plan_mode: state.plan_mode,
+      turn_count: state.turn_count,
+      checkpointed_at: DateTime.utc_now() |> DateTime.to_iso8601()
+    }
+
+    dir = checkpoint_dir()
+    File.mkdir_p!(dir)
+
+    path = checkpoint_path(state.session_id)
+    File.write!(path, Jason.encode!(data), [:utf8])
+
+    Logger.debug("[loop] Checkpoint written for session #{state.session_id} at iteration #{state.iteration}")
+  rescue
+    e ->
+      Logger.warning("[loop] Checkpoint write failed: #{Exception.message(e)}")
+  end
+
+  @doc false
+  def restore_checkpoint(session_id) do
+    path =
+      Application.get_env(:optimal_system_agent, :checkpoint_dir, "~/.osa/checkpoints")
+      |> Path.expand()
+      |> Path.join("#{session_id}.json")
+
+    if File.exists?(path) do
+      case File.read(path) do
+        {:ok, content} ->
+          case Jason.decode(content) do
+            {:ok, data} ->
+              messages =
+                (data["messages"] || [])
+                |> Enum.map(fn msg when is_map(msg) ->
+                  for {k, v} <- msg, into: %{} do
+                    {String.to_atom(k), v}
+                  end
+                end)
+
+              %{
+                messages: messages,
+                iteration: data["iteration"] || 0,
+                plan_mode: data["plan_mode"] || false,
+                turn_count: data["turn_count"] || 0
+              }
+
+            {:error, _} ->
+              Logger.warning("[loop] Checkpoint decode failed for session #{session_id}")
+              %{}
+          end
+
+        {:error, _} ->
+          %{}
+      end
+    else
+      %{}
+    end
+  rescue
+    _ -> %{}
+  end
+
+  @doc false
+  def clear_checkpoint(session_id) do
+    path =
+      Application.get_env(:optimal_system_agent, :checkpoint_dir, "~/.osa/checkpoints")
+      |> Path.expand()
+      |> Path.join("#{session_id}.json")
+
+    File.rm(path)
+    :ok
+  rescue
+    _ -> :ok
+  end
+
+  # Clean up checkpoint on normal exit — only crash restarts should use it
+  @impl true
+  def terminate(:normal, state) do
+    clear_checkpoint(state.session_id)
+    :ok
+  end
+
+  def terminate(:shutdown, state) do
+    clear_checkpoint(state.session_id)
+    :ok
+  end
+
+  def terminate({:shutdown, _}, state) do
+    clear_checkpoint(state.session_id)
+    :ok
+  end
+
+  def terminate(_reason, _state) do
+    # Abnormal termination — keep checkpoint for recovery
+    :ok
   end
 
   defp tool_call_hint(%{"command" => cmd}), do: String.slice(cmd, 0, 60)
@@ -1290,6 +1474,45 @@ defmodule OptimalSystemAgent.Agent.Loop do
     Regex.match?(@code_block_pattern, content)
   end
 
+  # Verification gate — triggers when:
+  #   1. iteration > 2 (agent has had multiple chances)
+  #   2. Session has a task/goal context (user message contains action verbs)
+  #   3. Zero tools were executed successfully in this session
+  # This prevents the agent from returning an unverified response after
+  # multiple reasoning iterations without ever using tools.
+  @doc false
+  def needs_verification_gate?(state) do
+    state.iteration > 2 and
+      has_task_context?(state.messages) and
+      zero_successful_tools?(state.messages)
+  end
+
+  defp has_task_context?(messages) do
+    messages
+    |> Enum.any?(fn
+      %{role: "user", content: content} when is_binary(content) ->
+        Regex.match?(~r/\b(fix|create|build|implement|add|update|change|write|deploy|test|debug|refactor|delete|remove|find|search|check|run|install|configure)\b/i, content)
+      _ -> false
+    end)
+  end
+
+  defp zero_successful_tools?(messages) do
+    tool_messages =
+      Enum.filter(messages, fn
+        %{role: "tool", content: content} when is_binary(content) -> true
+        _ -> false
+      end)
+
+    if tool_messages == [] do
+      true
+    else
+      Enum.all?(tool_messages, fn %{content: content} ->
+        String.starts_with?(content, "Error:") or
+          String.starts_with?(content, "Blocked:")
+      end)
+    end
+  end
+
   # Detect when a task involves code changes — triggers the explore-first directive.
   @coding_action_patterns ~r/\b(fix|change|update|refactor|add|implement|create|modify|edit|write|build|rewrite|delete|remove|rename)\b/i
   @coding_context_patterns ~r/\b(function|method|module|file|code|script|class|endpoint|handler|component|route|controller|service|model|schema|migration|test|spec|bug|error|feature)\b/i
@@ -1383,4 +1606,5 @@ defmodule OptimalSystemAgent.Agent.Loop do
         end
     end
   end
+
 end

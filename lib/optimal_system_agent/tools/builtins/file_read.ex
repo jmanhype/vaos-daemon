@@ -20,6 +20,9 @@ defmodule OptimalSystemAgent.Tools.Builtins.FileRead do
   ]
 
   @impl true
+  def safety, do: :read_only
+
+  @impl true
   def name, do: "file_read"
 
   @impl true
@@ -30,7 +33,9 @@ defmodule OptimalSystemAgent.Tools.Builtins.FileRead do
     %{
       "type" => "object",
       "properties" => %{
-        "path" => %{"type" => "string", "description" => "Path to the file to read"}
+        "path" => %{"type" => "string", "description" => "Path to the file to read"},
+        "offset" => %{"type" => "integer", "description" => "Line number to start reading from (1-based). Optional."},
+        "limit" => %{"type" => "integer", "description" => "Maximum number of lines to read. Optional."}
       },
       "required" => ["path"]
     }
@@ -40,8 +45,10 @@ defmodule OptimalSystemAgent.Tools.Builtins.FileRead do
   @max_image_bytes 10 * 1024 * 1024
 
   @impl true
-  def execute(%{"path" => path}) do
+  def execute(%{"path" => path} = params) when is_binary(path) do
     expanded = Path.expand(path)
+    offset = params["offset"]
+    limit = params["limit"]
 
     if path_allowed?(expanded) do
       ext = Path.extname(expanded) |> String.downcase()
@@ -49,13 +56,51 @@ defmodule OptimalSystemAgent.Tools.Builtins.FileRead do
       if ext in @image_extensions do
         read_image(expanded, path, ext)
       else
-        case File.read(expanded) do
-          {:ok, content} -> {:ok, content}
-          {:error, reason} -> {:error, "Error reading file: #{reason}"}
+        if offset || limit do
+          read_with_range(expanded, path, offset, limit)
+        else
+          case File.read(expanded) do
+            {:ok, content} -> {:ok, content}
+            {:error, reason} -> {:error, "Error reading file: #{reason}"}
+          end
         end
       end
     else
       {:error, "Access denied: #{path} is outside allowed paths or is a sensitive file"}
+    end
+  end
+
+  def execute(%{"path" => _}), do: {:error, "path must be a string"}
+  def execute(_), do: {:error, "Missing required parameter: path"}
+
+  defp read_with_range(expanded, display_path, offset, limit) do
+    if not File.exists?(expanded) do
+      {:error, "Error reading file: enoent"}
+    else
+      # offset is 1-based line number; drop (offset - 1) lines
+      drop_count = if offset && offset > 1, do: offset - 1, else: 0
+      start_line = if offset && offset > 0, do: offset, else: 1
+
+      lines =
+        expanded
+        |> File.stream!()
+        |> Stream.drop(drop_count)
+        |> then(fn stream ->
+          if limit && limit > 0, do: Stream.take(stream, limit), else: stream
+        end)
+        |> Stream.with_index(start_line)
+        |> Enum.map(fn {line, line_num} ->
+          # Format with right-aligned line numbers and pipe separator
+          num_str = line_num |> Integer.to_string() |> String.pad_leading(5)
+          "#{num_str}| #{String.trim_trailing(line, "\n")}"
+        end)
+        |> Enum.join("\n")
+
+      if lines == "" do
+        {:error, "No lines in range for #{display_path}"}
+      else
+        {:ok, lines}
+      end
     end
   end
 

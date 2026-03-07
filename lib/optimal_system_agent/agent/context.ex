@@ -37,6 +37,7 @@ defmodule OptimalSystemAgent.Agent.Context do
 
   require Logger
 
+  alias OptimalSystemAgent.Agent.Scratchpad
   alias OptimalSystemAgent.Agent.Workflow
   alias OptimalSystemAgent.Agent.TaskTracker
   alias OptimalSystemAgent.Soul
@@ -191,7 +192,8 @@ defmodule OptimalSystemAgent.Agent.Context do
       {memory_block_relevant(state), 1, "memory"},
       {task_state_block(state), 1, "task_state"},
       {workflow_block(state), 1, "workflow"},
-      {skills_block(state), 2, "skills"}
+      {skills_block(state), 2, "skills"},
+      {scratchpad_block(state), 1, "scratchpad"}
     ]
     |> Enum.reject(fn {content, _, _} -> is_nil(content) or content == "" end)
   end
@@ -593,6 +595,17 @@ defmodule OptimalSystemAgent.Agent.Context do
       _ -> nil
     catch
       :exit, _ -> nil
+    end
+  end
+
+  defp scratchpad_block(state) do
+    provider = Map.get(state, :provider) ||
+      Application.get_env(:optimal_system_agent, :default_provider, :ollama)
+
+    if Scratchpad.inject?(provider) do
+      Scratchpad.instruction()
+    else
+      nil
     end
   end
 end

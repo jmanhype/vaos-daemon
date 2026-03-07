@@ -17,6 +17,9 @@ defmodule OptimalSystemAgent.Tools.Builtins.FileWrite do
   ]
 
   @impl true
+  def safety, do: :write_safe
+
+  @impl true
   def name, do: "file_write"
 
   @impl true

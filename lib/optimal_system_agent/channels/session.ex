@@ -35,7 +35,7 @@ defmodule OptimalSystemAgent.Channels.Session do
 
   defp start_loop(session_id, user_id, channel) do
     case DynamicSupervisor.start_child(
-           OptimalSystemAgent.Channels.Supervisor,
+           OptimalSystemAgent.SessionSupervisor,
            {Loop, session_id: session_id, user_id: to_string(user_id), channel: channel}
          ) do
       {:ok, _pid} -> :ok
