@@ -83,9 +83,13 @@ defmodule OptimalSystemAgent.Agent.AutoFixer do
   @spec run_async(run_opts()) :: {:ok, Task.t()} | {:error, String.t()}
   def run_async(opts) do
     ensure_cache_table()
-    
-    task = Task.async(fn -> run(opts) end)
-    {:ok, task}
+
+    try do
+      task = Task.async(fn -> run(opts) end)
+      {:ok, task}
+    rescue
+      e -> {:error, Exception.message(e)}
+    end
   end
 
   @doc """

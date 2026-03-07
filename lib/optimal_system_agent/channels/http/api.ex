@@ -49,14 +49,16 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
         exception: Exception.format(:error, e, __STACKTRACE__)
       )
 
-      body = Jason.encode!(%{error: "internal_error", details: Exception.message(e)})
+      body = safe_json_encode(%{error: "internal_error", details: Exception.message(e)})
 
       conn
       |> Plug.Conn.put_resp_content_type("application/json")
       |> Plug.Conn.send_resp(500, body)
   end
 
+  plug :cors
   plug OptimalSystemAgent.Channels.HTTP.RateLimiter
+  plug :validate_content_type
   plug :authenticate
   plug OptimalSystemAgent.Channels.HTTP.Integrity
   plug :match
@@ -159,8 +161,61 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
     if ch in @known_channels, do: String.to_existing_atom(ch), else: :http
   end
 
+  defp safe_json_encode(data) do
+    case Jason.encode(data) do
+      {:ok, json} -> json
+      {:error, _} -> Jason.encode!(%{error: "internal_error"})
+    end
+  end
+
+  # ── CORS Plug ───────────────────────────────────────────────────────
+  defp cors(%{method: "OPTIONS"} = conn, _opts) do
+    origin = Application.get_env(:optimal_system_agent, :cors_origin, "*")
+
+    conn
+    |> Plug.Conn.put_resp_header("access-control-allow-origin", origin)
+    |> Plug.Conn.put_resp_header("access-control-allow-methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+    |> Plug.Conn.put_resp_header("access-control-allow-headers", "authorization, content-type")
+    |> Plug.Conn.put_resp_header("access-control-max-age", "86400")
+    |> Plug.Conn.send_resp(204, "")
+    |> Plug.Conn.halt()
+  end
+
+  defp cors(conn, _opts) do
+    origin = Application.get_env(:optimal_system_agent, :cors_origin, "*")
+
+    conn
+    |> Plug.Conn.put_resp_header("access-control-allow-origin", origin)
+    |> Plug.Conn.put_resp_header("access-control-allow-methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+    |> Plug.Conn.put_resp_header("access-control-allow-headers", "authorization, content-type")
+  end
+
+  # ── Content-Type validation for write methods ─────────────────────
+  defp validate_content_type(%{method: method} = conn, _opts) when method in ["POST", "PUT", "PATCH"] do
+    case Plug.Conn.get_req_header(conn, "content-type") do
+      [ct | _] ->
+        if String.starts_with?(ct, "application/json") do
+          conn
+        else
+          body = safe_json_encode(%{error: "unsupported_media_type", details: "Content-Type must be application/json"})
+
+          conn
+          |> Plug.Conn.put_resp_content_type("application/json")
+          |> Plug.Conn.send_resp(415, body)
+          |> Plug.Conn.halt()
+        end
+
+      [] ->
+        # Allow missing content-type for empty bodies
+        conn
+    end
+  end
+
+  defp validate_content_type(conn, _opts), do: conn
+
   defp authenticate(%{request_path: "/api/v1/auth/" <> _} = conn, _opts), do: conn
   defp authenticate(%{request_path: "/api/v1/channels/" <> _} = conn, _opts), do: conn
+  defp authenticate(%{request_path: "/api/v1/platform/auth/" <> _} = conn, _opts), do: conn
 
   defp authenticate(conn, _opts) do
     case get_req_header(conn, "authorization") do

@@ -28,6 +28,7 @@ defmodule OptimalSystemAgent.Events.Bus do
   require Logger
 
   alias OptimalSystemAgent.Events.Event
+  alias OptimalSystemAgent.Events.Classifier
 
   @event_types ~w(user_message llm_request llm_response tool_call tool_result agent_response system_event channel_connected channel_disconnected channel_error ask_user_question survey_answered algedonic_alert)a
 
@@ -55,6 +56,14 @@ defmodule OptimalSystemAgent.Events.Bus do
     source = Keyword.get(opts, :source, "bus")
     typed_event = Event.new(event_type, source, payload, opts)
 
+    # Auto-classify signal dimensions if not explicitly set
+    typed_event =
+      if is_nil(typed_event.signal_mode) do
+        Classifier.auto_classify(typed_event)
+      else
+        typed_event
+      end
+
     # Build goldrush proplist from the Event struct.
     # :type must be at the top level for goldrush's compiled filter.
     gre_fields =
@@ -69,13 +78,35 @@ defmodule OptimalSystemAgent.Events.Bus do
     # Dispatch via a supervised Task — goldrush's compiled module can call
     # into gr_param GenServer (5s default timeout), which hangs when its
     # ETS tables are in a bad state. An event bus must never block the caller.
-    Task.Supervisor.start_child(OptimalSystemAgent.Events.TaskSupervisor, fn ->
+    Task.Supervisor.start_child(
+      OptimalSystemAgent.Events.TaskSupervisor,
+      fn ->
+        try do
+          :glc.handle(:osa_event_router, gre_event)
+        catch
+          :error, reason ->
+            Logger.warning("[Bus] Router dispatch error: #{inspect(reason)}")
+
+          :exit, reason ->
+            Logger.warning("[Bus] Router dispatch exit: #{inspect(reason)}")
+        end
+      end,
+      max_children: 1000
+    )
+
+    # Best-effort append to per-session event stream (if session_id present).
+    # Stream unavailable = silent no-op.
+    if typed_event.session_id do
       try do
-        :glc.handle(:osa_event_router, gre_event)
+        OptimalSystemAgent.Events.Stream.append(typed_event.session_id, typed_event)
+      rescue
+        e ->
+          Logger.warning("[Bus] Stream append failed for session #{typed_event.session_id}: #{Exception.message(e)}")
       catch
-        _, _ -> :ok
+        kind, reason ->
+          Logger.warning("[Bus] Stream append #{kind} for session #{typed_event.session_id}: #{inspect(reason)}")
       end
-    end)
+    end
 
     {:ok, typed_event}
   end
@@ -198,17 +229,29 @@ defmodule OptimalSystemAgent.Events.Bus do
       :ets.lookup(:osa_event_handlers, type)
       |> Enum.each(fn
         {_, _ref, handler} ->
-          Task.Supervisor.start_child(OptimalSystemAgent.Events.TaskSupervisor, fn ->
-            handler.(payload)
-          end)
+          dispatch_with_dlq(type, payload, handler)
 
         {_, handler} ->
-          Task.Supervisor.start_child(OptimalSystemAgent.Events.TaskSupervisor, fn ->
-            handler.(payload)
-          end)
+          dispatch_with_dlq(type, payload, handler)
       end)
     rescue
-      _ -> :ok
+      ArgumentError -> :ok
     end
+  end
+
+  defp dispatch_with_dlq(type, payload, handler) do
+    Task.Supervisor.start_child(OptimalSystemAgent.Events.TaskSupervisor, fn ->
+      try do
+        handler.(payload)
+      rescue
+        e ->
+          Logger.warning("[Bus] Handler crash for #{type}: #{Exception.message(e)}")
+          OptimalSystemAgent.Events.DLQ.enqueue(type, payload, handler, Exception.message(e))
+      catch
+        kind, reason ->
+          Logger.warning("[Bus] Handler #{kind} for #{type}: #{inspect(reason)}")
+          OptimalSystemAgent.Events.DLQ.enqueue(type, payload, handler, "#{kind}: #{inspect(reason)}")
+      end
+    end)
   end
 end

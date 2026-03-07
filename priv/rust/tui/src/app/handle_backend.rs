@@ -23,10 +23,31 @@ impl App {
                 self.load_tools();
             }
             BackendEvent::SseDisconnected { error } => {
-                if let Some(err) = error {
-                    warn!("SSE disconnected: {}", err);
+                match error.as_deref() {
+                    Some("token_refreshed") => {
+                        info!("SSE reconnecting with refreshed token");
+                        self.toasts.push(
+                            "SSE reconnecting with refreshed token".into(),
+                            crate::components::toast::ToastLevel::Info,
+                        );
+                        self.start_sse();
+                    }
+                    Some("auth_failed") => {
+                        warn!("SSE auth failed after refresh attempt");
+                        self.toasts.push(
+                            "SSE auth failed. Try /login to re-authenticate.".into(),
+                            crate::components::toast::ToastLevel::Error,
+                        );
+                        self.sse_reconnecting = true;
+                    }
+                    Some(err) => {
+                        warn!("SSE disconnected: {}", err);
+                        self.sse_reconnecting = true;
+                    }
+                    None => {
+                        self.sse_reconnecting = true;
+                    }
                 }
-                self.sse_reconnecting = true;
             }
             BackendEvent::SseReconnecting { attempt } => {
                 debug!("SSE reconnecting (attempt {})", attempt);
@@ -237,6 +258,7 @@ impl App {
                 Ok(resp) => {
                     self.header.set_provider_info(&resp.provider, &resp.model);
                     self.status.set_provider_info(&resp.provider, &resp.model);
+                    self.sidebar.set_provider_info(&resp.provider, &resp.model);
                     self.chat.set_welcome_info(
                         &resp.provider,
                         &resp.model,
@@ -376,11 +398,22 @@ impl App {
             }
 
             BackendEvent::SseAuthFailed => {
-                error!("SSE auth failed — token may be expired");
-                self.toasts.push(
-                    "SSE auth failed. Try /login to re-authenticate.".into(),
-                    crate::components::toast::ToastLevel::Error,
-                );
+                error!("SSE auth failed — attempting token refresh");
+                let client = self.client.clone();
+                let tx = self.event_tx.clone();
+                tokio::spawn(async move {
+                    if client.try_refresh_token().await {
+                        // Signal the app to restart SSE with refreshed token
+                        let _ = tx.send(crate::event::Event::Backend(BackendEvent::SseDisconnected {
+                            error: Some("token_refreshed".into()),
+                        }));
+                    } else {
+                        // Refresh failed — tell user to login manually
+                        let _ = tx.send(crate::event::Event::Backend(BackendEvent::SseDisconnected {
+                            error: Some("auth_failed".into()),
+                        }));
+                    }
+                });
             }
             BackendEvent::ParseWarning { message } => {
                 warn!("SSE parse warning: {}", message);
@@ -724,6 +757,7 @@ impl App {
                     );
                     self.header.set_provider_info(&resp.provider, &resp.model);
                     self.status.set_provider_info(&resp.provider, &resp.model);
+                    self.sidebar.set_provider_info(&resp.provider, &resp.model);
                     self.onboarding = None;
                     if self.state == AppState::Onboarding {
                         self.transition(AppState::Idle);
@@ -794,6 +828,33 @@ impl App {
             }
             BackendEvent::SurveyAnswered { survey_id, summary } => {
                 self.chat.add_survey_summary(survey_id, summary);
+            }
+
+            // === Proactive Mode ===
+            BackendEvent::ProactiveMessage { message, message_type } => {
+                let level = match message_type.as_str() {
+                    "alert" | "work_failed" => crate::components::toast::ToastLevel::Warning,
+                    "work_complete" => crate::components::toast::ToastLevel::Success,
+                    _ => crate::components::toast::ToastLevel::Info,
+                };
+                // Show as a system message in chat with proactive badge
+                let tagged = format!("[proactive] {}", message);
+                self.chat.add_system_message(&tagged, &message_type);
+                // Also toast for visibility
+                let preview = if message.len() > 60 {
+                    format!("{}...", &message[..57])
+                } else {
+                    message
+                };
+                self.toasts.push(preview, level);
+            }
+            BackendEvent::ProactiveModeChanged { enabled } => {
+                let msg = if enabled { "Proactive mode: ON" } else { "Proactive mode: OFF" };
+                self.toasts.push(
+                    msg.into(),
+                    crate::components::toast::ToastLevel::Info,
+                );
+                self.sidebar.set_proactive(enabled);
             }
         }
         false

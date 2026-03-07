@@ -23,6 +23,8 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.SessionRoutes do
   # ── GET /sessions ──────────────────────────────────────────────────
 
   get "/" do
+    {page, per_page} = pagination_params(conn)
+
     # Merge persisted sessions (from Memory/SQLite) with live Registry sessions.
     persisted = Memory.list_sessions()
 
@@ -46,9 +48,16 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.SessionRoutes do
           alive: alive
         }
       end)
-      |> Enum.sort_by(fn s -> s.last_active || "" end, :desc)
+      |> Enum.sort_by(fn s -> s.last_active || "9999-99-99T99:99:99" end, :desc)
 
-    body = Jason.encode!(%{sessions: sessions, count: length(sessions)})
+    total = length(sessions)
+
+    paginated =
+      sessions
+      |> Enum.drop((page - 1) * per_page)
+      |> Enum.take(per_page)
+
+    body = Jason.encode!(%{sessions: paginated, count: total, page: page, per_page: per_page})
 
     conn
     |> put_resp_content_type("application/json")
@@ -254,7 +263,54 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.SessionRoutes do
     |> send_resp(200, Jason.encode!(%{status: "skipped"}))
   end
 
+  # ── POST /sessions/:id/proactive ───────────────────────────────
+
+  post "/:id/proactive" do
+    body = conn.body_params
+
+    case body["enabled"] do
+      true ->
+        OptimalSystemAgent.Agent.ProactiveMode.enable()
+        resp = Jason.encode!(%{status: "ok", enabled: true})
+        conn |> put_resp_content_type("application/json") |> send_resp(200, resp)
+
+      false ->
+        OptimalSystemAgent.Agent.ProactiveMode.disable()
+        resp = Jason.encode!(%{status: "ok", enabled: false})
+        conn |> put_resp_content_type("application/json") |> send_resp(200, resp)
+
+      _ ->
+        json_error(conn, 400, "invalid_request", "Provide {\"enabled\": true|false}")
+    end
+  end
+
+  # ── GET /sessions/:id/activity ─────────────────────────────────
+
+  get "/:id/activity" do
+    log = OptimalSystemAgent.Agent.ProactiveMode.activity_log()
+    body = Jason.encode!(%{activity: log, count: length(log)})
+    conn |> put_resp_content_type("application/json") |> send_resp(200, body)
+  end
+
   match _ do
     json_error(conn, 404, "not_found", "Session endpoint not found")
   end
+
+  defp pagination_params(conn) do
+    conn = Plug.Conn.fetch_query_params(conn)
+    page = parse_positive_int(conn.query_params["page"], 1)
+    per_page = conn.query_params["per_page"] |> parse_positive_int(20) |> min(100)
+    {page, per_page}
+  end
+
+  defp parse_positive_int(nil, default), do: default
+
+  defp parse_positive_int(val, default) when is_binary(val) do
+    case Integer.parse(val) do
+      {n, ""} when n > 0 -> n
+      _ -> default
+    end
+  end
+
+  defp parse_positive_int(_, default), do: default
 end

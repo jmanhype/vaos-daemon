@@ -48,6 +48,11 @@ defmodule OptimalSystemAgent.Channels.CLI do
     # Register async response handler
     register_response_handler(session_id)
 
+    # Proactive mode integration
+    register_proactive_handler(session_id)
+    OptimalSystemAgent.Agent.ProactiveMode.set_active_session(session_id)
+    maybe_greet(session_id)
+
     loop(session_id)
   end
 
@@ -353,6 +358,16 @@ defmodule OptimalSystemAgent.Channels.CLI do
     IO.write(IO.ANSI.clear() <> IO.ANSI.home())
     print_banner()
     IO.puts("")
+    session_id
+  end
+
+  defp handle_action({:set_strategy, strategy_name}, session_id) do
+    case Registry.lookup(OptimalSystemAgent.SessionRegistry, session_id) do
+      [{pid, _}] ->
+        GenServer.call(pid, {:set_strategy, strategy_name})
+      _ ->
+        :ok
+    end
     session_id
   end
 
@@ -667,6 +682,54 @@ defmodule OptimalSystemAgent.Channels.CLI do
       else: "#{@bold}#{@cyan}❯#{@reset} "
   end
 
+  # ── Proactive Mode Handlers ──────────────────────────────────────────
+
+  defp register_proactive_handler(session_id) do
+    Bus.register_handler(:system_event, fn payload ->
+      # Bus wraps payloads in CloudEvent envelope — data is in payload.data
+      data = Map.get(payload, :data, payload)
+
+      case data do
+        %{event: :proactive_message, session_id: ^session_id, message: msg, message_type: type} ->
+          prefix =
+            case type do
+              :alert -> "#{@yellow}  ⚠ OSA"
+              :work_complete -> "#{@dim}  ✓ OSA"
+              :work_failed -> "#{@yellow}  ✗ OSA"
+              :greeting -> "#{@cyan}  OSA"
+              _ -> "#{@cyan}  OSA"
+            end
+
+          clear_line()
+          IO.puts("\n#{prefix} > #{msg}#{@reset}\n")
+
+        _ ->
+          :ok
+      end
+    end)
+  rescue
+    _ -> :ok
+  end
+
+  defp maybe_greet(session_id) do
+    Task.Supervisor.start_child(OptimalSystemAgent.Events.TaskSupervisor, fn ->
+      case OptimalSystemAgent.Agent.ProactiveMode.greeting(session_id) do
+        {:ok, text} ->
+          Bus.emit(:system_event, %{
+            event: :proactive_message,
+            session_id: session_id,
+            message: text,
+            message_type: :greeting
+          })
+
+        :skip ->
+          :ok
+      end
+    end)
+  rescue
+    _ -> :ok
+  end
+
   defp register_response_handler(session_id) do
     Bus.register_handler(:system_event, fn payload ->
       case payload do
@@ -774,8 +837,20 @@ defmodule OptimalSystemAgent.Channels.CLI do
     #{@dim}#{provider} / #{model} · #{tool_count} tools · soul: #{soul_status}#{@reset}
     #{@dim}#{cwd}#{@reset}
     #{@dim}/help#{@reset} #{@dim}commands  ·  #{@bold}/model#{@reset} #{@dim}switch  ·  #{@bold}exit#{@reset} #{@dim}quit#{@reset}
-    #{@dim}#{String.duplicate("─", width)}#{@reset}
+    #{proactive_banner_line()}#{@dim}#{String.duplicate("─", width)}#{@reset}
     """)
+  end
+
+  defp proactive_banner_line do
+    if OptimalSystemAgent.Agent.ProactiveMode.enabled?() do
+      "#{@dim}proactive: #{IO.ANSI.green()}on#{@reset}\n"
+    else
+      ""
+    end
+  rescue
+    _ -> ""
+  catch
+    :exit, _ -> ""
   end
 
   defp git_short_hash do

@@ -40,6 +40,9 @@ defmodule OptimalSystemAgent.Agent.Context do
   alias OptimalSystemAgent.Agent.Scratchpad
   alias OptimalSystemAgent.Agent.Workflow
   alias OptimalSystemAgent.Agent.TaskTracker
+  alias OptimalSystemAgent.Agent.Memory.Episodic
+  alias OptimalSystemAgent.Agent.Memory.Injector
+  alias OptimalSystemAgent.Agent.Memory.Taxonomy
   alias OptimalSystemAgent.Soul
 
   @response_reserve 8_192
@@ -190,6 +193,7 @@ defmodule OptimalSystemAgent.Agent.Context do
       {environment_block(state), 1, "environment"},
       {plan_mode_block(state), 1, "plan_mode"},
       {memory_block_relevant(state), 1, "memory"},
+      {episodic_block(state), 1, "episodic"},
       {task_state_block(state), 1, "task_state"},
       {workflow_block(state), 1, "workflow"},
       {skills_block(state), 2, "skills"},
@@ -272,10 +276,14 @@ defmodule OptimalSystemAgent.Agent.Context do
             0
 
           calls when is_list(calls) ->
-            Enum.reduce(calls, 0, fn tc, tc_acc ->
-              name_tokens = estimate_tokens(safe_to_string(Map.get(tc, :name, "")))
-              arg_tokens = estimate_tokens(safe_to_string(Map.get(tc, :arguments, "")))
-              tc_acc + name_tokens + arg_tokens + 4
+            Enum.reduce(calls, 0, fn
+              tc, tc_acc when is_map(tc) ->
+                name_tokens = estimate_tokens(safe_to_string(Map.get(tc, :name, "")))
+                arg_tokens = estimate_tokens(safe_to_string(Map.get(tc, :arguments, "")))
+                tc_acc + name_tokens + arg_tokens + 4
+
+              _, tc_acc ->
+                tc_acc
             end)
         end
 
@@ -326,10 +334,91 @@ defmodule OptimalSystemAgent.Agent.Context do
         full_recall()
       end
 
-    case content do
+    # Append taxonomy-classified memories via Injector (if available)
+    taxonomy_addendum = taxonomy_inject(state, latest_user_msg)
+
+    combined =
+      case {content, taxonomy_addendum} do
+        {nil, nil} -> nil
+        {nil, add} -> add
+        {text, nil} -> text
+        {text, add} -> text <> "\n\n" <> add
+      end
+
+    case combined do
       nil -> nil
       "" -> nil
       text -> "## Long-term Memory\n#{text}"
+    end
+  end
+
+  defp taxonomy_inject(state, latest_user_msg) do
+    session_id = Map.get(state, :session_id, "default")
+    working_dir = Map.get(state, :working_dir) || File.cwd!()
+
+    # Attempt to load taxonomy entries from the learning engine
+    taxonomy_entries =
+      try do
+        patterns_map = OptimalSystemAgent.Agent.Learning.patterns()
+        solutions_map = OptimalSystemAgent.Agent.Learning.solutions()
+
+        pattern_entries =
+          patterns_map
+          |> Enum.map(fn {key, val} ->
+            content = "#{key}: #{inspect(val)}"
+            Taxonomy.new(content, category: :pattern, scope: :workspace)
+          end)
+
+        solution_entries =
+          solutions_map
+          |> Enum.map(fn {key, val} ->
+            correction = Map.get(val, :correction, inspect(val))
+            content = "#{key} -> #{correction}"
+            Taxonomy.new(content, category: :solution, scope: :workspace)
+          end)
+
+        pattern_entries ++ solution_entries
+      rescue
+        _ -> []
+      catch
+        :exit, _ -> []
+      end
+
+    if taxonomy_entries == [] do
+      nil
+    else
+      # Guard nil working_dir before entering file operations
+      working_dir = if is_binary(working_dir), do: working_dir, else: File.cwd!()
+
+      try do
+        # Build files list from working dir (top-level only, for context)
+        files =
+          try do
+            working_dir
+            |> File.ls!()
+            |> Enum.take(20)
+            |> Enum.map(&Path.join(working_dir, &1))
+          rescue
+            _ -> []
+          end
+
+        context = %{
+          files: files,
+          task: latest_user_msg || "",
+          session_id: session_id
+        }
+
+        injected = Injector.inject_relevant(taxonomy_entries, context)
+
+        case injected do
+          [] -> nil
+          entries -> Injector.format_for_prompt(entries)
+        end
+      rescue
+        _ -> nil
+      catch
+        :exit, _ -> nil
+      end
     end
   end
 
@@ -397,6 +486,39 @@ defmodule OptimalSystemAgent.Agent.Context do
     rescue
       _ -> nil
     end
+  end
+
+  defp episodic_block(state) do
+    session_id = Map.get(state, :session_id, "default")
+
+    events =
+      try do
+        Episodic.recent(session_id, 10)
+      rescue
+        _ -> []
+      catch
+        :exit, _ -> []
+      end
+
+    case events do
+      [] ->
+        nil
+
+      events ->
+        lines =
+          Enum.map(events, fn event ->
+            ts = Map.get(event, :timestamp)
+            type = Map.get(event, :event_type, :unknown)
+            data = Map.get(event, :data, %{})
+            summary = Map.get(data, :summary) || Map.get(data, :tool) || Map.get(data, :message) || inspect(data)
+            time_str = if ts, do: Calendar.strftime(ts, "%H:%M:%S"), else: "??:??:??"
+            "[#{time_str}] #{type}: #{summary}"
+          end)
+
+        "## Recent Session Events\n" <> Enum.join(lines, "\n")
+    end
+  rescue
+    _ -> nil
   end
 
   defp workflow_block(state) do

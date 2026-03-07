@@ -128,13 +128,14 @@ defmodule OptimalSystemAgent.Commands do
       n when n in ~w(compact usage) -> "context"
       "cortex" -> "intelligence"
       n when n in ~w(verbose think plan config tier) -> "config"
-      n when n in ~w(agents tiers tier swarms swarm hooks learning) -> "agents"
+      n when n in ~w(agents tiers tier swarms swarm hooks learning strategy) -> "agents"
       n when n in ~w(budget thinking export machines providers) -> "info"
       n when n in ~w(reload doctor setup create-command) -> "system"
       n when n in ~w(commit build test lint verify create-pr fix explain) -> "workflow"
       n when n in ~w(prime prime-backend prime-webdev prime-svelte prime-security prime-devops prime-testing prime-osa prime-miosa) -> "priming"
       n when n in ~w(security-scan secret-scan harden) -> "security"
       n when n in ~w(mem-search mem-save mem-recall mem-list mem-stats mem-delete mem-context mem-export) -> "memory"
+      n when n in ~w(proactive activity) -> "proactive"
       n when n in ~w(schedule cron triggers heartbeat) -> "scheduler"
       "tasks" -> "tasks"
       n when n in ~w(analytics debug search review pr-review refactor banner init) -> "analytics"
@@ -236,7 +237,7 @@ defmodule OptimalSystemAgent.Commands do
 
   defp builtin_commands do
     alias OptimalSystemAgent.Commands.{Info, Session, Channels, Agents, SchedulerCmd, System}
-    alias OptimalSystemAgent.Commands.{Config, Auth, Data, Dev}
+    alias OptimalSystemAgent.Commands.{Config, Auth, Data, Dev, Proactive}
     alias OptimalSystemAgent.Commands.Model
 
     [
@@ -283,6 +284,7 @@ defmodule OptimalSystemAgent.Commands do
       {"swarm", "Launch a swarm: /swarm <preset> <task>", &Agents.cmd_swarm/2},
       {"hooks", "Show hook pipeline status", &Agents.cmd_hooks/2},
       {"learning", "Learning engine metrics", &Agents.cmd_learning/2},
+      {"strategy", "Show or switch reasoning strategy", &Agents.cmd_strategy/2},
 
       # ── Budget / thinking / machines ──
       {"budget", "Token and cost budget status", &Agents.cmd_budget/2},
@@ -343,6 +345,10 @@ defmodule OptimalSystemAgent.Commands do
       {"cron", "Manage cron jobs", &SchedulerCmd.cmd_cron/2},
       {"triggers", "Manage event triggers", &SchedulerCmd.cmd_triggers/2},
       {"heartbeat", "Heartbeat tasks", &SchedulerCmd.cmd_heartbeat/2},
+
+      # ── Proactive Mode ──
+      {"proactive", "Toggle proactive mode", &Proactive.cmd_proactive/2},
+      {"activity", "Autonomous work log", &Proactive.cmd_activity/2},
 
       # ── Task Tracker ──
       {"tasks", "Show/manage tracked tasks", &Data.cmd_tasks/2},

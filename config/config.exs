@@ -36,6 +36,9 @@ config :optimal_system_agent,
   # Proactive monitor interval (milliseconds)
   proactive_interval: 30 * 60 * 1000,
 
+  # Proactive mode — autonomous greetings, notifications, and work (default: off)
+  proactive_mode: false,
+
   # User config directory
   config_dir: Path.expand("~/.osa"),
 

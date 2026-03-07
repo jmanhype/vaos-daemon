@@ -85,7 +85,10 @@ defmodule OptimalSystemAgent.MixProject do
       {:miosa_llm, path: "../miosa_llm"},
 
       # Extracted budget tracking package
-      {:miosa_budget, path: "../miosa_budget"}
+      {:miosa_budget, path: "../miosa_budget"},
+
+      # Knowledge graph — semantic triple store with pluggable backends
+      {:miosa_knowledge, path: "../miosa_knowledge"}
     ]
   end
 

@@ -5,7 +5,7 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Elixir](https://img.shields.io/badge/Elixir-1.17+-purple.svg)](https://elixir-lang.org)
 [![OTP](https://img.shields.io/badge/OTP-27+-green.svg)](https://www.erlang.org)
-[![Tests](https://img.shields.io/badge/Tests-1108-brightgreen.svg)](#)
+[![Tests](https://img.shields.io/badge/Tests-1958-brightgreen.svg)](#)
 [![Version](https://img.shields.io/badge/Version-0.2.5-orange.svg)](#)
 
 ---
@@ -18,7 +18,21 @@ The problem: most messages are noise. "ok", "thanks", "hey" — each one trigger
 
 Then we looked around and saw every other agent framework treating every message identically. Full pipeline, full cost, full latency, every time. No signal intelligence. No cost optimization.
 
-So we open-sourced OSA. The same agent that powers MIOSA, available to everyone. ~75,000 lines of Elixir/OTP + Rust. 1,108 tests. Runs locally on your machine. Your data stays yours.
+So we open-sourced OSA. The same agent that powers MIOSA, available to everyone. ~112,000 lines of code. ~2,000 tests. Runs locally on your machine. Your data stays yours.
+
+```
+Codebase Breakdown
+──────────────────────────────────────────
+Elixir/OTP (lib/)          69,000 lines   Core agent, orchestration, providers,
+                                          channels, tools, swarm, sandbox
+Rust TUI (priv/rust/tui/)  20,000 lines   Terminal interface, SSE client,
+                                          auth, rendering
+Tests (test/)              22,000 lines   ~2,000 tests across all modules
+Go utilities (priv/go/)       900 lines   Tokenizer, git helper, sysmon
+Config                        500 lines   Runtime, dev, test, prod
+──────────────────────────────────────────
+Total                     ~112,000 lines
+```
 
 ---
 
@@ -218,7 +232,7 @@ Requires Elixir 1.17+, Erlang/OTP 27+, Rust/Cargo (for TUI).
 docker compose up -d
 ```
 
-The compose file includes OSA + Ollama with healthchecks and automatic dependency ordering.
+The compose file includes OSA + Ollama with healthchecks and automatic dependency ordering. The production container runs as a non-root `osa` user with minimal privileges.
 
 ---
 
@@ -281,7 +295,7 @@ curl http://localhost:8089/api/v1/models
 curl http://localhost:8089/api/v1/stream/my-session
 ```
 
-JWT authentication supported for production — set `OSA_SHARED_SECRET` and `OSA_REQUIRE_AUTH=true`.
+JWT authentication supported for production — set `OSA_SHARED_SECRET` and `OSA_REQUIRE_AUTH=true`. The SSE stream and HTTP client auto-refresh expired tokens transparently.
 
 ---
 
@@ -344,34 +358,68 @@ JWT authentication supported for production — set `OSA_SHARED_SECRET` and `OSA
 
 ### OTP Supervision Tree
 
-Every component is supervised. If any part crashes, OTP restarts just that component — no downtime, no data loss, no manual intervention.
+Every component is supervised across 4 subsystem supervisors. If any part crashes, OTP restarts just that component — no downtime, no data loss, no manual intervention. The top-level uses `rest_for_one` so a crash in Infrastructure tears down everything above it.
 
 ```
-OptimalSystemAgent.Supervisor (one_for_one)
-├── SessionRegistry
-├── Phoenix.PubSub
-├── Events.Bus (goldrush :osa_event_router)
-├── Bridge.PubSub (event fan-out, 3 tiers)
-├── Store.Repo (SQLite3)
-├── Providers.Registry (18 providers, 3-tier routing)
-├── Skills.Registry (37 skill defs + MCP)
-├── Agent.Hooks (priority-ordered middleware pipeline)
-├── Agent.Roster (52 agent definitions across 4 categories)
-├── Machines (composable skill sets)
-├── OS.Registry (template discovery + connection)
-├── MCP.Supervisor (DynamicSupervisor)
-├── Channels.Supervisor (DynamicSupervisor, 12 adapters)
-├── Agent.Memory (3-store architecture + episodic JSONL)
-├── Agent.Orchestrator (multi-agent spawning)
-├── Agent.Scheduler (cron + heartbeat)
-├── Agent.Compactor (3-zone compression)
-├── Agent.Cortex (knowledge synthesis)
-├── Agent.Tier (18-provider model routing, dynamic Ollama detection)
-├── Intelligence.Supervisor (5 communication modules)
-├── Swarm.Supervisor (PACT framework + 4 patterns)
-├── Sandbox.Supervisor (Docker + Wasm + Sprites.dev + Registry)
-├── Bandit HTTP (port 8089)
-└── Commands (91 built-in + custom)
+OptimalSystemAgent.Supervisor (rest_for_one)
+│
+├── Platform.Repo (PostgreSQL — conditional, multi-tenant)
+│
+├── Supervisors.Infrastructure (rest_for_one)
+│   ├── SessionRegistry          Process registry for agent sessions
+│   ├── Events.TaskSupervisor    Supervised async work
+│   ├── PubSub                   Phoenix.PubSub core messaging
+│   ├── Events.Bus               goldrush-compiled event routing
+│   ├── Events.DLQ               Dead letter queue
+│   ├── Bridge.PubSub            Event fan-out bridge
+│   ├── Store.Repo               SQLite3 persistent storage
+│   ├── Telemetry.Metrics        Event-driven metrics collection
+│   ├── MiosaLLM.HealthChecker   Provider health + circuit breaker
+│   ├── Providers.Registry       18 LLM providers, 3-tier routing
+│   ├── Tools.Registry           Tool dispatcher (goldrush-compiled)
+│   ├── Machines                 Composable skill sets
+│   ├── Commands                 91 built-in + custom slash commands
+│   ├── OS.Registry              Template discovery + connection
+│   └── MCP.Supervisor           DynamicSupervisor for MCP servers
+│
+├── Supervisors.Sessions (one_for_one)
+│   ├── Channels.Supervisor      DynamicSupervisor — 12 channel adapters
+│   ├── EventStreamRegistry      Per-session SSE event streams
+│   └── SessionSupervisor        DynamicSupervisor — Agent Loop processes
+│
+├── Supervisors.AgentServices (one_for_one)
+│   ├── Agent.Memory             3-store architecture + episodic JSONL
+│   ├── Agent.HeartbeatState     Session heartbeat tracking
+│   ├── Agent.Workflow           Workflow state machine
+│   ├── MiosaBudget.Budget       Token budget management
+│   ├── Agent.TaskQueue          Task queuing + prioritization
+│   ├── Agent.Orchestrator       Multi-agent spawning + synthesis
+│   ├── Agent.Progress           Real-time progress reporting
+│   ├── Agent.TaskTracker        Task lifecycle tracking
+│   ├── Agent.Hooks              Priority-ordered middleware pipeline
+│   ├── Agent.Learning           Pattern learning system
+│   ├── Agent.Scheduler          Cron + heartbeat scheduling
+│   ├── Agent.Compactor          3-zone context compression
+│   ├── Agent.Cortex             Knowledge synthesis
+│   └── Agent.ProactiveMode      Autonomous proactive actions
+│
+├── Supervisors.Extensions (one_for_one)
+│   ├── Treasury                 Token treasury (opt-in)
+│   ├── Intelligence.Supervisor  5 communication modules
+│   ├── Fleet.Supervisor         Multi-instance fleet (opt-in)
+│   ├── Sidecar.Manager          Go/Python sidecar lifecycle
+│   │   ├── Go.Tokenizer         Fast tokenization sidecar
+│   │   ├── Go.Git               Git operations sidecar
+│   │   ├── Go.Sysmon            System monitoring sidecar
+│   │   ├── Python.Supervisor    Python execution sidecar
+│   │   └── WhatsAppWeb          Baileys WhatsApp bridge
+│   ├── Sandbox.Supervisor       Docker + Wasm + Sprites.dev (opt-in)
+│   ├── Wallet                   Payment integration (opt-in)
+│   ├── System.Updater           OTA update checker (opt-in)
+│   └── Platform.AMQP            RabbitMQ publisher (opt-in)
+│
+├── Channels.Starter             Deferred channel boot
+└── Bandit HTTP                  REST API on port 8089
 ```
 
 ---

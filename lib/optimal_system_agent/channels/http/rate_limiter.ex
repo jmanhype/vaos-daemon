@@ -104,6 +104,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.RateLimiter do
   # ── Helpers ─────────────────────────────────────────────────────────────
 
   defp limit_for_path("/api/v1/auth/" <> _), do: @auth_limit
+  defp limit_for_path("/api/v1/platform/auth/" <> _), do: @auth_limit
   defp limit_for_path(_), do: @default_limit
 
   defp format_ip({a, b, c, d}), do: "#{a}.#{b}.#{c}.#{d}"

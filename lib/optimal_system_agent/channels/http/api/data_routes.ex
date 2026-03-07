@@ -330,12 +330,12 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.DataRoutes do
     |> send_resp(200, body)
   end
 
-  # Persist provider/model selection to ~/.osa/config.json so it survives restarts.
-  # Reads existing config (if any), merges the two keys, and writes back atomically.
   defp parse_sort_atom("recency"), do: :recency
   defp parse_sort_atom("importance"), do: :importance
   defp parse_sort_atom(_), do: :relevance
 
+  # Persist provider/model selection to ~/.osa/config.json so it survives restarts.
+  # Reads existing config (if any), merges the two keys, and writes back atomically.
   defp persist_model_selection(provider, model) do
     config_path =
       Application.get_env(:optimal_system_agent, :bootstrap_dir, "~/.osa")

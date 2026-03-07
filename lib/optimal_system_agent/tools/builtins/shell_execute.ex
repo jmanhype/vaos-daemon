@@ -90,6 +90,9 @@ defmodule OptimalSystemAgent.Tools.Builtins.ShellExecute do
     end
   end
 
+  def execute(%{"command" => _}), do: {:error, "command must be a string"}
+  def execute(_), do: {:error, "Missing required parameter: command"}
+
   defp maybe_truncate(output) do
     if byte_size(output) > @max_output_bytes do
       String.slice(output, 0, @max_output_bytes) <> "\n[output truncated at 100KB]"
@@ -106,9 +109,6 @@ defmodule OptimalSystemAgent.Tools.Builtins.ShellExecute do
       ShellPolicy.validate(command)
     end
   end
-
-  def execute(%{"command" => _}), do: {:error, "command must be a string"}
-  def execute(_), do: {:error, "Missing required parameter: command"}
 
   defp cd_outside_osa?(command) do
     # Match any `cd <path>` where path is not under ~/.osa/

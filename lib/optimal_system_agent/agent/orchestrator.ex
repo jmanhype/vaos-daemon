@@ -22,13 +22,14 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
   require Logger
 
   alias OptimalSystemAgent.Agent.{Appraiser, Loop, Roster, TaskQueue}
-  alias OptimalSystemAgent.Agent.Orchestrator.{Complexity, SkillManager, Decomposer, AgentRunner, WaveExecutor, GitVersioning, ComplexityScaler}
+  alias OptimalSystemAgent.Agent.Orchestrator.{Complexity, SkillManager, Decomposer, AgentRunner, WaveExecutor, GitVersioning, ComplexityScaler, StateMachine}
   alias OptimalSystemAgent.Events.Bus
   alias OptimalSystemAgent.Providers.Registry, as: Providers
 
   defstruct tasks: %{},
             agent_pool: %{},
-            skill_cache: %{}
+            skill_cache: %{},
+            machines: %{}
 
   # ── Sub-task struct ──────────────────────────────────────────────────
 
@@ -292,7 +293,14 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
           cached_tools: cached_tools
         }
 
-        state = %{state | tasks: Map.put(state.tasks, task_id, task_state)}
+        # Initialize state machine and transition: idle → planning → executing
+        machine = StateMachine.new(task_id)
+        {:ok, machine} = StateMachine.transition(machine, :start_planning)
+        plan = %{sub_tasks: sub_tasks, complexity_score: complexity_score, estimated_tokens: estimated_tokens}
+        {:ok, machine} = StateMachine.set_plan(machine, plan)
+        {:ok, machine} = StateMachine.transition(machine, :approve_plan)
+
+        state = %{state | tasks: Map.put(state.tasks, task_id, task_state), machines: Map.put(state.machines, task_id, machine)}
 
         Bus.emit(:system_event, %{
           event: :orchestrator_agents_spawning,
@@ -339,6 +347,13 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
       {:error, reason} ->
         Logger.error("[Orchestrator] Task decomposition failed: #{inspect(reason)}")
 
+        # Initialize machine and record error: idle → planning → error_recovery
+        machine = StateMachine.new(task_id)
+        state = case StateMachine.transition(machine, :start_planning) do
+          {:ok, m} -> %{state | machines: Map.put(state.machines, task_id, m)}
+          _ -> state
+        end
+
         Bus.emit(:system_event, %{
           event: :orchestrator_task_failed,
           task_id: task_id,
@@ -380,7 +395,11 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
               }
             end),
           synthesis: task_state.synthesis,
-          error: task_state.error
+          error: task_state.error,
+          machine_phase: case Map.get(state.machines, task_id) do
+            nil -> nil
+            machine -> StateMachine.current_phase(machine)
+          end
         }
 
         {:reply, {:ok, progress}, state}
@@ -579,6 +598,8 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
         {:noreply, state}
 
       %{pending_waves: []} ->
+        # All waves done — transition machine: executing → verifying
+        state = transition_machine(state, task_id, :waves_complete)
         {:noreply, state, {:continue, {:synthesize, task_id}}}
 
       %{pending_waves: [wave | rest]} = task_state ->
@@ -598,6 +619,17 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
         cached_tools = task_state.cached_tools
         batch_id = "wave-#{wave_number}"
 
+        # Get permission tier from state machine to enforce tool access constraints
+        permission_tier = case Map.get(state.machines, task_id) do
+          nil -> :full
+          machine ->
+            try do
+              StateMachine.permission_tier(machine)
+            rescue
+              _ -> :full
+            end
+        end
+
         # Spawn all agents in this wave, collecting refs and agent states
         spawn_results =
           Enum.map(wave, fn sub_task ->
@@ -605,7 +637,7 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
             sub_task_with_context = %{sub_task | context: dep_context}
 
             {agent_id, agent_state, task_ref} =
-              AgentRunner.spawn_agent(sub_task_with_context, task_id, session_id, cached_tools, batch_id: batch_id)
+              AgentRunner.spawn_agent(sub_task_with_context, task_id, session_id, cached_tools, batch_id: batch_id, permission_tier: permission_tier)
 
             subtask_id = "#{task_id}_#{sub_task.name}"
             {agent_id, agent_state, task_ref, sub_task.name, subtask_id}
@@ -644,6 +676,19 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
 
       task_state ->
         synthesis = WaveExecutor.synthesize_results(task_id, task_state.results, task_state.message, task_state.session_id)
+
+        # Transition machine: verifying → completed
+        state = update_machine(state, task_id, fn machine ->
+          verification = %{synthesis: true, completed_at: DateTime.utc_now()}
+          machine = case StateMachine.set_verification(machine, verification) do
+            {:ok, m} -> m
+            {:error, _} -> machine
+          end
+          case StateMachine.transition(machine, :verification_passed) do
+            {:ok, m} -> m
+            {:error, _} -> machine
+          end
+        end)
 
         task_state = %{
           task_state
@@ -687,9 +732,20 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
             {:ok, text} -> text
             {:error, reason} -> "FAILED: #{reason}"
             text when is_binary(text) -> text
+            other ->
+              Logger.warning("[Orchestrator] Unexpected task result: #{inspect(other)}")
+              "FAILED: unexpected result format"
           end
 
         state = WaveExecutor.record_agent_result(state, task_id, agent_name, agent_id, subtask_id, result_text, result)
+
+        # Track result in state machine (best-effort, ignore phase mismatch)
+        state = update_machine(state, task_id, fn machine ->
+          case StateMachine.add_wave_result(machine, %{agent: agent_name, result: result_text}) do
+            {:ok, m} -> m
+            {:error, _} -> machine
+          end
+        end)
 
         # Check if all agents in current wave are done
         task_state = Map.get(state.tasks, task_id)
@@ -711,6 +767,14 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
       {task_id, agent_name, agent_id, subtask_id} ->
         result_text = "FAILED: Agent crashed: #{inspect(reason)}"
         state = WaveExecutor.record_agent_result(state, task_id, agent_name, agent_id, subtask_id, result_text, {:error, result_text})
+
+        # Record failure in state machine
+        state = update_machine(state, task_id, fn machine ->
+          case StateMachine.add_wave_result(machine, %{agent: agent_name, result: result_text, crashed: true}) do
+            {:ok, m} -> m
+            {:error, _} -> machine
+          end
+        end)
 
         task_state = Map.get(state.tasks, task_id)
 
@@ -750,4 +814,24 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
 
   defp generate_id(prefix),
     do: OptimalSystemAgent.Utils.ID.generate(prefix)
+
+  # ── State Machine Helpers ──────────────────────────────────────────
+
+  # Apply a transition event to a task's state machine (best-effort, no crash on invalid)
+  defp transition_machine(state, task_id, event) do
+    update_machine(state, task_id, fn machine ->
+      case StateMachine.transition(machine, event) do
+        {:ok, m} -> m
+        {:error, _} -> machine
+      end
+    end)
+  end
+
+  # Update a task's state machine via a transformation function
+  defp update_machine(state, task_id, fun) when is_function(fun, 1) do
+    case Map.get(state.machines, task_id) do
+      nil -> state
+      machine -> %{state | machines: Map.put(state.machines, task_id, fun.(machine))}
+    end
+  end
 end

@@ -2,35 +2,19 @@ defmodule OptimalSystemAgent.Application do
   @moduledoc """
   OTP Application supervisor for the Optimal System Agent.
 
-  Supervision tree:
-    - SessionRegistry (process registry for agent sessions)
-    - PubSub (internal event fan-out — standalone, no Phoenix framework)
-    - Events.Bus (goldrush-compiled :osa_event_router)
-    - Bridge.PubSub (goldrush → PubSub bridge, 3 tiers)
-    - Repo (SQLite3 persistent storage)
-    - Telemetry.Metrics (ETS metrics — tool counts, provider latency, noise filter rate)
-    - Providers.Registry (LLM provider routing via :osa_provider_router)
-    - Tools.Registry (tool dispatch via :osa_tool_dispatcher)
-    - Machines (composable skill set activation from ~/.osa/config.json)
-    - OS.Registry (OS template discovery, connection, context injection)
-    - MCP.Supervisor (MCP server/client processes)
-    - Channels.Supervisor (platform adapters: CLI, HTTP, Telegram, Discord, Slack,
-        WhatsApp, Signal, Matrix, Email, QQ, DingTalk, Feishu)
-    - Channels.Starter (deferred channel startup via handle_continue)
-    - Agent.Memory (persistent JSONL session storage)
-    - Agent.Workflow (multi-step task tracking + LLM decomposition)
-    - Agent.Orchestrator (autonomous task orchestration, multi-agent spawning)
-    - Agent.Progress (real-time progress tracking for orchestrated tasks)
-    - Agent.Scheduler (cron + heartbeat)
-    - Agent.Compactor (context compression, 3 thresholds)
-    - Agent.Cortex (memory synthesis, periodic knowledge bulletin)
-    - Agent.Treasury (budget tracking — started when treasury_enabled: true)
-    - Intelligence.Supervisor (Signal Theory unique modules)
-    - Swarm.Supervisor (multi-agent swarm coordination subsystem)
-    - Fleet.Supervisor (registry + sentinels — started when fleet_enabled: true)
-    - Sandbox.Supervisor (Docker container isolation — started when sandbox_enabled: true)
-    - Wallet (blockchain integration — started when wallet_enabled: true)
-    - System.Updater (OTA updates — started when update_enabled: true)
+  The supervision tree is organised into 4 logical subsystem supervisors
+  plus the HTTP server and deferred channel startup:
+
+    Infrastructure  — registries, pub/sub, event bus, storage, telemetry,
+                      provider/tool routing, MCP integration
+    Sessions        — channel adapters, event stream registry, session DynamicSupervisor
+    AgentServices   — memory, workflow, orchestration, hooks, learning, scheduler, etc.
+    Extensions      — opt-in subsystems: treasury, intelligence, swarm, fleet,
+                      sidecars, sandbox, wallet, updater, AMQP
+
+  The top-level strategy remains `:rest_for_one` so that a crash in
+  Infrastructure (core) tears down everything above it, while each subsystem
+  supervisor uses the strategy most appropriate for its children.
   """
   use Application
 
@@ -57,93 +41,20 @@ defmodule OptimalSystemAgent.Application do
     :ets.new(:osa_context_cache, [:set, :public, :named_table])
 
     children =
+      platform_repo_children() ++
       [
-        # Process registry for agent sessions
-        {Registry, keys: :unique, name: OptimalSystemAgent.SessionRegistry},
-
-        # Task supervisor for supervised async work (must come before Events.Bus)
-        {Task.Supervisor, name: OptimalSystemAgent.Events.TaskSupervisor, max_children: 100},
-
-        # Core infrastructure
-        {Phoenix.PubSub, name: OptimalSystemAgent.PubSub},
-        OptimalSystemAgent.Events.Bus,
-        OptimalSystemAgent.Events.DLQ,
-        OptimalSystemAgent.Bridge.PubSub,
-        OptimalSystemAgent.Store.Repo,
-      ] ++
-        platform_repo_children() ++
-        [
-
-        # Telemetry — subscribes to Events.Bus; must start after Bus + TaskSupervisor
-        OptimalSystemAgent.Telemetry.Metrics,
-
-        # Provider health / circuit breaker — must start before Registry
-        MiosaLLM.HealthChecker,
-
-        # LLM providers (goldrush-compiled :osa_provider_router)
-        OptimalSystemAgent.Providers.Registry,
-
-        # Tools + machines (goldrush-compiled :osa_tool_dispatcher)
-        OptimalSystemAgent.Tools.Registry,
-        OptimalSystemAgent.Machines,
-
-        # Slash command registry (built-in + custom + agent-created)
-        OptimalSystemAgent.Commands,
-
-        # OS template discovery and connection
-        OptimalSystemAgent.OS.Registry,
-
-        # MCP integration — Registry for server name lookup + DynamicSupervisor for per-server GenServers
-        {Registry, keys: :unique, name: OptimalSystemAgent.MCP.Registry},
-        {DynamicSupervisor, name: OptimalSystemAgent.MCP.Supervisor, strategy: :one_for_one},
-
-        # Channel adapters
-        {DynamicSupervisor, name: OptimalSystemAgent.Channels.Supervisor, strategy: :one_for_one},
-
-        # Event stream registry — per-session event streams (must start before SessionSupervisor)
-        {Registry, keys: :unique, name: OptimalSystemAgent.EventStreamRegistry},
-
-        # Session supervisor — DynamicSupervisor for agent Loop processes.
-        # Must start before any code that creates sessions (CLI, HTTP, SDK).
-        {DynamicSupervisor, name: OptimalSystemAgent.SessionSupervisor, strategy: :one_for_one},
-
-        # Agent processes
-        OptimalSystemAgent.Agent.Memory,
-        OptimalSystemAgent.Agent.HeartbeatState,
-        OptimalSystemAgent.Agent.Workflow,
-        MiosaBudget.Budget,
-        OptimalSystemAgent.Agent.TaskQueue,
-        OptimalSystemAgent.Agent.Orchestrator,
-        OptimalSystemAgent.Agent.Progress,
-        OptimalSystemAgent.Agent.TaskTracker,
-        OptimalSystemAgent.Agent.Hooks,
-        OptimalSystemAgent.Agent.Learning,
-        OptimalSystemAgent.Agent.Scheduler,
-        OptimalSystemAgent.Agent.Compactor,
-        OptimalSystemAgent.Agent.Cortex,
-      ] ++
-        treasury_children() ++
-        intelligence_children() ++
-        [
-
-        # Multi-agent swarm collaboration system
-        OptimalSystemAgent.Swarm.Supervisor,
+        OptimalSystemAgent.Supervisors.Infrastructure,
+        OptimalSystemAgent.Supervisors.Sessions,
+        OptimalSystemAgent.Supervisors.AgentServices,
+        OptimalSystemAgent.Supervisors.Extensions,
 
         # Deferred channel startup — starts configured channels in handle_continue
         OptimalSystemAgent.Channels.Starter,
 
-      ] ++
-        fleet_children() ++
-        sidecar_children() ++
-        sandbox_children() ++
-        wallet_children() ++
-        updater_children() ++
-        amqp_children() ++
-        [
-          # HTTP channel — Plug/Bandit on port 8089 (SDK API surface)
-          # Started LAST so all agent processes are ready before accepting requests
-          {Bandit, plug: OptimalSystemAgent.Channels.HTTP, port: http_port()}
-        ]
+        # HTTP channel — Plug/Bandit on port 8089 (SDK API surface)
+        # Started LAST so all agent processes are ready before accepting requests
+        {Bandit, plug: OptimalSystemAgent.Channels.HTTP, port: http_port()}
+      ]
 
     opts = [strategy: :rest_for_one, name: OptimalSystemAgent.Supervisor]
 
@@ -161,6 +72,9 @@ defmodule OptimalSystemAgent.Application do
 
         # Start MCP servers asynchronously — don't block boot if servers are slow.
         # After servers initialise, register their tools in Tools.Registry.
+        # Start knowledge graph (Mnesia-backed, distributed-ready)
+        start_knowledge_store()
+
         Task.start(fn ->
           OptimalSystemAgent.MCP.Client.start_servers()
           # Block on list_tools() — it's a GenServer.call that queues behind initialize.
@@ -176,117 +90,9 @@ defmodule OptimalSystemAgent.Application do
     end
   end
 
-  # Unified sidecar startup: Manager first (creates registry + circuit breaker tables),
-  # then individual sidecars based on config flags.
-  defp sidecar_children do
-    manager = [OptimalSystemAgent.Sidecar.Manager]
-
-    go =
-      if Application.get_env(:optimal_system_agent, :go_tokenizer_enabled, false) do
-        Logger.info("[Application] Go tokenizer enabled — starting Go.Tokenizer")
-        [OptimalSystemAgent.Go.Tokenizer]
-      else
-        []
-      end
-
-    python =
-      if Application.get_env(:optimal_system_agent, :python_sidecar_enabled, false) do
-        Logger.info("[Application] Python sidecar enabled — starting Python.Supervisor")
-        [OptimalSystemAgent.Python.Supervisor]
-      else
-        []
-      end
-
-    go_git =
-      if Application.get_env(:optimal_system_agent, :go_git_enabled, false) do
-        Logger.info("[Application] Go git sidecar enabled — starting Go.Git")
-        [OptimalSystemAgent.Go.Git]
-      else
-        []
-      end
-
-    go_sysmon =
-      if Application.get_env(:optimal_system_agent, :go_sysmon_enabled, false) do
-        Logger.info("[Application] Go sysmon sidecar enabled — starting Go.Sysmon")
-        [OptimalSystemAgent.Go.Sysmon]
-      else
-        []
-      end
-
-    whatsapp_web =
-      if Application.get_env(:optimal_system_agent, :whatsapp_web_enabled, false) do
-        Logger.info("[Application] WhatsApp Web sidecar enabled — starting WhatsAppWeb")
-        [OptimalSystemAgent.WhatsAppWeb]
-      else
-        []
-      end
-
-    manager ++ go ++ python ++ go_git ++ go_sysmon ++ whatsapp_web
-  end
-
-  # Fleet management (registry + sentinels) — opt-in via OSA_FLEET_ENABLED=true
-  defp fleet_children do
-    if Application.get_env(:optimal_system_agent, :fleet_enabled, false) do
-      Logger.info("[Application] Fleet enabled — starting Fleet.Supervisor")
-      [OptimalSystemAgent.Fleet.Supervisor]
-    else
-      []
-    end
-  end
-
-  # Only add Sandbox.Supervisor to the tree when the sandbox is enabled.
-  # This keeps the default startup path completely unchanged.
-  defp sandbox_children do
-    if Application.get_env(:optimal_system_agent, :sandbox_enabled, false) do
-      Logger.info("[Application] Sandbox enabled — starting Sandbox.Supervisor")
-      [OptimalSystemAgent.Sandbox.Supervisor]
-    else
-      []
-    end
-  end
-
-  # Wallet integration — opt-in via OSA_WALLET_ENABLED=true
-  defp wallet_children do
-    if Application.get_env(:optimal_system_agent, :wallet_enabled, false) do
-      Logger.info("[Application] Wallet enabled — starting Wallet + Mock provider")
-
-      [
-        OptimalSystemAgent.Integrations.Wallet.Mock,
-        OptimalSystemAgent.Integrations.Wallet
-      ]
-    else
-      []
-    end
-  end
-
-  # OTA updater — opt-in via OSA_UPDATE_ENABLED=true
-  defp updater_children do
-    if Application.get_env(:optimal_system_agent, :update_enabled, false) do
-      Logger.info("[Application] OTA updater enabled — starting System.Updater")
-      [OptimalSystemAgent.System.Updater]
-    else
-      []
-    end
-  end
-
-  # Treasury — opt-in via OSA_TREASURY_ENABLED=true
-  defp treasury_children do
-    if Application.get_env(:optimal_system_agent, :treasury_enabled, false) do
-      Logger.info("[Application] Treasury enabled — starting Agent.Treasury")
-      [OptimalSystemAgent.Agent.Treasury]
-    else
-      []
-    end
-  end
-
-  # Communication intelligence (Signal Theory unique) — always started when present.
-  # ConversationTracker, ContactDetector, ProactiveMonitor are dormant until wired;
-  # starting the supervisor is cheap and keeps them ready for future integration.
-  defp intelligence_children do
-    [OptimalSystemAgent.Intelligence.Supervisor]
-  end
-
   # Platform PostgreSQL repo — opt-in via DATABASE_URL
+  # Started at the top level (before Infrastructure) so platform DB is available
+  # to any child that needs it during init.
   defp platform_repo_children do
     if Application.get_env(:optimal_system_agent, :platform_enabled, false) do
       Logger.info("[Application] Platform enabled — starting Platform.Repo")
@@ -296,13 +102,18 @@ defmodule OptimalSystemAgent.Application do
     end
   end
 
-  # AMQP publisher — opt-in via AMQP_URL
-  defp amqp_children do
-    if Application.get_env(:optimal_system_agent, :amqp_url) do
-      Logger.info("[Application] AMQP enabled — starting Platform.AMQP publisher")
-      [OptimalSystemAgent.Platform.AMQP]
-    else
-      []
+  defp start_knowledge_store do
+    backend =
+      if Mix.env() == :test,
+        do: MiosaKnowledge.Backend.ETS,
+        else: MiosaKnowledge.Backend.Mnesia
+
+    case MiosaKnowledge.open("osa_default", backend: backend) do
+      {:ok, _pid} ->
+        Logger.info("[Application] Knowledge store started (#{inspect(backend)})")
+
+      {:error, reason} ->
+        Logger.warning("[Application] Knowledge store failed to start: #{inspect(reason)}")
     end
   end
 

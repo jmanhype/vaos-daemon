@@ -39,6 +39,8 @@ pub struct Sidebar {
     current_agent: String,
     /// Whether --dangerously-skip-permissions / --yolo mode is active.
     yolo_mode: bool,
+    /// Whether proactive mode is enabled.
+    proactive: bool,
     /// Signal Theory mode from last ClassifyResult.
     signal_mode: String,
     /// Signal Theory genre from last ClassifyResult.
@@ -61,6 +63,7 @@ impl Sidebar {
             elapsed_ms: 0,
             current_agent: String::new(),
             yolo_mode: false,
+            proactive: false,
             signal_mode: String::new(),
             signal_genre: String::new(),
             sections: Vec::new(),
@@ -132,6 +135,12 @@ impl Sidebar {
         self.rebuild_sections();
     }
 
+    /// Set whether proactive mode is enabled.
+    pub fn set_proactive(&mut self, enabled: bool) {
+        self.proactive = enabled;
+        self.rebuild_sections();
+    }
+
     // ─── Layout ───────────────────────────────────────────────────────────
 
     /// Total height occupied by all sections (title + items + gap).
@@ -150,12 +159,21 @@ impl Sidebar {
     fn rebuild_sections(&mut self) {
         self.sections.clear();
 
-        // ── YOLO mode indicator (shown first when active) ─────────────────
-        if self.yolo_mode {
-            self.sections.push(SidebarSection {
-                title: "Mode".into(),
-                items: vec![("yolo".into(), "ON".into())],
-            });
+        // ── Mode indicators (shown first when active) ─────────────────────
+        {
+            let mut mode_items = Vec::new();
+            if self.yolo_mode {
+                mode_items.push(("yolo".into(), "ON".into()));
+            }
+            if self.proactive {
+                mode_items.push(("proactive".into(), "ON".into()));
+            }
+            if !mode_items.is_empty() {
+                self.sections.push(SidebarSection {
+                    title: "Mode".into(),
+                    items: mode_items,
+                });
+            }
         }
 
         // ── Provider / Model ──────────────────────────────────────────────

@@ -24,10 +24,13 @@ RUN MIX_ENV=prod mix release osagent
 FROM alpine:3.19 AS runner
 
 RUN apk add --no-cache libstdc++ openssl ncurses-libs
+RUN addgroup -S osa && adduser -S osa -G osa
 
 WORKDIR /app
 
 COPY --from=builder /app/_build/prod/rel/osagent ./
+RUN chown -R osa:osa /app
+USER osa
 
 ENV MIX_ENV=prod
 

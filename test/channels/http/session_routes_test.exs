@@ -56,11 +56,13 @@ defmodule OptimalSystemAgent.Channels.HTTP.SessionRoutesTest do
       assert is_integer(body["count"])
     end
 
-    test "count matches sessions list length" do
+    test "count is total and sessions is paginated subset" do
       conn = json_get("/")
       body = decode_body(conn)
 
-      assert body["count"] == length(body["sessions"])
+      assert body["count"] >= length(body["sessions"])
+      assert length(body["sessions"]) <= body["per_page"]
+      assert body["page"] == 1
     end
   end
 

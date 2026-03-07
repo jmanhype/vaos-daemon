@@ -99,30 +99,9 @@ defmodule OptimalSystemAgent.Intelligence.ProactiveMonitor do
       Logger.info("[ProactiveMonitor] #{length(alerts)} alert(s) detected")
       Bus.emit(:system_event, %{event: :proactive_alerts, count: length(alerts), alerts: alerts})
 
-      # Auto-dispatch agents for critical alerts (max 3 to avoid flood)
-      critical = Enum.filter(alerts, &(&1.severity == :critical))
-
-      for alert <- Enum.take(critical, 3) do
-        Bus.emit(:system_event, %{
-          event: :proactive_auto_dispatch,
-          alert_id: Map.get(alert, :id, "unknown"),
-          message: alert.message,
-          severity: alert.severity
-        })
-
-        Task.start(fn ->
-          try do
-            session_id = "proactive_#{System.system_time(:second)}"
-
-            OptimalSystemAgent.Agent.Loop.process_message(
-              session_id,
-              "PROACTIVE ALERT (#{alert.severity}): #{alert.message}\n\nInvestigate and take corrective action.",
-              []
-            )
-          rescue
-            e -> Logger.warning("[ProactiveMonitor] Auto-dispatch failed: #{Exception.message(e)}")
-          end
-        end)
+      # Route alerts through ProactiveMode (handles budget, rate limiting, notifications)
+      for alert <- alerts do
+        OptimalSystemAgent.Agent.ProactiveMode.handle_alert(alert)
       end
     end
 

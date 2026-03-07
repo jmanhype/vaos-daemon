@@ -218,6 +218,15 @@ pub enum BackendEvent {
         summary: Vec<(String, String)>, // (question, answer_text) pairs
     },
 
+    // === Proactive Mode ===
+    ProactiveMessage {
+        message: String,
+        message_type: String,
+    },
+    ProactiveModeChanged {
+        enabled: bool,
+    },
+
     // === Cancel ===
     /// Fired 3s after cancel request if the SSE stream hasn't delivered a response.
     /// Forces the UI back to Idle to prevent getting stuck.

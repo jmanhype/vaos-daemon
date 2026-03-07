@@ -20,17 +20,19 @@ defmodule OptimalSystemAgent.Agent.Loop do
   alias OptimalSystemAgent.Agent.Context
   alias OptimalSystemAgent.Agent.Explorer
   alias OptimalSystemAgent.Agent.Memory
-  alias OptimalSystemAgent.Agent.Hooks
   alias OptimalSystemAgent.Agent.Scratchpad
-  alias OptimalSystemAgent.Providers.Registry, as: Providers
   alias OptimalSystemAgent.Tools.Registry, as: Tools
   alias OptimalSystemAgent.Events.Bus
   alias OptimalSystemAgent.Channels.NoiseFilter
+  alias OptimalSystemAgent.Agent.Strategy
+
+  alias OptimalSystemAgent.Agent.Loop.ToolExecutor
+  alias OptimalSystemAgent.Agent.Loop.Guardrails
+  alias OptimalSystemAgent.Agent.Loop.LLMClient
+  alias OptimalSystemAgent.Agent.Loop.Checkpoint
+  alias OptimalSystemAgent.Agent.Loop.GenreRouter
 
   defp max_iterations, do: Application.get_env(:optimal_system_agent, :max_iterations, 30)
-  # Tool results larger than this are truncated before being added to the
-  # conversation to prevent context overflow. Default: 10 KB.
-  defp max_tool_output_bytes, do: Application.get_env(:optimal_system_agent, :max_tool_output_bytes, 10_240)
   defp auto_insights_interval, do: Application.get_env(:optimal_system_agent, :auto_insights_interval, 10)
   defp max_response_tokens, do: Application.get_env(:optimal_system_agent, :max_response_tokens, 8_192)
 
@@ -60,7 +62,12 @@ defmodule OptimalSystemAgent.Agent.Loop do
     exploration_done: false,
     # :full | :workspace | :read_only
     # Controls which tools the agent is allowed to execute this session.
-    permission_tier: :full
+    permission_tier: :full,
+    # Pluggable reasoning strategy (module implementing Strategy behaviour).
+    # Defaults to ReAct for backward compatibility.
+    strategy: nil,
+    # Strategy-specific state managed by the active strategy module.
+    strategy_state: %{}
   ]
 
   # --- Client API ---
@@ -87,7 +94,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
   end
 
   def process_message(session_id, message, opts \\ []) do
-    GenServer.call(via(session_id), {:process, message, opts}, :infinity)
+    GenServer.call(via(session_id), {:process, message, opts}, 300_000)
   end
 
   @doc "Get metadata from the last process_message call (iteration_count, tools_used)."
@@ -122,7 +129,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
     session_id = Keyword.fetch!(opts, :session_id)
 
     # Attempt checkpoint restore — if this session crashed, pick up where it left off
-    restored = restore_checkpoint(session_id)
+    restored = Checkpoint.restore_checkpoint(session_id)
 
     messages = Keyword.get(opts, :messages) || Map.get(restored, :messages, [])
     iteration = Map.get(restored, :iteration, 0)
@@ -144,6 +151,25 @@ defmodule OptimalSystemAgent.Agent.Loop do
       permission_tier: Keyword.get(opts, :permission_tier, :full),
       working_dir: Keyword.get(opts, :working_dir) || Application.get_env(:optimal_system_agent, :working_dir)
     }
+
+    # Resolve reasoning strategy — explicit opt, task_type, or default to ReAct
+    strategy_context =
+      case {Keyword.get(opts, :strategy), Keyword.get(opts, :task_type)} do
+        {name, _} when is_atom(name) and not is_nil(name) -> %{strategy: name}
+        {_, task_type} when is_atom(task_type) and not is_nil(task_type) -> %{task_type: task_type}
+        _ -> %{}
+      end
+
+    {strategy_mod, strategy_state} =
+      case Strategy.resolve(strategy_context) do
+        {:ok, mod} -> {mod, mod.init_state(strategy_context)}
+        {:error, _} ->
+          # Fallback to ReAct
+          react = OptimalSystemAgent.Agent.Strategies.ReAct
+          {react, react.init_state(%{})}
+      end
+
+    state = %{state | strategy: strategy_mod, strategy_state: strategy_state}
 
     if restored != %{} do
       Logger.info("[loop] Restored checkpoint for session #{session_id} — iteration=#{iteration}, messages=#{length(messages)}")
@@ -184,7 +210,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
 
     # 0.5. Application-layer prompt injection guard — block before LLM ever sees it.
     # This catches weak local models (Ollama) that ignore system prompt instructions.
-    if prompt_injection?(message) do
+    if Guardrails.prompt_injection?(message) do
       refusal = "I can't help with that."
       Memory.append(state.session_id, %{role: "user", content: message, channel: state.channel})
       Memory.append(state.session_id, %{role: "assistant", content: refusal, channel: state.channel})
@@ -215,7 +241,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
     Memory.append(state.session_id, %{role: "user", content: message, channel: state.channel})
 
     # 2. Compact message history if needed, then process through agent loop
-    compacted = OptimalSystemAgent.Agent.Compactor.maybe_compact(state.messages)
+    compacted = OptimalSystemAgent.Agent.Compactor.maybe_compact(state.messages) || state.messages
     state = %{state | messages: compacted}
 
     # Auto-extract insights from recent conversation history every 10 turns.
@@ -252,7 +278,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
     # Inject an exploration directive before complex coding tasks so local models
     # read relevant files BEFORE writing — the "explore first" pattern.
     messages_to_append =
-      if complex_coding_task?(message_with_nudge) do
+      if Guardrails.complex_coding_task?(message_with_nudge) do
         [
           %{
             role: "system",
@@ -290,7 +316,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
     # Defaults to :direct (current behavior: execute tools immediately).
     signal_genre = Keyword.get(opts, :signal_genre, :direct)
 
-    genre_route = route_by_genre(signal_genre, message, state)
+    genre_route = GenreRouter.route_by_genre(signal_genre, message, state)
 
     case genre_route do
       {:respond, genre_response} ->
@@ -310,7 +336,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
       Bus.emit(:llm_request, %{session_id: state.session_id, iteration: 0})
       start_time = System.monotonic_time(:millisecond)
 
-      result = llm_chat(state, context.messages, tools: [], temperature: 0.3)
+      result = LLMClient.llm_chat(state, context.messages, tools: [], temperature: 0.3)
 
       duration_ms = System.monotonic_time(:millisecond) - start_time
 
@@ -419,6 +445,27 @@ defmodule OptimalSystemAgent.Agent.Loop do
     {:reply, {:ok, state.permission_tier}, state}
   end
 
+  def handle_call({:set_strategy, strategy_name}, _from, state) when is_atom(strategy_name) do
+    case Strategy.resolve_by_name(strategy_name) do
+      {:ok, mod} ->
+        new_state = %{state | strategy: mod, strategy_state: mod.init_state(%{})}
+        Bus.emit(:strategy_changed, %{
+          session_id: state.session_id,
+          from: (state.strategy && state.strategy.name()) || :none,
+          to: mod.name()
+        })
+        {:reply, {:ok, mod.name()}, new_state}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call(:get_strategy, _from, state) do
+    name = if state.strategy, do: state.strategy.name(), else: :none
+    {:reply, {:ok, name, state.strategy_state}, state}
+  end
+
   # --- Agent Loop ---
 
   defp run_loop(%{iteration: iter, session_id: sid} = state) do
@@ -461,16 +508,74 @@ defmodule OptimalSystemAgent.Agent.Loop do
     # Build context (system prompt + conversation history), using cached system message (Phase 4)
     context = cached_context(state)
 
+    # ── Strategy guidance ────────────────────────────────────────────
+    # Consult the active strategy before calling the LLM. The strategy can:
+    #   - inject a reasoning guidance message into the context
+    #   - signal completion ({:done, ...}) to short-circuit
+    #   - request a strategy switch
+    {context, state} =
+      if state.strategy do
+        loop_context = %{
+          iteration: state.iteration,
+          messages: state.messages,
+          task: last_user_message(state.messages)
+        }
+
+        case state.strategy.next_step(state.strategy_state, loop_context) do
+          {{:done, info}, new_ss} ->
+            # Strategy says we're done — but we still let the LLM produce a final
+            # response by adding a summarization hint rather than short-circuiting.
+            hint = Map.get(info, :summary, "Summarize your findings and respond.")
+            guidance = %{role: "system", content: "[Strategy/#{state.strategy.name()}] #{hint}"}
+            {%{context | messages: context.messages ++ [guidance]},
+             %{state | strategy_state: new_ss}}
+
+          {{:think, thought}, new_ss} ->
+            guidance = %{
+              role: "system",
+              content: "[Strategy/#{state.strategy.name()}] #{thought}"
+            }
+            {%{context | messages: context.messages ++ [guidance]},
+             %{state | strategy_state: new_ss}}
+
+          {{:act, _, _}, new_ss} ->
+            # Act phase — no extra guidance, let the LLM pick tools naturally
+            {context, %{state | strategy_state: new_ss}}
+
+          {{:observe, observation}, new_ss} ->
+            guidance = %{
+              role: "system",
+              content: "[Strategy/#{state.strategy.name()}] #{observation}"
+            }
+            {%{context | messages: context.messages ++ [guidance]},
+             %{state | strategy_state: new_ss}}
+
+          {{:respond, text}, new_ss} ->
+            guidance = %{
+              role: "system",
+              content: "[Strategy/#{state.strategy.name()}] #{text}"
+            }
+            {%{context | messages: context.messages ++ [guidance]},
+             %{state | strategy_state: new_ss}}
+
+          _other ->
+            {context, state}
+        end
+      else
+        {context, state}
+      end
+
     # Emit timing event before LLM call
     Bus.emit(:llm_request, %{session_id: state.session_id, iteration: state.iteration})
     start_time = System.monotonic_time(:millisecond)
 
     # Call LLM with streaming — emits per-token SSE events for live TUI display.
     # Falls back to sync chat if streaming is unavailable.
-    thinking_opts = thinking_config(state)
-    llm_opts = [tools: state.tools, temperature: temperature(), max_tokens: max_response_tokens()]
+    thinking_opts = LLMClient.thinking_config(state)
+    llm_opts = [tools: state.tools, temperature: LLMClient.temperature(), max_tokens: max_response_tokens()]
     llm_opts = if thinking_opts, do: Keyword.put(llm_opts, :thinking, thinking_opts), else: llm_opts
-    result = llm_chat_stream(state, context.messages, llm_opts)
+    llm_opts = Keyword.put_new(llm_opts, :timeout, 300_000)
+    result = LLMClient.llm_chat_stream(state, context.messages, llm_opts)
 
     # Emit timing + usage event after LLM call
     duration_ms = System.monotonic_time(:millisecond) - start_time
@@ -505,7 +610,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
         content = if String.trim(content) == "", do: "...", else: content
 
         cond do
-          state.auto_continues < 2 and wants_to_continue?(content) ->
+          state.auto_continues < 2 and Guardrails.wants_to_continue?(content) ->
             Logger.info("[loop] Auto-continue: model described intent without tool calls (nudge #{state.auto_continues + 1}/2)")
             nudge = %{
               role: "system",
@@ -522,7 +627,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
             }
             run_loop(state)
 
-          state.auto_continues < 2 and code_in_text?(content) ->
+          state.auto_continues < 2 and Guardrails.code_in_text?(content) ->
             Logger.info("[loop] Coding nudge: model wrote code in markdown instead of calling file_write/file_edit (nudge #{state.auto_continues + 1}/2)")
             nudge = %{
               role: "system",
@@ -537,7 +642,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
             }
             run_loop(state)
 
-          needs_verification_gate?(state) ->
+          Guardrails.needs_verification_gate?(state) ->
             Logger.info("[loop] Verification gate: iteration #{state.iteration}, task context present, zero successful tools — injecting verification")
             verification = %{
               role: "system",
@@ -586,7 +691,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
         results =
           tool_calls
           |> Task.async_stream(
-            fn tool_call -> execute_tool_call(tool_call, state) end,
+            fn tool_call -> ToolExecutor.execute_tool_call(tool_call, state) end,
             max_concurrency: 10,
             timeout: 60_000,
             on_timeout: :kill_task
@@ -606,10 +711,53 @@ defmodule OptimalSystemAgent.Agent.Loop do
         state = %{state | messages: state.messages ++ tool_messages}
 
         # Checkpoint after tool results — crash recovery can resume from here
-        checkpoint_state(state)
+        Checkpoint.checkpoint_state(state)
+
+        # ── Strategy: handle tool results ──────────────────────────────
+        # Update strategy state with tool outcomes so the strategy can track
+        # progress (e.g., count observations, detect patterns).
+        state =
+          if state.strategy do
+            result_summary = Enum.map(results, fn {tc, {_msg, result_str}} ->
+              %{tool: tc.name, result: result_str}
+            end)
+
+            new_ss = state.strategy.handle_result(
+              {:act, :tools, %{tool_calls: tool_calls}},
+              result_summary,
+              state.strategy_state
+            )
+
+            # Check for strategy switch request
+            case new_ss do
+              {:switch_strategy, new_name} ->
+                case Strategy.resolve_by_name(new_name) do
+                  {:ok, new_mod} ->
+                    Logger.info("[loop] Strategy switch: #{state.strategy.name()} -> #{new_mod.name()}")
+                    Bus.emit(:strategy_changed, %{
+                      session_id: state.session_id,
+                      from: state.strategy.name(),
+                      to: new_mod.name()
+                    })
+                    %{state | strategy: new_mod, strategy_state: new_mod.init_state(%{})}
+
+                  {:error, _} ->
+                    Logger.warning("[loop] Strategy switch failed: unknown strategy #{inspect(new_name)}")
+                    state
+                end
+
+              new_ss when is_map(new_ss) ->
+                %{state | strategy_state: new_ss}
+
+              _ ->
+                state
+            end
+          else
+            state
+          end
 
         # Read-before-write nudge — check if any file_edit/file_write targeted an unread file
-        state = inject_read_nudges(state, tool_calls)
+        state = ToolExecutor.inject_read_nudges(state, tool_calls)
 
         # If memory_save ran successfully in this batch, invalidate system message cache (Phase 4)
         if Enum.any?(tool_calls, fn tc -> tc.name == "memory_save" end) and
@@ -623,7 +771,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
         state =
           if state.iteration == 1 and
                state.auto_continues < 2 and
-               write_without_read?(tool_calls) do
+               Guardrails.write_without_read?(tool_calls) do
             Logger.info("[loop] Explore-first nudge: model issued write tools before reading (iteration 1)")
 
             nudge = %{
@@ -736,20 +884,23 @@ defmodule OptimalSystemAgent.Agent.Loop do
         # Rebuild with cached system message but fresh conversation history
         full = Context.build(state)
 
-        case full.messages do
-          [_system | rest] -> %{full | messages: [cached_system_msg | rest]}
-          _ -> full
+        case full do
+          %{messages: [_system | rest]} -> %{full | messages: [cached_system_msg | rest]}
+          %{messages: _} -> full
+          _ -> Context.build(state)
         end
 
       _ ->
         full = Context.build(state)
-        system_msg = List.first(full.messages)
 
-        if system_msg do
-          Process.put(:osa_system_msg_cache, {cache_key, system_msg})
+        case full do
+          %{messages: [system_msg | _]} when system_msg != nil ->
+            Process.put(:osa_system_msg_cache, {cache_key, system_msg})
+            full
+
+          _ ->
+            full
         end
-
-        full
     end
   end
 
@@ -760,111 +911,30 @@ defmodule OptimalSystemAgent.Agent.Loop do
       String.contains?(reason, "token limit")
   end
 
-  # ── Checkpoint / Restore ─────────────────────────────────────────────
-  # Persists enough state after each completed tool-result cycle so that
-  # a crash-restarted Loop can resume without losing conversation context.
-
-  defp checkpoint_dir do
-    Application.get_env(:optimal_system_agent, :checkpoint_dir, "~/.osa/checkpoints")
-    |> Path.expand()
-  end
-
-  defp checkpoint_path(session_id) do
-    Path.join(checkpoint_dir(), "#{session_id}.json")
-  end
-
-  @doc false
-  def checkpoint_state(%__MODULE__{} = state) do
-    data = %{
-      session_id: state.session_id,
-      messages: state.messages,
-      iteration: state.iteration,
-      plan_mode: state.plan_mode,
-      turn_count: state.turn_count,
-      checkpointed_at: DateTime.utc_now() |> DateTime.to_iso8601()
-    }
-
-    dir = checkpoint_dir()
-    File.mkdir_p!(dir)
-
-    path = checkpoint_path(state.session_id)
-    File.write!(path, Jason.encode!(data), [:utf8])
-
-    Logger.debug("[loop] Checkpoint written for session #{state.session_id} at iteration #{state.iteration}")
-  rescue
-    e ->
-      Logger.warning("[loop] Checkpoint write failed: #{Exception.message(e)}")
-  end
-
-  @doc false
-  def restore_checkpoint(session_id) do
-    path =
-      Application.get_env(:optimal_system_agent, :checkpoint_dir, "~/.osa/checkpoints")
-      |> Path.expand()
-      |> Path.join("#{session_id}.json")
-
-    if File.exists?(path) do
-      case File.read(path) do
-        {:ok, content} ->
-          case Jason.decode(content) do
-            {:ok, data} ->
-              messages =
-                (data["messages"] || [])
-                |> Enum.map(fn msg when is_map(msg) ->
-                  for {k, v} <- msg, into: %{} do
-                    {String.to_atom(k), v}
-                  end
-                end)
-
-              %{
-                messages: messages,
-                iteration: data["iteration"] || 0,
-                plan_mode: data["plan_mode"] || false,
-                turn_count: data["turn_count"] || 0
-              }
-
-            {:error, _} ->
-              Logger.warning("[loop] Checkpoint decode failed for session #{session_id}")
-              %{}
-          end
-
-        {:error, _} ->
-          %{}
-      end
-    else
-      %{}
-    end
-  rescue
-    _ -> %{}
-  end
-
-  @doc false
-  def clear_checkpoint(session_id) do
-    path =
-      Application.get_env(:optimal_system_agent, :checkpoint_dir, "~/.osa/checkpoints")
-      |> Path.expand()
-      |> Path.join("#{session_id}.json")
-
-    File.rm(path)
-    :ok
-  rescue
-    _ -> :ok
+  # Extract the last user message from conversation history for strategy context.
+  defp last_user_message(messages) do
+    messages
+    |> Enum.reverse()
+    |> Enum.find_value("", fn
+      %{role: "user", content: c} when is_binary(c) -> c
+      _ -> nil
+    end)
   end
 
   # Clean up checkpoint on normal exit — only crash restarts should use it
   @impl true
   def terminate(:normal, state) do
-    clear_checkpoint(state.session_id)
+    Checkpoint.clear_checkpoint(state.session_id)
     :ok
   end
 
   def terminate(:shutdown, state) do
-    clear_checkpoint(state.session_id)
+    Checkpoint.clear_checkpoint(state.session_id)
     :ok
   end
 
   def terminate({:shutdown, _}, state) do
-    clear_checkpoint(state.session_id)
+    Checkpoint.clear_checkpoint(state.session_id)
     :ok
   end
 
@@ -872,214 +942,6 @@ defmodule OptimalSystemAgent.Agent.Loop do
     # Abnormal termination — keep checkpoint for recovery
     :ok
   end
-
-  defp tool_call_hint(%{"command" => cmd}), do: String.slice(cmd, 0, 60)
-  defp tool_call_hint(%{"path" => p}), do: p
-  defp tool_call_hint(%{"query" => q}), do: String.slice(q, 0, 60)
-
-  defp tool_call_hint(args) when is_map(args) and map_size(args) > 0 do
-    args |> Map.keys() |> Enum.take(2) |> Enum.join(", ")
-  end
-
-  defp tool_call_hint(_), do: ""
-
-  # --- Permission Tiers ---
-
-  # Tools allowed in :read_only mode (no side-effects, no writes)
-  @read_only_tools ~w(
-    file_read file_glob dir_list file_grep file_search
-    memory_recall session_search semantic_search
-    code_symbols web_fetch web_search
-    list_dir read_file grep_search
-  )
-
-  # Additional tools unlocked in :workspace mode (local writes only)
-  @workspace_tools ~w(
-    file_write file_edit multi_file_edit file_create file_delete file_move
-    git task_write memory_write
-  )
-
-  @doc false
-  def permission_tier_allows?(:full, _tool), do: true
-  def permission_tier_allows?(:read_only, tool), do: tool in @read_only_tools
-  def permission_tier_allows?(:workspace, tool), do: tool in (@read_only_tools ++ @workspace_tools)
-  def permission_tier_allows?(_, _), do: true
-
-  # --- Parallel Tool Execution ---
-
-  # Execute a single tool call — used by parallel Task.async_stream.
-  # Returns {tool_msg, result_str} tuple.
-  defp execute_tool_call(tool_call, state) do
-    arg_hint = tool_call_hint(tool_call.arguments)
-    Bus.emit(:tool_call, %{name: tool_call.name, phase: :start, args: arg_hint, session_id: state.session_id})
-    start_time_tool = System.monotonic_time(:millisecond)
-
-    # Run pre_tool_use hooks sync (security_check/spend_guard can block)
-    pre_payload = %{
-      tool_name: tool_call.name,
-      arguments: tool_call.arguments,
-      session_id: state.session_id
-    }
-
-    tool_result =
-      if not permission_tier_allows?(state.permission_tier, tool_call.name) do
-        Logger.warning("[loop] Permission denied: tier=#{state.permission_tier} blocked #{tool_call.name} (session: #{state.session_id})")
-        "Blocked: #{state.permission_tier} mode — #{tool_call.name} is not permitted at this permission level"
-      else
-      case run_hooks(:pre_tool_use, pre_payload) do
-        {:blocked, reason} ->
-          "Blocked: #{reason}"
-
-        {:error, :hooks_unavailable} ->
-          # Hooks GenServer is down — fail closed. Never execute a tool when
-          # security_check and spend_guard are unreachable.
-          Logger.error("[loop] Blocking tool #{tool_call.name} — pre_tool_use hooks unavailable (session: #{state.session_id})")
-          "Blocked: security pipeline unavailable"
-
-        _ ->
-          case Tools.execute(tool_call.name, tool_call.arguments) do
-            {:ok, {:image, %{media_type: mt, data: b64, path: p}}} ->
-              {:image, mt, b64, p}
-
-            {:ok, content} ->
-              content
-
-            {:error, reason} ->
-              "Error: #{reason}"
-          end
-      end
-      end
-
-    tool_duration_ms = System.monotonic_time(:millisecond) - start_time_tool
-
-    # Normalize result for hooks/events
-    result_str =
-      case tool_result do
-        {:image, _mt, _b64, path} -> "[image: #{path}]"
-        text when is_binary(text) -> text
-        other -> inspect(other)
-      end
-
-    # Run post_tool_use hooks async (cost tracker, telemetry, learning)
-    post_payload = %{
-      tool_name: tool_call.name,
-      result: result_str,
-      duration_ms: tool_duration_ms,
-      session_id: state.session_id
-    }
-
-    run_hooks_async(:post_tool_use, post_payload)
-
-    Bus.emit(:tool_call, %{
-      name: tool_call.name,
-      phase: :end,
-      duration_ms: tool_duration_ms,
-      args: arg_hint,
-      session_id: state.session_id
-    })
-
-    Bus.emit(:tool_result, %{
-      name: tool_call.name,
-      result: String.slice(result_str, 0, 500),
-      success: !match?({:error, _}, tool_result),
-      session_id: state.session_id
-    })
-
-    # Build tool message — images get structured content blocks
-    tool_msg =
-      case tool_result do
-        {:image, media_type, b64, path} ->
-          %{
-            role: "tool",
-            tool_call_id: tool_call.id,
-            content: [
-              %{type: "text", text: "Image: #{path}"},
-              %{type: "image", source: %{type: "base64", media_type: media_type, data: b64}}
-            ]
-          }
-
-        _ ->
-          limit = max_tool_output_bytes()
-          content =
-            if byte_size(result_str) > limit do
-              truncated = binary_part(result_str, 0, limit)
-              truncated <> "\n\n[Output truncated — #{byte_size(result_str)} bytes total, showing first #{limit} bytes]"
-            else
-              result_str
-            end
-
-          %{role: "tool", tool_call_id: tool_call.id, content: content}
-      end
-
-    {tool_msg, result_str}
-  end
-
-  # --- Provider/Model Passthrough ---
-
-  # Route LLM calls through Providers.chat with per-session provider/model
-  defp llm_chat(%{provider: provider, model: model}, messages, opts) do
-    opts = if provider, do: Keyword.put(opts, :provider, provider), else: opts
-    opts = if model, do: Keyword.put(opts, :model, model), else: opts
-    Providers.chat(messages, opts)
-  end
-
-  # Streaming variant — emits per-token SSE events via Bus, returns {:ok, result} | {:error, reason}.
-  # Uses process dictionary to capture the {:done, result} from the streaming callback,
-  # since chat_stream/3 returns :ok on success (not the accumulated result).
-  defp llm_chat_stream(%{session_id: session_id, provider: provider, model: model}, messages, opts) do
-    # Stash result from {:done, _} callback into process dictionary
-    Process.put(:llm_stream_result, nil)
-
-    callback = fn
-      {:text_delta, text} ->
-        Logger.debug("[stream] text_delta #{byte_size(text)}B → session:#{session_id}")
-        Bus.emit(:system_event, %{
-          event: :streaming_token,
-          session_id: session_id,
-          text: text
-        })
-
-      {:done, result} ->
-        Logger.info("[stream] done → session:#{session_id}")
-        Process.put(:llm_stream_result, result)
-
-      {:thinking_delta, text} ->
-        Bus.emit(:system_event, %{
-          event: :thinking_delta,
-          session_id: session_id,
-          text: text
-        })
-
-      # Ignore tool_use deltas — these are handled after the full result
-      _other ->
-        :ok
-    end
-
-    opts = if provider, do: Keyword.put(opts, :provider, provider), else: opts
-    opts = if model, do: Keyword.put(opts, :model, model), else: opts
-
-    case Providers.chat_stream(messages, callback, opts) do
-      :ok ->
-        case Process.get(:llm_stream_result) do
-          nil -> {:error, "Stream completed but no result received"}
-          result -> {:ok, result}
-        end
-
-      {:error, _} = err ->
-        err
-    end
-  end
-
-  # Apply per-call overrides from opts (SDK query passthrough)
-  defp apply_overrides(state, opts) do
-    state
-    |> maybe_override(:provider, Keyword.get(opts, :provider))
-    |> maybe_override(:model, Keyword.get(opts, :model))
-    |> maybe_override(:working_dir, Keyword.get(opts, :working_dir))
-  end
-
-  defp maybe_override(state, _key, nil), do: state
-  defp maybe_override(state, key, value), do: Map.put(state, key, value)
 
   # --- Plan Mode ---
 
@@ -1089,70 +951,6 @@ defmodule OptimalSystemAgent.Agent.Loop do
     # bypasses this check entirely at the handle_call level.
     # The LLM decides whether the message warrants a plan via prompt instructions.
     state.plan_mode_enabled and not state.plan_mode
-  end
-
-  # --- Genre Routing ---
-
-  # Routes message handling based on the signal genre from upstream classification.
-  # Returns {:respond, text} to short-circuit with a direct response,
-  # or :execute_tools to continue normal LLM + tool execution.
-  #
-  # Genres from Signal Theory 5-tuple Type field:
-  #   :direct   — user wants something done → execute tools (default)
-  #   :inform   — user is sharing info → suggest memory_save, no tools
-  #   :express  — emotional content → empathetic response, no tools
-  #   :decide   — user needs help deciding → ask clarifying question first
-  #   :commit   — user is committing to an action → confirm plan before executing
-
-  defp route_by_genre(:inform, _message, _state) do
-    {:respond,
-     "Got it — I've noted that. Would you like me to save this to memory with `memory_save` so I can reference it later?"}
-  end
-
-  defp route_by_genre(:express, message, _state) do
-    # Acknowledge emotional content with empathy, skip tools
-    lower = String.downcase(message)
-
-    response =
-      cond do
-        Regex.match?(~r/\b(frustrated?|annoyed?|angry|upset|irritated?)\b/, lower) ->
-          "I hear you — that sounds frustrating. I'm here to help. What would make things easier right now?"
-
-        Regex.match?(~r/\b(worried|anxious|nervous|scared|overwhelmed)\b/, lower) ->
-          "That sounds stressful. Let's take it one step at a time. What's the most pressing thing on your mind?"
-
-        Regex.match?(~r/\b(happy|excited|great|awesome|amazing|love)\b/, lower) ->
-          "That's great to hear! How can I help you build on that?"
-
-        true ->
-          "I appreciate you sharing that. How can I best support you right now?"
-      end
-
-    {:respond, response}
-  end
-
-  defp route_by_genre(:decide, _message, _state) do
-    # Ask a clarifying question before committing to any action
-    {:respond,
-     "Before I proceed — could you help me understand a bit more? Specifically: what outcome matters most to you here, and are there any constraints I should know about? Once I have that I can give you a more useful recommendation."}
-  end
-
-  defp route_by_genre(:commit, message, _state) do
-    # Surface the implied plan and ask for confirmation before executing
-    {:respond,
-     "Just to confirm before I proceed: based on what you've said, my plan would be to #{summarize_intent(message)}. Should I go ahead with that?"}
-  end
-
-  defp route_by_genre(_genre, _message, _state) do
-    # :direct or any unknown genre → normal tool execution
-    :execute_tools
-  end
-
-  # Extract a short intent summary from the message for the :commit confirmation prompt.
-  defp summarize_intent(message) do
-    words = message |> String.split(~r/\s+/, trim: true) |> Enum.take(12)
-    summary = Enum.join(words, " ")
-    if String.length(message) > String.length(summary), do: "#{summary}…", else: summary
   end
 
   # --- Helpers ---
@@ -1169,31 +967,6 @@ defmodule OptimalSystemAgent.Agent.Loop do
       [{_pid, owner}] -> owner
       _ -> nil
     end
-  end
-
-  defp temperature, do: Application.get_env(:optimal_system_agent, :temperature, 0.7)
-
-  # Resolve thinking config based on provider, model, and config
-  defp thinking_config(%{provider: provider} = state) do
-    enabled = Application.get_env(:optimal_system_agent, :thinking_enabled, false)
-
-    if enabled and provider in [:anthropic, nil] and is_anthropic_provider?() do
-      model = state.model || Application.get_env(:optimal_system_agent, :anthropic_model, "claude-sonnet-4-6")
-
-      if String.contains?(to_string(model), "opus") do
-        %{type: "adaptive"}
-      else
-        budget = Application.get_env(:optimal_system_agent, :thinking_budget_tokens, 5_000)
-        %{type: "enabled", budget_tokens: budget}
-      end
-    else
-      nil
-    end
-  end
-
-  defp is_anthropic_provider? do
-    default = Application.get_env(:optimal_system_agent, :default_provider, :ollama)
-    default == :anthropic
   end
 
   # Emit context window pressure event so the CLI can display utilization
@@ -1213,95 +986,6 @@ defmodule OptimalSystemAgent.Agent.Loop do
     e -> Logger.debug("emit_context_pressure failed: #{inspect(e)}")
   end
 
-  # Run hooks with fault isolation.
-  #
-  # Returns {:error, :hooks_unavailable} when the Hooks GenServer is down,
-  # rather than {:ok, payload}. This is intentional: pre_tool_use callers
-  # MUST fail closed (block execution) when the security pipeline is
-  # unreachable. post_tool_use callers may choose to warn and continue.
-  defp run_hooks(event, payload) do
-    try do
-      Hooks.run(event, payload)
-    catch
-      :exit, reason ->
-        Logger.warning("[loop] Hooks GenServer unreachable for #{event} (#{inspect(reason)})")
-        {:error, :hooks_unavailable}
-    end
-  end
-
-  # Async hooks — fire-and-forget for post-event hooks (post_tool_use).
-  # Pre-tool hooks stay sync so security_check/spend_guard can block.
-  # Logs a warning if the Hooks GenServer is down so the issue is visible,
-  # but does not block — post-event side effects are non-critical.
-  defp run_hooks_async(event, payload) do
-    try do
-      Hooks.run_async(event, payload)
-    catch
-      :exit, reason ->
-        Logger.warning("[loop] Hooks GenServer unreachable for async #{event} (#{inspect(reason)})")
-        :ok
-    end
-  end
-
-
-  # Inject system nudge when file_edit/file_write targeted files that weren't read first.
-  # Checks the :osa_files_read ETS table for nudge flags set by the read_before_write hook.
-  # Nudges max 2 times per session per file to prevent doom loops.
-  defp inject_read_nudges(state, tool_calls) do
-    write_tools = Enum.filter(tool_calls, fn tc -> tc.name in ["file_edit", "file_write"] end)
-
-    if write_tools == [] do
-      state
-    else
-      nudged_paths =
-        write_tools
-        |> Enum.map(fn tc -> tc.arguments["path"] end)
-        |> Enum.filter(fn path ->
-          is_binary(path) and File.exists?(path) and
-            not file_was_read?(state.session_id, path) and
-            get_nudge_count(state.session_id, path) < 2
-        end)
-        |> Enum.uniq()
-
-      if nudged_paths == [] do
-        state
-      else
-        paths_str = Enum.join(nudged_paths, ", ")
-        nudge_msg = %{
-          role: "system",
-          content: "[System: You modified #{paths_str} without reading #{if length(nudged_paths) == 1, do: "it", else: "them"} first. " <>
-            "Always call file_read before file_edit/file_write on existing files to understand current content.]"
-        }
-        %{state | messages: state.messages ++ [nudge_msg]}
-      end
-    end
-  rescue
-    _ -> state
-  end
-
-  defp file_was_read?(session_id, path) do
-    try do
-      case :ets.lookup(:osa_files_read, {session_id, path}) do
-        [{_, true}] -> true
-        _ -> false
-      end
-    rescue
-      ArgumentError -> false
-    end
-  end
-
-  defp get_nudge_count(session_id, path) do
-    try do
-      nudge_key = {session_id, :nudge_count, path}
-      case :ets.lookup(:osa_files_read, nudge_key) do
-        [{^nudge_key, n}] -> n
-        _ -> 0
-      end
-    rescue
-      ArgumentError -> 0
-    end
-  end
-
   # Extract unique tool names used during the agent loop from message history
   defp extract_tools_used(messages) do
     messages
@@ -1314,227 +998,16 @@ defmodule OptimalSystemAgent.Agent.Loop do
     |> Enum.uniq()
   end
 
-  # Application-layer guardrail against system prompt extraction attempts.
-  # Catches common injection patterns before the LLM processes them,
-  # protecting weaker local models (Ollama) that may not follow system instructions.
-  #
-  # Three-tier detection (all deterministic, no LLM calls):
-  #
-  #   Tier 1 — Regex on raw trimmed input (fast first pass, < 1ms).
-  #   Tier 2 — Regex on *normalized* input: zero-width chars stripped,
-  #             fullwidth ASCII folded to ASCII, homoglyphs collapsed,
-  #             then lowercased. Catches Unicode obfuscation tricks.
-  #   Tier 3 — Structural analysis: detects prompt-boundary markers
-  #             injected mid-message (SYSTEM:, ASSISTANT:, XML tags,
-  #             markdown instruction headers).
-
-  @injection_patterns [
-    ~r/what\s+(is|are|was)\s+(your\s+)?(system\s+prompt|instructions?|rules?|configuration|directives?)/i,
-    ~r/what\s+(is|are|was)\s+the\s+(system\s+prompt|instructions?|configuration|directives?)/i,
-    ~r/(show(\s+me)?|print|display|reveal|repeat|output|tell\s+me|give\s+me|say|recite|state|list|read)\s+(your\s+)?(system\s+prompt|instructions?|full\s+prompt|prompt|initial\s+prompt|configuration)/i,
-    # "tell me your system prompt word for word" and inverted variants
-    ~r/tell\s+me\s+.{0,30}(system\s+prompt|instructions?|rules?|prompt)\s*(word\s+for\s+word|verbatim|exactly|literally)?/i,
-    ~r/(word\s+for\s+word|verbatim|character\s+for\s+character).{0,40}(prompt|instructions?|told|rules?)/i,
-    # "ignore all instructions" without requiring previous/prior/above
-    ~r/ignore\s+all\s+(instructions?|rules?|guidelines?|context|constraints?)/i,
-    ~r/ignore\s+(all\s+)?(previous|prior|above)\s+(instructions?|prompt|context|rules?)/i,
-    ~r/repeat\s+everything\s+(above|before|prior)/i,
-    ~r/what\s+(were\s+)?(you\s+)?(told|instructed|programmed|trained|configured)\s+to/i,
-    # DAN / jailbreak persona adoption
-    ~r/(jailbreak|do\s+anything\s+now|developer\s+mode|prompt\s+injection)/i,
-    ~r/\byou\s+(are|were|become|act\s+as)\s+DAN\b/i,
-    ~r/\bDAN\s+(mode|protocol|activated|enabled)\b/i,
-    # "pretend/act as if you have no restrictions"
-    ~r/(pretend|act\s+as\s+if|imagine|behave\s+as\s+if)\s+.{0,40}(no\s+restrictions?|no\s+guidelines?|no\s+rules?|unrestricted|without\s+limits?|uncensored)/i,
-    # "output everything above/before this"
-    ~r/(output|print|repeat|copy|write\s+out)\s+(everything|all\s+text|all\s+content)\s+(above|before|prior)/i,
-    ~r/disregard\s+(your\s+)?(previous\s+)?(instructions?|guidelines?|rules?)/i,
-    ~r/forget\s+(everything|all)\s+(you\s+)?(were\s+)?(told|instructed|programmed)/i,
-    ~r/system\s+prompt.*word\s+for\s+word/i,
-    ~r/verbatim.*(prompt|instructions?)/i,
-    ~r/(prompt|instructions?).*verbatim/i,
-    ~r/copy\s+(and\s+)?(paste|output)\s+(your\s+)?(prompt|instructions?)/i,
-    # "override/bypass/circumvent your instructions/restrictions"
-    ~r/(override|bypass|circumvent|disable)\s+.{0,30}(instructions?|restrictions?|guidelines?|safety\s+filter)/i
-  ]
-
-  # Tier 3 — structural boundary markers that signal injected prompt sections.
-  # Anchored to line-starts ((?:^|\n)) so they fire on injected headers,
-  # not incidental mid-sentence occurrences.
-  @structural_injection_patterns [
-    # Role headers on their own line: SYSTEM:, ASSISTANT:, USER:
-    ~r/(?:^|\n)\s*(?:system|assistant|user)\s*:/i,
-    # Markdown instruction resets: ### New Instructions, ## Override, etc.
-    ~r/(?:^|\n)\s*\#{1,6}\s*(?:new\s+instructions?|override|ignore\s+above|reset|updated?\s+rules?)/i,
-    # XML-like prompt boundary tags: <system>, </instructions>, <prompt>, etc.
-    ~r/<\/?\s*(?:system|instructions?|prompt|context|rules?)\s*>/i,
-    # Bracket/chevron-delimited role tags: [SYSTEM], [INST], [/INST], <<SYS>>
-    ~r/(?:\[|<<)\s*(?:SYSTEM|INST|SYS|ASSISTANT|USER)\s*(?:\]|>>)/,
-    # Horizontal-rule followed by "instructions": ---\nNew instructions below
-    ~r/(?:^|\n)-{3,}\s*\n\s*(?:new\s+)?instructions?/i
-  ]
-
-  defp prompt_injection?(message) when is_binary(message) do
-    trimmed = String.trim(message)
-
-    # Tier 1 — raw regex (fast path, < 1ms)
-    if Enum.any?(@injection_patterns, &Regex.match?(&1, trimmed)) do
-      true
-    else
-      # Tier 2 — regex on normalized input (catches Unicode obfuscation)
-      normalized = normalize_for_injection_check(trimmed)
-
-      tier2 =
-        trimmed != normalized and
-          Enum.any?(@injection_patterns, &Regex.match?(&1, normalized))
-
-      if tier2 do
-        true
-      else
-        # Tier 3 — structural boundary analysis
-        Enum.any?(@structural_injection_patterns, &Regex.match?(&1, trimmed))
-      end
-    end
+  # Apply per-call overrides from opts (SDK query passthrough)
+  defp apply_overrides(state, opts) do
+    state
+    |> maybe_override(:provider, Keyword.get(opts, :provider))
+    |> maybe_override(:model, Keyword.get(opts, :model))
+    |> maybe_override(:working_dir, Keyword.get(opts, :working_dir))
   end
 
-  defp prompt_injection?(_), do: false
-
-  # Normalize user input before Tier 2 injection pattern matching.
-  # Eliminates common Unicode obfuscation vectors without touching
-  # the original string (Tier 1 always runs on raw input).
-  #
-  # Steps:
-  #   1. Strip zero-width and invisible codepoints (U+200B, ZWNJ, BOM, etc.)
-  #   2. Fold fullwidth ASCII (U+FF01–U+FF5E) to standard ASCII (U+0021–U+007E)
-  #   3. Collapse common Cyrillic/Greek homoglyphs to ASCII equivalents
-  #   4. Lowercase
-  defp normalize_for_injection_check(input) when is_binary(input) do
-    input
-    # Step 1: strip zero-width / invisible codepoints
-    |> String.replace(
-      ~r/[\x{200B}\x{200C}\x{200D}\x{200E}\x{200F}\x{FEFF}\x{00AD}\x{2028}\x{2029}]/u,
-      ""
-    )
-    # Step 2: fold fullwidth ASCII (！…～, U+FF01–U+FF5E) → standard ASCII (!…~)
-    |> String.graphemes()
-    |> Enum.map(fn g ->
-      case String.to_charlist(g) do
-        [cp] when cp >= 0xFF01 and cp <= 0xFF5E -> <<cp - 0xFF01 + 0x21::utf8>>
-        _ -> g
-      end
-    end)
-    |> Enum.join()
-    # Step 3: collapse common Cyrillic/Greek homoglyphs to ASCII equivalents
-    |> String.replace("а", "a")
-    |> String.replace("е", "e")
-    |> String.replace("о", "o")
-    |> String.replace("р", "p")
-    |> String.replace("с", "c")
-    |> String.replace("х", "x")
-    |> String.replace("у", "y")
-    |> String.replace("і", "i")
-    |> String.replace("ѕ", "s")
-    |> String.replace("ν", "v")
-    |> String.replace("ο", "o")
-    |> String.replace("ρ", "p")
-    # Step 4: lowercase
-    |> String.downcase()
-  end
-
-  # Detect when a local model describes intent ("Let me check...") instead of
-  # calling tools. Returns true if the response looks like narrated intent
-  # rather than a final answer.
-  @intent_patterns [
-    ~r/\blet me (check|read|look|examine|create|write|edit|search|find|open|run|list|inspect)\b/i,
-    ~r/\bi('ll| will) (check|read|look|create|write|edit|search|find|open|run|list|inspect)\b/i,
-    ~r/\bi('m going to|am going to) /i,
-    ~r/\bfirst,? i (need|want) to /i,
-    ~r/\blet's start by /i,
-    ~r/\bnow (i'll|let me|i will|i need to) /i,
-    ~r/\bi (need|want) to (check|read|look|examine|create|write|edit|search|find|open|run|list)\b/i
-  ]
-
-  # Matches a code block with 5+ lines of content — indicates model wrote code
-  # in its response text instead of calling file_write or file_edit.
-  @code_block_pattern ~r/```[a-zA-Z]*\n(?:.*\n){5,}?```/
-
-  defp wants_to_continue?(nil), do: false
-  defp wants_to_continue?(content) when byte_size(content) < 20, do: false
-
-  defp wants_to_continue?(content) do
-    Enum.any?(@intent_patterns, &Regex.match?(&1, content))
-  end
-
-  # Detect when model embeds a substantial code block in its response text
-  # instead of calling file_write or file_edit to persist it to disk.
-  defp code_in_text?(nil), do: false
-  defp code_in_text?(content) when byte_size(content) < 50, do: false
-
-  defp code_in_text?(content) do
-    Regex.match?(@code_block_pattern, content)
-  end
-
-  # Verification gate — triggers when:
-  #   1. iteration > 2 (agent has had multiple chances)
-  #   2. Session has a task/goal context (user message contains action verbs)
-  #   3. Zero tools were executed successfully in this session
-  # This prevents the agent from returning an unverified response after
-  # multiple reasoning iterations without ever using tools.
-  @doc false
-  def needs_verification_gate?(state) do
-    state.iteration > 2 and
-      has_task_context?(state.messages) and
-      zero_successful_tools?(state.messages)
-  end
-
-  defp has_task_context?(messages) do
-    messages
-    |> Enum.any?(fn
-      %{role: "user", content: content} when is_binary(content) ->
-        Regex.match?(~r/\b(fix|create|build|implement|add|update|change|write|deploy|test|debug|refactor|delete|remove|find|search|check|run|install|configure)\b/i, content)
-      _ -> false
-    end)
-  end
-
-  defp zero_successful_tools?(messages) do
-    tool_messages =
-      Enum.filter(messages, fn
-        %{role: "tool", content: content} when is_binary(content) -> true
-        _ -> false
-      end)
-
-    if tool_messages == [] do
-      true
-    else
-      Enum.all?(tool_messages, fn %{content: content} ->
-        String.starts_with?(content, "Error:") or
-          String.starts_with?(content, "Blocked:")
-      end)
-    end
-  end
-
-  # Detect when a task involves code changes — triggers the explore-first directive.
-  @coding_action_patterns ~r/\b(fix|change|update|refactor|add|implement|create|modify|edit|write|build|rewrite|delete|remove|rename)\b/i
-  @coding_context_patterns ~r/\b(function|method|module|file|code|script|class|endpoint|handler|component|route|controller|service|model|schema|migration|test|spec|bug|error|feature)\b/i
-
-  defp complex_coding_task?(message) when is_binary(message) do
-    Regex.match?(@coding_action_patterns, message) and
-      Regex.match?(@coding_context_patterns, message)
-  end
-
-  defp complex_coding_task?(_), do: false
-
-  # Detect when the model issued write/execute tools without any read tools first.
-  # Triggered at iteration 1 (first tool batch) to catch blind writes.
-  @write_tools ~w(file_write file_edit shell_execute)
-  @read_tools ~w(file_read dir_list file_glob file_grep mcts_index)
-
-  defp write_without_read?(tool_calls) do
-    names = Enum.map(tool_calls, & &1.name)
-    has_write = Enum.any?(names, &(&1 in @write_tools))
-    has_read = Enum.any?(names, &(&1 in @read_tools))
-    has_write and not has_read
-  end
+  defp maybe_override(state, _key, nil), do: state
+  defp maybe_override(state, key, value), do: Map.put(state, key, value)
 
   # --- Ask User Question (Survey Dialog) ---
 
@@ -1607,4 +1080,22 @@ defmodule OptimalSystemAgent.Agent.Loop do
     end
   end
 
+  # --- Delegations for backward compatibility ---
+  # These public functions were previously defined directly in this module.
+  # They delegate to the extracted modules so any external callers continue to work.
+
+  @doc false
+  defdelegate checkpoint_state(state), to: Checkpoint
+
+  @doc false
+  defdelegate restore_checkpoint(session_id), to: Checkpoint
+
+  @doc false
+  defdelegate clear_checkpoint(session_id), to: Checkpoint
+
+  @doc false
+  defdelegate needs_verification_gate?(state), to: Guardrails
+
+  @doc false
+  defdelegate permission_tier_allows?(tier, tool), to: ToolExecutor
 end

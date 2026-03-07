@@ -26,36 +26,40 @@ end
 # ── .env file loading ──────────────────────────────────────────────────
 # Load .env from project root OR ~/.osa/.env (project root takes priority).
 # Only sets vars that aren't already in the environment (explicit env wins).
-for env_path <- [Path.expand(".env"), Path.expand("~/.osa/.env")] do
-  if File.exists?(env_path) do
-    env_path
-    |> File.read!()
-    |> String.split("\n")
-    |> Enum.each(fn line ->
-      line = String.trim(line)
+# Skipped in test env so OSA_HTTP_PORT / DATABASE_URL from .env don't
+# override test.exs config (port 0, platform_enabled: false).
+if config_env() != :test do
+  for env_path <- [Path.expand(".env"), Path.expand("~/.osa/.env")] do
+    if File.exists?(env_path) do
+      env_path
+      |> File.read!()
+      |> String.split("\n")
+      |> Enum.each(fn line ->
+        line = String.trim(line)
 
-      case line do
-        "#" <> _ ->
-          :skip
+        case line do
+          "#" <> _ ->
+            :skip
 
-        "" ->
-          :skip
+          "" ->
+            :skip
 
-        _ ->
-          case String.split(line, "=", parts: 2) do
-            [key, value] ->
-              key = String.trim(key)
-              value = value |> String.trim() |> String.trim("\"") |> String.trim("'")
+          _ ->
+            case String.split(line, "=", parts: 2) do
+              [key, value] ->
+                key = String.trim(key)
+                value = value |> String.trim() |> String.trim("\"") |> String.trim("'")
 
-              if key != "" and value != "" and is_nil(System.get_env(key)) do
-                System.put_env(key, value)
-              end
+                if key != "" and value != "" and is_nil(System.get_env(key)) do
+                  System.put_env(key, value)
+                end
 
-            _ ->
-              :skip
-          end
-      end
-    end)
+              _ ->
+                :skip
+            end
+        end
+      end)
+    end
   end
 end
 
@@ -290,17 +294,17 @@ config :optimal_system_agent,
 # Set AMQP_URL to enable event publishing to Go workers.
 # Set JWT_SECRET to share JWT signing key with the Go backend.
 
-if database_url = System.get_env("DATABASE_URL") do
+database_url = System.get_env("DATABASE_URL")
+
+if database_url do
   config :optimal_system_agent, OptimalSystemAgent.Platform.Repo,
     url: database_url,
     pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10")
-end
 
-if System.get_env("DATABASE_URL") do
   config :optimal_system_agent, ecto_repos: [OptimalSystemAgent.Store.Repo, OptimalSystemAgent.Platform.Repo]
 end
 
 config :optimal_system_agent,
   jwt_secret: System.get_env("JWT_SECRET"),
   amqp_url: System.get_env("AMQP_URL"),
-  platform_enabled: System.get_env("DATABASE_URL") != nil
+  platform_enabled: database_url != nil

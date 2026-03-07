@@ -6,7 +6,11 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.Shared do
 
   @doc "Send a JSON error response with status code."
   def json_error(conn, status, error, details) do
-    body = Jason.encode!(%{error: error, details: details})
+    body =
+      case Jason.encode(%{error: error, details: details}) do
+        {:ok, json} -> json
+        {:error, _} -> Jason.encode!(%{error: error})
+      end
 
     conn
     |> put_resp_content_type("application/json")

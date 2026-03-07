@@ -433,7 +433,9 @@ fn parse_sse_event(event_type: &str, data: &[u8]) -> Option<BackendEvent> {
         | "permission_required"
         | "plan_proposed"
         | "ask_user_question"
-        | "survey_answered" => parse_system_event(data),
+        | "survey_answered"
+        | "proactive_message"
+        | "proactive_mode_changed" => parse_system_event(data),
 
         "" => None,
 
@@ -1014,6 +1016,39 @@ fn parse_system_event(data: &[u8]) -> Option<BackendEvent> {
             Some(BackendEvent::SurveyAnswered {
                 survey_id: ev.survey_id,
                 summary: ev.summary,
+            })
+        }
+
+        "proactive_message" => {
+            #[derive(serde::Deserialize)]
+            struct Ev {
+                #[serde(default)]
+                message: String,
+                #[serde(default)]
+                message_type: String,
+            }
+            let ev: Ev = match serde_json::from_slice(data) {
+                Ok(e) => e,
+                Err(e) => return Some(parse_warning("proactive_message", e)),
+            };
+            Some(BackendEvent::ProactiveMessage {
+                message: ev.message,
+                message_type: ev.message_type,
+            })
+        }
+
+        "proactive_mode_changed" => {
+            #[derive(serde::Deserialize)]
+            struct Ev {
+                #[serde(default)]
+                enabled: bool,
+            }
+            let ev: Ev = match serde_json::from_slice(data) {
+                Ok(e) => e,
+                Err(e) => return Some(parse_warning("proactive_mode_changed", e)),
+            };
+            Some(BackendEvent::ProactiveModeChanged {
+                enabled: ev.enabled,
             })
         }
 

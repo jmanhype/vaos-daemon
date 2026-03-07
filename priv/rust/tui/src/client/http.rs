@@ -501,7 +501,7 @@ impl ApiClient {
     }
 
     /// Attempt to refresh the auth token using the refresh_token.
-    async fn try_refresh_token(&self) -> bool {
+    pub async fn try_refresh_token(&self) -> bool {
         let refresh_token = {
             let auth = self.auth.read().await;
             match auth.refresh_token() {
