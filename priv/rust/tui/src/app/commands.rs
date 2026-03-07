@@ -216,6 +216,13 @@ impl App {
                     self.execute_reasoning_command(arg);
                 }
             }
+            "/voice" => {
+                let label = format!("{:?}", self.voice.provider);
+                self.toasts.push(
+                    format!("Voice: {}", label),
+                    crate::components::toast::ToastLevel::Info,
+                );
+            }
             _ => {
                 // Unknown slash command -> send to backend
                 let cmd_name = &cmd[1..]; // strip leading /

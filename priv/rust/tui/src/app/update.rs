@@ -106,8 +106,12 @@ impl App {
                 self.show_help();
                 false
             }
-            (KeyCode::Char('g'), KeyModifiers::CONTROL) => {
+            (KeyCode::Char('v'), KeyModifiers::ALT) => {
                 self.start_recording();
+                false
+            }
+            (KeyCode::F(9), _) => {
+                self.toggle_hands_free();
                 false
             }
             (KeyCode::Char('n'), KeyModifiers::CONTROL) => {
@@ -257,7 +261,11 @@ impl App {
 
     fn handle_recording_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
         match (key.code, key.modifiers) {
-            (KeyCode::Char('g'), KeyModifiers::CONTROL) => {
+            (KeyCode::Enter, _) => {
+                self.stop_recording();
+                false
+            }
+            (KeyCode::Char('v'), KeyModifiers::ALT) => {
                 self.stop_recording();
                 false
             }
@@ -278,28 +286,62 @@ impl App {
         match event {
             VoiceEvent::TranscriptionReady(text) => {
                 self.status.clear_download_progress();
-                if !text.is_empty() {
+                self.status.set_transcribing(false);
+                let trimmed = text.trim();
+                let is_hands_free = self.voice.hands_free;
+
+                if trimmed.is_empty() {
+                    self.toasts.push(
+                        "No speech detected".into(),
+                        crate::components::toast::ToastLevel::Warning,
+                    );
+                } else if is_hands_free {
+                    // Hands-free: auto-submit the transcribed text
+                    self.input.insert_str(trimmed);
+                    self.submit_input(trimmed);
+                    self.input.reset();
+                } else if trimmed.starts_with('/') {
+                    // Auto-submit slash commands without review
+                    self.input.insert_str(trimmed);
+                    self.submit_input(trimmed);
+                    self.input.reset();
+                } else {
                     self.input.insert_str(&text);
                     self.toasts.push(
                         "Voice transcribed \u{2014} review and press Enter".into(),
                         crate::components::toast::ToastLevel::Info,
                     );
-                } else {
-                    self.toasts.push(
-                        "No speech detected".into(),
-                        crate::components::toast::ToastLevel::Warning,
-                    );
                 }
                 if self.state == AppState::Recording {
                     self.transition(AppState::Idle);
                 }
+
+                // Hands-free: auto-restart recording after a brief delay
+                if is_hands_free {
+                    let tx = self.event_tx.clone();
+                    tokio::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        // Send a tick to trigger recording restart
+                        let _ = tx.send(crate::event::Event::Voice(
+                            crate::event::VoiceEvent::HandsFreeRestart,
+                        ));
+                    });
+                }
             }
             VoiceEvent::TranscriptionError(err) => {
                 self.status.clear_download_progress();
-                self.toasts.push(
-                    format!("Voice error: {}", err),
-                    crate::components::toast::ToastLevel::Error,
-                );
+                self.status.set_transcribing(false);
+                if err.contains("whisper-cli not found") || err.contains("whisper not found") {
+                    self.toasts.push(
+                        "Install: brew install whisper-cpp (or set VOICE_PROVIDER=cloud)".into(),
+                        crate::components::toast::ToastLevel::Error,
+                    );
+                } else {
+                    self.toasts.push(
+                        format!("Voice error: {}", err),
+                        crate::components::toast::ToastLevel::Error,
+                    );
+                }
                 if self.state == AppState::Recording {
                     self.transition(AppState::Idle);
                 }
@@ -314,9 +356,18 @@ impl App {
                     0
                 };
                 self.status.set_download_progress(&label, pct);
+                self.toasts.push(
+                    format!("Downloading whisper model: {}%", pct),
+                    crate::components::toast::ToastLevel::Info,
+                );
             }
             VoiceEvent::AudioLevel(level) => {
                 self.status.set_audio_level((level * 100.0).clamp(0.0, 100.0) as u8);
+            }
+            VoiceEvent::HandsFreeRestart => {
+                if self.voice.hands_free && !self.voice.recording {
+                    self.start_recording();
+                }
             }
         }
     }
@@ -381,10 +432,35 @@ impl App {
         self.activity.tick();
         self.agents.tick();
 
-        // Poll audio level from active voice capture
+        // Poll audio level and elapsed time from active voice capture
         if self.voice.recording {
+            self.status.set_recording_elapsed(self.voice.elapsed_secs());
             if let Some(ref capture) = self.voice.capture {
-                self.status.set_audio_level(capture.level());
+                let level = capture.level();
+                self.status.set_audio_level(level);
+
+                // Hands-free VAD: auto-stop on sustained silence
+                if self.voice.hands_free {
+                    if level < 5 {
+                        // Silence detected — start or continue tracking
+                        if self.voice.silence_start.is_none() {
+                            self.voice.silence_start = Some(std::time::Instant::now());
+                        }
+                        if let Some(silence_start) = self.voice.silence_start {
+                            let silence_dur = silence_start.elapsed();
+                            let recorded_secs = self.voice.elapsed_secs();
+                            if silence_dur >= std::time::Duration::from_millis(1500)
+                                && recorded_secs >= 1
+                            {
+                                // Enough silence after meaningful audio — auto-stop
+                                self.stop_recording();
+                            }
+                        }
+                    } else {
+                        // Sound detected — reset silence tracker
+                        self.voice.silence_start = None;
+                    }
+                }
             }
         }
 

@@ -14,7 +14,7 @@ pub struct AudioBuffer {
 impl AudioBuffer {
     fn new(sample_rate: u32) -> Self {
         Self {
-            samples: Arc::new(Mutex::new(Vec::with_capacity(sample_rate as usize * 60))),
+            samples: Arc::new(Mutex::new(Vec::with_capacity(sample_rate as usize * 300))),
             sample_rate,
         }
     }
@@ -113,12 +113,6 @@ impl VoiceCapture {
                 &config,
                 move |data: &[f32], _: &cpal::InputCallbackInfo| {
                     if let Ok(mut buf) = write_buf.lock() {
-                        // Enforce 60 second max at 16kHz
-                        let max_samples = target_sample_rate as usize * 60;
-                        if buf.len() >= max_samples {
-                            return;
-                        }
-
                         // Downmix to mono, then resample to 16kHz
                         let mono_samples: Vec<f32> = data
                             .chunks(device_channels)
@@ -143,9 +137,7 @@ impl VoiceCapture {
                             let s0 = mono_samples.get(idx0).copied().unwrap_or(0.0);
                             let s1 = mono_samples.get(idx0 + 1).copied().unwrap_or(s0);
                             let sample = s0 + (s1 - s0) * frac as f32;
-                            if buf.len() < max_samples {
-                                buf.push(sample);
-                            }
+                            buf.push(sample);
                         }
                     }
                 },
@@ -176,9 +168,10 @@ impl VoiceCapture {
         self.buffer.clone()
     }
 
-    /// Check if we've hit the 60-second max
+    /// Deprecated: recording is no longer capped. Always returns false.
+    #[deprecated(note = "Recording cap removed — buffer grows unbounded")]
     pub fn is_at_limit(&self) -> bool {
-        self.buffer.duration_secs() >= 60.0
+        false
     }
 
     /// Current recording duration in seconds

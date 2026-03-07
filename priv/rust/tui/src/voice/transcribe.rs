@@ -4,10 +4,11 @@ use tracing::info;
 
 use super::capture::AudioBuffer;
 
-/// Transcription provider — local CLI whisper.cpp or cloud OpenAI
+/// Transcription provider — local CLI whisper.cpp, cloud OpenAI, or Groq
 pub enum VoiceProvider {
     Local(LocalTranscriber),
     Cloud(CloudTranscriber),
+    Groq(GroqTranscriber),
 }
 
 impl VoiceProvider {
@@ -16,6 +17,7 @@ impl VoiceProvider {
         match self {
             VoiceProvider::Local(local) => local.transcribe(buffer).await,
             VoiceProvider::Cloud(cloud) => cloud.transcribe(buffer).await,
+            VoiceProvider::Groq(groq) => groq.transcribe(buffer).await,
         }
     }
 
@@ -28,6 +30,7 @@ impl VoiceProvider {
         match self {
             VoiceProvider::Local(local) => local.transcribe_with_progress(buffer, progress_tx).await,
             VoiceProvider::Cloud(cloud) => cloud.transcribe(buffer).await,
+            VoiceProvider::Groq(groq) => groq.transcribe(buffer).await,
         }
     }
 
@@ -41,7 +44,8 @@ impl std::fmt::Debug for VoiceProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             VoiceProvider::Local(_) => write!(f, "Local(whisper-cli)"),
-            VoiceProvider::Cloud(_) => write!(f, "Cloud(OpenAI)"),
+            VoiceProvider::Cloud(_) => write!(f, "Cloud(OpenAI whisper-1)"),
+            VoiceProvider::Groq(_) => write!(f, "Groq(whisper-large-v3-turbo)"),
         }
     }
 }
@@ -378,6 +382,61 @@ impl CloudTranscriber {
 
         let text = response.text().await?;
         info!("Cloud transcription complete: {} chars", text.len());
+        Ok(text.trim().to_string())
+    }
+}
+
+// ── Groq transcriber (Whisper via Groq API) ──────────────────
+
+pub struct GroqTranscriber {
+    api_key: String,
+}
+
+impl GroqTranscriber {
+    pub fn new(api_key: String) -> Self {
+        Self { api_key }
+    }
+
+    pub fn api_key(&self) -> &str {
+        &self.api_key
+    }
+
+    pub async fn transcribe(&self, buffer: AudioBuffer) -> Result<String> {
+        let wav_bytes = buffer.to_wav_bytes()?;
+
+        if wav_bytes.len() < 100 {
+            return Ok(String::new());
+        }
+
+        info!("Sending {:.1}KB audio to Groq Whisper API", wav_bytes.len() as f64 / 1024.0);
+
+        let client = reqwest::Client::new();
+        let part = reqwest::multipart::Part::bytes(wav_bytes)
+            .file_name("audio.wav")
+            .mime_str("audio/wav")?;
+
+        let form = reqwest::multipart::Form::new()
+            .text("model", "whisper-large-v3-turbo")
+            .text("language", "en")
+            .text("response_format", "text")
+            .part("file", part);
+
+        let response = client
+            .post("https://api.groq.com/openai/v1/audio/transcriptions")
+            .bearer_auth(&self.api_key)
+            .multipart(form)
+            .send()
+            .await
+            .context("Failed to call Groq Whisper API")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("Groq Whisper API error: {} — {}", status, body);
+        }
+
+        let text = response.text().await?;
+        info!("Groq transcription complete: {} chars", text.len());
         Ok(text.trim().to_string())
     }
 }

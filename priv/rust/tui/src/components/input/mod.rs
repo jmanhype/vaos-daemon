@@ -50,6 +50,8 @@ pub struct InputComponent {
     completions: Completions,
     /// Mic button area for click detection
     mic_area: Cell<Option<Rect>>,
+    /// Voice recording active
+    recording: bool,
 }
 
 impl InputComponent {
@@ -72,6 +74,7 @@ impl InputComponent {
             file_search_start: 0,
             completions: Completions::new(),
             mic_area: Cell::new(None),
+            recording: false,
         }
     }
 
@@ -104,6 +107,11 @@ impl InputComponent {
     /// Set processing indicator state (Step 4)
     pub fn set_processing(&mut self, active: bool) {
         self.processing = active;
+    }
+
+    /// Set voice recording state — changes placeholder text
+    pub fn set_recording(&mut self, active: bool) {
+        self.recording = active;
     }
 
     pub fn submit(&mut self) -> String {
@@ -590,9 +598,19 @@ impl Component for InputComponent {
         };
 
         if self.content.is_empty() {
+            let placeholder = if self.recording {
+                "\u{25C9} Recording... press Enter to stop, Esc to cancel"
+            } else {
+                "Type a message..."
+            };
+            let placeholder_style = if self.recording {
+                Style::default().fg(Color::Red)
+            } else {
+                theme.input_placeholder()
+            };
             let line = Line::from(vec![
                 Span::styled(prompt, prompt_style),
-                Span::styled("Type a message...", theme.input_placeholder()),
+                Span::styled(placeholder, placeholder_style),
             ]);
             frame.render_widget(Paragraph::new(line), input_area);
         } else {

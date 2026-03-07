@@ -609,14 +609,24 @@ impl App {
         if self.voice.recording {
             return;
         }
+        // Don't allow recording while the LLM is processing
+        if self.state == AppState::Processing {
+            self.toasts.push(
+                "Cannot record while processing".into(),
+                crate::components::toast::ToastLevel::Warning,
+            );
+            return;
+        }
 
         match crate::voice::VoiceCapture::start() {
             Ok(capture) => {
                 self.voice.recording = true;
                 self.voice.started_at = Some(std::time::Instant::now());
+                self.voice.silence_start = None;
                 self.voice.capture = Some(capture);
                 self.transition(AppState::Recording);
                 self.status.set_recording(true);
+                self.input.set_recording(true);
                 info!("Voice recording started");
             }
             Err(e) => {
@@ -635,7 +645,9 @@ impl App {
         }
 
         self.voice.recording = false;
+        self.voice.silence_start = None;
         self.status.set_recording(false);
+        self.input.set_recording(false);
 
         let capture = match self.voice.capture.take() {
             Some(c) => c,
@@ -666,40 +678,51 @@ impl App {
         let provider_debug = format!("{:?}", self.voice.provider);
         info!("Transcribing with {}", provider_debug);
 
+        self.status.set_transcribing(true);
         self.toasts.push(
             "Transcribing...".into(),
             crate::components::toast::ToastLevel::Info,
         );
 
         // Spawn transcription based on provider type
-        let is_cloud = matches!(self.voice.provider, crate::voice::VoiceProvider::Cloud(_));
-
-        if is_cloud {
-            let api_key = match &self.voice.provider {
-                crate::voice::VoiceProvider::Cloud(c) => c.api_key().to_string(),
-                _ => unreachable!(),
-            };
-            tokio::spawn(async move {
-                let transcriber = crate::voice::CloudTranscriber::new(api_key);
-                let result = transcriber.transcribe(buffer).await;
-                let event = match result {
-                    Ok(text) => crate::event::VoiceEvent::TranscriptionReady(text),
-                    Err(e) => crate::event::VoiceEvent::TranscriptionError(e.to_string()),
-                };
-                let _ = tx.send(crate::event::Event::Voice(event));
-            });
-        } else {
-            tokio::spawn(async move {
-                let provider = crate::voice::VoiceProvider::local_or_unavailable();
-                let result = provider
-                    .transcribe_with_progress(buffer, Some(&tx))
-                    .await;
-                let event = match result {
-                    Ok(text) => crate::event::VoiceEvent::TranscriptionReady(text),
-                    Err(e) => crate::event::VoiceEvent::TranscriptionError(e.to_string()),
-                };
-                let _ = tx.send(crate::event::Event::Voice(event));
-            });
+        match &self.voice.provider {
+            crate::voice::VoiceProvider::Cloud(c) => {
+                let api_key = c.api_key().to_string();
+                tokio::spawn(async move {
+                    let transcriber = crate::voice::CloudTranscriber::new(api_key);
+                    let result = transcriber.transcribe(buffer).await;
+                    let event = match result {
+                        Ok(text) => crate::event::VoiceEvent::TranscriptionReady(text),
+                        Err(e) => crate::event::VoiceEvent::TranscriptionError(e.to_string()),
+                    };
+                    let _ = tx.send(crate::event::Event::Voice(event));
+                });
+            }
+            crate::voice::VoiceProvider::Groq(g) => {
+                let api_key = g.api_key().to_string();
+                tokio::spawn(async move {
+                    let transcriber = crate::voice::GroqTranscriber::new(api_key);
+                    let result = transcriber.transcribe(buffer).await;
+                    let event = match result {
+                        Ok(text) => crate::event::VoiceEvent::TranscriptionReady(text),
+                        Err(e) => crate::event::VoiceEvent::TranscriptionError(e.to_string()),
+                    };
+                    let _ = tx.send(crate::event::Event::Voice(event));
+                });
+            }
+            crate::voice::VoiceProvider::Local(_) => {
+                tokio::spawn(async move {
+                    let provider = crate::voice::VoiceProvider::local_or_unavailable();
+                    let result = provider
+                        .transcribe_with_progress(buffer, Some(&tx))
+                        .await;
+                    let event = match result {
+                        Ok(text) => crate::event::VoiceEvent::TranscriptionReady(text),
+                        Err(e) => crate::event::VoiceEvent::TranscriptionError(e.to_string()),
+                    };
+                    let _ = tx.send(crate::event::Event::Voice(event));
+                });
+            }
         }
     }
 
@@ -710,7 +733,9 @@ impl App {
 
         self.voice.recording = false;
         self.voice.started_at = None;
+        self.voice.silence_start = None;
         self.status.set_recording(false);
+        self.input.set_recording(false);
 
         // Drop capture, discarding audio
         if let Some(capture) = self.voice.capture.take() {
@@ -725,5 +750,31 @@ impl App {
             crate::components::toast::ToastLevel::Info,
         );
         info!("Voice recording cancelled");
+    }
+
+    pub(crate) fn toggle_hands_free(&mut self) {
+        self.voice.hands_free = !self.voice.hands_free;
+        self.status.set_hands_free(self.voice.hands_free);
+
+        if self.voice.hands_free {
+            self.toasts.push(
+                "Hands-free: ON (F9 to toggle)".into(),
+                crate::components::toast::ToastLevel::Info,
+            );
+            // Start recording immediately when enabling hands-free
+            if !self.voice.recording {
+                self.start_recording();
+            }
+        } else {
+            self.toasts.push(
+                "Hands-free: OFF".into(),
+                crate::components::toast::ToastLevel::Info,
+            );
+            // Cancel any active recording when disabling
+            if self.voice.recording {
+                self.cancel_recording();
+            }
+        }
+        info!("Hands-free voice mode: {}", self.voice.hands_free);
     }
 }

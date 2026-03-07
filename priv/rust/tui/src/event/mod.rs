@@ -6,12 +6,13 @@ use crossterm::event::Event as CrosstermEvent;
 
 /// Voice subsystem events
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum VoiceEvent {
     /// Transcription completed successfully
     TranscriptionReady(String),
     /// Transcription failed
     TranscriptionError(String),
-    /// Recording hit the 60s limit
+    /// Recording hit a time/size limit (kept for future use)
     RecordingStopped,
     /// Download progress for whisper binary or model
     DownloadProgress {
@@ -21,6 +22,8 @@ pub enum VoiceEvent {
     },
     /// Audio input level (RMS 0.0..1.0) from mic capture
     AudioLevel(f32),
+    /// Hands-free mode: restart recording after transcription
+    HandsFreeRestart,
 }
 
 /// Unified event type — all event sources merge into this

@@ -22,9 +22,12 @@ pub struct StatusBar {
     bg_count: usize,
     width: u16,
     recording: bool,
+    recording_elapsed_secs: u64,
+    transcribing: bool,
     audio_level: u8,
     download_label: String,
     download_pct: u8,
+    hands_free: bool,
 }
 
 impl StatusBar {
@@ -44,9 +47,12 @@ impl StatusBar {
             bg_count: 0,
             width: 0,
             recording: false,
+            recording_elapsed_secs: 0,
+            transcribing: false,
             audio_level: 0,
             download_label: String::new(),
             download_pct: 0,
+            hands_free: false,
         }
     }
 
@@ -91,7 +97,16 @@ impl StatusBar {
         self.recording = recording;
         if !recording {
             self.audio_level = 0;
+            self.recording_elapsed_secs = 0;
         }
+    }
+
+    pub fn set_transcribing(&mut self, transcribing: bool) {
+        self.transcribing = transcribing;
+    }
+
+    pub fn set_recording_elapsed(&mut self, secs: u64) {
+        self.recording_elapsed_secs = secs;
     }
 
     pub fn set_audio_level(&mut self, level: u8) {
@@ -106,6 +121,10 @@ impl StatusBar {
     pub fn clear_download_progress(&mut self) {
         self.download_label.clear();
         self.download_pct = 0;
+    }
+
+    pub fn set_hands_free(&mut self, enabled: bool) {
+        self.hands_free = enabled;
     }
 
     pub fn context_utilization(&self) -> f64 {
@@ -180,11 +199,15 @@ impl Component for StatusBar {
 
         // Recording indicator takes priority over everything
         if self.recording {
+            let mins = self.recording_elapsed_secs / 60;
+            let secs = self.recording_elapsed_secs % 60;
+            let duration = format!(" {}:{:02}", mins, secs);
+
             let level = self.audio_level;
             let bar_total = 10usize;
             let filled = (level as usize * bar_total / 100).min(bar_total);
             let empty = bar_total - filled;
-            let level_bar = format!("[{}{}]", "\u{2588}".repeat(filled), "\u{2591}".repeat(empty));
+            let level_bar = format!("{}{}", "\u{2588}".repeat(filled), "\u{2591}".repeat(empty));
             let level_color = if level > 70 {
                 Color::Red
             } else if level > 30 {
@@ -192,14 +215,36 @@ impl Component for StatusBar {
             } else {
                 Color::DarkGray
             };
-            let spans = vec![
+            let mut spans = vec![
                 Span::styled(
                     "\u{25C9} Recording",
                     Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                 ),
+                Span::styled(duration, Style::default().fg(Color::Red)),
                 Span::styled(" ", Style::default()),
                 Span::styled(level_bar, Style::default().fg(level_color)),
-                Span::styled(" \u{2014} click \u{25C9} to stop \u{00b7} Esc cancel", theme.faint()),
+            ];
+            if self.hands_free {
+                spans.push(Span::styled(
+                    " \u{00b7} HF",
+                    Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+                ));
+                spans.push(Span::styled(" \u{2014} auto-stop on silence", theme.faint()));
+            } else {
+                spans.push(Span::styled(" \u{2014} click \u{25C9} to stop \u{00b7} Esc cancel", theme.faint()));
+            }
+            let line = Line::from(spans);
+            frame.render_widget(Paragraph::new(line), area);
+            return;
+        }
+
+        // Transcribing indicator — after recording stops, before result arrives
+        if self.transcribing {
+            let spans = vec![
+                Span::styled(
+                    "\u{27F3} Transcribing...",
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                ),
             ];
             let line = Line::from(spans);
             frame.render_widget(Paragraph::new(line), area);
@@ -270,6 +315,14 @@ impl Component for StatusBar {
                 spans.push(Span::styled(
                     format!("{} bg", self.bg_count),
                     theme.faint(),
+                ));
+            }
+
+            if self.hands_free {
+                spans.push(Span::styled(" \u{00b7} ", theme.faint()));
+                spans.push(Span::styled(
+                    "\u{1F3A4} Hands-free",
+                    Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
                 ));
             }
 

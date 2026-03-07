@@ -21,7 +21,7 @@ pub enum MessageType {
 }
 
 /// Number of rendered lines for the Help message (must match `build_help_lines`).
-const HELP_LINE_COUNT: u16 = 21;
+const HELP_LINE_COUNT: u16 = 27;
 
 /// Stored tool call metadata for rich rendering.
 #[derive(Clone)]
@@ -486,6 +486,13 @@ fn build_help_lines(theme: &style::Theme) -> Vec<Line<'static>> {
         ("  PgUp/PgDn", "Page scroll"),
     ];
 
+    let voice: &[(&str, &str)] = &[
+        ("  Alt+V", "Toggle recording"),
+        ("  Enter", "Stop & transcribe"),
+        ("  Esc", "Cancel recording"),
+        ("  Config", "VOICE_PROVIDER=local|cloud|groq"),
+    ];
+
     let mut lines: Vec<Line<'static>> = Vec::with_capacity(HELP_LINE_COUNT as usize);
 
     // blank
@@ -504,6 +511,17 @@ fn build_help_lines(theme: &style::Theme) -> Vec<Line<'static>> {
     // section: Shortcuts
     lines.push(Line::from(Span::styled(" Shortcuts", title_style)));
     for &(key, desc) in shortcuts {
+        lines.push(Line::from(vec![
+            Span::styled(format!("{:<18}", key), key_style),
+            Span::styled(desc.to_string(), desc_style),
+        ]));
+    }
+
+    // blank
+    lines.push(Line::from(""));
+    // section: Voice Input
+    lines.push(Line::from(Span::styled(" Voice Input", title_style)));
+    for &(key, desc) in voice {
         lines.push(Line::from(vec![
             Span::styled(format!("{:<18}", key), key_style),
             Span::styled(desc.to_string(), desc_style),
