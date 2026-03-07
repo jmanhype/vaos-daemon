@@ -690,8 +690,9 @@ impl App {
             });
         } else {
             tokio::spawn(async move {
-                let result = crate::voice::VoiceProvider::local_or_unavailable()
-                    .transcribe(buffer)
+                let provider = crate::voice::VoiceProvider::local_or_unavailable();
+                let result = provider
+                    .transcribe_with_progress(buffer, Some(&tx))
                     .await;
                 let event = match result {
                     Ok(text) => crate::event::VoiceEvent::TranscriptionReady(text),

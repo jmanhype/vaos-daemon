@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use futures::StreamExt;
 use tracing::info;
 
 use super::capture::AudioBuffer;
@@ -14,6 +15,18 @@ impl VoiceProvider {
     pub async fn transcribe(&self, buffer: AudioBuffer) -> Result<String> {
         match self {
             VoiceProvider::Local(local) => local.transcribe(buffer).await,
+            VoiceProvider::Cloud(cloud) => cloud.transcribe(buffer).await,
+        }
+    }
+
+    /// Transcribe with download progress events sent to the given channel
+    pub async fn transcribe_with_progress(
+        &self,
+        buffer: AudioBuffer,
+        progress_tx: Option<&tokio::sync::mpsc::UnboundedSender<crate::event::Event>>,
+    ) -> Result<String> {
+        match self {
+            VoiceProvider::Local(local) => local.transcribe_with_progress(buffer, progress_tx).await,
             VoiceProvider::Cloud(cloud) => cloud.transcribe(buffer).await,
         }
     }
@@ -51,7 +64,7 @@ impl LocalTranscriber {
             });
 
         let model_name = std::env::var("WHISPER_MODEL")
-            .unwrap_or_else(|_| "base".to_string());
+            .unwrap_or_else(|_| "tiny".to_string());
 
         Self { osa_dir, model_name }
     }
@@ -74,11 +87,54 @@ impl LocalTranscriber {
     }
 
     /// Download the pre-built whisper-cli binary for this platform
-    async fn ensure_binary(&self) -> Result<std::path::PathBuf> {
+    async fn ensure_binary(&self, progress_tx: Option<&tokio::sync::mpsc::UnboundedSender<crate::event::Event>>) -> Result<std::path::PathBuf> {
         let bin = self.whisper_bin();
         if bin.exists() {
             return Ok(bin);
         }
+
+        // Check if whisper-cli is already on the system PATH
+        if let Ok(output) = std::process::Command::new(if cfg!(windows) { "where" } else { "which" })
+            .arg("whisper-cli")
+            .output()
+        {
+            if output.status.success() {
+                let path_str = String::from_utf8_lossy(&output.stdout).trim().lines().next().unwrap_or("").to_string();
+                if !path_str.is_empty() {
+                    let system_bin = std::path::PathBuf::from(&path_str);
+                    if system_bin.exists() {
+                        info!("Found system whisper-cli: {}", path_str);
+                        return Ok(system_bin);
+                    }
+                }
+            }
+        }
+
+        // On Windows, download pre-built binary from whisper.cpp releases
+        #[cfg(target_os = "windows")]
+        {
+            return self.download_whisper_binary(progress_tx).await;
+        }
+
+        // macOS/Linux: no pre-built CLI binaries available from upstream
+        #[cfg(not(target_os = "windows"))]
+        {
+            let install_hint = if cfg!(target_os = "macos") {
+                "brew install whisper-cpp"
+            } else {
+                "sudo apt install whisper-cpp   # or build from source: https://github.com/ggerganov/whisper.cpp"
+            };
+            anyhow::bail!(
+                "whisper-cli not found. Install it and try again:\n  {}\n\nOr use cloud transcription: export VOICE_PROVIDER=cloud",
+                install_hint
+            );
+        }
+    }
+
+    /// Download and extract the pre-built Windows whisper-cli binary
+    #[cfg(target_os = "windows")]
+    async fn download_whisper_binary(&self, progress_tx: Option<&tokio::sync::mpsc::UnboundedSender<crate::event::Event>>) -> Result<std::path::PathBuf> {
+        let bin = self.whisper_bin();
 
         std::fs::create_dir_all(self.bin_dir())
             .context("Failed to create ~/.osa/bin")?;
@@ -93,7 +149,9 @@ impl LocalTranscriber {
 
         info!("Downloading whisper-cli: {}", url);
 
-        let response = reqwest::get(&url)
+        let response = reqwest::Client::new()
+            .get(&url)
+            .send()
             .await
             .context("Failed to download whisper-cli")?;
 
@@ -104,25 +162,38 @@ impl LocalTranscriber {
             );
         }
 
-        let bytes = response.bytes().await?;
-        info!("Downloaded {:.1}MB, extracting...", bytes.len() as f64 / 1_048_576.0);
+        let total_size = response.content_length().unwrap_or(0);
+        let mut downloaded: u64 = 0;
+        let mut body = Vec::new();
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.context("Error reading download stream")?;
+            downloaded += chunk.len() as u64;
+            body.extend_from_slice(&chunk);
+            if let Some(tx) = &progress_tx {
+                if total_size > 0 {
+                    let _ = tx.send(crate::event::Event::Voice(
+                        crate::event::VoiceEvent::DownloadProgress {
+                            label: "whisper-cli".into(),
+                            downloaded,
+                            total: total_size,
+                        },
+                    ));
+                }
+            }
+        }
+        info!("Downloaded {:.1}MB, extracting...", body.len() as f64 / 1_048_576.0);
 
         // Extract whisper-cli + required DLLs from the zip
-        let cursor = std::io::Cursor::new(&bytes);
+        let cursor = std::io::Cursor::new(&body);
         let mut archive = zip::ZipArchive::new(cursor)
             .context("Failed to open whisper zip archive")?;
 
-        // Files we need from the archive
-        let needed: &[&str] = if cfg!(windows) {
-            &["whisper-cli.exe", "whisper.dll", "ggml.dll", "ggml-base.dll", "ggml-cpu.dll"]
-        } else {
-            &["whisper-cli"]
-        };
+        let needed: &[&str] = &["whisper-cli.exe", "whisper.dll", "ggml.dll", "ggml-base.dll", "ggml-cpu.dll"];
 
         for i in 0..archive.len() {
             let mut file = archive.by_index(i)?;
             let name = file.name().to_string();
-            // Check if this file's basename matches any we need
             let basename = name.rsplit('/').next().unwrap_or(&name);
             if needed.iter().any(|n| *n == basename) {
                 let dest = self.bin_dir().join(basename);
@@ -137,19 +208,12 @@ impl LocalTranscriber {
             anyhow::bail!("whisper-cli not found in archive");
         }
 
-        // Make executable on unix
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755))?;
-        }
-
         info!("whisper-cli installed to {:?}", bin);
         Ok(bin)
     }
 
     /// Download the ggml model if not present
-    async fn ensure_model(&self) -> Result<std::path::PathBuf> {
+    async fn ensure_model(&self, progress_tx: Option<&tokio::sync::mpsc::UnboundedSender<crate::event::Event>>) -> Result<std::path::PathBuf> {
         let path = self.model_path();
         if path.exists() {
             return Ok(path);
@@ -165,7 +229,9 @@ impl LocalTranscriber {
 
         info!("Downloading whisper model: {}", url);
 
-        let response = reqwest::get(&url)
+        let response = reqwest::Client::new()
+            .get(&url)
+            .send()
             .await
             .context("Failed to download whisper model")?;
 
@@ -173,17 +239,44 @@ impl LocalTranscriber {
             anyhow::bail!("Failed to download model: HTTP {}", response.status());
         }
 
-        let bytes = response.bytes().await?;
-        std::fs::write(&path, &bytes)
-            .context("Failed to write whisper model file")?;
+        let total_size = response.content_length().unwrap_or(0);
+        let mut downloaded: u64 = 0;
+        let mut file = std::fs::File::create(&path)
+            .context("Failed to create whisper model file")?;
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.context("Error reading model download stream")?;
+            downloaded += chunk.len() as u64;
+            std::io::Write::write_all(&mut file, &chunk)
+                .context("Failed to write whisper model chunk")?;
+            if let Some(tx) = &progress_tx {
+                if total_size > 0 {
+                    let _ = tx.send(crate::event::Event::Voice(
+                        crate::event::VoiceEvent::DownloadProgress {
+                            label: format!("ggml-{}.bin", self.model_name),
+                            downloaded,
+                            total: total_size,
+                        },
+                    ));
+                }
+            }
+        }
 
-        info!("Whisper model downloaded: {:.1}MB", bytes.len() as f64 / 1_048_576.0);
+        info!("Whisper model downloaded: {:.1}MB", downloaded as f64 / 1_048_576.0);
         Ok(path)
     }
 
     pub async fn transcribe(&self, buffer: AudioBuffer) -> Result<String> {
-        let bin = self.ensure_binary().await?;
-        let model = self.ensure_model().await?;
+        self.transcribe_with_progress(buffer, None).await
+    }
+
+    pub async fn transcribe_with_progress(
+        &self,
+        buffer: AudioBuffer,
+        progress_tx: Option<&tokio::sync::mpsc::UnboundedSender<crate::event::Event>>,
+    ) -> Result<String> {
+        let bin = self.ensure_binary(progress_tx).await?;
+        let model = self.ensure_model(progress_tx).await?;
 
         // Write WAV to temp file
         let wav_bytes = buffer.to_wav_bytes()?;

@@ -1,4 +1,5 @@
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU8, Ordering};
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use tracing::{info, warn, error};
@@ -56,6 +57,8 @@ impl AudioBuffer {
 pub struct VoiceCapture {
     stream: Option<cpal::Stream>,
     buffer: AudioBuffer,
+    /// Current audio input level (0-100), updated from capture callback
+    level: Arc<AtomicU8>,
 }
 
 // cpal::Stream is not Send by default on all platforms, but we need it
@@ -95,6 +98,8 @@ impl VoiceCapture {
         let target_sample_rate = 16000u32;
         let buffer = AudioBuffer::new(target_sample_rate);
         let write_buf = buffer.samples.clone();
+        let level = Arc::new(AtomicU8::new(0));
+        let level_write = level.clone();
 
         // Pre-compute resample ratio
         let ratio = device_sample_rate as f64 / target_sample_rate as f64;
@@ -119,6 +124,15 @@ impl VoiceCapture {
                             .chunks(device_channels)
                             .map(|frame| frame.iter().sum::<f32>() / device_channels as f32)
                             .collect();
+
+                        // Compute RMS level from mono samples (0.0-1.0 → 0-100)
+                        if !mono_samples.is_empty() {
+                            let sum_sq: f32 = mono_samples.iter().map(|s| s * s).sum();
+                            let rms = (sum_sq / mono_samples.len() as f32).sqrt();
+                            // Scale: typical speech is ~0.01-0.1 RMS, clamp to 0-100
+                            let scaled = (rms * 500.0).clamp(0.0, 100.0) as u8;
+                            level_write.store(scaled, Ordering::Relaxed);
+                        }
 
                         // Simple linear resampling from device rate to 16kHz
                         let out_len = (mono_samples.len() as f64 / ratio).ceil() as usize;
@@ -146,6 +160,7 @@ impl VoiceCapture {
         Ok(Self {
             stream: Some(stream),
             buffer,
+            level,
         })
     }
 
@@ -169,6 +184,11 @@ impl VoiceCapture {
     /// Current recording duration in seconds
     pub fn duration_secs(&self) -> f32 {
         self.buffer.duration_secs()
+    }
+
+    /// Current audio input level (0-100)
+    pub fn level(&self) -> u8 {
+        self.level.load(Ordering::Relaxed)
     }
 }
 

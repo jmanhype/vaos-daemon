@@ -22,6 +22,9 @@ pub struct StatusBar {
     bg_count: usize,
     width: u16,
     recording: bool,
+    audio_level: u8,
+    download_label: String,
+    download_pct: u8,
 }
 
 impl StatusBar {
@@ -41,6 +44,9 @@ impl StatusBar {
             bg_count: 0,
             width: 0,
             recording: false,
+            audio_level: 0,
+            download_label: String::new(),
+            download_pct: 0,
         }
     }
 
@@ -83,6 +89,23 @@ impl StatusBar {
 
     pub fn set_recording(&mut self, recording: bool) {
         self.recording = recording;
+        if !recording {
+            self.audio_level = 0;
+        }
+    }
+
+    pub fn set_audio_level(&mut self, level: u8) {
+        self.audio_level = level;
+    }
+
+    pub fn set_download_progress(&mut self, label: &str, pct: u8) {
+        self.download_label = label.to_string();
+        self.download_pct = pct;
+    }
+
+    pub fn clear_download_progress(&mut self) {
+        self.download_label.clear();
+        self.download_pct = 0;
     }
 
     pub fn context_utilization(&self) -> f64 {
@@ -135,13 +158,47 @@ impl Component for StatusBar {
     fn draw(&self, frame: &mut Frame, area: Rect) {
         let theme = style::theme();
 
+        // Download progress indicator takes top priority
+        if !self.download_label.is_empty() {
+            let pct = self.download_pct;
+            let bar_total = 20usize;
+            let filled = (pct as usize * bar_total / 100).min(bar_total);
+            let empty = bar_total - filled;
+            let bar = format!("[{}{}]", "\u{2588}".repeat(filled), "\u{2591}".repeat(empty));
+            let spans = vec![
+                Span::styled(
+                    format!("\u{21E9} Downloading {}: ", self.download_label),
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(bar, Style::default().fg(Color::Cyan)),
+                Span::styled(format!(" {}%", pct), theme.progress_label()),
+            ];
+            let line = Line::from(spans);
+            frame.render_widget(Paragraph::new(line), area);
+            return;
+        }
+
         // Recording indicator takes priority over everything
         if self.recording {
+            let level = self.audio_level;
+            let bar_total = 10usize;
+            let filled = (level as usize * bar_total / 100).min(bar_total);
+            let empty = bar_total - filled;
+            let level_bar = format!("[{}{}]", "\u{2588}".repeat(filled), "\u{2591}".repeat(empty));
+            let level_color = if level > 70 {
+                Color::Red
+            } else if level > 30 {
+                Color::Green
+            } else {
+                Color::DarkGray
+            };
             let spans = vec![
                 Span::styled(
                     "\u{25C9} Recording",
                     Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                 ),
+                Span::styled(" ", Style::default()),
+                Span::styled(level_bar, Style::default().fg(level_color)),
                 Span::styled(" \u{2014} click \u{25C9} to stop \u{00b7} Esc cancel", theme.faint()),
             ];
             let line = Line::from(spans);

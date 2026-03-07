@@ -277,6 +277,7 @@ impl App {
         use crate::event::VoiceEvent;
         match event {
             VoiceEvent::TranscriptionReady(text) => {
+                self.status.clear_download_progress();
                 if !text.is_empty() {
                     self.input.insert_str(&text);
                     self.toasts.push(
@@ -294,6 +295,7 @@ impl App {
                 }
             }
             VoiceEvent::TranscriptionError(err) => {
+                self.status.clear_download_progress();
                 self.toasts.push(
                     format!("Voice error: {}", err),
                     crate::components::toast::ToastLevel::Error,
@@ -304,6 +306,17 @@ impl App {
             }
             VoiceEvent::RecordingStopped => {
                 self.stop_recording();
+            }
+            VoiceEvent::DownloadProgress { label, downloaded, total } => {
+                let pct = if total > 0 {
+                    ((downloaded as f64 / total as f64) * 100.0).min(100.0) as u8
+                } else {
+                    0
+                };
+                self.status.set_download_progress(&label, pct);
+            }
+            VoiceEvent::AudioLevel(level) => {
+                self.status.set_audio_level((level * 100.0).clamp(0.0, 100.0) as u8);
             }
         }
     }
@@ -367,6 +380,13 @@ impl App {
         self.toasts.tick();
         self.activity.tick();
         self.agents.tick();
+
+        // Poll audio level from active voice capture
+        if self.voice.recording {
+            if let Some(ref capture) = self.voice.capture {
+                self.status.set_audio_level(capture.level());
+            }
+        }
 
         if self.state.is_processing() {
             if let Some(start) = self.processing_start {
