@@ -5,17 +5,27 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
   Forwarded prefix: /command-center
 
   Routes:
-    GET  /                  → dashboard summary
-    GET  /agents            → all agents
-    GET  /agents/:name      → agent detail
-    GET  /tiers             → tier breakdown
-    GET  /patterns          → swarm patterns
-    GET  /metrics           → metrics summary
-    GET  /sandboxes         → list sandboxes
-    POST /sandboxes         → provision sandbox
-    DELETE /sandboxes/:id   → deprovision sandbox
-    GET  /events            → SSE event stream
-    GET  /events/history    → recent event history
+    GET  /                          → dashboard summary
+    GET  /agents                    → all agents
+    GET  /agents/:name              → agent detail
+    GET  /tiers                     → tier breakdown
+    GET  /patterns                  → swarm patterns
+    GET  /metrics                   → metrics summary
+    GET  /sandboxes                 → list sandboxes
+    POST /sandboxes                 → provision sandbox
+    DELETE /sandboxes/:id           → deprovision sandbox
+    GET  /events                    → SSE event stream
+    GET  /events/history            → recent event history
+    GET  /scheduler                 → scheduler status
+    GET  /scheduler/jobs            → list jobs
+    POST /scheduler/jobs            → add job
+    DELETE /scheduler/jobs/:id      → remove job
+    POST /scheduler/jobs/:id/toggle → toggle job enabled
+    POST /scheduler/jobs/:id/run    → run job immediately
+    GET  /scheduler/triggers        → list triggers
+    POST /scheduler/triggers        → add trigger
+    DELETE /scheduler/triggers/:id  → remove trigger
+    POST /scheduler/triggers/:id/toggle → toggle trigger enabled
   """
   use Plug.Router
   import OptimalSystemAgent.Channels.HTTP.API.Shared
@@ -23,6 +33,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
 
   alias OptimalSystemAgent.CommandCenter
   alias OptimalSystemAgent.Sandbox.Provisioner
+  alias OptimalSystemAgent.Agent.Scheduler
 
   plug :match
   plug :dispatch
@@ -167,6 +178,201 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
 
   get "/events/history" do
     json_error(conn, 501, "not_implemented", "Event history not yet available")
+  end
+
+  # ── GET /scheduler — overall scheduler status ──────────────────────
+
+  get "/scheduler" do
+    try do
+      body = Jason.encode!(Scheduler.status())
+
+      conn
+      |> put_resp_content_type("application/json")
+      |> send_resp(200, body)
+    rescue
+      e -> json_error(conn, 500, "scheduler_error", Exception.message(e))
+    end
+  end
+
+  # ── GET /scheduler/jobs — list all cron jobs ───────────────────────
+
+  get "/scheduler/jobs" do
+    try do
+      jobs = Scheduler.list_jobs()
+      body = Jason.encode!(%{jobs: jobs, count: length(jobs)})
+
+      conn
+      |> put_resp_content_type("application/json")
+      |> send_resp(200, body)
+    rescue
+      e -> json_error(conn, 500, "scheduler_error", Exception.message(e))
+    end
+  end
+
+  # ── POST /scheduler/jobs — create a new cron job ───────────────────
+
+  post "/scheduler/jobs" do
+    try do
+      case Scheduler.add_job(conn.body_params) do
+        {:ok, job} ->
+          conn
+          |> put_resp_content_type("application/json")
+          |> send_resp(201, Jason.encode!(job))
+
+        {:error, reason} ->
+          json_error(conn, 422, "add_job_failed", inspect(reason))
+      end
+    rescue
+      e -> json_error(conn, 500, "scheduler_error", Exception.message(e))
+    end
+  end
+
+  # ── DELETE /scheduler/jobs/:id — remove a cron job ─────────────────
+
+  delete "/scheduler/jobs/:id" do
+    try do
+      case Scheduler.remove_job(id) do
+        :ok ->
+          body = Jason.encode!(%{status: "removed", id: id})
+
+          conn
+          |> put_resp_content_type("application/json")
+          |> send_resp(200, body)
+
+        {:error, :not_found} ->
+          json_error(conn, 404, "not_found", "Job '#{id}' not found")
+
+        {:error, reason} ->
+          json_error(conn, 500, "remove_job_failed", inspect(reason))
+      end
+    rescue
+      e -> json_error(conn, 500, "scheduler_error", Exception.message(e))
+    end
+  end
+
+  # ── POST /scheduler/jobs/:id/toggle — enable or disable a job ──────
+
+  post "/scheduler/jobs/:id/toggle" do
+    try do
+      enabled = conn.body_params["enabled"]
+
+      case Scheduler.toggle_job(id, enabled) do
+        {:ok, job} ->
+          conn
+          |> put_resp_content_type("application/json")
+          |> send_resp(200, Jason.encode!(job))
+
+        {:error, :not_found} ->
+          json_error(conn, 404, "not_found", "Job '#{id}' not found")
+
+        {:error, reason} ->
+          json_error(conn, 500, "toggle_job_failed", inspect(reason))
+      end
+    rescue
+      e -> json_error(conn, 500, "scheduler_error", Exception.message(e))
+    end
+  end
+
+  # ── POST /scheduler/jobs/:id/run — execute a job immediately ───────
+
+  post "/scheduler/jobs/:id/run" do
+    try do
+      case Scheduler.run_job(id) do
+        {:ok, result} ->
+          body = Jason.encode!(%{status: "executed", id: id, result: result})
+
+          conn
+          |> put_resp_content_type("application/json")
+          |> send_resp(200, body)
+
+        {:error, :not_found} ->
+          json_error(conn, 404, "not_found", "Job '#{id}' not found")
+
+        {:error, reason} ->
+          json_error(conn, 500, "run_job_failed", inspect(reason))
+      end
+    rescue
+      e -> json_error(conn, 500, "scheduler_error", Exception.message(e))
+    end
+  end
+
+  # ── GET /scheduler/triggers — list all triggers ─────────────────────
+
+  get "/scheduler/triggers" do
+    try do
+      triggers = Scheduler.list_triggers()
+      body = Jason.encode!(%{triggers: triggers, count: length(triggers)})
+
+      conn
+      |> put_resp_content_type("application/json")
+      |> send_resp(200, body)
+    rescue
+      e -> json_error(conn, 500, "scheduler_error", Exception.message(e))
+    end
+  end
+
+  # ── POST /scheduler/triggers — create a new trigger ─────────────────
+
+  post "/scheduler/triggers" do
+    try do
+      case Scheduler.add_trigger(conn.body_params) do
+        {:ok, trigger} ->
+          conn
+          |> put_resp_content_type("application/json")
+          |> send_resp(201, Jason.encode!(trigger))
+
+        {:error, reason} ->
+          json_error(conn, 422, "add_trigger_failed", inspect(reason))
+      end
+    rescue
+      e -> json_error(conn, 500, "scheduler_error", Exception.message(e))
+    end
+  end
+
+  # ── DELETE /scheduler/triggers/:id — remove a trigger ───────────────
+
+  delete "/scheduler/triggers/:id" do
+    try do
+      case Scheduler.remove_trigger(id) do
+        :ok ->
+          body = Jason.encode!(%{status: "removed", id: id})
+
+          conn
+          |> put_resp_content_type("application/json")
+          |> send_resp(200, body)
+
+        {:error, :not_found} ->
+          json_error(conn, 404, "not_found", "Trigger '#{id}' not found")
+
+        {:error, reason} ->
+          json_error(conn, 500, "remove_trigger_failed", inspect(reason))
+      end
+    rescue
+      e -> json_error(conn, 500, "scheduler_error", Exception.message(e))
+    end
+  end
+
+  # ── POST /scheduler/triggers/:id/toggle — enable or disable a trigger
+
+  post "/scheduler/triggers/:id/toggle" do
+    try do
+      enabled = conn.body_params["enabled"]
+
+      case Scheduler.toggle_trigger(id, enabled) do
+        {:ok, trigger} ->
+          conn
+          |> put_resp_content_type("application/json")
+          |> send_resp(200, Jason.encode!(trigger))
+
+        {:error, :not_found} ->
+          json_error(conn, 404, "not_found", "Trigger '#{id}' not found")
+
+        {:error, reason} ->
+          json_error(conn, 500, "toggle_trigger_failed", inspect(reason))
+      end
+    rescue
+      e -> json_error(conn, 500, "scheduler_error", Exception.message(e))
+    end
   end
 
   match _ do
