@@ -380,12 +380,42 @@ defmodule OptimalSystemAgent.Tools.Registry do
   @doc "Search existing tools and skills by keyword matching against names and descriptions."
   @spec search(String.t()) :: list({String.t(), String.t(), float()})
   def search(query) do
-    GenServer.call(__MODULE__, {:search, query})
+    builtin_tools = :persistent_term.get({__MODULE__, :builtin_tools}, %{})
+    skills = :persistent_term.get({__MODULE__, :skills}, %{})
+    do_search(query, builtin_tools, skills)
   end
 
-  @doc "Execute a tool by name with given arguments."
+  @doc """
+  Execute a tool by name with given arguments.
+
+  Runs directly in the caller's process (no GenServer serialization) using
+  :persistent_term for module lookup. This prevents deadlocks when multiple
+  sessions execute tools concurrently.
+  """
   def execute(tool_name, arguments) do
-    GenServer.call(__MODULE__, {:execute, tool_name, arguments}, 60_000)
+    builtin_tools = :persistent_term.get({__MODULE__, :builtin_tools}, %{})
+
+    case Map.get(builtin_tools, tool_name) do
+      nil ->
+        mcp_tools = :persistent_term.get({__MODULE__, :mcp_tools}, %{})
+
+        case Map.get(mcp_tools, tool_name) do
+          nil ->
+            {:error, "Unknown tool: #{tool_name}"}
+
+          %{original_name: original_name} ->
+            OptimalSystemAgent.MCP.Client.call_tool(original_name, arguments)
+        end
+
+      mod ->
+        case validate_arguments(mod, arguments) do
+          :ok -> mod.execute(arguments)
+          {:error, _reason} = error -> error
+        end
+    end
+  rescue
+    e ->
+      {:error, "Tool execution error: #{Exception.message(e)}"}
   end
 
   @doc """

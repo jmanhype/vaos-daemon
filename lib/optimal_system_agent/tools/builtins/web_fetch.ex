@@ -4,7 +4,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.WebFetch do
   alias MiosaProviders.Registry, as: Providers
 
   @max_body_bytes 15_000
-  @timeout_ms 15_000
+  @timeout_ms 30_000
 
   @impl true
   def name, do: "web_fetch"
@@ -31,16 +31,9 @@ defmodule OptimalSystemAgent.Tools.Builtins.WebFetch do
     if not valid_url?(url) do
       {:error, "Invalid URL: #{url}"}
     else
-      ensure_started()
-
-      url_charlist = String.to_charlist(url)
-      headers = [{~c"User-Agent", ~c"OSA/1.0"}]
-      http_opts = [timeout: @timeout_ms, connect_timeout: 5_000, ssl: ssl_opts()]
-      opts = [body_format: :binary]
-
-      case :httpc.request(:get, {url_charlist, headers}, http_opts, opts) do
-        {:ok, {{_, status, _}, _headers, body}} when status in 200..299 ->
-          text = body |> strip_html() |> String.slice(0, @max_body_bytes)
+      case Req.get(url, headers: [{"user-agent", "OSA/1.0"}], receive_timeout: @timeout_ms, connect_options: [timeout: 5_000]) do
+        {:ok, %Req.Response{status: status, body: body}} when status in 200..299 ->
+          text = body |> to_string() |> strip_html() |> String.slice(0, @max_body_bytes)
 
           if params["prompt"] && String.length(text) > 100 do
             extract_with_llm(text, params["prompt"], url)
@@ -48,7 +41,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.WebFetch do
             {:ok, "#{prompt} from #{url}:\n\n#{text}"}
           end
 
-        {:ok, {{_, status, _}, _headers, _body}} ->
+        {:ok, %Req.Response{status: status}} ->
           {:error, "HTTP #{status} from #{url}"}
 
         {:error, reason} ->
@@ -105,17 +98,6 @@ defmodule OptimalSystemAgent.Tools.Builtins.WebFetch do
       {:ok, {0, 0, 0, 0, 0, 0, 0, 1}} -> true
       _ -> host in ["localhost", "0.0.0.0", "::1", "[::1]"]
     end
-  end
-
-  defp ensure_started do
-    :inets.start()
-    :ssl.start()
-  rescue
-    _ -> :ok
-  end
-
-  defp ssl_opts do
-    [verify: :verify_peer, cacerts: :public_key.cacerts_get(), depth: 3]
   end
 
   defp strip_html(body) when is_binary(body) do

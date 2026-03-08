@@ -308,16 +308,20 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.SessionRoutes do
       |> halt()
     end
 
-    case Loop.process_message(session_id, message) do
-      {:ok, _} ->
+    # Check session exists before dispatching async
+    case Registry.lookup(OptimalSystemAgent.SessionRegistry, session_id) do
+      [{_pid, _}] ->
+        # Fire-and-forget — the loop processes in background.
+        # Client polls GET /sessions/:id/messages for results.
+        Task.start(fn ->
+          Loop.process_message(session_id, message)
+        end)
+
         resp = Jason.encode!(%{status: "processing", session_id: session_id})
         conn |> put_resp_content_type("application/json") |> send_resp(202, resp)
 
-      {:error, :session_not_found} ->
+      [] ->
         json_error(conn, 404, "session_not_found", "Session #{session_id} not found")
-
-      {:error, reason} ->
-        json_error(conn, 500, "process_failed", inspect(reason))
     end
   end
 

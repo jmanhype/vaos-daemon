@@ -10,8 +10,9 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.Mailbox do
   The GenServer only coordinates table creation and deletion; all reads go
   directly to ETS without passing through the GenServer process.
 
-  Message schema:
-    {swarm_id, seq, from_agent_id, message, posted_at_ms}
+  Record schema (`:set` table with composite keys):
+    Message: {{swarm_id, seq}, from_agent_id, message, posted_at_ms}
+    Counter: {{:seq, swarm_id}, counter_value}
 
   The `seq` field is a monotonically-increasing integer per swarm so that
   messages can be read in insertion order.
@@ -42,7 +43,7 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.Mailbox do
   def post(swarm_id, from_agent_id, message) do
     seq = :ets.update_counter(@table, {:seq, swarm_id}, {2, 1}, {{:seq, swarm_id}, 0})
 
-    record = {swarm_id, seq, from_agent_id, message, System.monotonic_time(:millisecond)}
+    record = {{swarm_id, seq}, from_agent_id, message, System.monotonic_time(:millisecond)}
     :ets.insert(@table, record)
     :ok
   rescue
@@ -56,11 +57,10 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.Mailbox do
   Returns a list of maps: %{seq, from, message, posted_at_ms}
   """
   def read_all(swarm_id) do
-    # Match pattern: {swarm_id, seq, from, message, posted_at_ms}
-    # Skip the sequence counter record (key is a tuple {:seq, swarm_id})
-    :ets.match_object(@table, {swarm_id, :_, :_, :_, :_})
-    |> Enum.sort_by(fn {_, seq, _, _, _} -> seq end)
-    |> Enum.map(fn {_, seq, from, message, posted_at_ms} ->
+    # Match composite key {swarm_id, seq} — skips counter records whose key is {:seq, _}
+    :ets.match_object(@table, {{swarm_id, :_}, :_, :_, :_})
+    |> Enum.sort_by(fn {{_, seq}, _, _, _} -> seq end)
+    |> Enum.map(fn {{_, seq}, from, message, posted_at_ms} ->
       %{seq: seq, from: from, message: message, posted_at_ms: posted_at_ms}
     end)
   rescue
@@ -71,9 +71,9 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.Mailbox do
   Read messages from a specific agent within a swarm, sorted by insertion order.
   """
   def read_from(swarm_id, agent_id) do
-    :ets.match_object(@table, {swarm_id, :_, agent_id, :_, :_})
-    |> Enum.sort_by(fn {_, seq, _, _, _} -> seq end)
-    |> Enum.map(fn {_, seq, from, message, posted_at_ms} ->
+    :ets.match_object(@table, {{swarm_id, :_}, agent_id, :_, :_})
+    |> Enum.sort_by(fn {{_, seq}, _, _, _} -> seq end)
+    |> Enum.map(fn {{_, seq}, from, message, posted_at_ms} ->
       %{seq: seq, from: from, message: message, posted_at_ms: posted_at_ms}
     end)
   rescue
@@ -85,7 +85,7 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.Mailbox do
   Deletes all messages and the sequence counter for that swarm.
   """
   def clear(swarm_id) do
-    :ets.match_delete(@table, {swarm_id, :_, :_, :_, :_})
+    :ets.match_delete(@table, {{swarm_id, :_}, :_, :_, :_})
     :ets.delete(@table, {:seq, swarm_id})
     :ok
   rescue
@@ -115,7 +115,7 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.Mailbox do
 
   @impl true
   def init(:ok) do
-    table = :ets.new(@table, [:named_table, :public, :bag, {:read_concurrency, true}])
+    table = :ets.new(@table, [:named_table, :public, :set, {:read_concurrency, true}])
     Logger.info("Swarm mailbox ETS table created: #{inspect(table)}")
     {:ok, %{table: table}}
   end

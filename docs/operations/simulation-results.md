@@ -269,6 +269,47 @@ For production tool-calling, use models with native tool support: Anthropic Clau
 
 ---
 
+## 11. Live Simulation Round 2 (2026-03-08, session 2)
+
+### Bugs Found & Fixed
+1. **`:http_util.timestamp/0` undefined (Erlang 28)** — `web_fetch` used `:httpc` which broke on Erlang 28. Fixed by switching to `Req` HTTP client.
+2. **Tools.Registry GenServer deadlock** — Single GenServer serialized ALL tool calls across ALL sessions. When PACT orchestration blocked the registry, every session deadlocked. Fixed by executing tools directly in the caller's process via `:persistent_term` lookup (no GenServer.call).
+3. **HTTP handler timeout** — `POST /sessions/:id/message` blocked synchronously waiting for the full ReAct loop (300s timeout). Fixed by making it async (fire-and-forget with `Task.start`, client polls for results).
+4. **Orchestrator execute timeout** — 60s timeout on `Orchestrator.execute` was too short for LLM decomposition. Increased to 600s.
+5. **Mailbox ETS type mismatch** — Swarm mailbox created as `:bag` but `update_counter` requires `:set`. Fixed by using `:set` with composite keys `{swarm_id, seq}`.
+
+### TaskFlow SaaS Generation (kimi-k2.5:cloud)
+- **25 files, 2,635 lines** generated at `~/.osa/workspace/taskflow/`
+- Phases completed: Research → Schema → Backend → Frontend (4 of 7)
+- **28 tool calls** across 4 iterations
+- Used: `web_fetch` (Linear.app, Notion.so), `memory_save`, `file_write` x22
+- Prisma schema: 189 lines (8 models with relations)
+- Routes: auth, projects, tasks, teams, comments (302 lines for tasks alone)
+- Components: KanbanBoard, TaskCard, TaskList, Sidebar, CreateTaskDialog
+- Hooks: useTasks, useDebounce, useToast
+
+### Capability Test (8-step sequential)
+- `web_fetch` → Extracted top 5 HN stories (SWE-CI, Cloud VM benchmarks, etc.)
+- `memory_save` → Stored to long-term memory under [research]
+- `file_write` → Created analysis.md with categorized summary
+
+### PACT Multi-Agent Orchestration
+- Planning gate: PASSED (score 0.8)
+- Action gate: PASSED (score 1.0) — 6 workers (3 backend + 2 coder + 1 architect)
+- Coordination: Lead agent dispatched on **qwen3:32b** (elite tier)
+- Architect agent also on qwen3:32b — intelligent tier routing working
+
+### Architecture Changes
+| Change | Before | After |
+|---|---|---|
+| web_fetch HTTP client | `:httpc` (broken on Erlang 28) | `Req` |
+| Tools.Registry.execute | GenServer.call (serialized) | Direct call via `:persistent_term` (parallel) |
+| POST /sessions/:id/message | Sync (300s timeout) | Async (fire-and-forget) |
+| Orchestrator.execute timeout | 60s | 600s |
+| Swarm Mailbox ETS type | `:bag` (broken `update_counter`) | `:set` with composite keys |
+
+---
+
 ## 8. Running Your Own Simulations
 
 ```bash

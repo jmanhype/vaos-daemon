@@ -101,7 +101,7 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
   @spec execute(String.t(), String.t(), keyword()) ::
           {:ok, String.t()} | {:error, term()}
   def execute(message, session_id, opts \\ []) do
-    GenServer.call(__MODULE__, {:execute, message, session_id, opts}, 60_000)
+    GenServer.call(__MODULE__, {:execute, message, session_id, opts}, 600_000)
   end
 
   @doc """
