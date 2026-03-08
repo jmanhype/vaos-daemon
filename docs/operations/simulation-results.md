@@ -218,7 +218,44 @@ Generated `auth.test.ts` — **1,119 lines, 32 test cases** covering:
 - **Multi-iteration ReAct**: Multiple LLM→tool→LLM cycles per request
 - **Web research**: Called `web_fetch` on shadcn/ui, Ant Design, Chakra UI, Mantine
 
-## 8. Model Compatibility Notes
+## 8. Multi-Agent Orchestration (PACT)
+
+The orchestrator dispatched a **PACT workflow** (Planning→Action→Coordination→Testing) with 3 specialized agents:
+
+```
+Task: "Build e-commerce checkout flow: database schema, API endpoints, frontend components"
+
+Agent 1: pact_b11798b3229ba358 (role: backend)    → Created API routes + services
+Agent 2: pact_b76f7cfa2fd829c4 (role: lead)       → Coordinated + created frontend
+Agent 3: pact_cb634607a8ad4921 (role: tester)      → Validated quality
+
+Testing gate passed: score 0.85 (threshold 0.7)
+Total time: 271 seconds
+```
+
+**16 files generated** at `~/.osa/workspace/ecommerce-checkout/`:
+- Backend: Express server, 4 services (payment, shipping, cart, order), 3 route files, auth + error middleware
+- Frontend: React + TypeScript (App.tsx, main.tsx)
+- Database: SQL seed script
+
+## 9. Deep Codebase Self-Analysis (9+ Iterations)
+
+The agent analyzed its own codebase through 9+ ReAct iterations using `file_read`, `file_grep`, `dir_list`:
+
+- **613-line analysis document** written to `~/.osa/workspace/codebase-analysis.md`
+- Mapped 4-tier supervision tree with all children
+- Identified 45+ GenServer modules with responsibilities
+- Found real race conditions (Events.Bus TOCTOU, Orchestrator↔Registry deadlock risk)
+- Listed all public API functions
+- Identified 5 crash vulnerability categories
+
+**Agent loop features exercised:**
+- Explore-first nudge (caught model trying to write before reading)
+- Coding nudge (forced `file_write` over markdown)
+- Multi-iteration ReAct (9+ tool calls per request)
+- Checkpoint persistence (state saved after each iteration for crash recovery)
+
+## 10. Model Compatibility Notes
 
 | Model | Q&A | Tool Calling | Notes |
 |---|---|---|---|
