@@ -33,7 +33,16 @@ defmodule OptimalSystemAgent.Agent.Loop.Checkpoint do
     File.mkdir_p!(dir)
 
     path = checkpoint_path(state.session_id)
-    File.write!(path, Jason.encode!(data), [:utf8])
+    # Sanitize messages to valid UTF-8 before JSON encoding — codebase context
+    # blocks may contain non-UTF-8 bytes from binary file reads.
+    sanitized = update_in(data, [:messages], fn msgs ->
+      Enum.map(msgs, fn
+        %{content: c} = m when is_binary(c) -> %{m | content: sanitize_utf8(c)}
+        %{"content" => c} = m when is_binary(c) -> %{m | "content" => sanitize_utf8(c)}
+        m -> m
+      end)
+    end)
+    File.write!(path, Jason.encode!(sanitized), [:utf8])
 
     Logger.debug("[loop] Checkpoint written for session #{state.session_id} at iteration #{state.iteration}")
   rescue
@@ -82,6 +91,16 @@ defmodule OptimalSystemAgent.Agent.Loop.Checkpoint do
   rescue
     _ -> %{}
   end
+
+  defp sanitize_utf8(binary) when is_binary(binary) do
+    case :unicode.characters_to_binary(binary, :utf8) do
+      {:error, valid, _} -> valid
+      {:incomplete, valid, _} -> valid
+      valid when is_binary(valid) -> valid
+    end
+  end
+
+  defp sanitize_utf8(other), do: to_string(other)
 
   @doc "Delete the checkpoint file for the given session."
   def clear_checkpoint(session_id) do

@@ -658,13 +658,13 @@ defmodule OptimalSystemAgent.Agent.Loop do
             }
             run_loop(state)
 
-          state.auto_continues < 2 and Guardrails.code_in_text?(content) ->
-            Logger.info("[loop] Coding nudge: model wrote code in markdown instead of calling file_write/file_edit (nudge #{state.auto_continues + 1}/2)")
+          state.auto_continues < 3 and Guardrails.code_in_text?(content) ->
+            Logger.info("[loop] Coding nudge: model wrote code in markdown instead of calling file_write/file_edit (nudge #{state.auto_continues + 1}/3)")
             nudge = %{
               role: "system",
-              content: "[System: You wrote code in a markdown code block instead of saving it to a file. " <>
-                "Call file_write to create the file or file_edit to modify an existing one. " <>
-                "Do NOT show code in your response — use the tool to write it directly to disk.]"
+              content: "[CRITICAL: You wrote code in markdown instead of using a tool. " <>
+                "You MUST call file_write with the code as content to create the file. " <>
+                "Do NOT output code in your response text — call the file_write tool NOW.]"
             }
             state = %{state |
               messages: state.messages ++ [%{role: "assistant", content: content}, nudge],
