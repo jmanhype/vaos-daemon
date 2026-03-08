@@ -5,7 +5,7 @@ defmodule OptimalSystemAgent.Channels.CLI.TaskDisplay do
   Returns ANSI strings — no IO, no GenServer, no side effects.
   """
 
-  alias OptimalSystemAgent.Agent.TaskTracker.Task
+  alias OptimalSystemAgent.Agent.Tasks.Tracker.Task
 
   @reset IO.ANSI.reset()
   @bold IO.ANSI.bright()

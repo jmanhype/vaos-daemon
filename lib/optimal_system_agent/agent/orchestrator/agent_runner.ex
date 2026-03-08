@@ -18,7 +18,7 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.AgentRunner do
 
   alias OptimalSystemAgent.Agent.{Roster, Tier, Memory, Orchestrator.SubTask, Orchestrator.AgentState}
   alias OptimalSystemAgent.Events.Bus
-  alias OptimalSystemAgent.Providers.Registry, as: Providers
+  alias MiosaProviders.Registry, as: Providers
   alias OptimalSystemAgent.Tools.Registry, as: Tools
 
   # Three confidence tiers for agent selection:

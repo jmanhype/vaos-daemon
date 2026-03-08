@@ -1,7 +1,7 @@
 defmodule OptimalSystemAgent.Tools.Builtins.WebFetch do
-  @behaviour OptimalSystemAgent.Tools.Behaviour
+  @behaviour MiosaTools.Behaviour
 
-  alias OptimalSystemAgent.Providers.Registry, as: Providers
+  alias MiosaProviders.Registry, as: Providers
 
   @max_body_bytes 15_000
   @timeout_ms 15_000

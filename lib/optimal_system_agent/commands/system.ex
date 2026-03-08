@@ -469,7 +469,7 @@ defmodule OptimalSystemAgent.Commands.System do
 
   @doc false
   def check_providers do
-    providers = OptimalSystemAgent.Providers.Registry.list_providers()
+    providers = MiosaProviders.Registry.list_providers()
 
     if length(providers) > 0 do
       {:ok, "Providers", "#{length(providers)} loaded"}

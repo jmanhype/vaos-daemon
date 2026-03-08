@@ -1,5 +1,5 @@
 defmodule OptimalSystemAgent.Tools.Builtins.FileRead do
-  @behaviour OptimalSystemAgent.Tools.Behaviour
+  @behaviour MiosaTools.Behaviour
 
   @default_allowed_paths ["~", "/tmp"]
 

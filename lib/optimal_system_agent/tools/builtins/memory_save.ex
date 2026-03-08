@@ -1,5 +1,5 @@
 defmodule OptimalSystemAgent.Tools.Builtins.MemorySave do
-  @behaviour OptimalSystemAgent.Tools.Behaviour
+  @behaviour MiosaTools.Behaviour
 
   @impl true
   def name, do: "memory_save"

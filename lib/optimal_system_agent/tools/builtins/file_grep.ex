@@ -1,5 +1,5 @@
 defmodule OptimalSystemAgent.Tools.Builtins.FileGrep do
-  @behaviour OptimalSystemAgent.Tools.Behaviour
+  @behaviour MiosaTools.Behaviour
 
   @default_allowed_paths ["~", "/tmp"]
   @sensitive_paths [".ssh/id_rsa", ".ssh/id_ed25519", ".ssh/id_ecdsa", ".ssh/id_dsa",

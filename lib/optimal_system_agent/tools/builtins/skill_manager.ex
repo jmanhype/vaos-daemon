@@ -7,7 +7,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.SkillManager do
   do alone is handled here; the decision of *when* to create skills is left to
   model intelligence via SYSTEM.md instructions.
   """
-  @behaviour OptimalSystemAgent.Tools.Behaviour
+  @behaviour MiosaTools.Behaviour
 
   require Logger
 

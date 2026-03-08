@@ -1,29 +1,14 @@
 defmodule OptimalSystemAgent.Signal.Classifier do
   @moduledoc """
-  Signal Theory 5-tuple classifier: S = (M, G, T, F, W)
+  OSA-wired Signal Theory 5-tuple classifier.
 
-  Every incoming communication is classified into:
-  - M (Mode): What operational mode (EXECUTE, ASSIST, ANALYZE, BUILD, MAINTAIN)
-  - G (Genre): Communicative purpose (DIRECT, INFORM, COMMIT, DECIDE, EXPRESS)
-  - T (Type): Domain-specific category (question, request, report, etc.)
-  - F (Format): Container format (message, document, notification, etc.)
-  - W (Weight): Informational value [0.0, 1.0] — Shannon information content
+  Thin wrapper around `MiosaSignal.MessageClassifier` that injects the OSA
+  LLM provider and event bus into the classifier's async enrichment path.
 
   Architecture:
-  - PRIMARY: LLM classification — understands intent, context, nuance
-  - FALLBACK: Deterministic pattern matching — used only when LLM is unavailable
-
-  The LLM is the primary classifier because understanding intent requires
-  intelligence. "Help me build a rocket" is BUILD mode, not ASSIST — only
-  an LLM understands that. Keyword matching produces false classifications.
-
-  The deterministic path exists for:
-  - Test environments (classifier_llm_enabled: false)
-  - Offline/disconnected mode
-  - LLM provider failures
-
-  Classification results are cached in ETS (SHA256 key, 10-minute TTL)
-  so repeated messages don't hit the LLM every time.
+  - PRIMARY: LLM classification via `MiosaProviders.Registry`
+  - FALLBACK: Deterministic pattern matching from `MiosaSignal.MessageClassifier`
+  - CACHE: ETS-backed, 10-minute TTL (managed in `MiosaSignal.MessageClassifier`)
 
   Reference: Luna, R. (2026). Signal Theory: The Architecture of Optimal
   Intent Encoding in Communication Systems. https://zenodo.org/records/18774174
@@ -31,109 +16,12 @@ defmodule OptimalSystemAgent.Signal.Classifier do
 
   require Logger
 
-  alias OptimalSystemAgent.Providers.Registry, as: Providers
+  alias MiosaProviders.Registry, as: Providers
   alias OptimalSystemAgent.PromptLoader
   alias OptimalSystemAgent.Events.Bus
 
-  defstruct [
-    :mode,
-    :genre,
-    :type,
-    :format,
-    :weight,
-    :raw,
-    :channel,
-    :timestamp,
-    confidence: :high
-  ]
-
-  @type confidence :: :high | :low
-
-  @type t :: %__MODULE__{
-          mode: :execute | :assist | :analyze | :build | :maintain,
-          genre: :direct | :inform | :commit | :decide | :express,
-          type: String.t(),
-          format: :message | :document | :notification | :command | :transcript,
-          weight: float(),
-          raw: String.t(),
-          channel: atom(),
-          timestamp: DateTime.t(),
-          confidence: confidence()
-        }
-
-  @cache_table :osa_classifier_cache
-  @cache_ttl 600
-  @max_cache_size 500
-
-  @doc """
-  Fast deterministic classification — always <1ms, returns full 5-tuple
-  with `confidence: :low`. Sufficient for routing (plan mode, soul overlay).
-  """
-  def classify_fast(message, channel \\ :cli) do
-    classify_deterministic(message, channel)
-  end
-
-  @doc """
-  Async LLM enrichment — spawns a supervised Task that:
-  1. Calls cached LLM classifier (ETS cache hit = instant)
-  2. Emits `Bus.emit(:signal_classified, enriched_signal)` for learning/analytics
-  3. Writes result to ETS cache for future `classify/2` calls
-
-  Fire-and-forget. Does not block the caller.
-  """
-  def classify_async(message, channel \\ :cli, session_id \\ nil) do
-    if llm_enabled?() do
-      Task.Supervisor.start_child(
-        OptimalSystemAgent.Events.TaskSupervisor,
-        fn ->
-          case cached_classify_llm(message, channel) do
-            {:ok, enriched} ->
-              Bus.emit(:signal_classified, %{
-                signal: enriched,
-                session_id: session_id,
-                source: :llm
-              })
-
-            {:error, reason} ->
-              Logger.debug("[Classifier] Async enrichment failed: #{inspect(reason)}")
-          end
-        end
-      )
-    end
-
-    :ok
-  end
-
-  @doc """
-  Classify a raw message into a Signal 5-tuple.
-
-  When LLM is enabled (production): LLM classifies with full understanding.
-  When LLM is disabled (tests/offline): Deterministic pattern matching.
-  """
-  def classify(message, channel \\ :cli) do
-    if llm_enabled?() do
-      # LLM-primary: use intelligence to understand intent
-      case cached_classify_llm(message, channel) do
-        {:ok, signal} ->
-          signal
-
-        {:error, _} ->
-          # Fallback to deterministic ONLY when LLM is unavailable
-          Logger.warning(
-            "[Classifier] LLM unavailable, falling back to deterministic classification"
-          )
-
-          classify_deterministic(message, channel)
-      end
-    else
-      # Test / offline mode: deterministic classification
-      classify_deterministic(message, channel)
-    end
-  end
-
-  # ---------------------------------------------------------------------------
-  # LLM Classification (Primary)
-  # ---------------------------------------------------------------------------
+  # Re-export the struct and type from MiosaSignal.MessageClassifier
+  @type t :: MiosaSignal.MessageClassifier.t()
 
   @classification_prompt_fallback """
   You are a Signal Theory classifier. Classify this message into exactly 4 fields.
@@ -185,12 +73,75 @@ defmodule OptimalSystemAgent.Signal.Classifier do
   Respond with ONLY: {"mode":"...","genre":"...","type":"...","weight":0.0}
   """
 
-  defp classification_prompt do
-    PromptLoader.get(:classifier, @classification_prompt_fallback)
+  @doc """
+  Fast deterministic classification — always <1ms, `confidence: :low`.
+  """
+  def classify_fast(message, channel \\ :cli) do
+    MiosaSignal.MessageClassifier.classify_fast(message, channel)
   end
 
-  defp classify_llm(message, channel) do
-    # Truncate to prevent prompt injection via extremely long messages
+  @doc """
+  Async LLM enrichment — fire-and-forget.
+
+  Spawns a supervised Task that calls the LLM classifier and emits
+  `Bus.emit(:signal_classified, ...)` with the enriched signal.
+  """
+  def classify_async(message, channel \\ :cli, session_id \\ nil) do
+    if llm_enabled?() do
+      Task.Supervisor.start_child(
+        OptimalSystemAgent.Events.TaskSupervisor,
+        fn ->
+          case call_llm(message, channel) do
+            {:ok, data} ->
+              Bus.emit(:signal_classified, %{
+                signal: data,
+                session_id: session_id,
+                source: :llm
+              })
+
+            {:error, reason} ->
+              Logger.debug("[Classifier] Async enrichment failed: #{inspect(reason)}")
+          end
+        end
+      )
+    end
+
+    :ok
+  end
+
+  @doc """
+  Classify a raw message into a Signal 5-tuple.
+
+  Uses the OSA LLM provider when enabled; falls back to deterministic.
+  """
+  def classify(message, channel \\ :cli) do
+    if llm_enabled?() do
+      case call_llm(message, channel) do
+        {:ok, data} ->
+          data
+
+        {:error, _} ->
+          Logger.warning(
+            "[Classifier] LLM unavailable, falling back to deterministic classification"
+          )
+
+          MiosaSignal.MessageClassifier.classify_deterministic(message, channel)
+      end
+    else
+      MiosaSignal.MessageClassifier.classify_deterministic(message, channel)
+    end
+  end
+
+  @doc """
+  Calculate the informational weight of a signal.
+  """
+  defdelegate calculate_weight(msg), to: MiosaSignal.MessageClassifier
+
+  # ---------------------------------------------------------------------------
+  # Private — LLM call via OSA Providers.Registry
+  # ---------------------------------------------------------------------------
+
+  defp call_llm(message, channel) do
     safe_message =
       message
       |> String.slice(0, 1000)
@@ -226,30 +177,13 @@ defmodule OptimalSystemAgent.Signal.Classifier do
 
     case Jason.decode(json_str) do
       {:ok, data} when is_map(data) ->
-        mode = parse_mode(data["mode"])
-        genre = parse_genre(data["genre"])
-        type = parse_type(data["type"])
-        weight = parse_weight(data["weight"])
-
-        {:ok,
-         %__MODULE__{
-           mode: mode || :assist,
-           genre: genre || :inform,
-           type: type || "general",
-           format: classify_format(message, channel),
-           weight: weight || calculate_weight(message),
-           raw: message,
-           channel: channel,
-           timestamp: DateTime.utc_now(),
-           confidence: :high
-         }}
+        build_signal(data, message, channel)
 
       {:error, _} ->
-        # Try to extract JSON from prose response
         case Regex.run(~r/\{[^}]+\}/, json_str) do
           [json_match] ->
             case Jason.decode(json_match) do
-              {:ok, data} -> parse_llm_result_from_data(data, message, channel)
+              {:ok, data} -> build_signal(data, message, channel)
               _ -> {:error, :parse_failed}
             end
 
@@ -259,14 +193,19 @@ defmodule OptimalSystemAgent.Signal.Classifier do
     end
   end
 
-  defp parse_llm_result_from_data(data, message, channel) do
+  defp build_signal(data, message, channel) do
+    mode = parse_mode(data["mode"])
+    genre = parse_genre(data["genre"])
+    type = parse_type(data["type"])
+    weight = parse_weight(data["weight"])
+
     {:ok,
-     %__MODULE__{
-       mode: parse_mode(data["mode"]) || :assist,
-       genre: parse_genre(data["genre"]) || :inform,
-       type: parse_type(data["type"]) || "general",
+     %MiosaSignal.MessageClassifier{
+       mode: mode || :assist,
+       genre: genre || :inform,
+       type: type || "general",
        format: classify_format(message, channel),
-       weight: parse_weight(data["weight"]) || calculate_weight(message),
+       weight: weight || MiosaSignal.MessageClassifier.calculate_weight(message),
        raw: message,
        channel: channel,
        timestamp: DateTime.utc_now(),
@@ -274,65 +213,26 @@ defmodule OptimalSystemAgent.Signal.Classifier do
      }}
   end
 
-  # ---------------------------------------------------------------------------
-  # LLM Cache (ETS-backed, 10-minute TTL)
-  # ---------------------------------------------------------------------------
+  defp classification_prompt do
+    PromptLoader.get(:classifier, @classification_prompt_fallback)
+  end
 
-  defp cached_classify_llm(message, channel) do
-    ensure_cache()
-    key = :crypto.hash(:sha256, "#{channel}:#{message}")
-    now = System.system_time(:second)
-
-    case :ets.lookup(@cache_table, key) do
-      [{^key, {:ok, cached_signal}, ts}] when now - ts < @cache_ttl ->
-        # Return cached result with fresh timestamp
-        {:ok, %{cached_signal | timestamp: DateTime.utc_now()}}
-
-      _ ->
-        result = classify_llm(message, channel)
-
-        case result do
-          {:ok, _} = ok ->
-            :ets.insert(@cache_table, {key, ok, now})
-            maybe_prune_cache(now)
-            ok
-
-          error ->
-            error
-        end
+  defp classify_format(_msg, channel) do
+    case channel do
+      :cli -> :command
+      :telegram -> :message
+      :discord -> :message
+      :slack -> :message
+      :whatsapp -> :message
+      :webhook -> :notification
+      :filesystem -> :document
+      _ -> :message
     end
   end
 
-  defp ensure_cache do
-    if :ets.whereis(@cache_table) == :undefined do
-      :ets.new(@cache_table, [:set, :public, :named_table])
-    end
+  defp llm_enabled? do
+    Application.get_env(:optimal_system_agent, :classifier_llm_enabled, true)
   end
-
-  # Prune cache when it exceeds @max_cache_size:
-  # 1. Delete expired entries (TTL elapsed)
-  # 2. If still over limit, evict the oldest half by insertion timestamp
-  defp maybe_prune_cache(now) do
-    if :ets.info(@cache_table, :size) > @max_cache_size do
-      expired_before = now - @cache_ttl
-
-      :ets.select_delete(@cache_table, [
-        {{:_, :_, :"$1"}, [{:"=<", :"$1", expired_before}], [true]}
-      ])
-
-      if :ets.info(@cache_table, :size) > @max_cache_size do
-        @cache_table
-        |> :ets.tab2list()
-        |> Enum.sort_by(fn {_k, _v, ts} -> ts end)
-        |> Enum.take(div(@max_cache_size, 2))
-        |> Enum.each(fn {key, _v, _ts} -> :ets.delete(@cache_table, key) end)
-      end
-    end
-  end
-
-  # ---------------------------------------------------------------------------
-  # LLM Response Parsers
-  # ---------------------------------------------------------------------------
 
   defp parse_mode(str) when is_binary(str) do
     case String.downcase(String.trim(str)) do
@@ -371,174 +271,4 @@ defmodule OptimalSystemAgent.Signal.Classifier do
   defp parse_weight(val) when is_float(val), do: max(0.0, min(1.0, val))
   defp parse_weight(val) when is_integer(val), do: max(0.0, min(1.0, val * 1.0))
   defp parse_weight(_), do: nil
-
-  # ---------------------------------------------------------------------------
-  # Config Guard
-  # ---------------------------------------------------------------------------
-
-  defp llm_enabled? do
-    Application.get_env(:optimal_system_agent, :classifier_llm_enabled, true)
-  end
-
-  # ---------------------------------------------------------------------------
-  # Deterministic Classification (Fallback)
-  # ---------------------------------------------------------------------------
-
-  @doc false
-  def classify_deterministic(message, channel) do
-    %__MODULE__{
-      mode: classify_mode(message),
-      genre: classify_genre(message),
-      type: classify_type(message),
-      format: classify_format(message, channel),
-      weight: calculate_weight(message),
-      raw: message,
-      channel: channel,
-      timestamp: DateTime.utc_now(),
-      confidence: :low
-    }
-  end
-
-  # --- Mode Classification (Beer's VSM S1-S5) ---
-
-  defp classify_mode(msg) do
-    lower = String.downcase(msg)
-
-    cond do
-      matches_word?(lower, ~w(build create generate make scaffold design)) or
-          matches_word_strict?(lower, "new") ->
-        :build
-
-      matches_word?(lower, ~w(run execute trigger sync send import export)) ->
-        :execute
-
-      matches_word?(lower, ~w(analyze report dashboard metrics trend compare kpi)) ->
-        :analyze
-
-      matches_word?(lower, ~w(update upgrade migrate fix health backup restore rollback version)) ->
-        :maintain
-
-      true ->
-        :assist
-    end
-  end
-
-  # --- Genre Classification (Speech Act Theory) ---
-
-  @commit_phrases ["i will", "i'll", "let me", "i promise", "i commit"]
-  @express_words ~w(thanks love hate great terrible wow)
-
-  defp classify_genre(msg) do
-    lower = String.downcase(msg)
-
-    cond do
-      matches_word?(lower, ~w(please run make create send)) or
-        matches_word_strict?(lower, "do") or
-          String.ends_with?(lower, "!") ->
-        :direct
-
-      matches_phrase?(lower, @commit_phrases) ->
-        :commit
-
-      matches_word?(lower, ~w(approve reject cancel confirm decide)) or
-          matches_word_strict?(lower, "set") ->
-        :decide
-
-      matches_word?(lower, @express_words) ->
-        :express
-
-      true ->
-        :inform
-    end
-  end
-
-  # --- Type Classification ---
-
-  defp classify_type(msg) do
-    lower = String.downcase(msg)
-
-    cond do
-      String.contains?(lower, "?") -> "question"
-      matches_word?(lower, ~w(help how what why when where)) -> "question"
-      matches_word?(lower, ~w(error bug broken fail crash)) -> "issue"
-      matches_word?(lower, ~w(remind schedule later tomorrow)) -> "scheduling"
-      matches_word?(lower, ~w(summarize summary brief recap)) -> "summary"
-      true -> "general"
-    end
-  end
-
-  # --- Format Classification ---
-
-  defp classify_format(_msg, channel) do
-    case channel do
-      :cli -> :command
-      :telegram -> :message
-      :discord -> :message
-      :slack -> :message
-      :whatsapp -> :message
-      :webhook -> :notification
-      :filesystem -> :document
-      _ -> :message
-    end
-  end
-
-  # --- Weight Calculation (Shannon Information Content) ---
-
-  @doc """
-  Calculate the informational weight of a signal.
-  Higher weight = more information content = higher priority.
-
-  Factors:
-  - Message length (longer = potentially more info, with diminishing returns)
-  - Question marks (questions are inherently high-info requests)
-  - Urgency markers
-  - Uniqueness (not a greeting or small talk)
-  """
-  def calculate_weight(msg) do
-    len = String.length(msg)
-    # Base scales with message length — single words start near 0, not 0.5
-    base = min(len / 20.0, 0.5)
-    length_bonus = min(len / 500.0, 0.2)
-    question_bonus = if String.contains?(msg, "?"), do: 0.15, else: 0.0
-
-    urgency_bonus =
-      if matches_word?(String.downcase(msg), ~w(urgent asap critical emergency immediately)) or
-           matches_word_strict?(String.downcase(msg), "now"), do: 0.2, else: 0.0
-
-    noise_penalty =
-      if matches_word?(String.downcase(msg), ~w(hello thanks lol haha)) or
-           matches_any_word_strict?(String.downcase(msg), ~w(hi ok hey sure k y n yep nope np gg)), do: -0.3, else: 0.0
-
-    # Emoji-only messages are noise
-    emoji_only_penalty =
-      if Regex.match?(~r/\A[\p{So}\p{Sk}\s]+\z/u, msg), do: -0.5, else: 0.0
-
-    (base + length_bonus + question_bonus + urgency_bonus + noise_penalty + emoji_only_penalty)
-    |> max(0.0)
-    |> min(1.0)
-  end
-
-  # --- Helpers ---
-
-  defp matches_word?(text, keywords) when is_list(keywords) do
-    Enum.any?(keywords, fn kw ->
-      Regex.match?(~r/\b#{Regex.escape(kw)}/, text)
-    end)
-  end
-
-  defp matches_word_strict?(text, keyword) do
-    Regex.match?(~r/\b#{Regex.escape(keyword)}\b/, text)
-  end
-
-  defp matches_any_word_strict?(text, keywords) when is_list(keywords) do
-    Enum.any?(keywords, fn kw ->
-      Regex.match?(~r/\b#{Regex.escape(kw)}\b/, text)
-    end)
-  end
-
-  defp matches_phrase?(text, phrases) when is_list(phrases) do
-    Enum.any?(phrases, fn phrase ->
-      Regex.match?(~r/\b#{Regex.escape(phrase)}\b/, text)
-    end)
-  end
 end

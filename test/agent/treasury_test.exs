@@ -1,7 +1,7 @@
 defmodule OptimalSystemAgent.Agent.TreasuryTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Agent.Treasury
+  alias MiosaBudget.Treasury
 
   # Start a fresh Treasury per test to avoid shared state
   setup do

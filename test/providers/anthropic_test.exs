@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Providers.AnthropicTest do
+defmodule MiosaProviders.AnthropicTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Providers.Anthropic
+  alias MiosaProviders.Anthropic
 
   # ---------------------------------------------------------------------------
   # format_messages/1

@@ -29,6 +29,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
     /tasks       → ProtocolRoutes    GET /history
     /command-center → CommandCenterRoutes  GET /|/agents|/tiers|/patterns|/metrics|/events, POST /sandboxes
     /classify    → inline            POST / (signal classification)
+    /knowledge   → KnowledgeRoutes   GET /triples|/count|/context/:id, POST /assert|/retract|/sparql|/reason
   """
   use Plug.Router
   import OptimalSystemAgent.Channels.HTTP.API.Shared
@@ -110,6 +111,9 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
   forward "/events", to: API.ProtocolRoutes
   forward "/oscp", to: API.ProtocolRoutes
   forward "/tasks", to: API.ProtocolRoutes
+
+  # ── Knowledge graph ──────────────────────────────────────────────────
+  forward "/knowledge", to: API.KnowledgeRoutes
 
   # ── Platform (multi-tenant auth + CRUD) ─────────────────────────────
   forward "/platform/auth", to: API.PlatformAuthRoutes

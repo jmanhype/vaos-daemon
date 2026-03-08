@@ -1,5 +1,5 @@
 defmodule OptimalSystemAgent.Tools.Builtins.Github do
-  @behaviour OptimalSystemAgent.Tools.Behaviour
+  @behaviour MiosaTools.Behaviour
 
   @allowed_commands ~w(
     pr_create pr_list pr_view pr_merge

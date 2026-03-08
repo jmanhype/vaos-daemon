@@ -88,7 +88,19 @@ defmodule OptimalSystemAgent.MixProject do
       {:miosa_budget, path: "../miosa_budget"},
 
       # Knowledge graph — semantic triple store with pluggable backends
-      {:miosa_knowledge, path: "../miosa_knowledge"}
+      {:miosa_knowledge, path: "../miosa_knowledge"},
+
+      # Tool infrastructure — Behaviour, Instruction, Middleware, Pipeline, Registry
+      {:miosa_tools, path: "../miosa_tools"},
+
+      # Signal Theory envelopes, classifiers, failure modes, CloudEvents codec
+      {:miosa_signal, path: "../miosa_signal"},
+
+      # Extracted memory package (session store, episodic memory, learning engine, cortex)
+      {:miosa_memory, path: "../miosa_memory"},
+
+      # LLM provider implementations (18 providers, registry, fallback chains)
+      {:miosa_providers, path: "../miosa_providers"}
     ]
   end
 

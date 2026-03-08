@@ -17,11 +17,11 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.ProtocolRoutes do
   import OptimalSystemAgent.Channels.HTTP.API.Shared
   require Logger
 
-  alias OptimalSystemAgent.Protocol.CloudEvent
+  alias MiosaSignal.CloudEvent
   alias OptimalSystemAgent.Protocol.OSCP
   alias OptimalSystemAgent.Events.Bus
   alias OptimalSystemAgent.Fleet.Registry, as: Fleet
-  alias OptimalSystemAgent.Agent.TaskQueue
+  alias OptimalSystemAgent.Agent.Tasks
 
   plug :match
   plug :dispatch
@@ -63,7 +63,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.ProtocolRoutes do
       |> maybe_put(:status, parse_task_status(conn.params["status"]))
       |> maybe_put(:limit, parse_int(conn.params["limit"]))
 
-    tasks = TaskQueue.list_history(opts)
+    tasks = Tasks.list_history(opts)
 
     body = Jason.encode!(%{tasks: tasks, count: length(tasks)})
 
@@ -158,7 +158,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.ProtocolRoutes do
     payload = event.data["payload"] || event.data[:payload] || %{}
 
     if task_id && agent_id do
-      TaskQueue.enqueue(task_id, agent_id, payload)
+      Tasks.enqueue(task_id, agent_id, payload)
     else
       Logger.warning("[API] OSCP instruction missing task_id or agent_id")
     end
@@ -174,11 +174,11 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.ProtocolRoutes do
 
       status in ["failed", :failed] ->
         error = event.data["error"] || event.data[:error] || "unknown error"
-        TaskQueue.fail(task_id, error)
+        Tasks.fail_queued(task_id, error)
 
       true ->
         output = event.data["output"] || event.data[:output] || %{}
-        TaskQueue.complete(task_id, output)
+        Tasks.complete_queued(task_id, output)
     end
   end
 

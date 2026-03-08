@@ -1,7 +1,7 @@
 defmodule OptimalSystemAgent.Tools.Builtins.WalletOps do
   @moduledoc "Wallet operations tool — check balance, send payments, view history."
 
-  @behaviour OptimalSystemAgent.Tools.Behaviour
+  @behaviour MiosaTools.Behaviour
 
   alias OptimalSystemAgent.Integrations.Wallet
 

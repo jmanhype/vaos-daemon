@@ -76,7 +76,7 @@ defmodule OptimalSystemAgent.Channels.HTTP do
           # Resolve from provider's default model
           prov = Application.get_env(:optimal_system_agent, :default_provider, :ollama)
 
-          case OptimalSystemAgent.Providers.Registry.provider_info(prov) do
+          case MiosaProviders.Registry.provider_info(prov) do
             {:ok, info} -> to_string(info.default_model)
             _ -> to_string(prov)
           end
@@ -93,7 +93,7 @@ defmodule OptimalSystemAgent.Channels.HTTP do
 
     uptime = System.system_time(:second) - Application.get_env(:optimal_system_agent, :start_time, System.system_time(:second))
 
-    context_window = OptimalSystemAgent.Providers.Registry.context_window(model_name)
+    context_window = MiosaProviders.Registry.context_window(model_name)
 
     body =
       Jason.encode!(%{
@@ -167,7 +167,7 @@ defmodule OptimalSystemAgent.Channels.HTTP do
             # Auto-detect Ollama tiers if Ollama selected
             if state.provider == "ollama" do
               try do
-                OptimalSystemAgent.Providers.Ollama.auto_detect_model()
+                MiosaProviders.Ollama.auto_detect_model()
                 OptimalSystemAgent.Agent.Tier.detect_ollama_tiers()
               rescue
                 _ -> :ok

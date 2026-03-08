@@ -38,8 +38,7 @@ defmodule OptimalSystemAgent.Agent.Context do
   require Logger
 
   alias OptimalSystemAgent.Agent.Scratchpad
-  alias OptimalSystemAgent.Agent.Workflow
-  alias OptimalSystemAgent.Agent.TaskTracker
+  alias OptimalSystemAgent.Agent.Tasks
   alias OptimalSystemAgent.Agent.Memory.Episodic
   alias OptimalSystemAgent.Agent.Memory.Injector
   alias OptimalSystemAgent.Agent.Memory.Taxonomy
@@ -48,7 +47,7 @@ defmodule OptimalSystemAgent.Agent.Context do
   @response_reserve 8_192
 
   defp max_tokens, do: Application.get_env(:optimal_system_agent, :max_context_tokens, 128_000)
-  defp max_tokens(model), do: OptimalSystemAgent.Providers.Registry.context_window(model)
+  defp max_tokens(model), do: MiosaProviders.Registry.context_window(model)
 
   # ---------------------------------------------------------------------------
   # Public API
@@ -197,7 +196,8 @@ defmodule OptimalSystemAgent.Agent.Context do
       {task_state_block(state), 1, "task_state"},
       {workflow_block(state), 1, "workflow"},
       {skills_block(state), 2, "skills"},
-      {scratchpad_block(state), 1, "scratchpad"}
+      {scratchpad_block(state), 1, "scratchpad"},
+      {knowledge_block(state), 2, "knowledge"}
     ]
     |> Enum.reject(fn {content, _, _} -> is_nil(content) or content == "" end)
   end
@@ -525,7 +525,7 @@ defmodule OptimalSystemAgent.Agent.Context do
     session_id = Map.get(state, :session_id)
 
     if session_id do
-      Workflow.context_block(session_id)
+      Tasks.workflow_context_block(session_id)
     else
       nil
     end
@@ -538,7 +538,7 @@ defmodule OptimalSystemAgent.Agent.Context do
 
     tasks =
       try do
-        TaskTracker.get_tasks(session_id)
+        Tasks.get_tasks(session_id)
       rescue
         _ -> []
       catch
@@ -728,6 +728,22 @@ defmodule OptimalSystemAgent.Agent.Context do
       Scratchpad.instruction()
     else
       nil
+    end
+  end
+
+  defp knowledge_block(state) do
+    try do
+      store = GenServer.whereis({:via, Registry, {MiosaKnowledge.Registry, "osa_default"}})
+
+      if is_nil(store) do
+        ""
+      else
+        agent_id = Map.get(state, :session_id) || "default"
+        ctx = MiosaKnowledge.Context.for_agent(store, agent_id: agent_id)
+        MiosaKnowledge.Context.to_prompt(ctx)
+      end
+    rescue
+      _ -> ""
     end
   end
 end

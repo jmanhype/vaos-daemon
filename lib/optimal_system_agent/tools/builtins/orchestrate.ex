@@ -13,7 +13,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Orchestrate do
   - Real-time progress tracking
   - Result synthesis
   """
-  @behaviour OptimalSystemAgent.Tools.Behaviour
+  @behaviour MiosaTools.Behaviour
 
   require Logger
 

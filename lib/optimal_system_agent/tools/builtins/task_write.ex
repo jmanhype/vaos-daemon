@@ -6,9 +6,9 @@ defmodule OptimalSystemAgent.Tools.Builtins.TaskWrite do
   Enables the LLM to create, track, and manage multi-step work plans.
   """
 
-  @behaviour OptimalSystemAgent.Tools.Behaviour
+  @behaviour MiosaTools.Behaviour
 
-  alias OptimalSystemAgent.Agent.TaskTracker
+  alias OptimalSystemAgent.Agent.Tasks
 
   @default_session "default"
 
@@ -108,7 +108,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.TaskWrite do
       |> maybe_put(:blocked_by, args["blocked_by"])
       |> maybe_put(:metadata, args["metadata"])
 
-    case TaskTracker.add_task(session_id, title, opts) do
+    case Tasks.add_task(session_id, title, opts) do
       {:ok, id} -> {:ok, "Created task #{id}: #{title}"}
       {:error, reason} -> {:error, "Failed to add task: #{inspect(reason)}"}
     end
@@ -119,7 +119,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.TaskWrite do
 
   defp do_action("add_multiple", session_id, %{"titles" => titles})
        when is_list(titles) and length(titles) > 0 do
-    case TaskTracker.add_tasks(session_id, titles) do
+    case Tasks.add_tasks(session_id, titles) do
       {:ok, ids} -> {:ok, "Created #{length(ids)} tasks: #{Enum.join(ids, ", ")}"}
       {:error, reason} -> {:error, "Failed to add tasks: #{inspect(reason)}"}
     end
@@ -129,7 +129,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.TaskWrite do
     do: {:error, "Missing required parameter: titles (non-empty list)"}
 
   defp do_action("start", session_id, %{"task_id" => task_id}) do
-    case TaskTracker.start_task(session_id, task_id) do
+    case Tasks.start_task(session_id, task_id) do
       :ok -> {:ok, "Started task #{task_id}"}
       {:error, :not_found} -> {:error, "Task #{task_id} not found"}
       {:error, reason} -> {:error, "Failed to start task: #{inspect(reason)}"}
@@ -140,7 +140,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.TaskWrite do
     do: {:error, "Missing required parameter: task_id"}
 
   defp do_action("complete", session_id, %{"task_id" => task_id}) do
-    case TaskTracker.complete_task(session_id, task_id) do
+    case Tasks.complete_task(session_id, task_id) do
       :ok -> {:ok, "Completed task #{task_id}"}
       {:error, :not_found} -> {:error, "Task #{task_id} not found"}
       {:error, reason} -> {:error, "Failed to complete task: #{inspect(reason)}"}
@@ -153,7 +153,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.TaskWrite do
   defp do_action("fail", session_id, %{"task_id" => task_id} = args) do
     reason = Map.get(args, "reason", "no reason given")
 
-    case TaskTracker.fail_task(session_id, task_id, reason) do
+    case Tasks.fail_task(session_id, task_id, reason) do
       :ok -> {:ok, "Failed task #{task_id}: #{reason}"}
       {:error, :not_found} -> {:error, "Task #{task_id} not found"}
       {:error, err} -> {:error, "Failed to fail task: #{inspect(err)}"}
@@ -164,12 +164,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.TaskWrite do
     do: {:error, "Missing required parameter: task_id"}
 
   defp do_action("list", session_id, _args) do
-    tasks = TaskTracker.get_tasks(session_id)
+    tasks = Tasks.get_tasks(session_id)
     {:ok, format_task_list(tasks)}
   end
 
   defp do_action("clear", session_id, _args) do
-    TaskTracker.clear_tasks(session_id)
+    Tasks.clear_tasks(session_id)
     {:ok, "Cleared all tasks"}
   end
 
@@ -180,7 +180,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.TaskWrite do
       |> maybe_put(:owner, args["owner"])
       |> maybe_put(:metadata, args["metadata"])
 
-    case TaskTracker.update_task_fields(session_id, task_id, updates) do
+    case Tasks.update_task_fields(session_id, task_id, updates) do
       :ok -> {:ok, "Updated task #{task_id}"}
       {:error, :not_found} -> {:error, "Task #{task_id} not found"}
       {:error, reason} -> {:error, "Failed to update: #{inspect(reason)}"}
@@ -191,7 +191,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.TaskWrite do
     do: {:error, "Missing required parameter: task_id"}
 
   defp do_action("add_dependency", session_id, %{"task_id" => task_id, "blocker_id" => blocker_id}) do
-    case TaskTracker.add_dependency(session_id, task_id, blocker_id) do
+    case Tasks.add_dependency(session_id, task_id, blocker_id) do
       :ok -> {:ok, "Added dependency: #{task_id} blocked by #{blocker_id}"}
       {:error, :not_found} -> {:error, "Task #{task_id} not found"}
       {:error, :blocker_not_found} -> {:error, "Blocker task #{blocker_id} not found"}
@@ -203,7 +203,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.TaskWrite do
     do: {:error, "Missing required parameters: task_id, blocker_id"}
 
   defp do_action("remove_dependency", session_id, %{"task_id" => task_id, "blocker_id" => blocker_id}) do
-    case TaskTracker.remove_dependency(session_id, task_id, blocker_id) do
+    case Tasks.remove_dependency(session_id, task_id, blocker_id) do
       :ok -> {:ok, "Removed dependency: #{task_id} no longer blocked by #{blocker_id}"}
       {:error, :not_found} -> {:error, "Task #{task_id} not found"}
       {:error, reason} -> {:error, "Failed to remove dependency: #{inspect(reason)}"}
@@ -214,7 +214,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.TaskWrite do
     do: {:error, "Missing required parameters: task_id, blocker_id"}
 
   defp do_action("next", session_id, _args) do
-    case TaskTracker.get_next_task(session_id) do
+    case Tasks.get_next_task(session_id) do
       {:ok, nil} -> {:ok, "No unblocked pending tasks."}
       {:ok, task} -> {:ok, "Next task: #{task.id} — #{task.title}"}
     end

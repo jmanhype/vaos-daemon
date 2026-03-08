@@ -22,7 +22,6 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
   require Logger
 
   alias OptimalSystemAgent.CommandCenter
-  alias OptimalSystemAgent.EventStream
   alias OptimalSystemAgent.Sandbox.Provisioner
 
   plug :match
@@ -81,7 +80,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
 
   get "/patterns" do
     patterns =
-      OptimalSystemAgent.Swarm.Patterns.list_patterns()
+      OptimalSystemAgent.Agent.Orchestrator.Patterns.list_patterns()
       |> Enum.map(fn {name, desc} -> %{name: name, description: desc} end)
 
     body = Jason.encode!(%{patterns: patterns, count: length(patterns)})
@@ -157,21 +156,17 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
   end
 
   # ── GET /events — SSE event stream ─────────────────────────────────
+  # TODO: re-implement via Events.Bus PubSub once Command Center SSE is scoped
 
   get "/events" do
-    EventStream.stream(conn)
+    json_error(conn, 501, "not_implemented", "SSE event stream not yet available")
   end
 
   # ── GET /events/history — recent event history ─────────────────────
+  # TODO: re-implement via Events.Bus once history storage is scoped
 
   get "/events/history" do
-    event_type = conn.query_params["type"]
-    events = EventStream.event_history(event_type)
-    body = Jason.encode!(%{events: events, count: length(events)})
-
-    conn
-    |> put_resp_content_type("application/json")
-    |> send_resp(200, body)
+    json_error(conn, 501, "not_implemented", "Event history not yet available")
   end
 
   match _ do

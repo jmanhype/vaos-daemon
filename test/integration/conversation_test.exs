@@ -1,7 +1,7 @@
 defmodule OptimalSystemAgent.Integration.ConversationTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Agent.{Context, Compactor, Workflow}
+  alias OptimalSystemAgent.Agent.{Context, Compactor, Tasks}
 
   # ---------------------------------------------------------------------------
   # Context builder — token budgeting
@@ -267,48 +267,48 @@ defmodule OptimalSystemAgent.Integration.ConversationTest do
 
   describe "workflow — complex task detection" do
     test "detects complex build + system task as needing a workflow" do
-      assert Workflow.should_create_workflow?(
+      assert Tasks.should_create_workflow?(
                "Build me a complete REST API from scratch with authentication and deployment"
              )
     end
 
     test "detects create + full-stack task as needing a workflow" do
-      assert Workflow.should_create_workflow?(
+      assert Tasks.should_create_workflow?(
                "Create a full-stack web application with React frontend and Node backend"
              )
     end
 
     test "detects end-to-end pipeline task as needing a workflow" do
-      assert Workflow.should_create_workflow?(
+      assert Tasks.should_create_workflow?(
                "Implement an end-to-end CI/CD pipeline for our microservices"
              )
     end
 
     test "does not flag simple questions as workflows" do
-      refute Workflow.should_create_workflow?("What time is it?")
+      refute Tasks.should_create_workflow?("What time is it?")
     end
 
     test "does not flag tiny fix tasks as workflows" do
-      refute Workflow.should_create_workflow?("Fix the typo in README.md")
+      refute Tasks.should_create_workflow?("Fix the typo in README.md")
     end
 
     test "does not flag simple run commands as workflows" do
-      refute Workflow.should_create_workflow?("Run the tests")
+      refute Tasks.should_create_workflow?("Run the tests")
     end
 
     test "context_block returns nil when no active workflow exists for session" do
       result =
-        Workflow.context_block("nonexistent-session-xyz-#{System.unique_integer([:positive])}")
+        Tasks.workflow_context_block("nonexistent-session-xyz-#{System.unique_integer([:positive])}")
 
       assert result == nil
     end
 
     test "should_create_workflow? returns false for nil input" do
-      refute Workflow.should_create_workflow?(nil)
+      refute Tasks.should_create_workflow?(nil)
     end
 
     test "should_create_workflow? returns false for empty string" do
-      refute Workflow.should_create_workflow?("")
+      refute Tasks.should_create_workflow?("")
     end
   end
 end

@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Providers.OllamaTest do
+defmodule MiosaProviders.OllamaTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Providers.Ollama
+  alias MiosaProviders.Ollama
   alias OptimalSystemAgent.Utils.Text
 
   # ---------------------------------------------------------------------------

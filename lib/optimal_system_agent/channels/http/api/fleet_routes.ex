@@ -13,7 +13,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.FleetRoutes do
   import OptimalSystemAgent.Channels.HTTP.API.Shared
 
   alias OptimalSystemAgent.Fleet.Registry, as: Fleet
-  alias OptimalSystemAgent.Agent.TaskQueue
+  alias OptimalSystemAgent.Agent.Tasks
   alias OptimalSystemAgent.Protocol.OSCP
 
   plug :match
@@ -95,7 +95,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.FleetRoutes do
     agent_id = conn.params["agent_id"]
 
     try do
-      case TaskQueue.lease(agent_id) do
+      case Tasks.lease(agent_id) do
         {:ok, task} ->
           event =
             OSCP.instruction(agent_id, task.task_id, task.payload,
@@ -143,7 +143,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.FleetRoutes do
     with %{"agent_id" => agent_id, "instruction" => instruction} <- conn.body_params do
       try do
         task_id = "fleet_" <> (:crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower))
-        OptimalSystemAgent.Agent.TaskQueue.enqueue(task_id, agent_id, %{instruction: instruction})
+        Tasks.enqueue(task_id, agent_id, %{instruction: instruction})
 
         conn
         |> put_resp_content_type("application/json")

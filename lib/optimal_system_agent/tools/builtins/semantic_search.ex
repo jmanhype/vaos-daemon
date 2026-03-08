@@ -1,5 +1,5 @@
 defmodule OptimalSystemAgent.Tools.Builtins.SemanticSearch do
-  @behaviour OptimalSystemAgent.Tools.Behaviour
+  @behaviour MiosaTools.Behaviour
 
   @impl true
   def name, do: "semantic_search"

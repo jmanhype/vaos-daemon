@@ -50,13 +50,13 @@ defmodule OptimalSystemAgent.Commands.Data do
 
   @doc "Handle the `/tasks` command."
   def cmd_tasks(arg, session_id) do
-    alias OptimalSystemAgent.Agent.TaskTracker
+    alias OptimalSystemAgent.Agent.Tasks
     alias OptimalSystemAgent.Channels.CLI.TaskDisplay
     trimmed = String.trim(arg)
 
     cond do
       trimmed == "" ->
-        tasks = TaskTracker.get_tasks(session_id)
+        tasks = Tasks.get_tasks(session_id)
 
         if tasks == [] do
           {:command, "No tracked tasks. Use /tasks add \"title\" or let OSA auto-detect."}
@@ -65,15 +65,15 @@ defmodule OptimalSystemAgent.Commands.Data do
         end
 
       trimmed == "clear" ->
-        TaskTracker.clear_tasks(session_id)
+        Tasks.clear_tasks(session_id)
         {:command, "Tasks cleared."}
 
       trimmed == "compact" ->
-        tasks = TaskTracker.get_tasks(session_id)
+        tasks = Tasks.get_tasks(session_id)
         if tasks == [], do: {:command, "No tasks."}, else: {:command, TaskDisplay.render_compact(tasks)}
 
       trimmed == "inline" ->
-        tasks = TaskTracker.get_tasks(session_id)
+        tasks = Tasks.get_tasks(session_id)
         if tasks == [], do: {:command, "No tasks."}, else: {:command, TaskDisplay.render_inline(tasks)}
 
       String.starts_with?(trimmed, "add ") ->
@@ -82,7 +82,7 @@ defmodule OptimalSystemAgent.Commands.Data do
         if title == "" do
           {:command, "Usage: /tasks add \"title\""}
         else
-          {:ok, id} = TaskTracker.add_task(session_id, title)
+          {:ok, id} = Tasks.add_task(session_id, title)
           {:command, "Added task #{id}: #{title}"}
         end
 

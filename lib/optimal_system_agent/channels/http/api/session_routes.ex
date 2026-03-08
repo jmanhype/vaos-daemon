@@ -6,6 +6,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.SessionRoutes do
     POST   /sessions
     GET    /sessions/:id
     GET    /sessions/:id/messages
+    POST   /sessions/:id/message
     POST   /sessions/:id/cancel
     POST   /sessions/:id/survey/answer
     POST   /sessions/:id/survey/skip
@@ -292,25 +293,36 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.SessionRoutes do
     conn |> put_resp_content_type("application/json") |> send_resp(200, body)
   end
 
+  # ── POST /sessions/:id/message ─────────────────────────────────
+
+  post "/:id/message" do
+    session_id = conn.params["id"]
+    body = conn.body_params
+
+    message = body["message"]
+
+    unless is_binary(message) && message != "" do
+      conn
+      |> put_resp_content_type("application/json")
+      |> send_resp(400, Jason.encode!(%{error: "missing or empty message"}))
+      |> halt()
+    end
+
+    case Loop.process_message(session_id, message) do
+      {:ok, _} ->
+        resp = Jason.encode!(%{status: "processing", session_id: session_id})
+        conn |> put_resp_content_type("application/json") |> send_resp(202, resp)
+
+      {:error, :session_not_found} ->
+        json_error(conn, 404, "session_not_found", "Session #{session_id} not found")
+
+      {:error, reason} ->
+        json_error(conn, 500, "process_failed", inspect(reason))
+    end
+  end
+
   match _ do
     json_error(conn, 404, "not_found", "Session endpoint not found")
   end
 
-  defp pagination_params(conn) do
-    conn = Plug.Conn.fetch_query_params(conn)
-    page = parse_positive_int(conn.query_params["page"], 1)
-    per_page = conn.query_params["per_page"] |> parse_positive_int(20) |> min(100)
-    {page, per_page}
-  end
-
-  defp parse_positive_int(nil, default), do: default
-
-  defp parse_positive_int(val, default) when is_binary(val) do
-    case Integer.parse(val) do
-      {n, ""} when n > 0 -> n
-      _ -> default
-    end
-  end
-
-  defp parse_positive_int(_, default), do: default
 end

@@ -8,7 +8,7 @@ defmodule OptimalSystemAgent.Channels.CLI do
   """
   require Logger
 
-  alias OptimalSystemAgent.Agent.{Loop, TaskTracker}
+  alias OptimalSystemAgent.Agent.{Loop, Tasks}
   alias OptimalSystemAgent.Channels.CLI.{LineEditor, Markdown, PlanReview, Spinner, TaskDisplay}
   alias OptimalSystemAgent.Channels.NoiseFilter
   alias OptimalSystemAgent.Commands
@@ -269,7 +269,7 @@ defmodule OptimalSystemAgent.Channels.CLI do
 
           if visible do
             try do
-              tasks = TaskTracker.get_tasks(sid)
+              tasks = Tasks.get_tasks(sid)
 
               if tasks != [] do
                 output = TaskDisplay.render_inline(tasks)

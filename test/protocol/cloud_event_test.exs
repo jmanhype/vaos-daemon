@@ -1,7 +1,7 @@
 defmodule OptimalSystemAgent.Protocol.CloudEventTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Protocol.CloudEvent
+  alias MiosaSignal.CloudEvent
 
   # ---------------------------------------------------------------------------
   # new/1 — creation

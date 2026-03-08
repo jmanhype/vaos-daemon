@@ -31,7 +31,7 @@ defmodule Mix.Tasks.Osa.Chat do
     # contain the onboarding default "llama3.2:latest" which overwrites
     # the auto-detected best model from Application.start/2.
     if Application.get_env(:optimal_system_agent, :default_provider) == :ollama do
-      OptimalSystemAgent.Providers.Ollama.auto_detect_model()
+      MiosaProviders.Ollama.auto_detect_model()
       OptimalSystemAgent.Agent.Tier.detect_ollama_tiers()
     end
 

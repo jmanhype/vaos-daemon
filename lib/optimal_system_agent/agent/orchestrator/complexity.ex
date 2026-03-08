@@ -9,7 +9,7 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.Complexity do
   require Logger
 
   alias OptimalSystemAgent.Agent.{Roster, Orchestrator.SubTask}
-  alias OptimalSystemAgent.Providers.Registry, as: Providers
+  alias MiosaProviders.Registry, as: Providers
 
   @doc """
   Fast heuristic check — no LLM call.

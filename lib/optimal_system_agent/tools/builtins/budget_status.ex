@@ -1,5 +1,5 @@
 defmodule OptimalSystemAgent.Tools.Builtins.BudgetStatus do
-  @behaviour OptimalSystemAgent.Tools.Behaviour
+  @behaviour MiosaTools.Behaviour
 
   alias MiosaBudget.Budget
 

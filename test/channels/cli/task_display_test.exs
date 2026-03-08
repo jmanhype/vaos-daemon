@@ -1,7 +1,7 @@
 defmodule OptimalSystemAgent.Channels.CLI.TaskDisplayTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Agent.TaskTracker.Task
+  alias OptimalSystemAgent.Agent.Tasks.Tracker.Task
   alias OptimalSystemAgent.Channels.CLI.TaskDisplay
 
   # ── Helpers ──────────────────────────────────────────────────────

@@ -9,7 +9,7 @@ defmodule OptimalSystemAgent.CommandCenter do
 
   alias OptimalSystemAgent.Agent.Roster
   alias OptimalSystemAgent.Agent.Tier
-  alias OptimalSystemAgent.Swarm.Patterns
+  alias OptimalSystemAgent.Agent.Orchestrator.Patterns
 
   @doc "Full dashboard summary: agents, tiers, patterns, running count."
   @spec dashboard_summary() :: map()

@@ -21,10 +21,10 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
   use GenServer
   require Logger
 
-  alias OptimalSystemAgent.Agent.{Appraiser, Loop, Roster, TaskQueue}
+  alias OptimalSystemAgent.Agent.{Appraiser, Loop, Roster, Tasks}
   alias OptimalSystemAgent.Agent.Orchestrator.{Complexity, SkillManager, Decomposer, AgentRunner, WaveExecutor, GitVersioning, ComplexityScaler, StateMachine}
   alias OptimalSystemAgent.Events.Bus
-  alias OptimalSystemAgent.Providers.Registry, as: Providers
+  alias MiosaProviders.Registry, as: Providers
 
   defstruct tasks: %{},
             agent_pool: %{},
@@ -256,12 +256,12 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
           })
         end
 
-        # Enqueue sub-tasks into TaskQueue (best-effort)
+        # Enqueue sub-tasks into Tasks queue (best-effort)
         try do
           Enum.each(sub_tasks, fn st ->
             subtask_id = "#{task_id}_#{st.name}"
 
-            TaskQueue.enqueue(subtask_id, session_id, %{
+            Tasks.enqueue(subtask_id, session_id, %{
               name: st.name,
               role: st.role,
               description: st.description,

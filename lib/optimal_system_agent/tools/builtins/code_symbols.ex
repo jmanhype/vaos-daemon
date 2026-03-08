@@ -9,7 +9,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.CodeSymbols do
   Supported: Elixir, Go, TypeScript/JavaScript, Python, Rust.
   """
 
-  @behaviour OptimalSystemAgent.Tools.Behaviour
+  @behaviour MiosaTools.Behaviour
 
   @default_allowed_paths ["~", "/tmp"]
   @max_output_bytes 8_000

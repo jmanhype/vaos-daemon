@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Providers.OpenAICompatTest do
+defmodule MiosaProviders.OpenAICompatTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Providers.OpenAICompat
+  alias MiosaProviders.OpenAICompat
 
   # ---------------------------------------------------------------------------
   # Helpers

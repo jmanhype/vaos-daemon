@@ -971,7 +971,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
 
   # Emit context window pressure event so the CLI can display utilization
   defp emit_context_pressure(state) do
-    max_tok = OptimalSystemAgent.Providers.Registry.context_window(state.model)
+    max_tok = MiosaProviders.Registry.context_window(state.model)
     estimated = OptimalSystemAgent.Agent.Compactor.estimate_tokens(state.messages)
     utilization = if max_tok > 0, do: Float.round(estimated / max_tok * 100, 1), else: 0.0
 

@@ -41,7 +41,7 @@ defmodule OptimalSystemAgent.Agent.AutoFixer do
   require Logger
 
   alias OptimalSystemAgent.Sandbox.Executor
-  alias OptimalSystemAgent.Providers.Registry, as: Providers
+  alias MiosaProviders.Registry, as: Providers
   alias OptimalSystemAgent.Tools.Registry, as: Tools
   alias OptimalSystemAgent.Events.Bus
   alias OptimalSystemAgent.Workspace

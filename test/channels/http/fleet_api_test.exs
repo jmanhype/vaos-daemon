@@ -107,7 +107,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.FleetAPITest do
       json_post("/fleet/register", %{agent_id: agent_id})
 
       # Enqueue a task for this agent
-      OptimalSystemAgent.Agent.TaskQueue.enqueue_sync(
+      OptimalSystemAgent.Agent.Tasks.enqueue_sync(
         task_id,
         agent_id,
         %{instruction: "run diagnostics"}
@@ -138,7 +138,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.FleetAPITest do
 
       json_post("/fleet/register", %{agent_id: agent_id})
 
-      OptimalSystemAgent.Agent.TaskQueue.enqueue_sync(
+      OptimalSystemAgent.Agent.Tasks.enqueue_sync(
         task_id,
         agent_id,
         %{instruction: "check status"}

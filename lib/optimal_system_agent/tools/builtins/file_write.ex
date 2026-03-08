@@ -1,5 +1,5 @@
 defmodule OptimalSystemAgent.Tools.Builtins.FileWrite do
-  @behaviour OptimalSystemAgent.Tools.Behaviour
+  @behaviour MiosaTools.Behaviour
 
   @default_allowed_write_paths ["~", "/tmp"]
 

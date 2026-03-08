@@ -5,7 +5,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.AskUser do
   Emits an event on the Bus and waits for the user's response.
   The channel (SSE/TUI) renders the question and relays the answer back.
   """
-  @behaviour OptimalSystemAgent.Tools.Behaviour
+  @behaviour MiosaTools.Behaviour
 
   alias OptimalSystemAgent.Events.Bus
 

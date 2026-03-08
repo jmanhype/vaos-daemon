@@ -1,5 +1,5 @@
 defmodule OptimalSystemAgent.Tools.Builtins.ShellExecute do
-  @behaviour OptimalSystemAgent.Tools.Behaviour
+  @behaviour MiosaTools.Behaviour
 
   require Logger
 

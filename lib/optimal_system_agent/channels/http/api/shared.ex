@@ -48,4 +48,48 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.Shared do
   end
 
   def parse_int(n) when is_integer(n), do: n
+
+  @doc "Send a JSON response with any data."
+  def json(conn, status, data) do
+    body =
+      case Jason.encode(data) do
+        {:ok, json} -> json
+        {:error, _} -> Jason.encode!(%{error: "internal_error"})
+      end
+
+    conn
+    |> Plug.Conn.put_resp_content_type("application/json")
+    |> Plug.Conn.send_resp(status, body)
+  end
+
+  @doc "Parse page/per_page from query params."
+  def pagination_params(conn) do
+    conn = Plug.Conn.fetch_query_params(conn)
+    page = parse_positive_int(conn.query_params["page"], 1)
+    per_page = conn.query_params["per_page"] |> parse_positive_int(20) |> min(100)
+    {page, per_page}
+  end
+
+  @doc "Parse a positive integer from string, returning default on failure."
+  def parse_positive_int(nil, default), do: default
+
+  def parse_positive_int(val, default) when is_binary(val) do
+    case Integer.parse(val) do
+      {n, ""} when n > 0 -> n
+      _ -> default
+    end
+  end
+
+  def parse_positive_int(_, default), do: default
+
+  @doc "Traverse an Ecto changeset and return human-readable error map."
+  def changeset_errors(changeset) do
+    Ecto.Changeset.traverse_errors(changeset, fn {msg, opts} ->
+      Regex.replace(~r"%{(\w+)}", msg, fn _, key ->
+        opts
+        |> Keyword.get(String.to_existing_atom(key), key)
+        |> to_string()
+      end)
+    end)
+  end
 end

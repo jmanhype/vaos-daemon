@@ -44,7 +44,7 @@ defmodule OptimalSystemAgent.Recipes.Recipe do
 
   require Logger
 
-  alias OptimalSystemAgent.Providers.Registry, as: Providers
+  alias MiosaProviders.Registry, as: Providers
   alias OptimalSystemAgent.Tools.Registry, as: Tools
   alias OptimalSystemAgent.Workspace
   alias OptimalSystemAgent.Events.Bus

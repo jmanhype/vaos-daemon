@@ -54,7 +54,7 @@ defmodule OptimalSystemAgent.Agent.Compactor do
   use GenServer
   require Logger
 
-  alias OptimalSystemAgent.Providers.Registry, as: Providers
+  alias MiosaProviders.Registry, as: Providers
   alias OptimalSystemAgent.PromptLoader
 
   defp max_tokens, do: Application.get_env(:optimal_system_agent, :max_context_tokens, 128_000)

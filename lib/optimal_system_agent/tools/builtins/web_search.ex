@@ -1,5 +1,5 @@
 defmodule OptimalSystemAgent.Tools.Builtins.WebSearch do
-  @behaviour OptimalSystemAgent.Tools.Behaviour
+  @behaviour MiosaTools.Behaviour
 
   @impl true
   def name, do: "web_search"

@@ -7,7 +7,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.CodebaseExplore do
 
   All internal tool calls use `Tools.execute_direct/2` (lock-free).
   """
-  @behaviour OptimalSystemAgent.Tools.Behaviour
+  @behaviour MiosaTools.Behaviour
 
   alias OptimalSystemAgent.Tools.Registry, as: Tools
 

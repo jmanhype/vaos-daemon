@@ -58,7 +58,7 @@ defmodule OptimalSystemAgent.SDK.Supervisor do
         OptimalSystemAgent.Store.Repo,
 
         # LLM providers
-        OptimalSystemAgent.Providers.Registry,
+        MiosaProviders.Registry,
 
         # Tools
         OptimalSystemAgent.Tools.Registry,
@@ -69,8 +69,7 @@ defmodule OptimalSystemAgent.SDK.Supervisor do
         # Agent processes — full set needed by Loop + Orchestrator
         OptimalSystemAgent.Agent.Memory,
         MiosaBudget.Budget,
-        OptimalSystemAgent.Agent.TaskQueue,
-        OptimalSystemAgent.Agent.Workflow,
+        OptimalSystemAgent.Agent.Tasks,
         OptimalSystemAgent.Agent.Orchestrator,
         OptimalSystemAgent.Agent.Progress,
         OptimalSystemAgent.Agent.Hooks,
@@ -80,8 +79,13 @@ defmodule OptimalSystemAgent.SDK.Supervisor do
         # Intelligence (Signal Theory)
         OptimalSystemAgent.Intelligence.Supervisor,
 
-        # Swarm
-        OptimalSystemAgent.Swarm.Supervisor
+        # Swarm coordination
+        OptimalSystemAgent.Agent.Orchestrator.Mailbox,
+        OptimalSystemAgent.Agent.Orchestrator.SwarmMode,
+        {DynamicSupervisor,
+         name: OptimalSystemAgent.Agent.Orchestrator.SwarmMode.AgentPool,
+         strategy: :one_for_one,
+         max_children: 10}
       ] ++ http_children(config)
 
     # Register SDK extensions after tree is up

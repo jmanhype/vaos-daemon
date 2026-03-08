@@ -23,8 +23,8 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.OrchestrationRoutes do
   alias OptimalSystemAgent.Agent.Loop
   alias OptimalSystemAgent.Channels.Session
   alias OptimalSystemAgent.Channels.NoiseFilter
-  alias OptimalSystemAgent.Swarm.Orchestrator, as: Swarm
-  alias OptimalSystemAgent.Swarm.Patterns, as: SwarmPatterns
+  alias OptimalSystemAgent.Agent.Orchestrator.SwarmMode, as: Swarm
+  alias OptimalSystemAgent.Agent.Orchestrator.Patterns, as: SwarmPatterns
   alias OptimalSystemAgent.Agent.Orchestrator, as: TaskOrchestrator
   alias OptimalSystemAgent.Agent.Orchestrator.Complexity
   alias OptimalSystemAgent.Agent.Progress

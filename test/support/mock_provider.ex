@@ -15,7 +15,7 @@ defmodule OptimalSystemAgent.Test.MockProvider do
          Application.put_env(:optimal_system_agent, :mock_provider_module, __MODULE__)
   """
 
-  @behaviour OptimalSystemAgent.Providers.Behaviour
+  @behaviour MiosaProviders.Behaviour
 
   # ── Behaviour callbacks ──────────────────────────────────────────────
 

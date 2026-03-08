@@ -20,7 +20,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.MCTSIndex do
   A ranked list of file paths with relevance scores and content previews.
   """
 
-  @behaviour OptimalSystemAgent.Tools.Behaviour
+  @behaviour MiosaTools.Behaviour
 
   @impl true
   def name, do: "mcts_index"

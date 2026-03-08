@@ -123,7 +123,7 @@ defmodule OptimalSystemAgent.Commands.Info do
 
   @doc "Handle the `/status` command."
   def cmd_status(_arg, _session_id) do
-    providers = OptimalSystemAgent.Providers.Registry.list_providers()
+    providers = MiosaProviders.Registry.list_providers()
     skills = OptimalSystemAgent.Tools.Registry.list_tools_direct()
     memory_stats = OptimalSystemAgent.Agent.Memory.memory_stats()
     soul_loaded = if OptimalSystemAgent.Soul.identity(), do: "yes", else: "defaults"

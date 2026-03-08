@@ -9,9 +9,9 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.WaveExecutor do
 
   require Logger
 
-  alias OptimalSystemAgent.Agent.TaskQueue
+  alias OptimalSystemAgent.Agent.Tasks
   alias OptimalSystemAgent.Events.Bus
-  alias OptimalSystemAgent.Providers.Registry, as: Providers
+  alias MiosaProviders.Registry, as: Providers
 
   # ── Ref Lookup ──────────────────────────────────────────────────────
 
@@ -83,11 +83,11 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.WaveExecutor do
         results: Map.put(task_state.results, agent_name, result_text)
     }
 
-    # TaskQueue complete/fail (best-effort)
+    # Tasks queue complete/fail (best-effort)
     try do
       case status do
-        :completed -> TaskQueue.complete(subtask_id, result_text)
-        :failed -> TaskQueue.fail(subtask_id, error || result_text)
+        :completed -> Tasks.complete_queued(subtask_id, result_text)
+        :failed -> Tasks.fail_queued(subtask_id, error || result_text)
       end
     catch
       :exit, _ -> :ok

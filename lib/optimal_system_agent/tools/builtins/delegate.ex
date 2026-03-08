@@ -8,12 +8,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.Delegate do
   Progress events emitted so TUI shows live status:
     Delegate(explore codebase) — 12 tool uses · 45k tokens
   """
-  @behaviour OptimalSystemAgent.Tools.Behaviour
+  @behaviour MiosaTools.Behaviour
 
   require Logger
 
   alias OptimalSystemAgent.Events.Bus
-  alias OptimalSystemAgent.Providers.Registry, as: Providers
+  alias MiosaProviders.Registry, as: Providers
   alias OptimalSystemAgent.Tools.Registry, as: Tools
 
   @max_iterations 20

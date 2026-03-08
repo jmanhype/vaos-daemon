@@ -9,7 +9,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.SessionSearch do
   Uses raw SQL through `Ecto.Adapters.SQL.query/3` — FTS5 virtual tables
   aren't Ecto-native.
   """
-  @behaviour OptimalSystemAgent.Tools.Behaviour
+  @behaviour MiosaTools.Behaviour
 
   require Logger
 

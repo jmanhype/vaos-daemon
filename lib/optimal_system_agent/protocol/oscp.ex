@@ -16,7 +16,7 @@ defmodule OptimalSystemAgent.Protocol.OSCP do
   | `oscp.signal`      | Any → Any              | Generic (subtype field)       |
   """
 
-  alias OptimalSystemAgent.Protocol.CloudEvent
+  alias MiosaSignal.CloudEvent
 
   @event_types ~w(oscp.heartbeat oscp.instruction oscp.result oscp.signal)
   @source_prefix "urn:osa:agent:"

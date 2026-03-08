@@ -15,7 +15,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.DataRoutes do
   require Logger
 
   alias OptimalSystemAgent.Agent.Memory
-  alias OptimalSystemAgent.Providers
+  alias MiosaProviders
   alias OptimalSystemAgent.Agent.Scheduler
   alias OptimalSystemAgent.Machines
 
@@ -117,7 +117,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.DataRoutes do
   # ── POST /switch — model switch ────────────────────────────────────
 
   post "/switch" do
-    valid_providers = Providers.Registry.list_providers()
+    valid_providers = MiosaProviders.Registry.list_providers()
     valid_names = Enum.map(valid_providers, &Atom.to_string/1)
 
     with %{"provider" => prov_str, "model" => model_name} <- conn.body_params,
@@ -135,7 +135,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.DataRoutes do
 
       Logger.info("[Models] Switched to #{prov_str}/#{model_name}")
 
-      context_window = Providers.Registry.context_window(model_name)
+      context_window = MiosaProviders.Registry.context_window(model_name)
       body = Jason.encode!(%{provider: prov_str, model: model_name, status: "ok", context_window: context_window})
 
       conn
@@ -203,10 +203,10 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.DataRoutes do
 
     ollama_models =
       try do
-        case Providers.Ollama.list_models() do
+        case MiosaProviders.Ollama.list_models() do
           {:ok, models} ->
             Enum.map(models, fn m ->
-              ctx = try do Providers.Registry.context_window(m.name) rescue _ -> 128_000 end
+              ctx = try do MiosaProviders.Registry.context_window(m.name) rescue _ -> 128_000 end
               %{
                 name: m.name,
                 provider: "ollama",
@@ -225,14 +225,14 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.DataRoutes do
 
     cloud_models =
       try do
-        Providers.Registry.list_providers()
+        MiosaProviders.Registry.list_providers()
         |> Enum.reject(&(&1 == :ollama))
-        |> Enum.filter(&Providers.Registry.provider_configured?/1)
+        |> Enum.filter(&MiosaProviders.Registry.provider_configured?/1)
         |> Enum.flat_map(fn p ->
-          case Providers.Registry.provider_info(p) do
+          case MiosaProviders.Registry.provider_info(p) do
             {:ok, info} ->
               Enum.map(info.available_models, fn model_name ->
-                ctx = try do Providers.Registry.context_window(model_name) rescue _ -> 128_000 end
+                ctx = try do MiosaProviders.Registry.context_window(model_name) rescue _ -> 128_000 end
                 %{
                   name: model_name,
                   provider: to_string(p),

@@ -20,7 +20,7 @@ defmodule OptimalSystemAgent.Integration.AgentPipelineTest do
   @moduletag :integration
   @moduletag timeout: 300_000
 
-  alias OptimalSystemAgent.Providers.Ollama
+  alias MiosaProviders.Ollama
   alias OptimalSystemAgent.Agent.Orchestrator.{Complexity, ComplexityScaler, AgentRunner}
   alias OptimalSystemAgent.Agent.Orchestrator.SubTask
   alias OptimalSystemAgent.Agent.{Roster, Tier}

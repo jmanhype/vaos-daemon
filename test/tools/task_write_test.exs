@@ -2,27 +2,27 @@ defmodule OptimalSystemAgent.Tools.Builtins.TaskWriteTest do
   use ExUnit.Case, async: false
 
   alias OptimalSystemAgent.Tools.Builtins.TaskWrite
-  alias OptimalSystemAgent.Agent.TaskTracker
+  alias OptimalSystemAgent.Agent.Tasks
 
   @session "test-task-write-#{:rand.uniform(100_000)}"
 
   setup do
     # TaskTracker is started by the supervision tree.
     # If not running (e.g., isolated test), start it.
-    case GenServer.whereis(TaskTracker) do
-      nil -> start_supervised!({TaskTracker, name: TaskTracker})
+    case GenServer.whereis(Tasks) do
+      nil -> start_supervised!({Tasks, name: Tasks})
       _pid -> :ok
     end
 
     # Clear any leftover tasks for our test session
-    TaskTracker.clear_tasks(@session)
+    Tasks.clear_tasks(@session)
 
     on_exit(fn ->
-      # Guard: TaskTracker may have been shut down by ExUnit's supervisor
+      # Guard: Tasks may have been shut down by ExUnit's supervisor
       # before on_exit callbacks run (e.g., when started via start_supervised!/2).
-      case GenServer.whereis(TaskTracker) do
+      case GenServer.whereis(Tasks) do
         nil -> :ok
-        _pid -> TaskTracker.clear_tasks(@session)
+        _pid -> Tasks.clear_tasks(@session)
       end
     end)
     :ok
@@ -80,7 +80,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.TaskWriteTest do
 
   describe "execute/1 — start/complete/fail" do
     setup do
-      {:ok, id} = TaskTracker.add_task(@session, "Test task")
+      {:ok, id} = Tasks.add_task(@session, "Test task")
       %{task_id: id}
     end
 
@@ -123,9 +123,9 @@ defmodule OptimalSystemAgent.Tools.Builtins.TaskWriteTest do
     end
 
     test "lists tasks with statuses" do
-      {:ok, id1} = TaskTracker.add_task(@session, "First task")
-      {:ok, _id2} = TaskTracker.add_task(@session, "Second task")
-      TaskTracker.start_task(@session, id1)
+      {:ok, id1} = Tasks.add_task(@session, "First task")
+      {:ok, _id2} = Tasks.add_task(@session, "Second task")
+      Tasks.start_task(@session, id1)
 
       assert {:ok, msg} = TaskWrite.execute(%{"action" => "list", "session_id" => @session})
       assert msg =~ "Tasks (0/2 completed)"
@@ -137,11 +137,11 @@ defmodule OptimalSystemAgent.Tools.Builtins.TaskWriteTest do
 
   describe "execute/1 — clear" do
     test "clears all tasks" do
-      TaskTracker.add_task(@session, "Task to clear")
+      Tasks.add_task(@session, "Task to clear")
       assert {:ok, msg} = TaskWrite.execute(%{"action" => "clear", "session_id" => @session})
       assert msg == "Cleared all tasks"
 
-      tasks = TaskTracker.get_tasks(@session)
+      tasks = Tasks.get_tasks(@session)
       assert tasks == []
     end
   end

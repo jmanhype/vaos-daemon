@@ -10,7 +10,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.CreateSkill do
   This enables OSA to grow its own capabilities at runtime, teaching itself
   new skills as the situation demands.
   """
-  @behaviour OptimalSystemAgent.Tools.Behaviour
+  @behaviour MiosaTools.Behaviour
 
   require Logger
 

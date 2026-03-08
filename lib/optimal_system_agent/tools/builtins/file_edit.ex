@@ -1,5 +1,5 @@
 defmodule OptimalSystemAgent.Tools.Builtins.FileEdit do
-  @behaviour OptimalSystemAgent.Tools.Behaviour
+  @behaviour MiosaTools.Behaviour
 
   # Copy the EXACT security constants from FileRead AND FileWrite
   @default_allowed_paths ["~", "/tmp"]

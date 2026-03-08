@@ -67,14 +67,11 @@ defmodule OptimalSystemAgent.Application do
       {:ok, pid} ->
         # Auto-detect best Ollama model + tier assignments SYNCHRONOUSLY at boot
         # so the banner shows the correct model (not a stale fallback)
-        OptimalSystemAgent.Providers.Ollama.auto_detect_model()
+        MiosaProviders.Ollama.auto_detect_model()
         OptimalSystemAgent.Agent.Tier.detect_ollama_tiers()
 
         # Start MCP servers asynchronously — don't block boot if servers are slow.
         # After servers initialise, register their tools in Tools.Registry.
-        # Start knowledge graph (Mnesia-backed, distributed-ready)
-        start_knowledge_store()
-
         Task.start(fn ->
           OptimalSystemAgent.MCP.Client.start_servers()
           # Block on list_tools() — it's a GenServer.call that queues behind initialize.
@@ -99,21 +96,6 @@ defmodule OptimalSystemAgent.Application do
       [OptimalSystemAgent.Platform.Repo]
     else
       []
-    end
-  end
-
-  defp start_knowledge_store do
-    backend =
-      if Mix.env() == :test,
-        do: MiosaKnowledge.Backend.ETS,
-        else: MiosaKnowledge.Backend.Mnesia
-
-    case MiosaKnowledge.open("osa_default", backend: backend) do
-      {:ok, _pid} ->
-        Logger.info("[Application] Knowledge store started (#{inspect(backend)})")
-
-      {:error, reason} ->
-        Logger.warning("[Application] Knowledge store failed to start: #{inspect(reason)}")
     end
   end
 

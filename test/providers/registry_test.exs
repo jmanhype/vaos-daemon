@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Providers.RegistryTest do
+defmodule MiosaProviders.RegistryTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Providers.Registry
+  alias MiosaProviders.Registry
 
   # ---------------------------------------------------------------------------
   # Module smoke tests

@@ -23,7 +23,7 @@ defmodule Mix.Tasks.Osa.Serve do
     OptimalSystemAgent.Onboarding.apply_config()
 
     if Application.get_env(:optimal_system_agent, :default_provider) == :ollama do
-      OptimalSystemAgent.Providers.Ollama.auto_detect_model()
+      MiosaProviders.Ollama.auto_detect_model()
       OptimalSystemAgent.Agent.Tier.detect_ollama_tiers()
     end
 

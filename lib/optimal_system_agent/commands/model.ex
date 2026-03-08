@@ -49,7 +49,7 @@ defmodule OptimalSystemAgent.Commands.Model do
 
   @doc "Handle the `/providers` command."
   def cmd_providers(_arg, _session_id) do
-    alias OptimalSystemAgent.Providers.Registry, as: ProvReg
+    alias MiosaProviders.Registry, as: ProvReg
 
     providers = ProvReg.list_providers()
     default = Application.get_env(:optimal_system_agent, :default_provider, :ollama)
@@ -82,7 +82,7 @@ defmodule OptimalSystemAgent.Commands.Model do
 
     case Application.get_env(:optimal_system_agent, model_key) do
       nil ->
-        case OptimalSystemAgent.Providers.Registry.provider_info(provider) do
+        case MiosaProviders.Registry.provider_info(provider) do
           {:ok, info} -> info.default_model
           _ -> "unknown"
         end
@@ -97,7 +97,7 @@ defmodule OptimalSystemAgent.Commands.Model do
   defp cmd_model_show do
     provider = Application.get_env(:optimal_system_agent, :default_provider, :unknown)
     model = active_model_for(provider)
-    registry = OptimalSystemAgent.Providers.Registry
+    registry = MiosaProviders.Registry
     tier_mod = OptimalSystemAgent.Agent.Tier
 
     configured =
@@ -138,7 +138,7 @@ defmodule OptimalSystemAgent.Commands.Model do
   end
 
   defp cmd_model_list do
-    registry = OptimalSystemAgent.Providers.Registry
+    registry = MiosaProviders.Registry
     current = Application.get_env(:optimal_system_agent, :default_provider, :unknown)
 
     lines =
@@ -167,7 +167,7 @@ defmodule OptimalSystemAgent.Commands.Model do
       rescue
         ArgumentError -> nil
       end
-    registry = OptimalSystemAgent.Providers.Registry
+    registry = MiosaProviders.Registry
     available = registry.list_providers()
 
     cond do
@@ -201,7 +201,7 @@ defmodule OptimalSystemAgent.Commands.Model do
       Application.put_env(:optimal_system_agent, model_key, model_override)
     else
       if provider == :ollama do
-        OptimalSystemAgent.Providers.Ollama.auto_detect_model()
+        MiosaProviders.Ollama.auto_detect_model()
       end
     end
 
@@ -217,7 +217,7 @@ defmodule OptimalSystemAgent.Commands.Model do
 
     parts =
       if provider == :ollama and model_override != nil and
-           not OptimalSystemAgent.Providers.Ollama.model_supports_tools?(model_override) do
+           not MiosaProviders.Ollama.model_supports_tools?(model_override) do
         parts ++
           [
             "⚠ #{model_override} does not support tool calling — tools will be disabled for this model."
@@ -256,7 +256,7 @@ defmodule OptimalSystemAgent.Commands.Model do
   end
 
   defp validate_ollama_model(model_name) do
-    case OptimalSystemAgent.Providers.Ollama.list_models() do
+    case MiosaProviders.Ollama.list_models() do
       {:ok, models} ->
         names = Enum.map(models, & &1.name)
 
@@ -278,7 +278,7 @@ defmodule OptimalSystemAgent.Commands.Model do
     url = Application.get_env(:optimal_system_agent, :ollama_url, "http://localhost:11434")
     current_model = Application.get_env(:optimal_system_agent, :ollama_model, "detecting...")
 
-    case OptimalSystemAgent.Providers.Ollama.list_models(url) do
+    case MiosaProviders.Ollama.list_models(url) do
       {:ok, models} ->
         if models == [] do
           {:command, "No models installed.\n\nPull one: ollama pull llama3.2"}

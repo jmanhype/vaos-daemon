@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Providers.AnthropicThinkingTest do
+defmodule MiosaProviders.AnthropicThinkingTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Providers.Anthropic
+  alias MiosaProviders.Anthropic
 
   describe "maybe_add_thinking/2" do
     test "adds enabled thinking with budget" do

@@ -1,5 +1,5 @@
 defmodule OptimalSystemAgent.Tools.Builtins.MultiFileEdit do
-  @behaviour OptimalSystemAgent.Tools.Behaviour
+  @behaviour MiosaTools.Behaviour
 
   @max_edits 20
 

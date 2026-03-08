@@ -184,6 +184,14 @@ config :optimal_system_agent, ecto_repos: [OptimalSystemAgent.Store.Repo]
 
 config :miosa_budget, event_emitter: OptimalSystemAgent.BudgetEmitter
 
+config :miosa_memory,
+  osa_dir: Path.expand("~/.osa"),
+  sessions_dir: Path.expand("~/.osa/sessions"),
+  learning_dir: Path.expand("~/.osa/learning"),
+  event_emitter: OptimalSystemAgent.MemoryEmitter,
+  secondary_store: OptimalSystemAgent.Agent.Memory.SQLiteBridge,
+  cortex_provider: OptimalSystemAgent.Agent.CortexProvider
+
 config :logger,
   level: :warning
 

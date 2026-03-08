@@ -153,7 +153,7 @@ defmodule OptimalSystemAgent.Commands.Agents do
 
   @doc "Handle the `/swarms` command — list available presets."
   def cmd_swarms(_arg, _session_id) do
-    alias OptimalSystemAgent.Swarm.Patterns
+    alias OptimalSystemAgent.Agent.Orchestrator.Patterns
 
     patterns = Patterns.list_patterns()
 
@@ -175,7 +175,7 @@ defmodule OptimalSystemAgent.Commands.Agents do
 
   @doc "Handle the `/swarm <preset> <task>` command — launch a swarm."
   def cmd_swarm(arg, session_id) do
-    alias OptimalSystemAgent.Swarm.{Orchestrator, Patterns}
+    alias OptimalSystemAgent.Agent.Orchestrator.{SwarmMode, Patterns}
 
     parts = arg |> String.trim() |> String.split(~r/\s+/, parts: 2)
 
@@ -217,7 +217,7 @@ defmodule OptimalSystemAgent.Commands.Agents do
               [session_id: session_id]
               |> then(fn o -> if pattern_atom, do: Keyword.put(o, :pattern, pattern_atom), else: o end)
 
-            case Orchestrator.launch(task, opts) do
+            case SwarmMode.launch(task, opts) do
               {:ok, swarm_id} ->
                 short_id = String.slice(swarm_id, 0, 12)
                 agents = config["agents"] || []
