@@ -110,9 +110,11 @@ defmodule OptimalSystemAgent.Agent.Loop.Guardrails do
     ~r/\bi (need|want) to (check|read|look|examine|create|write|edit|search|find|open|run|list)\b/i
   ]
 
-  # Matches a code block with 5+ lines of content — indicates model wrote code
+  # Matches a code block with 5+ lines of actual code — indicates model wrote code
   # in its response text instead of calling file_write or file_edit.
-  @code_block_pattern ~r/```[a-zA-Z]*\n(?:.*\n){5,}?```/
+  # Must have a language identifier (```python, ```typescript, etc.) to avoid
+  # false positives on directory trees, command output, and plain text blocks.
+  @code_block_pattern ~r/```(?:python|typescript|javascript|elixir|go|rust|java|ruby|bash|sh|sql|css|html|jsx|tsx|yaml|toml|json|c|cpp|swift|kotlin|scala|haskell|lua|perl|php|r|dart|zig|nim|svelte)\n(?:.*\n){5,}?```/
 
   @doc "Returns true if the content describes narrated intent rather than a final answer."
   def wants_to_continue?(nil), do: false

@@ -313,9 +313,13 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.SessionRoutes do
       [{_pid, _}] ->
         # Fire-and-forget — the loop processes in background.
         # Client polls GET /sessions/:id/messages for results.
-        Task.start(fn ->
-          Loop.process_message(session_id, message)
-        end)
+        # Uses Task.Supervisor to ensure the task survives long LLM calls
+        # (Task.start would create an unsupervised process that may be reaped).
+        Task.Supervisor.start_child(
+          OptimalSystemAgent.TaskSupervisor,
+          fn -> Loop.process_message(session_id, message) end,
+          restart: :temporary
+        )
 
         resp = Jason.encode!(%{status: "processing", session_id: session_id})
         conn |> put_resp_content_type("application/json") |> send_resp(202, resp)

@@ -98,7 +98,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
   end
 
   def process_message(session_id, message, opts \\ []) do
-    GenServer.call(via(session_id), {:process, message, opts}, 300_000)
+    GenServer.call(via(session_id), {:process, message, opts}, :infinity)
   end
 
   @doc "Get metadata from the last process_message call (iteration_count, tools_used)."
@@ -825,17 +825,22 @@ defmodule OptimalSystemAgent.Agent.Loop do
           Process.put(:osa_memory_version, Process.get(:osa_memory_version, 0) + 1)
         end
 
-        # Explore-first nudge — if the model writes/edits files without reading first at iteration 1
+        # Explore-first nudge — if the model edits existing files without reading first at iteration 1.
+        # Only fires when file_edit or shell_execute are used (modifying existing code).
+        # Does NOT fire for pure file_write (creating new files) — there's nothing to read first.
+        has_edit_tools = Enum.any?(tool_calls, fn tc -> tc.name in ~w(file_edit shell_execute) end)
+
         state =
           if state.iteration == 1 and
                state.auto_continues < 2 and
+               has_edit_tools and
                Guardrails.write_without_read?(tool_calls) do
-            Logger.info("[loop] Explore-first nudge: model issued write tools before reading (iteration 1)")
+            Logger.info("[loop] Explore-first nudge: model edited files before reading (iteration 1)")
 
             nudge = %{
               role: "system",
               content:
-                "[System: You modified files without reading them first. " <>
+                "[System: You modified existing files without reading them first. " <>
                   "Always explore before you act: call dir_list and file_read to understand " <>
                   "the current state of relevant files before making changes. " <>
                   "On your next step, read what you changed to verify it's correct.]"

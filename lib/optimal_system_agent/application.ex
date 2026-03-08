@@ -47,6 +47,10 @@ defmodule OptimalSystemAgent.Application do
     children =
       platform_repo_children() ++
       [
+        # General-purpose Task.Supervisor for fire-and-forget async work
+        # (HTTP message dispatch, background learning, etc.)
+        {Task.Supervisor, name: OptimalSystemAgent.TaskSupervisor},
+
         OptimalSystemAgent.Supervisors.Infrastructure,
         OptimalSystemAgent.Supervisors.Sessions,
         OptimalSystemAgent.Supervisors.AgentServices,
