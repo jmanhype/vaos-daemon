@@ -40,6 +40,10 @@ defmodule OptimalSystemAgent.Application do
     # /api/show HTTP calls since context_length doesn't change without re-pull.
     :ets.new(:osa_context_cache, [:set, :public, :named_table])
 
+    # ETS table for survey/waitlist responses when platform DB is not enabled.
+    # Rows: {unique_integer, body_map, datetime}
+    :ets.new(:osa_survey_responses, [:bag, :public, :named_table])
+
     children =
       platform_repo_children() ++
       [

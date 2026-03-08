@@ -228,6 +228,78 @@ defmodule OptimalSystemAgent.Channels.HTTP do
     end
   end
 
+  # ── Survey / waitlist (no auth — anonymous submissions) ─────────────
+
+  post "/api/survey" do
+    {:ok, raw, conn} = Plug.Conn.read_body(conn)
+
+    case Jason.decode(raw) do
+      {:ok, body} ->
+        result =
+          if Application.get_env(:optimal_system_agent, :platform_enabled, false) do
+            OptimalSystemAgent.Platform.Surveys.create(body)
+          else
+            :ets.insert(:osa_survey_responses, {System.unique_integer([:positive]), body, DateTime.utc_now()})
+            {:ok, body}
+          end
+
+        case result do
+          {:ok, _} ->
+            conn
+            |> put_resp_content_type("application/json")
+            |> send_resp(201, Jason.encode!(%{status: "collected"}))
+
+          {:error, changeset} ->
+            errors =
+              Ecto.Changeset.traverse_errors(changeset, fn {msg, _opts} -> msg end)
+
+            conn
+            |> put_resp_content_type("application/json")
+            |> send_resp(422, Jason.encode!(%{error: "validation_failed", details: errors}))
+        end
+
+      {:error, _} ->
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(400, Jason.encode!(%{error: "invalid_json"}))
+    end
+  end
+
+  post "/api/waitlist" do
+    {:ok, raw, conn} = Plug.Conn.read_body(conn)
+
+    case Jason.decode(raw) do
+      {:ok, body} ->
+        # Waitlist is a lightweight survey with just email + optional source
+        attrs = Map.put_new(body, "role", "other")
+
+        result =
+          if Application.get_env(:optimal_system_agent, :platform_enabled, false) do
+            OptimalSystemAgent.Platform.Surveys.create(attrs)
+          else
+            :ets.insert(:osa_survey_responses, {System.unique_integer([:positive]), attrs, DateTime.utc_now()})
+            {:ok, attrs}
+          end
+
+        case result do
+          {:ok, _} ->
+            conn
+            |> put_resp_content_type("application/json")
+            |> send_resp(201, Jason.encode!(%{status: "collected"}))
+
+          {:error, _changeset} ->
+            conn
+            |> put_resp_content_type("application/json")
+            |> send_resp(422, Jason.encode!(%{error: "validation_failed"}))
+        end
+
+      {:error, _} ->
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(400, Jason.encode!(%{error: "invalid_json"}))
+    end
+  end
+
   # ── All /api routes require JWT ─────────────────────────────────────
 
   forward("/api/v1", to: OptimalSystemAgent.Channels.HTTP.API)
