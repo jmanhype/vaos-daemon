@@ -605,7 +605,8 @@ defmodule OptimalSystemAgent.Agent.Loop do
     thinking_opts = LLMClient.thinking_config(state)
     llm_opts = [tools: state.tools, temperature: LLMClient.temperature(), max_tokens: max_response_tokens()]
     llm_opts = if thinking_opts, do: Keyword.put(llm_opts, :thinking, thinking_opts), else: llm_opts
-    llm_opts = Keyword.put_new(llm_opts, :timeout, 300_000)
+    # LLM streaming call — idle-timeout detection is inside LLMClient.
+    # Active streams can run indefinitely; only silent connections are killed.
     result = LLMClient.llm_chat_stream(state, context.messages, llm_opts)
 
     # Emit timing + usage event after LLM call

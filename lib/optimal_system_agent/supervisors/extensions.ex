@@ -62,7 +62,7 @@ defmodule OptimalSystemAgent.Supervisors.Extensions do
       {DynamicSupervisor,
        name: OptimalSystemAgent.Agent.Orchestrator.SwarmMode.AgentPool,
        strategy: :one_for_one,
-       max_children: 10}
+       max_children: 50}
     ]
   end
 

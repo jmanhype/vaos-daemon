@@ -167,9 +167,14 @@ defmodule OptimalSystemAgent.Onboarding do
 
     with {:ok, content} <- File.read(config_path),
          {:ok, config} <- Jason.decode(content) do
-      # Provider + model
-      provider = get_in(config, ["provider", "default"])
-      model = get_in(config, ["provider", "model"])
+      # Provider + model — handle both flat ("provider": "ollama") and
+      # nested ("provider": {"default": "ollama", "model": "..."}) config shapes
+      {provider, model} =
+        case config["provider"] do
+          %{"default" => p} = nested -> {p, nested["model"] || config["model"]}
+          p when is_binary(p) -> {p, config["model"]}
+          _ -> {nil, config["model"]}
+        end
 
       provider_atom =
         if is_binary(provider) and provider != "" do
@@ -199,7 +204,8 @@ defmodule OptimalSystemAgent.Onboarding do
 
       # Working directory — only apply if not already set via OSA_WORKING_DIR env var
       if System.get_env("OSA_WORKING_DIR") == nil do
-        case get_in(config, ["workspace", "default_dir"]) do
+        workspace = config["workspace"]
+        case is_map(workspace) && workspace["default_dir"] do
           dir when is_binary(dir) and dir != "" ->
             Application.put_env(:optimal_system_agent, :working_dir, Path.expand(dir))
           _ ->

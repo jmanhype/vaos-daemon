@@ -3,12 +3,17 @@ defmodule OptimalSystemAgent.Agent.Loop.LLMClient do
   LLM call abstraction for the agent loop.
 
   Wraps Providers.chat and Providers.chat_stream with per-session
-  provider/model routing, streaming callback setup, and thinking config.
+  provider/model routing, streaming callback setup, thinking config,
+  and idle-timeout detection (kills connections that go silent).
   """
   require Logger
 
   alias MiosaProviders.Registry, as: Providers
   alias OptimalSystemAgent.Events.Bus
+
+  # If no streaming token arrives for this long, the connection is dead.
+  # This is NOT a total-duration cap — active streams can run indefinitely.
+  @idle_timeout_ms 120_000
 
   @doc """
   Synchronous LLM chat — routes through the configured provider/model for this session.
@@ -20,18 +25,25 @@ defmodule OptimalSystemAgent.Agent.Loop.LLMClient do
   end
 
   @doc """
-  Streaming LLM chat — emits per-token SSE events via Bus.
-  Returns {:ok, result} | {:error, reason}.
+  Streaming LLM chat with idle-timeout detection.
 
-  Uses process dictionary to capture the {:done, result} from the streaming
-  callback, since chat_stream/3 returns :ok on success (not the accumulated result).
+  The stream can run for hours as long as tokens keep arriving. If the
+  connection goes silent (no text_delta, thinking_delta, or done event
+  for #{@idle_timeout_ms}ms), the call is killed and an error returned.
+
+  Returns {:ok, result} | {:error, reason}.
   """
   def llm_chat_stream(%{session_id: session_id, provider: provider, model: model}, messages, opts) do
-    # Stash result from {:done, _} callback into process dictionary
-    Process.put(:llm_stream_result, nil)
+    # Heartbeat: atomics counter incremented on every streaming event.
+    # The watchdog checks if the counter has changed since last poll.
+    heartbeat = :atomics.new(1, signed: false)
+    :atomics.put(heartbeat, 1, 1)
+
+    caller = self()
 
     callback = fn
       {:text_delta, text} ->
+        :atomics.add(heartbeat, 1, 1)
         Logger.debug("[stream] text_delta #{byte_size(text)}B → session:#{session_id}")
         Bus.emit(:system_event, %{
           event: :streaming_token,
@@ -40,33 +52,102 @@ defmodule OptimalSystemAgent.Agent.Loop.LLMClient do
         })
 
       {:done, result} ->
+        :atomics.add(heartbeat, 1, 1)
         Logger.info("[stream] done → session:#{session_id}")
-        Process.put(:llm_stream_result, result)
+        send(caller, {:llm_stream_done, result})
 
       {:thinking_delta, text} ->
+        :atomics.add(heartbeat, 1, 1)
         Bus.emit(:system_event, %{
           event: :thinking_delta,
           session_id: session_id,
           text: text
         })
 
-      # Ignore tool_use deltas — these are handled after the full result
       _other ->
+        :atomics.add(heartbeat, 1, 1)
         :ok
     end
 
     opts = if provider, do: Keyword.put(opts, :provider, provider), else: opts
     opts = if model, do: Keyword.put(opts, :model, model), else: opts
 
-    case Providers.chat_stream(messages, callback, opts) do
-      :ok ->
-        case Process.get(:llm_stream_result) do
-          nil -> {:error, "Stream completed but no result received"}
-          result -> {:ok, result}
-        end
+    # Run the stream in a linked task so we can kill it on idle timeout
+    stream_task = Task.async(fn ->
+      Providers.chat_stream(messages, callback, opts)
+    end)
 
-      {:error, _} = err ->
-        err
+    # Watchdog: polls heartbeat every 10s, kills if no progress for @idle_timeout_ms
+    idle_timeout = Keyword.get(opts, :idle_timeout, @idle_timeout_ms)
+    watchdog = spawn_link(fn -> watchdog_loop(heartbeat, stream_task, idle_timeout, session_id) end)
+
+    # Wait for stream completion or idle timeout
+    result =
+      receive do
+        {:llm_stream_done, stream_result} ->
+          # Stream completed normally — clean up watchdog
+          Process.unlink(watchdog)
+          Process.exit(watchdog, :normal)
+          # Wait for the task to finish (it should be done already)
+          Task.await(stream_task, 5_000)
+          {:ok, stream_result}
+
+        {:llm_idle_timeout, elapsed_ms} ->
+          # Watchdog detected idle connection — kill the stream
+          Logger.warning("[stream] Idle timeout after #{div(elapsed_ms, 1000)}s of silence — killing stream for session:#{session_id}")
+          Task.shutdown(stream_task, :brutal_kill)
+          {:error, "LLM stream went silent for #{div(elapsed_ms, 1000)}s — connection likely dropped"}
+
+      after
+        # Absolute safety net: 1 hour. Should never fire for legitimate work.
+        3_600_000 ->
+          Logger.error("[stream] Absolute timeout (1h) hit for session:#{session_id}")
+          Process.unlink(watchdog)
+          Process.exit(watchdog, :normal)
+          Task.shutdown(stream_task, :brutal_kill)
+          {:error, "LLM stream exceeded 1 hour absolute limit"}
+      end
+
+    result
+  rescue
+    e ->
+      Logger.error("[stream] Exception in llm_chat_stream: #{inspect(e)}")
+      {:error, "Stream error: #{inspect(e)}"}
+  end
+
+  # Watchdog process: polls heartbeat counter every 10s.
+  # If the counter hasn't changed for `timeout_ms`, sends idle timeout signal.
+  defp watchdog_loop(heartbeat, stream_task, timeout_ms, session_id) do
+    poll_interval = 10_000
+    last_count = :atomics.get(heartbeat, 1)
+    watchdog_poll(heartbeat, stream_task, timeout_ms, session_id, poll_interval, last_count, 0)
+  end
+
+  defp watchdog_poll(heartbeat, stream_task, timeout_ms, session_id, poll_interval, last_count, idle_ms) do
+    Process.sleep(poll_interval)
+
+    # Check if stream task is still alive
+    unless Process.alive?(stream_task.pid) do
+      # Stream finished — watchdog can exit
+      :ok
+    else
+      current_count = :atomics.get(heartbeat, 1)
+
+      if current_count == last_count do
+        # No progress — accumulate idle time
+        new_idle = idle_ms + poll_interval
+
+        if new_idle >= timeout_ms do
+          # Idle timeout exceeded — notify caller
+          Logger.warning("[watchdog] No stream activity for #{div(new_idle, 1000)}s — session:#{session_id}")
+          send(stream_task.owner, {:llm_idle_timeout, new_idle})
+        else
+          watchdog_poll(heartbeat, stream_task, timeout_ms, session_id, poll_interval, last_count, new_idle)
+        end
+      else
+        # Progress detected — reset idle counter
+        watchdog_poll(heartbeat, stream_task, timeout_ms, session_id, poll_interval, current_count, 0)
+      end
     end
   end
 

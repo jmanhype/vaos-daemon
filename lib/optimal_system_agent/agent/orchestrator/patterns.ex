@@ -145,13 +145,12 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.Patterns do
   Uses Task.async_stream for true parallelism with bounded concurrency.
   Results are collected in agent order.
   """
-  def parallel(workers, agent_specs, _swarm_id) do
+  def parallel(workers, _agent_specs, _swarm_id) do
     Logger.debug("Swarm pattern: parallel (#{length(workers)} agents)")
 
     workers
-    |> Enum.zip(agent_specs)
     |> Task.async_stream(
-      fn {{_spec, pid}, agent} ->
+      fn {agent, pid} ->
         case SwarmWorker.assign(pid, agent.task) do
           {:ok, result} ->
             %{role: agent.role, task: agent.task, result: result, status: :done}
@@ -182,13 +181,11 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.Patterns do
   prepended to its task so it can build on prior work.
   Agent A -> Agent B (with A's result) -> Agent C (with B's result) -> ...
   """
-  def pipeline(workers, agent_specs, _swarm_id) do
+  def pipeline(workers, _agent_specs, _swarm_id) do
     Logger.debug("Swarm pattern: pipeline (#{length(workers)} agents)")
 
-    pairs = Enum.zip(workers, agent_specs)
-
     {results, _acc} =
-      Enum.map_reduce(pairs, nil, fn {{_spec, pid}, agent}, prev_result ->
+      Enum.map_reduce(workers, nil, fn {agent, pid}, prev_result ->
         task_with_context =
           if prev_result do
             """
@@ -235,21 +232,19 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.Patterns do
     parallel(workers, agent_specs, swarm_id)
   end
 
-  def debate(workers, agent_specs, _swarm_id) do
+  def debate(workers, _agent_specs, _swarm_id) do
     Logger.debug("Swarm pattern: debate (#{length(workers)} agents)")
 
+    # workers = [{agent_spec, pid}, ...] — spec already embedded
     # Split: first N-1 agents propose, last agent evaluates
-    {proposal_pairs, [evaluator_pair]} = Enum.split(Enum.zip(workers, agent_specs), -1)
-    {{_eval_spec, evaluator_pid}, evaluator_agent} = evaluator_pair
-
-    proposal_agents = Enum.map(proposal_pairs, fn {_worker, spec} -> spec end)
+    {proposers, [{evaluator_spec, evaluator_pid}]} = Enum.split(workers, -1)
+    evaluator_agent = evaluator_spec
 
     # All proposals run in parallel
     proposal_results =
-      proposal_pairs
-      |> Enum.zip(proposal_agents)
+      proposers
       |> Task.async_stream(
-        fn {{_spec, pid}, agent} ->
+        fn {agent, pid} ->
           case SwarmWorker.assign(pid, agent.task) do
             {:ok, result} ->
               %{role: agent.role, task: agent.task, result: result, status: :done}
@@ -324,13 +319,10 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.Patterns do
     parallel(workers, agent_specs, swarm_id)
   end
 
-  def review_loop(workers, agent_specs, _swarm_id, max_iterations) do
+  def review_loop(workers, _agent_specs, _swarm_id, max_iterations) do
     Logger.debug("Swarm pattern: review_loop (max_iterations=#{max_iterations})")
 
-    [{_worker_spec, worker_pid}, {_reviewer_spec, reviewer_pid} | _] =
-      Enum.zip(workers, agent_specs)
-
-    [worker_agent, reviewer_agent | _] = agent_specs
+    [{worker_agent, worker_pid}, {reviewer_agent, reviewer_pid} | _] = workers
 
     do_review_loop(
       worker_pid,

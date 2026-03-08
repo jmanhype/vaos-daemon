@@ -178,6 +178,9 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.SwarmMode do
         {:noreply, state}
 
       swarm ->
+        # Terminate workers — they're done, free DynamicSupervisor slots
+        terminate_workers(swarm.workers)
+
         updated = %{
           swarm
           | status: :completed,
@@ -217,6 +220,9 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.SwarmMode do
         {:noreply, state}
 
       swarm ->
+        # Terminate any remaining workers
+        terminate_workers(swarm.workers)
+
         updated = %{
           swarm
           | status: :failed,
