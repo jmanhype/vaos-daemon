@@ -12,13 +12,11 @@
 
 ## Why OSA Exists
 
-We were building the AI layer for [MIOSA](https://miosa.ai) — an operating system for running your entire business. The agent needed to handle everything: scheduling meetings, analyzing revenue, drafting content, managing CRM contacts, orchestrating deployments. One AI, dozens of domains, thousands of messages a day.
+Every agent framework processes every message the same way. "Build me a REST API with auth" gets the same pipeline as "What time is it?" Same model, same context window, same latency, same cost. No understanding of what the message actually *is* before throwing compute at it.
 
-The problem: most messages are noise. "ok", "thanks", "hey" — each one triggering a full LLM round-trip at $0.015/1K tokens. So we built Signal Theory to solve it. Every message is classified into a 5-tuple before processing. A noise filter catches low-value messages before they hit the LLM. A tier system routes simple tasks to cheap models and complex ones to powerful models.
+We built OSA to fix this. It's the AI layer of [MIOSA](https://miosa.ai) — an operating system for running your entire business. One agent handling everything: code, operations, communication, analysis, orchestration. The foundation is Signal Theory: every input is classified by intent, domain, and complexity *before* it touches the reasoning engine. The right model gets the right task. Multi-step problems get decomposed into parallel sub-agents. The agent remembers what worked and what didn't across sessions.
 
-Then we looked around and saw every other agent framework treating every message identically. Full pipeline, full cost, full latency, every time. No signal intelligence. No cost optimization.
-
-So we open-sourced OSA. The same agent that powers MIOSA, available to everyone. ~112,000 lines of code. ~2,000 tests. Runs locally on your machine. Your data stays yours.
+~112,000 lines of Elixir/OTP. ~2,000 tests. Runs locally. Your data stays yours.
 
 ```
 Codebase Breakdown
@@ -40,32 +38,31 @@ Total                     ~112,000 lines
 
 ### 1. Signal Classification
 
-Every message is classified into a 5-tuple before processing — the primary classifier is an LLM, with a deterministic fallback:
+Before the agent reasons about anything, it understands what you're asking. Every input is classified into a 5-tuple that determines how it gets processed — which model handles it, what strategy to use, how much compute to spend:
 
 ```
 S = (Mode, Genre, Type, Format, Weight)
 
-Mode:   What action    — BUILD, EXECUTE, ANALYZE, MAINTAIN, ASSIST
-Genre:  Purpose        — DIRECT, INFORM, COMMIT, DECIDE, EXPRESS
+Mode:   What to do     — BUILD, EXECUTE, ANALYZE, MAINTAIN, ASSIST
+Genre:  Speech act     — DIRECT, INFORM, COMMIT, DECIDE, EXPRESS
 Type:   Domain         — question, request, issue, scheduling, summary, report
 Format: Container      — message, command, document, notification
-Weight: Information    — 0.0 (noise) → 1.0 (critical signal)
+Weight: Complexity     — 0.0 (trivial) → 1.0 (critical, multi-step)
 ```
 
-The LLM understands intent. "Help me build a rocket" → BUILD mode (not ASSIST, which is what keyword matching would give you). "Can you run the tests?" → EXECUTE. The deterministic fallback only activates when the LLM is unavailable.
+"Help me build a rocket" → BUILD mode, high weight → routes to the most capable model with orchestration. "What time is it?" → ASSIST mode, low weight → fast model, direct answer, no overhead. The classifier is LLM-primary with a deterministic fallback when the LLM is unavailable. Results are cached in ETS (SHA256 key, 10-minute TTL).
 
-Results are cached in ETS (SHA256 key, 10-minute TTL) — repeated messages never hit the LLM twice.
+### 2. Intelligent Routing
 
-### 2. Two-Tier Noise Filtering
+The classification drives everything downstream:
 
 ```
-Tier 1 (< 1ms):  Deterministic — regex patterns for single chars, filler words,
-                  emoji-only, confirmations, greetings, reactions
-Tier 2:          Weight-based — signals scored 0.0-0.35 filtered, 0.35-0.65 clarified,
-                  0.65+ processed
+Weight 0.0–0.35  →  Utility tier (Haiku, GPT-3.5, 8B models) — fast, cheap
+Weight 0.35–0.65 →  Specialist tier (Sonnet, GPT-4o-mini, 70B) — balanced
+Weight 0.65–1.0  →  Elite tier (Opus, GPT-4o, Pro models) — full reasoning
 ```
 
-Low-value messages ("ok", "thanks", "lol", emoji reactions) are caught before they reach the main AI model. Thresholds are configurable via application config.
+A simple lookup doesn't need Opus. A complex refactor doesn't belong on Haiku. The system matches compute to complexity automatically — no manual model switching.
 
 ### 3. Autonomous Task Orchestration
 
@@ -508,10 +505,10 @@ MCP tools are auto-discovered and available alongside built-in skills.
 
 OSA is grounded in four principles from communication and systems theory:
 
-1. **Shannon (Channel Capacity):** Every channel has finite capacity. Processing noise wastes capacity meant for real signals.
-2. **Ashby (Requisite Variety):** The system must match the variety of its inputs — 18 providers, 12 channels, unlimited skills.
+1. **Shannon (Channel Capacity):** Every channel has finite capacity. Match compute to complexity — don't burn your best model on trivial tasks.
+2. **Ashby (Requisite Variety):** The system must match the variety of its inputs — 18 providers, 12 channels, unlimited skills, 5 reasoning strategies.
 3. **Beer (Viable System Model):** Five operational modes (Build, Assist, Analyze, Execute, Maintain) mirror the five subsystems every viable organization needs.
-4. **Wiener (Feedback Loops):** Every action produces feedback. The agent learns and adapts — memory, cortex, profiling.
+4. **Wiener (Feedback Loops):** Every action produces feedback. The agent learns across sessions — memory, knowledge graph, pattern recognition, cortex synthesis.
 
 **Research:** [Signal Theory: The Architecture of Optimal Intent Encoding in Communication Systems](https://zenodo.org/records/18774174) (Luna, 2026)
 
@@ -537,15 +534,16 @@ OSA is the intelligence layer of the MIOSA platform:
 
 | Doc | What It Covers |
 |-----|---------------|
-| [Getting Started](docs/getting-started/) | Install, configuration, troubleshooting |
-| [Architecture](docs/architecture/) | Signal Theory, memory & learning, SDK design |
-| [Provider Guides](docs/guides/providers/) | Per-provider setup for all 18 LLM providers |
-| [Channel Guides](docs/guides/channels/) | Per-channel setup for all 12 messaging channels |
-| [Orchestration](docs/guides/orchestration.md) | Agent roles, waves, swarms, PACT framework |
-| [Hook Pipeline](docs/guides/hooks.md) | Lifecycle hooks, custom hook development |
-| [Skills Guide](docs/guides/skills.md) | SKILL.md format, Elixir modules, hot reload |
-| [CLI Reference](docs/reference/cli.md) | 90+ slash commands organized by category |
-| [HTTP API Reference](docs/reference/http-api.md) | Every endpoint, auth, SSE, error codes |
+| [Documentation Index](docs/README.md) | Full docs map — 312 docs across all subsystems |
+| [Architecture](docs/architecture/overview.md) | Ecosystem map, supervision tree, module organization |
+| [Agent Loop](docs/backend/agent-loop/loop.md) | Core reasoning engine, strategies, context builder |
+| [Memory & Knowledge](docs/backend/memory/overview.md) | 5-layer memory, knowledge graph, SPARQL, OWL reasoning |
+| [Orchestration](docs/backend/orchestration/orchestrator.md) | Multi-agent decomposition, waves, swarms, PACT |
+| [Tools](docs/backend/tools/overview.md) | 32 built-in tools, middleware pipeline, custom tools |
+| [LLM Providers](docs/backend/providers/overview.md) | 18 providers, circuit breaker, tier routing |
+| [HTTP API](docs/frontend/http-api.md) | Every endpoint, auth, SSE, error codes |
+| [CLI Reference](docs/frontend/cli-reference.md) | All slash commands organized by category |
+| [Features](docs/features/) | Recipes, skills, hooks, voice, proactive mode, tasks |
 | [Deployment](docs/operations/deployment.md) | Docker, systemd, Nginx, production checklist |
 
 ---
