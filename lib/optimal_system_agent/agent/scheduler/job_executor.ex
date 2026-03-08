@@ -170,33 +170,26 @@ defmodule OptimalSystemAgent.Agent.Scheduler.JobExecutor do
   def validate_url(_), do: {:error, :invalid_url}
 
   def http_request(method, url, headers, body) do
-    :ok = :inets.start(:httpc, profile: :default)
+    headers_map = Map.new(headers)
 
-    headers_list =
-      Enum.map(headers, fn {k, v} ->
-        {String.to_charlist(k), String.to_charlist(v)}
-      end)
+    req_opts = [
+      headers: headers_map,
+      receive_timeout: @webhook_timeout_ms,
+      connect_options: [timeout: 5_000]
+    ]
 
-    request =
-      case method do
-        "GET" -> {String.to_charlist(url), headers_list}
-        _ -> {String.to_charlist(url), headers_list, ~c"application/json", body}
-      end
-
-    opts = [{:timeout, @webhook_timeout_ms}]
-
-    method_atom =
+    result =
       case String.downcase(method) do
-        "get" -> :get
-        "post" -> :post
-        "put" -> :put
-        "delete" -> :delete
-        "patch" -> :patch
-        _ -> :get
+        "get" -> Req.get(url, req_opts)
+        "post" -> Req.post(url, [{:body, body} | req_opts])
+        "put" -> Req.put(url, [{:body, body} | req_opts])
+        "delete" -> Req.delete(url, req_opts)
+        "patch" -> Req.patch(url, [{:body, body} | req_opts])
+        _ -> Req.get(url, req_opts)
       end
 
-    case :httpc.request(method_atom, request, opts, []) do
-      {:ok, {{_vsn, status, _reason}, _resp_headers, resp_body}} ->
+    case result do
+      {:ok, %Req.Response{status: status, body: resp_body}} ->
         {:ok, status, to_string(resp_body)}
 
       {:error, reason} ->

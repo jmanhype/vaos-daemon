@@ -277,8 +277,6 @@ defmodule OptimalSystemAgent.Onboarding do
   """
   @spec doctor_checks() :: [{:ok, String.t()} | {:error, String.t(), String.t()}]
   def doctor_checks do
-    ensure_httpc_started()
-
     [
       check_config(),
       check_provider(),
@@ -294,8 +292,6 @@ defmodule OptimalSystemAgent.Onboarding do
   """
   @spec detect_system() :: map()
   def detect_system do
-    ensure_httpc_started()
-
     os_info = detect_os()
     shell = System.get_env("SHELL") || "unknown"
 
@@ -886,14 +882,14 @@ defmodule OptimalSystemAgent.Onboarding do
   end
 
   defp detect_ollama do
-    ensure_httpc_started()
-
     url = Application.get_env(:optimal_system_agent, :ollama_url, "http://localhost:11434")
 
-    case :httpc.request(:get, {~c"#{url}/api/tags", []}, [{:timeout, 3000}], []) do
-      {:ok, {{_, 200, _}, _, body}} ->
+    case Req.get("#{url}/api/tags", receive_timeout: 3_000, connect_options: [timeout: 3_000]) do
+      {:ok, %Req.Response{status: 200, body: body}} ->
+        decoded = if is_binary(body), do: Jason.decode(body), else: {:ok, body}
+
         count =
-          case Jason.decode(to_string(body)) do
+          case decoded do
             {:ok, %{"models" => models}} when is_list(models) -> length(models)
             _ -> 0
           end
@@ -910,12 +906,10 @@ defmodule OptimalSystemAgent.Onboarding do
   # ── Provider Connectivity ─────────────────────────────────────
 
   defp test_provider_connectivity("ollama", _model, _key) do
-    ensure_httpc_started()
-
     url = Application.get_env(:optimal_system_agent, :ollama_url, "http://localhost:11434")
 
-    case :httpc.request(:get, {~c"#{url}/api/tags", []}, [{:timeout, 5000}], []) do
-      {:ok, {{_, 200, _}, _, _}} -> :ok
+    case Req.get("#{url}/api/tags", receive_timeout: 5_000, connect_options: [timeout: 5_000]) do
+      {:ok, %Req.Response{status: 200}} -> :ok
       _ -> {:error, "Ollama not reachable at #{url}"}
     end
   rescue
@@ -926,11 +920,6 @@ defmodule OptimalSystemAgent.Onboarding do
   defp test_provider_connectivity(_provider, _model, ""), do: {:error, "No API key provided"}
   defp test_provider_connectivity(_provider, _model, _key), do: :ok
 
-  defp ensure_httpc_started do
-    :inets.start()
-    :ssl.start()
-    :ok
-  end
 
   # ── Profile-Aware Config Path ─────────────────────────────────
 

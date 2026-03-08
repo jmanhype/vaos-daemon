@@ -277,18 +277,11 @@ defmodule OptimalSystemAgent.Tools.Builtins.Browser do
     if not valid_url?(url) do
       {:error, "Invalid URL: #{url}"}
     else
-      ensure_http_started()
-
-      url_charlist = String.to_charlist(url)
-      headers = [{~c"User-Agent", ~c"OSA/1.0 Browser Tool"}]
-      http_opts = [timeout: @timeout_ms, connect_timeout: 5_000, ssl: ssl_opts()]
-      opts = [body_format: :binary]
-
-      case :httpc.request(:get, {url_charlist, headers}, http_opts, opts) do
-        {:ok, {{_, status, _}, _headers, body}} when status in 200..299 ->
+      case Req.get(url, headers: [{"user-agent", "OSA/1.0 Browser Tool"}], receive_timeout: @timeout_ms, connect_options: [timeout: 5_000]) do
+        {:ok, %Req.Response{status: status, body: body}} when status in 200..299 ->
           {:ok, body |> to_string() |> String.slice(0, @max_body_bytes)}
 
-        {:ok, {{_, status, _}, _headers, _body}} ->
+        {:ok, %Req.Response{status: status}} ->
           {:error, "HTTP #{status} from #{url}"}
 
         {:error, reason} ->
@@ -303,17 +296,6 @@ defmodule OptimalSystemAgent.Tools.Builtins.Browser do
   end
 
   defp valid_url?(_), do: false
-
-  defp ensure_http_started do
-    :inets.start()
-    :ssl.start()
-  rescue
-    _ -> :ok
-  end
-
-  defp ssl_opts do
-    [verify: :verify_peer, cacerts: :public_key.cacerts_get(), depth: 3]
-  end
 
   # ---------------------------------------------------------------------------
   # HTML helpers
