@@ -3,12 +3,15 @@ defmodule OptimalSystemAgent.Intelligence.Supervisor do
   Supervises communication intelligence processes.
   These are what make OSA unique — no other agent framework has them.
 
-  Processes:
+  GenServer children:
   - CommProfiler: Learns communication patterns per contact
   - CommCoach: Scores outbound message quality
   - ConversationTracker: Tracks conversation depth (casual→working→deep→strategic)
-  - ContactDetector: Pure pattern matching for contact identification (< 1ms)
   - ProactiveMonitor: Scans for silence, drift, engagement drops
+
+  Pure modules (no supervision needed):
+  - ContactDetector: Pure pattern matching for contact identification (< 1ms),
+    called from Agent.Loop after each inbound user message.
   """
   use Supervisor
 

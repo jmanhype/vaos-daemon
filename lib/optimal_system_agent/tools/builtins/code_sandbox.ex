@@ -134,36 +134,34 @@ defmodule OptimalSystemAgent.Tools.Builtins.CodeSandbox do
       filename = @language_filenames[language]
 
       if is_nil(filename) do
-        throw({:unsupported, language})
+        {:error, "Unsupported language: #{language}"}
+      else
+        code_path = Path.join(tmp_dir, filename)
+        File.write!(code_path, code)
+
+        image = @language_images[language]
+        run_cmd = @language_commands[language]
+
+        docker_args = build_docker_args(image, run_cmd, tmp_dir, timeout, stdin)
+
+        Logger.debug("[CodeSandbox] Running #{language} in Docker (timeout=#{timeout}s)")
+
+        # Use System.cmd to avoid shell injection — args are passed as a list
+        timeout_ms = (timeout + 5) * 1_000
+
+        task =
+          Task.async(fn ->
+            System.cmd("docker", docker_args, stderr_to_stdout: true, into: "")
+          end)
+
+        case Task.yield(task, timeout_ms) || Task.shutdown(task, :brutal_kill) do
+          {:ok, {output, exit_code}} ->
+            format_result(output, exit_code)
+
+          nil ->
+            {:error, "Execution timed out after #{timeout}s"}
+        end
       end
-
-      code_path = Path.join(tmp_dir, filename)
-      File.write!(code_path, code)
-
-      image = @language_images[language]
-      run_cmd = @language_commands[language]
-
-      docker_args = build_docker_args(image, run_cmd, tmp_dir, timeout, stdin)
-
-      Logger.debug("[CodeSandbox] Running #{language} in Docker (timeout=#{timeout}s)")
-
-      # Use System.cmd to avoid shell injection — args are passed as a list
-      timeout_ms = (timeout + 5) * 1_000
-
-      task =
-        Task.async(fn ->
-          System.cmd("docker", docker_args, stderr_to_stdout: true, into: "")
-        end)
-
-      case Task.yield(task, timeout_ms) || Task.shutdown(task, :brutal_kill) do
-        {:ok, {output, exit_code}} ->
-          format_result(output, exit_code)
-
-        nil ->
-          {:error, "Execution timed out after #{timeout}s"}
-      end
-    catch
-      {:unsupported, lang} -> {:error, "Unsupported language: #{lang}"}
     after
       cleanup_temp_dir(tmp_dir)
     end

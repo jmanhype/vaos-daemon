@@ -29,6 +29,10 @@ defmodule OptimalSystemAgent.Events.Bus do
 
   alias OptimalSystemAgent.Events.Event
   alias OptimalSystemAgent.Events.Classifier
+  alias OptimalSystemAgent.Events.FailureModes
+
+  # Sample 1-in-N events for failure-mode detection to keep overhead negligible.
+  @failure_mode_sample_rate 10
 
   @event_types ~w(user_message llm_request llm_response tool_call tool_result agent_response system_event channel_connected channel_disconnected channel_error ask_user_question survey_answered algedonic_alert)a
 
@@ -63,6 +67,20 @@ defmodule OptimalSystemAgent.Events.Bus do
       else
         typed_event
       end
+
+    # Signal Theory failure-mode detection — sampled to keep the hot path cheap.
+    # Runs 1-in-@failure_mode_sample_rate events; logs detected violations.
+    if :rand.uniform(@failure_mode_sample_rate) == 1 do
+      case FailureModes.detect(typed_event) do
+        [] ->
+          :ok
+
+        violations ->
+          Enum.each(violations, fn {mode, description} ->
+            Logger.warning("[Bus] Signal failure mode #{mode} on #{event_type}: #{description}")
+          end)
+      end
+    end
 
     # Build goldrush proplist from the Event struct.
     # :type must be at the top level for goldrush's compiled filter.

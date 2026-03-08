@@ -32,6 +32,10 @@ defmodule OptimalSystemAgent.Agent.Loop do
   alias OptimalSystemAgent.Agent.Loop.Checkpoint
   alias OptimalSystemAgent.Agent.Loop.GenreRouter
 
+  alias OptimalSystemAgent.Intelligence.ConversationTracker
+  alias OptimalSystemAgent.Intelligence.CommCoach
+  alias OptimalSystemAgent.Intelligence.ContactDetector
+
   defp max_iterations, do: Application.get_env(:optimal_system_agent, :max_iterations, 30)
   defp auto_insights_interval, do: Application.get_env(:optimal_system_agent, :auto_insights_interval, 10)
   defp max_response_tokens, do: Application.get_env(:optimal_system_agent, :max_response_tokens, 8_192)
@@ -200,6 +204,11 @@ defmodule OptimalSystemAgent.Agent.Loop do
     # Increment turn counter for memory/skill nudges (Phase 6)
     state = %{state | turn_count: state.turn_count + 1}
 
+    # Re-resolve strategy per-message using actual message content and available tools.
+    # init/1 runs before any message arrives so it cannot infer task type from content.
+    # Here we have the message, so we build a proper context and let select?/1 run.
+    state = maybe_update_strategy(state, message, opts)
+
     # 0. Clear per-message caches (git info and workspace overview run once per message, not per iteration)
     Process.delete(:osa_git_info_cache)
     Process.delete(:osa_workspace_overview_cache)
@@ -239,6 +248,28 @@ defmodule OptimalSystemAgent.Agent.Loop do
 
     # 1.5. Persist user message to JSONL session storage (only non-noise messages)
     Memory.append(state.session_id, %{role: "user", content: message, channel: state.channel})
+
+    # 1.6. Intelligence wiring — track conversation depth and detect contacts.
+    # Both run in a fire-and-forget task so they never block the agent loop.
+    session_id = state.session_id
+    channel = state.channel
+    Task.start(fn ->
+      try do
+        ConversationTracker.record_turn(session_id, message)
+      rescue
+        e -> Logger.debug("[loop] ConversationTracker.record_turn failed: #{inspect(e)}")
+      end
+
+      contacts = ContactDetector.detect(message)
+      if contacts != [] do
+        Bus.emit(:system_event, %{
+          event: :contacts_detected,
+          session_id: session_id,
+          channel: channel,
+          contacts: contacts
+        })
+      end
+    end)
 
     # 2. Compact message history if needed, then process through agent loop
     compacted = OptimalSystemAgent.Agent.Compactor.maybe_compact(state.messages) || state.messages
@@ -660,6 +691,33 @@ defmodule OptimalSystemAgent.Agent.Loop do
             run_loop(state)
 
           true ->
+            # CommCoach: score the outbound response async — observe only, never blocks.
+            score_session_id = state.session_id
+            score_channel = state.channel
+            score_user_id = state.user_id
+            score_content = content
+            Task.start(fn ->
+              try do
+                case CommCoach.score_response(score_content, score_user_id, score_channel) do
+                  {:ok, %{verdict: verdict, score: score, suggestions: suggestions}}
+                  when verdict in [:needs_work, :poor] ->
+                    Bus.emit(:system_event, %{
+                      event: :comm_coach_warning,
+                      session_id: score_session_id,
+                      verdict: verdict,
+                      score: score,
+                      suggestions: suggestions
+                    })
+                    Logger.warning("[CommCoach] outbound quality #{verdict} (#{score}) session=#{score_session_id}")
+
+                  _ ->
+                    :ok
+                end
+              rescue
+                e -> Logger.debug("[loop] CommCoach.score_response failed: #{inspect(e)}")
+              end
+            end)
+
             {content, state}
         end
 
@@ -996,6 +1054,109 @@ defmodule OptimalSystemAgent.Agent.Loop do
     |> Enum.flat_map(& &1.tool_calls)
     |> Enum.map(& &1.name)
     |> Enum.uniq()
+  end
+
+  # Re-resolve the reasoning strategy based on the incoming message content.
+  #
+  # This runs at the start of every handle_call so that strategy selection has
+  # access to the actual user message (not available at init/1 time). If the
+  # caller explicitly passed a :strategy or :task_type opt, those take priority.
+  # Otherwise we infer task_type from message keywords and compute a complexity
+  # score so that select?/1 on each strategy can actually fire.
+  defp maybe_update_strategy(state, message, opts) do
+    # Explicit caller opt always wins — don't override a deliberate choice.
+    case {Keyword.get(opts, :strategy), Keyword.get(opts, :task_type)} do
+      {name, _} when is_atom(name) and not is_nil(name) ->
+        state
+
+      {_, task_type} when is_atom(task_type) and not is_nil(task_type) ->
+        state
+
+      _ ->
+        # Infer task context from message content
+        inferred = infer_task_context(message, state.tools)
+
+        case Strategy.resolve(inferred) do
+          {:ok, mod} when mod != state.strategy ->
+            Logger.debug("[loop] Strategy switched #{inspect(state.strategy && state.strategy.name())} -> #{mod.name()} for message")
+            %{state | strategy: mod, strategy_state: mod.init_state(inferred)}
+
+          {:ok, _same} ->
+            state
+        end
+    end
+  end
+
+  # Build a strategy context map from raw message content.
+  #
+  # task_type — keyword-based classification. One pass over the message
+  # covers the most common patterns; order matters (more specific first).
+  #
+  # complexity — heuristic: word count bucketed 1-10.
+  defp infer_task_context(message, tools) do
+    lower = String.downcase(message)
+    words = String.split(message)
+    word_count = length(words)
+
+    task_type =
+      cond do
+        Regex.match?(~r/\b(debug|fix bug|traceback|error|exception|crash|failing|broken)\b/, lower) ->
+          :debugging
+
+        Regex.match?(~r/\b(review|audit|check|inspect|critique|assess|evaluate)\b/, lower) ->
+          :review
+
+        Regex.match?(~r/\b(refactor|clean up|reorganize|restructure|rename|extract|simplify)\b/, lower) ->
+          :refactor
+
+        Regex.match?(~r/\b(design|architect|plan|blueprint|spec|diagram|system design)\b/, lower) ->
+          :design
+
+        Regex.match?(~r/\b(planning|roadmap|strategy|approach|how should i|what's the best way)\b/, lower) ->
+          :planning
+
+        Regex.match?(~r/\b(analyze|analyse|research|explain|describe|understand|how does)\b/, lower) ->
+          :analysis
+
+        Regex.match?(~r/\b(explore|discover|find the best|optimize|search for|what if)\b/, lower) ->
+          :exploration
+
+        Regex.match?(~r/\b(optimize|performance|faster|slower|bottleneck|benchmark)\b/, lower) ->
+          :optimization
+
+        true ->
+          :action
+      end
+
+    # Word count → complexity score 1-10
+    complexity =
+      cond do
+        word_count < 10 -> 1
+        word_count < 20 -> 2
+        word_count < 40 -> 3
+        word_count < 60 -> 4
+        word_count < 80 -> 5
+        word_count < 120 -> 6
+        word_count < 200 -> 7
+        word_count < 300 -> 8
+        word_count < 500 -> 9
+        true -> 10
+      end
+
+    tool_names = Enum.map(tools, fn
+      %{name: n} -> n
+      t when is_atom(t) -> t
+      t when is_binary(t) -> t
+      _ -> nil
+    end) |> Enum.reject(&is_nil/1)
+
+    %{
+      task_type: task_type,
+      complexity: complexity,
+      tools: tool_names,
+      message: message,
+      task: message
+    }
   end
 
   # Apply per-call overrides from opts (SDK query passthrough)

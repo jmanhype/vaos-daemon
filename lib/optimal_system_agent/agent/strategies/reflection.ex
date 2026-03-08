@@ -126,6 +126,32 @@ defmodule OptimalSystemAgent.Agent.Strategies.Reflection do
     %{state | content: response}
   end
 
+  # Tool result list from the agent loop. Reflection interprets tool outcomes as
+  # observations that become the content to critique in the next phase.
+  def handle_result({:act, :tools, _}, results, state) when is_list(results) do
+    tool_text =
+      results
+      |> Enum.map(fn
+        %{tool: tool, result: r} when is_binary(r) -> "Tool #{tool} returned:\n#{r}"
+        %{tool: tool, result: r} -> "Tool #{tool} returned:\n#{inspect(r)}"
+        other -> inspect(other)
+      end)
+      |> Enum.join("\n\n")
+
+    case state.phase do
+      :critique when is_nil(state.content) ->
+        # First tool results — treat as initial content to reflect on
+        %{state | content: tool_text}
+
+      :critique ->
+        # Append new tool results to existing content
+        %{state | content: state.content <> "\n\n" <> tool_text}
+
+      _ ->
+        state
+    end
+  end
+
   def handle_result(_step, _result, state), do: state
 
   # ── Public Helpers ───────────────────────────────────────────────

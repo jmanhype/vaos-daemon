@@ -282,6 +282,87 @@ defmodule OptimalSystemAgent.Agent.HooksETSTest do
       assert "cost_tracker" in post_names
       assert "mcp_cache_post" in post_names
       assert "telemetry" in post_names
+      assert "track_files_read" in post_names
+      assert "read_before_write" in pre_names
+    end
+  end
+
+  # ── Regression: track_files_read must match string result ────────
+  # Bug: the hook previously matched `result: {:ok, _}` but ToolExecutor
+  # normalizes tool output to a plain string before building post_payload.
+  # The fix matches `result: binary` and excludes "Error:"/"Blocked:" prefixes.
+
+  describe "track_files_read regression (string result from ToolExecutor)" do
+    @tag :hooks_ets
+    test "records file path when result is a plain string (success)", %{available: available} do
+      if not available, do: flunk("Hooks GenServer not running")
+
+      sid = "test-session-track-#{:erlang.unique_integer([:positive])}"
+
+      # Ensure ETS table exists
+      if :ets.whereis(:osa_files_read) == :undefined do
+        :ets.new(:osa_files_read, [:named_table, :public, :set])
+      end
+
+      payload = %{
+        tool_name: "file_read",
+        arguments: %{"path" => "/tmp/some_file.ex"},
+        session_id: sid,
+        # Plain string — exactly what ToolExecutor provides
+        result: "defmodule Foo do\nend\n"
+      }
+
+      {:ok, _updated} = Hooks.run(:post_tool_use, payload)
+
+      # The file path must be recorded in ETS
+      assert [{_, true}] = :ets.lookup(:osa_files_read, {sid, "/tmp/some_file.ex"}),
+             "track_files_read should record the path when result is a success string"
+    end
+
+    @tag :hooks_ets
+    test "does NOT record file path when result is an error string", %{available: available} do
+      if not available, do: flunk("Hooks GenServer not running")
+
+      sid = "test-session-track-err-#{:erlang.unique_integer([:positive])}"
+
+      if :ets.whereis(:osa_files_read) == :undefined do
+        :ets.new(:osa_files_read, [:named_table, :public, :set])
+      end
+
+      payload = %{
+        tool_name: "file_read",
+        arguments: %{"path" => "/tmp/missing.ex"},
+        session_id: sid,
+        result: "Error: file not found"
+      }
+
+      {:ok, _updated} = Hooks.run(:post_tool_use, payload)
+
+      assert [] = :ets.lookup(:osa_files_read, {sid, "/tmp/missing.ex"}),
+             "track_files_read must not record paths on error results"
+    end
+
+    @tag :hooks_ets
+    test "does NOT record file path when result is a blocked string", %{available: available} do
+      if not available, do: flunk("Hooks GenServer not running")
+
+      sid = "test-session-track-block-#{:erlang.unique_integer([:positive])}"
+
+      if :ets.whereis(:osa_files_read) == :undefined do
+        :ets.new(:osa_files_read, [:named_table, :public, :set])
+      end
+
+      payload = %{
+        tool_name: "file_read",
+        arguments: %{"path" => "/tmp/blocked.ex"},
+        session_id: sid,
+        result: "Blocked: permission denied"
+      }
+
+      {:ok, _updated} = Hooks.run(:post_tool_use, payload)
+
+      assert [] = :ets.lookup(:osa_files_read, {sid, "/tmp/blocked.ex"}),
+             "track_files_read must not record paths on blocked results"
     end
   end
 end

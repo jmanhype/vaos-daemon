@@ -50,9 +50,6 @@ defmodule OptimalSystemAgent.MixProject do
       # PubSub for internal event fan-out (standalone, no Phoenix framework)
       {:phoenix_pubsub, "~> 2.1"},
 
-      # Filesystem watching (skill hot reload)
-      {:file_system, "~> 1.0"},
-
       # YAML parsing (skills, config)
       {:yaml_elixir, "~> 2.9"},
 
@@ -76,7 +73,6 @@ defmodule OptimalSystemAgent.MixProject do
       # Telemetry
       {:telemetry, "~> 1.2"},
       {:telemetry_metrics, "~> 1.0"},
-      {:telemetry_poller, "~> 1.0"},
 
       # OTP 28: rustler removed — nif.ex uses pure Elixir fallbacks
       # {:rustler, "~> 0.37", optional: true}

@@ -152,21 +152,19 @@ defmodule OptimalSystemAgent.Tools.Builtins.Knowledge do
   defp do_reason do
     store_ref = store()
 
-    case GenServer.whereis(store_ref) do
-      nil ->
-        {:error, "Knowledge store not running"}
+    try do
+      case :sys.get_state(store_ref) do
+        %{backend: backend, backend_state: backend_state} ->
+          case MiosaKnowledge.Reasoner.materialize(backend, backend_state) do
+            {:ok, _new_state, rounds} ->
+              {:ok, "Reasoning complete. #{rounds} rounds of inference applied."}
+          end
 
-      _pid ->
-        case :sys.get_state(store_ref) do
-          %{backend: backend, backend_state: backend_state} ->
-            case MiosaKnowledge.Reasoner.materialize(backend, backend_state) do
-              {:ok, _new_state, rounds} ->
-                {:ok, "Reasoning complete. #{rounds} rounds of inference applied."}
-            end
-
-          _ ->
-            {:error, "Could not access store state for reasoning"}
-        end
+        _ ->
+          {:error, "Could not access store state for reasoning"}
+      end
+    catch
+      :exit, _ -> {:error, "Knowledge store not running"}
     end
   end
 

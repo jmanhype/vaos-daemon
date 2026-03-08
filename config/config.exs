@@ -168,7 +168,14 @@ config :optimal_system_agent,
   telegram_webhook_secret: nil,
   whatsapp_app_secret: nil,
   dingtalk_secret: nil,
-  email_webhook_secret: nil
+  email_webhook_secret: nil,
+
+  # ---------------------------------------------------------------------------
+  # Feature flags — disabled subsystems (Go sidecar, WhatsApp Web)
+  # ---------------------------------------------------------------------------
+  go_git_enabled: false,
+  go_sysmon_enabled: false,
+  whatsapp_web_enabled: false
 
 # Database — SQLite3
 config :optimal_system_agent, OptimalSystemAgent.Store.Repo,

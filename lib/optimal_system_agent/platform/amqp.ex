@@ -24,7 +24,28 @@ defmodule OptimalSystemAgent.Platform.AMQP do
     amqp_url = Application.get_env(:optimal_system_agent, :amqp_url)
     :ets.new(@buffer_table, [:named_table, :ordered_set, :public])
     send(self(), :connect)
-    {:ok, %{url: amqp_url, conn: nil, channel: nil}}
+    {:ok, %{url: amqp_url, conn: nil, channel: nil, bus_handlers: []}, {:continue, :register_bus_handlers}}
+  end
+
+  @impl true
+  def handle_continue(:register_bus_handlers, state) do
+    # Register a catch-all handler on the Events.Bus that forwards every event
+    # to AMQP. One handler per event type — unregistered on terminate.
+    bus = OptimalSystemAgent.Events.Bus
+    event_types = bus.event_types()
+
+    refs =
+      Enum.map(event_types, fn event_type ->
+        ref =
+          bus.register_handler(event_type, fn payload ->
+            publish_event(to_string(event_type), payload)
+          end)
+
+        {event_type, ref}
+      end)
+
+    Logger.info("[Platform.AMQP] Registered Bus handlers for #{length(refs)} event types")
+    {:noreply, %{state | bus_handlers: refs}}
   end
 
   @impl true
@@ -51,6 +72,15 @@ defmodule OptimalSystemAgent.Platform.AMQP do
     Logger.warning("[Platform.AMQP] Connection lost: #{inspect(reason)}, reconnecting...")
     Process.send_after(self(), :connect, 1_000)
     {:noreply, %{state | conn: nil, channel: nil}}
+  end
+
+  @impl true
+  def terminate(_reason, %{bus_handlers: refs}) do
+    bus = OptimalSystemAgent.Events.Bus
+
+    Enum.each(refs, fn {event_type, ref} ->
+      bus.unregister_handler(event_type, ref)
+    end)
   end
 
   @impl true

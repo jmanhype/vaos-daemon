@@ -701,12 +701,26 @@ defmodule OptimalSystemAgent.Agent.Context do
   end
 
   defp runtime_block(state) do
-    """
+    session_id = Map.get(state, :session_id, "default")
+
+    depth_hint =
+      try do
+        depth = OptimalSystemAgent.Intelligence.ConversationTracker.get_depth(session_id)
+        "- Conversation depth: #{depth}"
+      rescue
+        _ -> nil
+      catch
+        :exit, _ -> nil
+      end
+
+    base = """
     ## Runtime Context
     - Timestamp: #{DateTime.utc_now() |> DateTime.to_iso8601()}
     - Channel: #{state.channel}
-    - Session: #{state.session_id}
+    - Session: #{session_id}
     """
+
+    if depth_hint, do: base <> depth_hint <> "\n", else: base
   end
 
   defp skills_block(state) do
@@ -732,18 +746,16 @@ defmodule OptimalSystemAgent.Agent.Context do
   end
 
   defp knowledge_block(state) do
-    try do
-      store = GenServer.whereis({:via, Registry, {MiosaKnowledge.Registry, "osa_default"}})
+    store_ref = {:via, Registry, {MiosaKnowledge.Registry, "osa_default"}}
 
-      if is_nil(store) do
-        ""
-      else
-        agent_id = Map.get(state, :session_id) || "default"
-        ctx = MiosaKnowledge.Context.for_agent(store, agent_id: agent_id)
-        MiosaKnowledge.Context.to_prompt(ctx)
-      end
+    try do
+      agent_id = Map.get(state, :session_id) || "default"
+      ctx = MiosaKnowledge.Context.for_agent(store_ref, agent_id: agent_id)
+      MiosaKnowledge.Context.to_prompt(ctx)
     rescue
       _ -> ""
+    catch
+      :exit, _ -> ""
     end
   end
 end

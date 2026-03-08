@@ -408,22 +408,14 @@ defmodule OptimalSystemAgent.Agent.Hooks do
 
         nudge_count =
           try do
-            case :ets.lookup(:osa_files_read, nudge_key) do
-              [{^nudge_key, n}] -> n
-              _ -> 0
-            end
+            :ets.update_counter(:osa_files_read, nudge_key, {2, 1}, {nudge_key, 0})
           rescue
-            ArgumentError -> 0
+            ArgumentError -> 1
           end
 
-        if nudge_count >= 2 do
+        if nudge_count > 2 do
           {:ok, payload}
         else
-          try do
-            :ets.insert(:osa_files_read, {nudge_key, nudge_count + 1})
-          rescue
-            ArgumentError -> :ok
-          end
 
           {:ok,
            Map.put(
@@ -441,22 +433,30 @@ defmodule OptimalSystemAgent.Agent.Hooks do
 
   defp read_before_write(payload), do: {:ok, payload}
 
-  # Track files read — records file paths in ETS after successful file_read/dir_list/glob
+  # Track files read — records file paths in ETS after successful file_read/dir_list/glob.
+  # ToolExecutor normalizes the result to a plain string before building the post_payload,
+  # so we match on a binary result and exclude error/blocked strings.
   defp track_files_read(
-         %{tool_name: tool_name, arguments: args, session_id: sid, result: {:ok, _}} = payload
+         %{tool_name: tool_name, arguments: args, session_id: sid, result: result} = payload
        )
-       when tool_name in ["file_read", "dir_list", "glob"] do
-    path = args["path"] || args["pattern"] || ""
+       when tool_name in ["file_read", "dir_list", "glob"] and is_binary(result) and
+              not (result == "") do
+    # Only record on success — skip Error:/Blocked: responses
+    if String.starts_with?(result, "Error:") or String.starts_with?(result, "Blocked:") do
+      {:ok, payload}
+    else
+      path = args["path"] || args["pattern"] || ""
 
-    if is_binary(path) and path != "" do
-      try do
-        :ets.insert(:osa_files_read, {{sid, path}, true})
-      rescue
-        ArgumentError -> :ok
+      if is_binary(path) and path != "" do
+        try do
+          :ets.insert(:osa_files_read, {{sid, path}, true})
+        rescue
+          ArgumentError -> :ok
+        end
       end
-    end
 
-    {:ok, payload}
+      {:ok, payload}
+    end
   end
 
   defp track_files_read(payload), do: {:ok, payload}

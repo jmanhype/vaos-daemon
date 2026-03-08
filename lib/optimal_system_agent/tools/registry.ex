@@ -698,6 +698,10 @@ defmodule OptimalSystemAgent.Tools.Registry do
     {:reply, result, state}
   end
 
+  def handle_call(msg, _from, state) do
+    Logger.warning("Tools.Registry received unexpected call: #{inspect(msg)}")
+    {:reply, {:error, :unknown_call}, state}
+  end
 
   # --- Built-in Tools ---
 

@@ -16,7 +16,7 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.AgentRunner do
   """
   require Logger
 
-  alias OptimalSystemAgent.Agent.{Roster, Tier, Memory, Orchestrator.SubTask, Orchestrator.AgentState}
+  alias OptimalSystemAgent.Agent.{Roster, Tier, Memory, Orchestrator.SubTask, Orchestrator.AgentState, Orchestrator.GitVersioning}
   alias OptimalSystemAgent.Events.Bus
   alias MiosaProviders.Registry, as: Providers
   alias OptimalSystemAgent.Tools.Registry, as: Tools
@@ -636,10 +636,19 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.AgentRunner do
         _ -> "unknown"
       end
 
+    git_log = GitVersioning.recent_log(cwd, 5)
+
+    log_section =
+      if git_log not in ["(git log unavailable)", "(not a git repository)"] do
+        "\n- Recent commits:\n#{git_log}"
+      else
+        ""
+      end
+
     """
     ## Environment
     - Working directory: #{cwd}
-    - Git branch: #{git_branch}
+    - Git branch: #{git_branch}#{log_section}
     """
   end
 

@@ -25,17 +25,17 @@ defmodule OptimalSystemAgent.Machines do
 
   @doc "Get list of active machines."
   def active do
-    GenServer.call(__MODULE__, :active)
+    GenServer.call(__MODULE__, :active, 5_000)
   end
 
   @doc "Get prompt addendums for active machines."
   def prompt_addendums do
-    GenServer.call(__MODULE__, :prompt_addendums)
+    GenServer.call(__MODULE__, :prompt_addendums, 5_000)
   end
 
   @doc "Check if a specific machine is active."
   def active?(machine) do
-    GenServer.call(__MODULE__, {:active?, machine})
+    GenServer.call(__MODULE__, {:active?, machine}, 5_000)
   end
 
   @impl true
@@ -61,6 +61,12 @@ defmodule OptimalSystemAgent.Machines do
 
   def handle_call({:active?, machine}, _from, state) do
     {:reply, machine in state.active_machines, state}
+  end
+
+  def handle_call(msg, _from, state) do
+    require Logger
+    Logger.warning("Machines received unexpected call: #{inspect(msg)}")
+    {:reply, {:error, :unknown_call}, state}
   end
 
   defp load_config do

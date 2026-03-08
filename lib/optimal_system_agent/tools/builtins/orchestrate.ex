@@ -38,8 +38,8 @@ defmodule OptimalSystemAgent.Tools.Builtins.Orchestrate do
         "strategy" => %{
           "type" => "string",
           "description" =>
-            "Execution strategy: parallel (all at once), pipeline (sequential with dependency passing), or auto (let the orchestrator decide)",
-          "enum" => ["parallel", "pipeline", "auto"]
+            "Execution strategy: parallel (all at once), pipeline (sequential with dependency passing), auto (let the orchestrator decide), or pact (structured 4-phase Planning→Action→Coordination→Testing workflow for complex tasks requiring reconciliation)",
+          "enum" => ["parallel", "pipeline", "auto", "pact"]
         }
       },
       "required" => ["task"]

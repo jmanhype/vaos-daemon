@@ -13,6 +13,14 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.PlatformRoutes do
   plug :match
   plug :dispatch
 
+  # ── Platform-enabled guard ───────────────────────────────────────────
+
+  defp platform_enabled?, do: Application.get_env(:optimal_system_agent, :platform_enabled, false)
+
+  defp platform_unavailable(conn) do
+    json(conn, 503, %{error: "platform_unavailable", details: "Platform database not configured"})
+  end
+
   # ── Tenant invite accept (before /:id to avoid match conflict) ─────
 
   post "/tenants/invite/accept" do
@@ -306,9 +314,13 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.PlatformRoutes do
   # ── Helpers ─────────────────────────────────────────────────────────
 
   defp with_auth(conn, fun) do
-    case conn.assigns[:claims] do
-      %{"user_id" => user_id} -> fun.(user_id)
-      _ -> json(conn, 401, %{error: "unauthorized"})
+    if not platform_enabled?() do
+      platform_unavailable(conn)
+    else
+      case conn.assigns[:claims] do
+        %{"user_id" => user_id} -> fun.(user_id)
+        _ -> json(conn, 401, %{error: "unauthorized"})
+      end
     end
   end
 

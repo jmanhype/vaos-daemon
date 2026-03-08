@@ -110,6 +110,11 @@ defmodule OptimalSystemAgent.Tenant.Config do
     {:reply, :ok, state}
   end
 
+  def handle_call(msg, _from, state) do
+    Logger.warning("Tenant.Config received unexpected call: #{inspect(msg)}")
+    {:reply, {:error, :unknown_call}, state}
+  end
+
   # ── Private ─────────────────────────────────────────────────────────
 
   defp atomize_keys(map) when is_map(map) do

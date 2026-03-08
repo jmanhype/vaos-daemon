@@ -55,12 +55,16 @@ defmodule OptimalSystemAgent.Agent.Strategy do
 
   # ── Strategy Registry ────────────────────────────────────────────
 
+  # Order matters: Enum.find stops at first match in select?/1.
+  # More specific strategies (MCTS, Reflection, ToT, CoT) are checked before
+  # ReAct so that task_type inference in the loop can actually select them.
+  # ReAct is last — it matches anything with tools (the universal fallback).
   @strategies [
-    OptimalSystemAgent.Agent.Strategies.ReAct,
-    OptimalSystemAgent.Agent.Strategies.ChainOfThought,
-    OptimalSystemAgent.Agent.Strategies.TreeOfThoughts,
+    OptimalSystemAgent.Agent.Strategies.MCTS,
     OptimalSystemAgent.Agent.Strategies.Reflection,
-    OptimalSystemAgent.Agent.Strategies.MCTS
+    OptimalSystemAgent.Agent.Strategies.TreeOfThoughts,
+    OptimalSystemAgent.Agent.Strategies.ChainOfThought,
+    OptimalSystemAgent.Agent.Strategies.ReAct
   ]
 
   # ── Public API ───────────────────────────────────────────────────

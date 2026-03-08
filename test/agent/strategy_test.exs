@@ -23,7 +23,8 @@ defmodule OptimalSystemAgent.Agent.StrategyTest do
 
   describe "names/0" do
     test "returns all strategy name atoms" do
-      assert Strategy.names() == [:react, :chain_of_thought, :tree_of_thoughts, :reflection, :mcts]
+      # Order reflects selection priority: specific strategies before ReAct (the fallback)
+      assert Strategy.names() == [:mcts, :reflection, :tree_of_thoughts, :chain_of_thought, :react]
     end
   end
 

@@ -54,17 +54,19 @@ defmodule OptimalSystemAgent.MCP.Server do
 
   @doc "List tools discovered from this server. Returns [] if not yet initialised."
   def list_tools(server_name) do
-    case GenServer.whereis(via(server_name)) do
-      nil -> []
-      pid -> GenServer.call(pid, :list_tools)
+    try do
+      GenServer.call(via(server_name), :list_tools)
+    catch
+      :exit, _ -> []
     end
   end
 
   @doc "Call a tool on this server. Validates input against schema. Blocks up to 30 s."
   def call_tool(server_name, tool_name, arguments) do
-    case GenServer.whereis(via(server_name)) do
-      nil -> {:error, "MCP server #{server_name} not running"}
-      pid -> GenServer.call(pid, {:call_tool, tool_name, arguments}, @tool_call_timeout_ms)
+    try do
+      GenServer.call(via(server_name), {:call_tool, tool_name, arguments}, @tool_call_timeout_ms)
+    catch
+      :exit, _ -> {:error, "MCP server #{server_name} not running"}
     end
   end
 

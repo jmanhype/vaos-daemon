@@ -358,7 +358,8 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.SwarmMode do
                 Patterns.review_loop(workers, plan.agents, swarm_id)
 
               other ->
-                raise "Invalid swarm pattern #{inspect(other)} reached execution — this should have been caught by validation"
+                Logger.error("Invalid swarm pattern #{inspect(other)} reached execution — this should have been caught by validation")
+                [{:error, "Invalid swarm pattern: #{inspect(other)}"}]
             end
 
           GenServer.cast(orchestrator, {:swarm_complete, swarm_id, results})

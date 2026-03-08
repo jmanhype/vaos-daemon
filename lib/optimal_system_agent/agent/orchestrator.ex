@@ -22,7 +22,7 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
   require Logger
 
   alias OptimalSystemAgent.Agent.{Appraiser, Loop, Roster, Tasks}
-  alias OptimalSystemAgent.Agent.Orchestrator.{Complexity, SkillManager, Decomposer, AgentRunner, WaveExecutor, GitVersioning, ComplexityScaler, StateMachine}
+  alias OptimalSystemAgent.Agent.Orchestrator.{Complexity, SkillManager, Decomposer, AgentRunner, WaveExecutor, GitVersioning, ComplexityScaler, StateMachine, Negotiation}
   alias OptimalSystemAgent.Events.Bus
   alias MiosaProviders.Registry, as: Providers
 
@@ -175,6 +175,43 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
       session_id: session_id,
       message_preview: String.slice(message, 0, 200)
     })
+
+    # PACT strategy: delegate to Negotiation.execute_pact/2 and return immediately.
+    # PACT runs its own Planning→Action→Coordination→Testing loop and emits its own
+    # progress events on the Bus. We record the final output as a completed TaskState
+    # so callers that poll progress/1 or wait on :orchestrator_task_completed get a result.
+    if strategy == "pact" do
+      pact_opts = Keyword.take(opts, [:quality_threshold, :timeout_ms, :max_action_agents, :rollback_on_failure])
+
+      task_state = %TaskState{
+        id: task_id,
+        message: message,
+        session_id: session_id,
+        strategy: strategy,
+        status: :running,
+        started_at: DateTime.utc_now(),
+        cached_tools: cached_tools
+      }
+
+      state = %{state | tasks: Map.put(state.tasks, task_id, task_state)}
+
+      # Run PACT in a detached Task so the GenServer stays responsive.
+      orchestrator_pid = self()
+      Task.start(fn ->
+        {synthesis, status} =
+          case Negotiation.execute_pact(message, pact_opts) do
+            {:ok, %{final_output: out}} when is_binary(out) -> {out, :completed}
+            {:ok, _result} -> {"PACT workflow completed.", :completed}
+            {:error, %{phases: phases}} ->
+              summary = "PACT workflow failed. Phases: #{Enum.map_join(phases, ", ", & "#{&1.phase}:#{&1.status}")}"
+              {summary, :failed}
+          end
+
+        GenServer.cast(orchestrator_pid, {:pact_complete, task_id, session_id, synthesis, status})
+      end)
+
+      {:reply, {:ok, task_id}, state}
+    else
 
     # For complex tasks (score >= 7), ask clarifying questions before decomposition
     message_with_context =
@@ -363,6 +400,7 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
 
         {:reply, {:error, reason}, state}
     end
+    end  # end pact else
   end
 
   @impl true
@@ -570,6 +608,32 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
     end
   end
 
+  # Receives the final result from a PACT Task and marks the task completed.
+  @impl true
+  def handle_cast({:pact_complete, task_id, session_id, synthesis, status}, state) do
+    case Map.get(state.tasks, task_id) do
+      nil ->
+        {:noreply, state}
+
+      task_state ->
+        task_state = %{task_state | status: status, synthesis: synthesis, completed_at: DateTime.utc_now()}
+        state = %{state | tasks: Map.put(state.tasks, task_id, task_state)}
+
+        event = if status == :completed, do: :orchestrator_task_completed, else: :orchestrator_task_failed
+
+        Bus.emit(:system_event, %{
+          event: event,
+          task_id: task_id,
+          session_id: session_id,
+          agent_count: 0,
+          result_preview: String.slice(synthesis || "", 0, 200)
+        })
+
+        Logger.info("[Orchestrator] PACT task #{task_id} #{status}")
+        {:noreply, state}
+    end
+  end
+
   # ── Handle Continue — Non-blocking wave execution ──────────────────
 
   @impl true
@@ -676,6 +740,12 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
 
       task_state ->
         synthesis = WaveExecutor.synthesize_results(task_id, task_state.results, task_state.message, task_state.session_id)
+
+        # Commit outcome in a detached Task — git can be slow and must not block the GenServer.
+        if is_binary(synthesis) and synthesis != "" do
+          summary = String.slice(synthesis, 0, 72)
+          Task.start(fn -> GitVersioning.commit_outcome(task_id, summary) end)
+        end
 
         # Transition machine: verifying → completed
         state = update_machine(state, task_id, fn machine ->

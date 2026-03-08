@@ -118,6 +118,30 @@ defmodule OptimalSystemAgent.Agent.Strategies.TreeOfThoughts do
   end
 
   def handle_result({:think, _}, _response, %{phase: :done} = state), do: state
+
+  # Tool result list from the agent loop — extract text summaries from each
+  # tool outcome and treat them as evaluation input for the current phase.
+  def handle_result({:act, :tools, _}, results, state) when is_list(results) do
+    tool_summary =
+      results
+      |> Enum.map(fn
+        %{tool: tool, result: r} when is_binary(r) -> "#{tool}: #{r}"
+        %{tool: tool, result: r} -> "#{tool}: #{inspect(r)}"
+        other -> inspect(other)
+      end)
+      |> Enum.join("\n")
+
+    case state.phase do
+      :evaluate ->
+        # Feed tool results as candidate approaches when in evaluation phase
+        candidates = if tool_summary != "", do: [tool_summary | state.candidates], else: state.candidates
+        %{state | candidates: Enum.take(candidates, state.num_candidates)}
+
+      _ ->
+        state
+    end
+  end
+
   def handle_result(_step, _result, state), do: state
 
   # ── Parsing Helpers ──────────────────────────────────────────────
