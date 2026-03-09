@@ -238,6 +238,62 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.OrchestrationRoutes do
     end
   end
 
+  # ── GET /:task_id/progress/stream ──────────────────────────────────
+  # Real-time SSE stream of orchestrator agent progress, Claude Code style.
+
+  get "/:task_id/progress/stream" do
+    task_id = conn.params["task_id"]
+
+    conn =
+      conn
+      |> put_resp_header("content-type", "text/event-stream")
+      |> put_resp_header("cache-control", "no-cache")
+      |> put_resp_header("connection", "keep-alive")
+      |> put_resp_header("access-control-allow-origin", "*")
+      |> send_chunked(200)
+
+    # Subscribe to orchestrator progress updates via PubSub
+    Phoenix.PubSub.subscribe(OptimalSystemAgent.PubSub, "osa:orchestrator:#{task_id}")
+
+    # Send initial state if available
+    case Progress.format(task_id) do
+      {:ok, formatted} ->
+        sse_event(conn, "progress", %{task_id: task_id, formatted: formatted})
+      _ -> :ok
+    end
+
+    # Block and stream events until task completes or client disconnects
+    stream_progress_loop(conn, task_id)
+  end
+
+  defp stream_progress_loop(conn, task_id) do
+    receive do
+      {:progress_update, ^task_id, formatted} ->
+        case sse_event(conn, "progress", %{task_id: task_id, formatted: formatted}) do
+          {:ok, conn} -> stream_progress_loop(conn, task_id)
+          {:error, _} -> conn  # Client disconnected
+        end
+    after
+      # Send keepalive every 30s, timeout after 10min of no updates
+      30_000 ->
+        case Progress.get(task_id) do
+          {:ok, %{status: status}} when status in [:completed, :failed] ->
+            sse_event(conn, "done", %{task_id: task_id, status: status})
+            conn
+          _ ->
+            case chunk(conn, ": keepalive\n\n") do
+              {:ok, conn} -> stream_progress_loop(conn, task_id)
+              {:error, _} -> conn
+            end
+        end
+    end
+  end
+
+  defp sse_event(conn, event, data) do
+    payload = "event: #{event}\ndata: #{Jason.encode!(data)}\n\n"
+    chunk(conn, payload)
+  end
+
   # ── POST /launch ────────────────────────────────────────────────────
   # Receives prefix-stripped path after forward "/swarm".
 

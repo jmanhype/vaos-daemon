@@ -163,7 +163,9 @@ defmodule OptimalSystemAgent.Channels.CLI do
     end
 
     Bus.register_handler(:system_event, fn payload ->
-      case payload do
+      # Bus wraps payload in Event struct — original data is in :data field
+      data = payload[:data] || payload
+      case data do
         %{event: :orchestrator_task_started, task_id: task_id} ->
           clear_line()
           IO.puts("#{@bold}#{@cyan}  ▶ Spawning agents...#{@reset}")

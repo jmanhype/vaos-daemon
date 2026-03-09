@@ -192,7 +192,9 @@ defmodule OptimalSystemAgent.Agent.Progress do
     progress_pid = self()
 
     Bus.register_handler(:system_event, fn payload ->
-      event = payload[:event]
+      # Bus wraps payload in Event struct — original data is in :data field
+      data = payload[:data] || payload
+      event = data[:event]
 
       if event in [
            :orchestrator_task_started,
@@ -206,7 +208,7 @@ defmodule OptimalSystemAgent.Agent.Progress do
            :orchestrator_task_failed,
            :orchestrator_synthesizing
          ] do
-        send(progress_pid, {:orchestrator_event, payload})
+        send(progress_pid, {:orchestrator_event, data})
       end
     end)
   end
