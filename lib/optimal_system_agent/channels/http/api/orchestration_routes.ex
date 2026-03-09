@@ -234,7 +234,24 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.OrchestrationRoutes do
         |> send_resp(200, body)
 
       {:error, :not_found} ->
-        json_error(conn, 404, "not_found", "Task #{task_id} not found")
+        # Orchestrator may have cleaned the task, but Progress GenServer retains it
+        case Progress.get(task_id) do
+          {:ok, progress_data} ->
+            formatted =
+              case Progress.format(task_id) do
+                {:ok, text} -> text
+                _ -> nil
+              end
+
+            body = Jason.encode!(Map.put(progress_data, :formatted, formatted))
+
+            conn
+            |> put_resp_content_type("application/json")
+            |> send_resp(200, body)
+
+          {:error, :not_found} ->
+            json_error(conn, 404, "not_found", "Task #{task_id} not found")
+        end
     end
   end
 
