@@ -597,6 +597,7 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
               session_id: task_state.session_id,
               agent_id: agent_id,
               agent_name: agent.name,
+              role: agent.role,
               tool_uses: updated_agent.tool_uses,
               tokens_used: updated_agent.tokens_used,
               current_action: updated_agent.current_action,

@@ -181,18 +181,46 @@ defmodule OptimalSystemAgent.Channels.CLI do
             "#{@cyan}  ▶ Deploying #{count} agent#{if count > 1, do: "s", else: ""}#{@reset}"
           )
 
+        %{event: :orchestrator_agent_started, agent_name: name, role: role, description: desc} ->
+          task_desc = if is_binary(desc) and desc != "", do: String.slice(desc, 0, 50), else: ""
+          role_str = role || name
+          IO.puts("#{@dim}  ⏺ #{role_str}(#{task_desc})#{@reset}")
+
         %{event: :orchestrator_agent_started, agent_name: name, role: role} ->
-          role_str = if role, do: " (#{role})", else: ""
-          IO.puts("#{@dim}  ├─ #{name}#{role_str} started#{@reset}")
+          role_str = role || name
+          IO.puts("#{@dim}  ⏺ #{role_str}#{@reset}")
+
+        %{event: :orchestrator_agent_progress, agent_name: name, role: role,
+          current_action: action, tool_uses: tools, tokens_used: tokens}
+        when is_binary(action) and action != "" ->
+          clear_line()
+          role_str = role || name
+          tokens_str = if is_number(tokens) and tokens >= 1000, do: "#{Float.round(tokens / 1000, 1)}k", else: "#{tokens || 0}"
+          tc = tools || 0
+          tl = if tc == 1, do: "tool use", else: "tool uses"
+          IO.write("#{@dim}  ⏺ #{role_str}: #{String.slice(action, 0, 50)} (#{tc} #{tl} · #{tokens_str} tokens)#{@reset}")
 
         %{event: :orchestrator_agent_progress, agent_name: name, current_action: action}
         when is_binary(action) and action != "" ->
           clear_line()
           IO.write("#{@dim}  │  #{name}: #{String.slice(action, 0, 60)}#{@reset}")
 
+        %{event: :orchestrator_agent_completed, agent_name: name, role: role,
+          tool_uses: tools, tokens_used: tokens, duration_ms: dur_ms} ->
+          clear_line()
+          role_str = role || name
+          tokens_str = if is_number(tokens) and tokens >= 1000, do: "#{Float.round(tokens / 1000, 1)}k", else: "#{tokens || 0}"
+          dur_str = format_duration_ms(dur_ms)
+          tool_count = tools || 0
+          tool_label = if tool_count == 1, do: "tool use", else: "tool uses"
+          parts = ["#{tool_count} #{tool_label}", "#{tokens_str} tokens", dur_str] |> Enum.reject(&(&1 == ""))
+          IO.puts("#{@dim}  ⏺ #{role_str}#{@reset}")
+          IO.puts("#{@dim}    ⎿  Done (#{Enum.join(parts, " · ")})#{@reset}")
+
         %{event: :orchestrator_agent_completed, agent_name: name} ->
           clear_line()
-          IO.puts("#{@dim}  ├─ #{name} done#{@reset}")
+          IO.puts("#{@dim}  ⏺ #{name}#{@reset}")
+          IO.puts("#{@dim}    ⎿  Done#{@reset}")
 
         %{event: :orchestrator_synthesizing} ->
           clear_line()
@@ -629,8 +657,12 @@ defmodule OptimalSystemAgent.Channels.CLI do
   defp format_elapsed(ms) do
     mins = div(ms, 60_000)
     secs = div(rem(ms, 60_000), 1_000)
-    "#{mins}m#{secs}s"
+    if secs > 0, do: "#{mins}m #{secs}s", else: "#{mins}m"
   end
+
+  defp format_duration_ms(nil), do: ""
+  defp format_duration_ms(ms) when is_number(ms), do: format_elapsed(ms)
+  defp format_duration_ms(_), do: ""
 
   defp format_tokens(0), do: ""
   defp format_tokens(n) when n < 1_000, do: "↓ #{n}"

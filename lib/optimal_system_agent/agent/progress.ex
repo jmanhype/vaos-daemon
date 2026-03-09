@@ -367,37 +367,84 @@ defmodule OptimalSystemAgent.Agent.Progress do
     if total == 0 do
       "Preparing agents..."
     else
-      completed = Enum.count(agents, &(&1.status == :completed))
-      failed = Enum.count(agents, &(&1.status == :failed))
-
-      header =
-        cond do
-          task_progress.status == :completed ->
-            "Completed #{total} agent#{plural(total)} (#{completed} succeeded#{if failed > 0, do: ", #{failed} failed"})"
-
-          task_progress.status == :failed ->
-            "Failed (#{failed}/#{total} agents failed)"
-
-          true ->
-            running = Enum.count(agents, &(&1.status == :running))
-            "Running #{running} agent#{plural(running)}..."
-        end
-
       lines =
-        agents
-        |> Enum.with_index()
-        |> Enum.map(fn {agent, idx} ->
-          prefix = if idx == total - 1, do: "   \u2514\u2500", else: "   \u251c\u2500"
-          tokens = format_tokens(agent.tokens_used)
-          status = agent_status_text(agent)
-          icon = status_icon(agent.status)
-
-          "#{prefix} #{icon} #{agent.name} \u00b7 #{agent.tool_uses} tool uses \u00b7 #{tokens} tokens \u00b7 #{status}"
+        Enum.map(agents, fn agent ->
+          format_agent_line(agent)
         end)
 
-      Enum.join([header | lines], "\n")
+      Enum.join(lines, "\n")
     end
   end
+
+  @doc """
+  Format a single agent's status in Claude Code style:
+
+      ⏺ devops-engineer(Build server bootstrap script)
+        ⎿  Done (15 tool uses · 50.6k tokens · 6m 32s)
+
+  Or while running:
+
+      ⏺ backend(Design user auth API)
+        ⎿  Reading lib/router.ex (8 tool uses · 12.3k tokens · 2m 15s)
+  """
+  def format_agent_line(%AgentProgress{} = agent) do
+    name = agent.name || agent.role || "agent"
+    role = agent.role || name
+    task_desc = truncate(agent.current_action || "", 50)
+    duration = format_duration(agent.started_at, agent.completed_at)
+    tokens = format_tokens(agent.tokens_used)
+    tools = agent.tool_uses
+
+    # Build metrics string: "15 tool uses · 50.6k tokens · 6m 32s"
+    metrics =
+      [
+        if(tools > 0, do: "#{tools} tool use#{plural(tools)}"),
+        if(agent.tokens_used > 0, do: "#{tokens} tokens"),
+        if(duration != "", do: duration)
+      ]
+      |> Enum.reject(&is_nil/1)
+      |> Enum.join(" · ")
+
+    status_text = agent_status_text(agent)
+    icon = status_icon(agent.status)
+
+    detail =
+      if metrics != "" do
+        "#{status_text} (#{metrics})"
+      else
+        status_text
+      end
+
+    "#{icon} #{role}(#{task_desc})\n  \u23bf  #{detail}"
+  end
+
+  @doc "Format duration between two DateTimes as human-readable string."
+  def format_duration(nil, _), do: ""
+  def format_duration(_, nil), do: ""
+
+  def format_duration(started_at, completed_at) do
+    diff_s = DateTime.diff(completed_at, started_at, :second)
+    format_elapsed(diff_s)
+  end
+
+  @doc "Format elapsed seconds as human-readable duration."
+  def format_elapsed(seconds) when seconds < 60, do: "#{seconds}s"
+
+  def format_elapsed(seconds) do
+    mins = div(seconds, 60)
+    secs = rem(seconds, 60)
+
+    if mins >= 60 do
+      hours = div(mins, 60)
+      remaining_mins = rem(mins, 60)
+      "#{hours}h #{remaining_mins}m"
+    else
+      if secs > 0, do: "#{mins}m #{secs}s", else: "#{mins}m"
+    end
+  end
+
+  defp truncate(str, max) when byte_size(str) > max, do: String.slice(str, 0, max) <> "..."
+  defp truncate(str, _), do: str
 
   defp format_tokens(tokens) when is_number(tokens) and tokens >= 1000 do
     "#{Float.round(tokens / 1000, 1)}k"
@@ -407,6 +454,8 @@ defmodule OptimalSystemAgent.Agent.Progress do
   defp format_tokens(_), do: "0"
 
   defp agent_status_text(%AgentProgress{status: :completed}), do: "Done"
+  defp agent_status_text(%AgentProgress{status: :failed, current_action: action})
+       when is_binary(action) and action != "", do: "Failed: #{action}"
   defp agent_status_text(%AgentProgress{status: :failed}), do: "Failed"
 
   defp agent_status_text(%AgentProgress{current_action: action})
@@ -415,10 +464,10 @@ defmodule OptimalSystemAgent.Agent.Progress do
   defp agent_status_text(%AgentProgress{status: :running}), do: "Working..."
   defp agent_status_text(_), do: "Pending"
 
-  defp status_icon(:completed), do: "[done]"
-  defp status_icon(:failed), do: "[fail]"
-  defp status_icon(:running), do: "[..]"
-  defp status_icon(_), do: "[ ]"
+  defp status_icon(:completed), do: "⏺"
+  defp status_icon(:failed), do: "✗"
+  defp status_icon(:running), do: "⏺"
+  defp status_icon(_), do: "○"
 
   defp plural(1), do: ""
   defp plural(_), do: "s"

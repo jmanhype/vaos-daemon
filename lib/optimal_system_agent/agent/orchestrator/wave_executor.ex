@@ -93,12 +93,24 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.WaveExecutor do
       :exit, _ -> :ok
     end
 
+    # Compute duration and extract metrics from agent state for CLI/UI display
+    duration_ms =
+      if updated_agent && updated_agent.started_at do
+        DateTime.diff(updated_agent.completed_at || DateTime.utc_now(), updated_agent.started_at, :millisecond)
+      else
+        nil
+      end
+
     Bus.emit(:system_event, %{
       event: :orchestrator_agent_completed,
       task_id: task_id,
       session_id: task_state.session_id,
       agent_id: agent_id,
       agent_name: agent_name,
+      role: updated_agent && updated_agent.role,
+      tool_uses: updated_agent && updated_agent.tool_uses,
+      tokens_used: updated_agent && updated_agent.tokens_used,
+      duration_ms: duration_ms,
       status: status
     })
 
