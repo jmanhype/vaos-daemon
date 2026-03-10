@@ -1191,7 +1191,12 @@ defmodule MiosaMemory.Store do
   # and arbitrary terms. Without this, multi-byte characters (Japanese,
   # emoji, CJK) can be mangled into '?????' sequences.
   defp ensure_utf8(nil), do: ""
-  defp ensure_utf8(val) when is_list(val), do: :unicode.characters_to_binary(val)
+
+  # Charlists are lists of Unicode codepoints. Pass :unicode as the input
+  # encoding so :unicode.characters_to_binary/2 emits a valid UTF-8 binary.
+  # The 1-arity form defaults to :latin1 input, which corrupts any codepoint
+  # above 127 (accented letters, CJK, emoji become replacement characters).
+  defp ensure_utf8(val) when is_list(val), do: :unicode.characters_to_binary(val, :unicode)
   defp ensure_utf8(val) when is_binary(val) do
     if String.valid?(val) do
       val

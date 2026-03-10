@@ -78,8 +78,8 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.SessionRoutes do
         |> put_resp_content_type("application/json")
         |> send_resp(201, body)
 
-      {:error, reason} ->
-        json_error(conn, 500, "session_create_failed", inspect(reason))
+      {:error, _reason} ->
+        json_error(conn, 500, "session_create_failed", "An internal error occurred while creating the session")
     end
   end
 
@@ -100,7 +100,9 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.SessionRoutes do
       messages = Memory.load_session(session_id) || []
 
       formatted_messages =
-        Enum.map(messages, fn m ->
+        messages
+        |> Enum.reject(fn m -> m["role"] == "system" end)
+        |> Enum.map(fn m ->
           %{
             role: m["role"],
             content: m["content"],
@@ -134,7 +136,9 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.SessionRoutes do
     messages = Memory.load_session(session_id) || []
 
     formatted =
-      Enum.map(messages, fn m ->
+      messages
+      |> Enum.reject(fn m -> m["role"] == "system" end)
+      |> Enum.map(fn m ->
         %{
           role: m["role"],
           content: m["content"],
@@ -175,8 +179,8 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.SessionRoutes do
       {:error, :enoent} ->
         json_error(conn, 404, "session_not_found", "Session #{session_id} not found")
 
-      {:error, reason} ->
-        json_error(conn, 500, "delete_failed", "Could not delete session: #{inspect(reason)}")
+      {:error, _reason} ->
+        json_error(conn, 500, "delete_failed", "An internal error occurred while deleting the session")
     end
   end
 

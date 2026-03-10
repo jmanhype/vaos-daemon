@@ -19,6 +19,7 @@ defmodule OptimalSystemAgent.Agent.Loop.LLMClient do
   Synchronous LLM chat — routes through the configured provider/model for this session.
   """
   def llm_chat(%{provider: provider, model: model}, messages, opts) do
+    Logger.debug("[llm] chat — #{length(messages)} messages (sanitized): #{inspect(sanitize_for_log(messages))}")
     opts = if provider, do: Keyword.put(opts, :provider, provider), else: opts
     opts = if model, do: Keyword.put(opts, :model, model), else: opts
     Providers.chat(messages, opts)
@@ -34,6 +35,7 @@ defmodule OptimalSystemAgent.Agent.Loop.LLMClient do
   Returns {:ok, result} | {:error, reason}.
   """
   def llm_chat_stream(%{session_id: session_id, provider: provider, model: model}, messages, opts) do
+    Logger.debug("[llm] stream — #{length(messages)} messages (sanitized): #{inspect(sanitize_for_log(messages))} session=#{session_id}")
     # Heartbeat: atomics counter incremented on every streaming event.
     # The watchdog checks if the counter has changed since last poll.
     heartbeat = :atomics.new(1, signed: false)
@@ -177,4 +179,33 @@ defmodule OptimalSystemAgent.Agent.Loop.LLMClient do
 
   @doc "Returns the configured LLM temperature."
   def temperature, do: Application.get_env(:optimal_system_agent, :temperature, 0.7)
+
+  # ── Log sanitization (Bug 17) ─────────────────────────────────────────────
+  # Strip system-prompt content from any message list before it touches a
+  # Logger call.  The messages are sent to the LLM unchanged — only the copy
+  # that appears in log output is redacted.
+  #
+  # Rules:
+  #   - Messages with role "system" (atom or string key) have their content
+  #     replaced with the literal string "[REDACTED: system prompt]".
+  #   - All other messages are returned as-is.
+  #   - Any non-map element is passed through unchanged (defensive).
+  @spec sanitize_for_log(list()) :: list()
+  defp sanitize_for_log(messages) when is_list(messages) do
+    Enum.map(messages, fn
+      # Atom-key map with role: "system"
+      %{role: "system"} = msg ->
+        %{msg | content: "[REDACTED: system prompt]"}
+
+      # String-key map with "role" => "system" (decoded JSON / checkpoint restore)
+      %{"role" => "system"} = msg ->
+        %{msg | "content" => "[REDACTED: system prompt]"}
+
+      # All other messages — pass through unchanged
+      msg ->
+        msg
+    end)
+  end
+
+  defp sanitize_for_log(other), do: other
 end

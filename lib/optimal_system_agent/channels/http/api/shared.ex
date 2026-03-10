@@ -4,7 +4,14 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.Shared do
   """
   import Plug.Conn
 
-  @doc "Send a JSON error response with status code."
+  @doc """
+  Send a JSON error response with status code.
+
+  SECURITY: `details` must be a caller-supplied static string.
+  Never pass `inspect(reason)` or any internal error term as `details`
+  — doing so may leak stack traces, configuration values, or prompt content
+  to the client.
+  """
   def json_error(conn, status, error, details) do
     body =
       case Jason.encode(%{error: error, details: details}) do
