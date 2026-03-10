@@ -39,7 +39,9 @@ defmodule OptimalSystemAgent.Agent.Treasury do
             approval_threshold: 10.0,
             transactions: [],
             daily_reset_at: nil,
-            monthly_reset_at: nil
+            monthly_reset_at: nil,
+            daily_alert_sent: MapSet.new(),
+            monthly_alert_sent: MapSet.new()
 
   @daily_reset_ms 24 * 60 * 60 * 1000
   @monthly_reset_ms 30 * 24 * 60 * 60 * 1000
@@ -329,6 +331,8 @@ defmodule OptimalSystemAgent.Agent.Treasury do
             "balance: $#{Float.round(new_balance, 2)}, daily: $#{Float.round(new_daily, 2)}"
         )
 
+        state = maybe_emit_budget_alerts(state, new_daily, state.daily_limit)
+
         {:reply, {:ok, txn}, state}
     end
   end
@@ -437,7 +441,8 @@ defmodule OptimalSystemAgent.Agent.Treasury do
     state = %{
       state
       | daily_spent: 0.0,
-        daily_reset_at: DateTime.add(DateTime.utc_now(), @daily_reset_ms, :millisecond)
+        daily_reset_at: DateTime.add(DateTime.utc_now(), @daily_reset_ms, :millisecond),
+        daily_alert_sent: MapSet.new()
     }
 
     schedule_daily_reset()
@@ -461,6 +466,43 @@ defmodule OptimalSystemAgent.Agent.Treasury do
   end
 
   # ── Private ─────────────────────────────────────────────────────────
+
+  # Emit :budget_alert events when daily spend crosses 80% or 100% of the daily limit.
+  # Tracks fired thresholds in state to avoid re-firing.
+  defp maybe_emit_budget_alerts(state, spent, limit) when limit > 0 do
+    pct = spent / limit * 100.0
+
+    state =
+      if pct >= 80.0 and not MapSet.member?(state.daily_alert_sent, :warning) do
+        Bus.emit(:system_event, %{
+          event: :budget_alert,
+          level: :warning,
+          percent: Float.round(pct, 1),
+          spent: spent,
+          budget: limit
+        })
+
+        %{state | daily_alert_sent: MapSet.put(state.daily_alert_sent, :warning)}
+      else
+        state
+      end
+
+    if pct >= 100.0 and not MapSet.member?(state.daily_alert_sent, :critical) do
+      Bus.emit(:system_event, %{
+        event: :budget_alert,
+        level: :critical,
+        percent: Float.round(pct, 1),
+        spent: spent,
+        budget: limit
+      })
+
+      %{state | daily_alert_sent: MapSet.put(state.daily_alert_sent, :critical)}
+    else
+      state
+    end
+  end
+
+  defp maybe_emit_budget_alerts(state, _spent, _limit), do: state
 
   defp create_transaction(type, amount, description, reference_id, balance_after) do
     %{
