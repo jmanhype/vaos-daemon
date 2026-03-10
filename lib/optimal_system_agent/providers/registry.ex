@@ -257,24 +257,32 @@ defmodule OptimalSystemAgent.Providers.Registry do
 
     Logger.info("Providers: #{Map.keys(providers) |> Enum.join(", ")}")
 
-    # Bug 7 fix: probe Ollama reachability at boot so we surface a single clear
-    # log line instead of a Req.TransportError on every subsequent request.
-    if default == :ollama do
-      url = Application.get_env(:optimal_system_agent, :ollama_url, "http://localhost:11434")
+    # Boot reachability check for Ollama.
+    # If Ollama is unreachable at startup we mark it as excluded so it is
+    # never tried in the fallback chain, preventing a flood of :econnrefused
+    # log lines on every LLM call.
+    ollama_reachable = ollama_reachable?()
 
-      case Req.get(url <> "/api/tags", receive_timeout: 2_000, retry: false) do
-        {:ok, %{status: status}} when status in 200..299 ->
-          Logger.info("[ProviderRegistry] Ollama reachable at #{url}")
-
-        _ ->
-          Logger.warning(
-            "[ProviderRegistry] Ollama not reachable at boot, skipping" <>
-              " (configure :ollama_url to enable)"
-          )
-      end
+    unless ollama_reachable do
+      Logger.info("[Providers.Registry] Ollama not reachable at boot — skipping in fallback chain")
     end
 
-    {:ok, %{extra_providers: %{}}}
+    # Stash the boot-time decision in the process dictionary so private
+    # chain-building helpers can read it without a self-GenServer-call.
+    Process.put(:osa_ollama_excluded, not ollama_reachable)
+
+    {:ok, %{extra_providers: %{}, ollama_excluded: not ollama_reachable}}
+  end
+
+  defp ollama_reachable? do
+    url = Application.get_env(:optimal_system_agent, :ollama_url, "http://localhost:11434")
+
+    case Req.get("#{url}/api/tags", receive_timeout: 2_000, retry: false) do
+      {:ok, %{status: 200}} -> true
+      _ -> false
+    end
+  rescue
+    _ -> false
   end
 
   @impl true
@@ -315,6 +323,7 @@ defmodule OptimalSystemAgent.Providers.Registry do
             [_ | rest] -> rest
             [] -> []
           end)
+          |> filter_boot_excluded_providers()
           |> Enum.filter(&HealthChecker.is_available?/1)
 
         if remaining_chain == [] do
@@ -341,6 +350,7 @@ defmodule OptimalSystemAgent.Providers.Registry do
         [_ | rest] -> rest
         [] -> []
       end)
+      |> filter_boot_excluded_providers()
       |> Enum.filter(&HealthChecker.is_available?/1)
 
     if remaining_chain == [] do
@@ -353,6 +363,18 @@ defmodule OptimalSystemAgent.Providers.Registry do
         "Provider #{failed_provider} #{reason}, trying next available: #{inspect(remaining_chain)}"
       )
       chat_with_fallback(messages, remaining_chain, opts)
+    end
+  end
+
+  # Removes providers that were found unreachable at boot time.
+  # Currently only :ollama is subject to a boot-time probe; all other
+  # providers are key-configured and assumed available until a runtime
+  # failure flips the circuit breaker.
+  defp filter_boot_excluded_providers(chain) do
+    if Process.get(:osa_ollama_excluded, false) do
+      Enum.reject(chain, &(&1 == :ollama))
+    else
+      chain
     end
   end
 
