@@ -90,7 +90,9 @@ defmodule OptimalSystemAgent.Agent.Loop do
     # Per-call signal weight (0.0–1.0 or nil).
     # Set from :signal_weight opt before entering run_loop.
     # Used to gate tool dispatch: weight < 0.20 → plain chat, no tools.
-    signal_weight: nil
+    signal_weight: nil,
+    # UTC datetime when this loop process was initialized.
+    started_at: nil
   ]
 
   # --- Client API ---
@@ -121,6 +123,12 @@ defmodule OptimalSystemAgent.Agent.Loop do
   end
 
   @doc "Get metadata from the last process_message call (iteration_count, tools_used)."
+  def get_state(session_id) do
+    GenServer.call(via(session_id), :get_state)
+  catch
+    :exit, _ -> {:error, :not_found}
+  end
+
   def get_metadata(session_id) do
     GenServer.call(via(session_id), :get_metadata)
   rescue
@@ -192,7 +200,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
           {react, react.init_state(%{})}
       end
 
-    state = %{state | strategy: strategy_mod, strategy_state: strategy_state}
+    state = %{state | strategy: strategy_mod, strategy_state: strategy_state, started_at: DateTime.utc_now()}
 
     if restored != %{} do
       Logger.info("[loop] Restored checkpoint for session #{session_id} — iteration=#{iteration}, messages=#{length(messages)}")
@@ -525,6 +533,12 @@ defmodule OptimalSystemAgent.Agent.Loop do
   @impl true
   def handle_call(:get_metadata, _from, state) do
     {:reply, state.last_meta, state}
+  end
+
+  def handle_call(:get_state, _from, state) do
+    uptime = if state.started_at, do: DateTime.diff(DateTime.utc_now(), state.started_at), else: 0
+    snap = %{session_id: state.session_id, iteration: state.iteration, tokens_used: estimate_tokens_for_introspection(state), tools_called: state.last_meta[:tools_used] || [], status: state.status, started_at: state.started_at, uptime_seconds: uptime}
+    {:reply, {:ok, snap}, state}
   end
 
   @impl true
@@ -1148,6 +1162,14 @@ defmodule OptimalSystemAgent.Agent.Loop do
     })
   rescue
     e -> Logger.debug("emit_context_pressure failed: #{inspect(e)}")
+  end
+
+  defp estimate_tokens_for_introspection(state) do
+    try do
+      OptimalSystemAgent.Agent.Compactor.estimate_tokens(state.messages)
+    rescue
+      _ -> 0
+    end
   end
 
   # Extract unique tool names used during the agent loop from message history
