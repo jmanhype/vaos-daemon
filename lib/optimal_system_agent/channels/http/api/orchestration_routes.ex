@@ -2,18 +2,21 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.OrchestrationRoutes do
   @moduledoc """
   Orchestration routes — simple agent, complex multi-agent, and swarm.
 
-  This module handles two forwarded prefixes from the parent router:
-    forward "/orchestrate" → routes here use /[...] relative paths
-    forward "/swarm"       → routes here use /[...] relative paths
+  This module handles three forwarded prefixes from the parent router:
+    forward "/orchestrate"  → routes here use /[...] relative paths
+    forward "/orchestrator" → alias for /orchestrate (backward compat)
+    forward "/swarm"        → routes here use /[...] relative paths
 
   Effective endpoints:
     POST   /orchestrate                   — Simple fire-and-forget via agent loop
     POST   /orchestrate/complex           — Launch multi-agent orchestrated task
+    POST   /orchestrator/complex          — Alias (same handler, backward compat)
     GET    /orchestrate/tasks             — List all orchestrated tasks
     GET    /orchestrate/:task_id/progress — Real-time progress for a task
     POST   /swarm/launch                  — Launch a new swarm
     GET    /swarm                         — List all swarms
-    GET    /swarm/:id                     — Get swarm status
+    GET    /swarm/status/:id              — Get swarm status (canonical path)
+    GET    /swarm/:id                     — Get swarm status (short alias)
     DELETE /swarm/:id                     — Cancel a swarm
   """
   use Plug.Router
@@ -370,6 +373,30 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.OrchestrationRoutes do
         conn
         |> put_resp_content_type("application/json")
         |> send_resp(200, body)
+
+      {:error, reason} ->
+        json_error(conn, 500, "swarm_error", to_string(reason))
+    end
+  end
+
+  # ── GET /status/:swarm_id ──────────────────────────────────────────
+  # Public-facing effective path: GET /swarm/status/:id
+  # Clients that hit /api/v1/swarm/status/<id> land here after the /swarm
+  # prefix is stripped by the parent router, leaving /status/<id>.
+
+  get "/status/:swarm_id" do
+    swarm_id = conn.params["swarm_id"]
+
+    case Swarm.status(swarm_id) do
+      {:ok, swarm} ->
+        body = Jason.encode!(swarm_to_map(swarm))
+
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(200, body)
+
+      {:error, :not_found} ->
+        json_error(conn, 404, "not_found", "Swarm #{swarm_id} not found")
 
       {:error, reason} ->
         json_error(conn, 500, "swarm_error", to_string(reason))

@@ -86,6 +86,9 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
 
   # ── Orchestration (simple POST + complex + swarm) ────────────────────
   forward "/orchestrate", to: API.OrchestrationRoutes
+  # /orchestrator is an alias for /orchestrate kept for backward-compat with
+  # clients that used the longer form (e.g. POST /orchestrator/complex).
+  forward "/orchestrator", to: API.OrchestrationRoutes
   forward "/swarm", to: API.OrchestrationRoutes
 
   # ── Agent SSE stream ─────────────────────────────────────────────────
