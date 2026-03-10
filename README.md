@@ -5,7 +5,7 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Elixir](https://img.shields.io/badge/Elixir-1.17+-purple.svg)](https://elixir-lang.org)
 [![OTP](https://img.shields.io/badge/OTP-27+-green.svg)](https://www.erlang.org)
-[![Tests](https://img.shields.io/badge/Tests-1958-brightgreen.svg)](#)
+[![Tests](https://img.shields.io/badge/Tests-2082-brightgreen.svg)](#)
 [![Version](https://img.shields.io/badge/Version-0.2.5-orange.svg)](#)
 
 ---
@@ -151,9 +151,39 @@ LOW      (remaining): Workflow context, environmental info
 
 **Three-zone compression:** HOT (last 10 msgs, full fidelity) → WARM (progressive compression) → COLD (key facts only, importance-weighted).
 
-**Three-store memory:** Session JSONL, persistent MEMORY.md, ETS inverted index for keyword → session mapping.
+**Four-layer memory:**
+- **Session** — JSONL per-session conversation log
+- **Long-term** — MEMORY.md across all sessions
+- **Episodic** — ETS inverted index for keyword → session mapping
+- **Vault** — Structured memory with 8 typed categories, fact extraction, scored observations, session lifecycle, and deterministic prompt injection (see below)
 
-### 9. Hook Middleware Pipeline
+### 9. Vault — Structured Memory
+
+The Vault is a structured memory system that goes beyond flat files:
+
+```
+~/.osa/vault/
+├── facts/          ├── decisions/      ├── lessons/
+├── preferences/    ├── commitments/    ├── relationships/
+├── projects/       ├── observations/   ├── handoffs/
+└── .vault/
+    ├── facts.jsonl       # Temporal fact store (never deletes, versioned)
+    ├── checkpoints/      # Mid-session save points
+    └── dirty/            # Dirty-death detection flags
+```
+
+| Feature | How It Works |
+|---------|-------------|
+| **Typed categories** | 8 memory types (fact, decision, lesson, preference, commitment, relationship, project, observation) with YAML frontmatter |
+| **Fact extraction** | ~15 regex patterns extract structured facts from free text — no LLM needed |
+| **Scored observations** | Observations get a relevance score (0.0–1.0) that decays exponentially over time |
+| **Session lifecycle** | Wake (detect dirty deaths) → Checkpoint (periodic save) → Sleep (create handoff doc) |
+| **Context profiles** | 4 profiles (default/planning/incident/handoff) control what vault content enters the prompt |
+| **Prompt injection** | Keyword matching against vault files injects relevant decisions/preferences into system prompt |
+
+6 tools: `vault_remember`, `vault_context`, `vault_wake`, `vault_sleep`, `vault_checkpoint`, `vault_inject`
+
+### 10. Hook Middleware Pipeline
 
 Priority-ordered hooks fire at lifecycle events:
 
@@ -164,6 +194,7 @@ mcp_cache (p15)          — Cache MCP schemas in persistent_term
 budget_tracker (p25)     — Token budget enforcement
 quality_check (p30)      — Output quality scoring
 episodic_memory (p60)    — Write JSONL episodes
+vault_checkpoint (p80)   — Auto-checkpoint vault every 10 tool calls
 metrics_dashboard (p80)  — JSONL metrics + periodic summary
 ...
 ```
@@ -340,6 +371,7 @@ JWT authentication supported for production — set `OSA_SHARED_SECRET` and `OSA
   │  Context Builder (token-budgeted, 4-tier priority)     │
   │  Compactor (3-zone sliding window, importance-weighted) │
   │  Memory (3-store + inverted index + episodic JSONL)    │
+  │  Vault (8-category structured memory + fact extraction)│
   │  Cortex (knowledge synthesis)                          │
   │  Scheduler (cron + heartbeat)                          │
   │  Sandbox (Docker + Wasm + Sprites.dev)                 │
@@ -395,6 +427,9 @@ OptimalSystemAgent.Supervisor (rest_for_one)
 │   ├── Agent.TaskTracker        Task lifecycle tracking
 │   ├── Agent.Hooks              Priority-ordered middleware pipeline
 │   ├── Agent.Learning           Pattern learning system
+│   ├── MiosaKnowledge.Store     Semantic knowledge graph
+│   ├── Memory.KnowledgeBridge   Knowledge ↔ Memory bridge
+│   ├── Vault.Supervisor         Structured memory (FactStore + Observer)
 │   ├── Agent.Scheduler          Cron + heartbeat scheduling
 │   ├── Agent.Compactor          3-zone context compression
 │   ├── Agent.Cortex             Knowledge synthesis

@@ -5,7 +5,7 @@
 ## Guides
 
 - [Signal Theory](signal-theory.md) — 5-tuple signal classification, noise filtering, communication intelligence
-- [Memory & Learning](memory-and-learning.md) — 3-store memory, SICA learning cycle, VIGIL error taxonomy, context compaction
+- [Memory & Learning](memory-and-learning.md) — 4-layer memory (Session + Long-term + Episodic + Vault), SICA learning cycle, VIGIL error taxonomy, context compaction
 - [SDK Architecture](sdk.md) — Internal SDK structure and module organization
 
 ## System Overview

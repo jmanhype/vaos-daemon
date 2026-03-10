@@ -1,6 +1,6 @@
 # OSA Orchestration Map
 
-> How OptimalSystemAgent wires 20 subsystems into a single agent lifecycle.
+> How OptimalSystemAgent wires 21 subsystems into a single agent lifecycle.
 
 ---
 
@@ -13,9 +13,11 @@ USER MESSAGE
 ┌─────────────────────────────────────────────────────────┐
 │  LOOP.process_message(session_id, message, opts)        │
 │                                                         │
+│  0. Vault.wake(session_id) — dirty-death detection      │
 │  1. Noise filter / Signal classifier                    │
 │  2. Memory.append(user message)                         │
-│  3. Context.build() → [static soul + dynamic blocks]    │
+│  3. Context.build() → [static soul + dynamic blocks     │
+│       + vault_block (profiled vault context)]            │
 │  4. Strategy.resolve() → reasoning algorithm            │
 │  5. run_loop() ─┐                                       │
 │                  │                                       │
@@ -40,6 +42,8 @@ USER MESSAGE
 │  6. Scratchpad.process_response()                       │
 │  7. Memory.append(assistant response)                   │
 │  8. Bus.emit(:agent_response)                           │
+│  9. On terminate: Vault.sleep(session_id)               │
+│     → flush observations, create handoff, clear dirty   │
 └─────────────────────────────────────────────────────────┘
   │
   ▼
@@ -126,6 +130,8 @@ Soul.static_base() = SYSTEM.md interpolated with:
 | workflow | Workspace workflow state | Low |
 | skills | Available custom skills | Low |
 | scratchpad | Think instructions (non-Anthropic only) | Low |
+| knowledge | Knowledge graph context | Low |
+| vault | Vault profiled context (facts, decisions, prefs) | Low |
 
 Each block fitted to: `dynamic_budget = max_tokens - static_tokens - conversation - reserve`
 
@@ -220,6 +226,7 @@ Strategies can trigger mid-loop switches (e.g., ReAct → Reflection when self-c
 5. Post-tool hooks (async, fire-and-forget):
    ├─ track_files_read (p5)  → ETS marker
    ├─ cost_tracker     (p25) → budget spend emission
+   ├─ vault_checkpoint (p80) → auto-checkpoint vault every 10 tool calls
    └─ telemetry        (p90) → timing metrics
 6. Bus.emit(:tool_result)
 7. Return {tool_msg, result_str}
@@ -452,7 +459,54 @@ Not injected into context by default — invoked on-demand when user asks about 
 
 ---
 
-### 20. Browser / ComputerUse / CodeSandbox — `tools/builtins/`
+### 20. Vault — `vault/`
+
+**When:** Automatically on session init/terminate + via 6 vault tools.
+
+**Structured memory system with session lifecycle:**
+
+```
+Session Start (Loop.init)
+  │
+  ▼
+Vault.wake(session_id)
+  ├─ Check ~/.osa/vault/.vault/dirty/ for stale flags (dirty deaths)
+  ├─ Recover any crashed sessions (load last handoff)
+  └─ Touch dirty flag for this session
+  │
+  ▼
+[Agent runs — tool calls happen]
+  │
+  ├─ vault_auto_checkpoint hook (post_tool_use, p80)
+  │   └─ Every 10 tool calls: flush observer + refresh dirty flag
+  │
+  ├─ vault_remember tool → write markdown + extract facts + buffer observation
+  │
+  ├─ Context.build() includes vault_block()
+  │   └─ ContextProfile.build(:default) → facts + vault files → prompt injection
+  │
+  ▼
+Session End (Loop.terminate)
+  │
+  ▼
+Vault.sleep(session_id)
+  ├─ Flush observation buffer
+  ├─ Create handoff document (summary, facts, next steps)
+  └─ Clear dirty flag
+```
+
+**Data stores:**
+
+| Store | Location | Access Pattern |
+|-------|----------|---------------|
+| Category files | `~/.osa/vault/{category}/*.md` | Filesystem read/write |
+| Fact store | `:osa_vault_facts` ETS + `facts.jsonl` | ETS reads (concurrent), GenServer writes, JSONL persistence |
+| Dirty flags | `~/.osa/vault/.vault/dirty/{session_id}` | Filesystem touch/rm |
+| Handoffs | `~/.osa/vault/handoffs/` | Filesystem read/write |
+
+---
+
+### 21. Browser / ComputerUse / CodeSandbox — `tools/builtins/`
 
 **Specialty tools invoked by LLM when task requires them:**
 
@@ -496,3 +550,4 @@ Not injected into context by default — invoked on-demand when user asks about 
 | **Knowledge** | knowledge tool | Triple store backend | (none) |
 | **Strategies** | Loop | (injects guidance) | (none) |
 | **Directives** | Agent responses | Loop interpreter | (varies by type) |
+| **Vault** | Loop (init/terminate), Hooks (checkpoint), Context (vault_block), Tools (6 vault_*) | Filesystem, ETS, Observer | (none — passive store) |

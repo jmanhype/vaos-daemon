@@ -46,6 +46,11 @@ OptimalSystemAgent.Application (rest_for_one)
 |   +-- Agent.TaskTracker               # task lifecycle tracking
 |   +-- Agent.Hooks                     # pre/post tool-use hooks (ETS metrics)
 |   +-- Agent.Learning                  # pattern learning + skill extraction
+|   +-- MiosaKnowledge.Store            # semantic knowledge graph
+|   +-- Memory.KnowledgeBridge          # knowledge ↔ memory bridge
+|   +-- Vault.Supervisor                # structured memory subsystem
+|   |   +-- Vault.FactStore             # ETS + JSONL temporal fact store
+|   |   +-- Vault.Observer              # buffered observation pipeline
 |   +-- Agent.Scheduler                 # cron-like job scheduling
 |   +-- Agent.Compactor                 # context window compaction
 |   +-- Agent.Cortex                    # cross-agent synthesis
@@ -149,7 +154,7 @@ LLM provider adapters — all implement the same interface.
 | `tool_call_parsers.ex` | Parse tool calls from LLM responses |
 
 ### 4. Tools (`tools/`)
-Tool system — 27 built-in tools + MCP tools + SDK tools.
+Tool system — 33 built-in tools + MCP tools + SDK tools.
 
 | Module | Purpose |
 |--------|---------|
@@ -186,6 +191,12 @@ Tool system — 27 built-in tools + MCP tools + SDK tools.
 | `computer_use` | Computer use (screen control) |
 | `diff` | Diff generation |
 | `notebook_edit` | Jupyter notebook editing |
+| `vault_remember` | Store memory with fact extraction |
+| `vault_context` | Build profiled context from vault |
+| `vault_wake` | Session start with dirty-death detection |
+| `vault_sleep` | Session end with handoff document |
+| `vault_checkpoint` | Mid-session vault save |
+| `vault_inject` | Keyword-matched prompt injection |
 
 ### 5. Channels (`channels/`)
 I/O adapters — how users interact with OSA.
@@ -287,7 +298,25 @@ External SDK for building on OSA.
 | `mcp.ex` | MCP integration |
 | `supervisor.ex` | SDK process supervisor |
 
-### 12. Other Subsystems
+### 12. Vault (`vault/`)
+Structured memory system with typed categories, fact extraction, and session lifecycle.
+
+| Module | Purpose |
+|--------|---------|
+| `vault.ex` | Facade API (remember, recall, context, wake, sleep, checkpoint, inject) |
+| `category.ex` | 8 typed memory categories with dir mapping + frontmatter |
+| `store.ex` | Markdown filesystem store with YAML frontmatter |
+| `observation.ex` | Scored observations with exponential time-based decay |
+| `fact_extractor.ex` | ~15 regex patterns for rule-based fact extraction |
+| `fact_store.ex` | GenServer + ETS + JSONL with temporal versioning |
+| `observer.ex` | Buffered observation pipeline (classify → score → flush) |
+| `supervisor.ex` | Supervises FactStore + Observer |
+| `session_lifecycle.ex` | Wake/sleep/checkpoint/recover + dirty-death flag files |
+| `context_profile.ex` | 4 profiles (default/planning/incident/handoff) with caps |
+| `handoff.ex` | Session handoff document creation/loading |
+| `inject.ex` | Keyword-matched vault content injection |
+
+### 13. Other Subsystems
 
 | Domain | Key Modules | Purpose |
 |--------|-------------|---------|
@@ -370,6 +399,7 @@ Loop continues until: stop token, max turns, budget exceeded, or cancel flag
 | `:osa_context_cache` | Ollama model context sizes | public, set |
 | `:osa_hooks` | Hook registrations | public, ordered_set, write_concurrency |
 | `:osa_hook_metrics` | Hook execution metrics (atomic counters) | public, set, write_concurrency |
+| `:osa_vault_facts` | Vault fact store (temporal versioning) | public, set, read_concurrency |
 
 ---
 
