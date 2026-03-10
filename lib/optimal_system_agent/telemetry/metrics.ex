@@ -5,7 +5,9 @@ defmodule OptimalSystemAgent.Telemetry.Metrics do
   Subscribes to Events.Bus and tracks:
     - :tool_executions    — count by tool name (histogram)
     - :provider_latency   — avg/p99 latency by provider (last 100 calls)
-    - :session_stats      — turns per session, messages per day
+    - :provider_calls     — total call count by provider atom
+    - :session_stats      — turns per session, messages per day, sessions today
+    - :token_stats        — cumulative input/output tokens from llm_response usage map
     - :noise_filter_rate  — % messages filtered by noise filter
     - :signal_weights     — distribution by bucket (0-0.2, 0.2-0.5, 0.5-0.8, 0.8-1.0)
 
@@ -19,6 +21,17 @@ defmodule OptimalSystemAgent.Telemetry.Metrics do
       Metrics.record_signal_weight(0.73)
       Metrics.get_metrics()
       Metrics.get_summary()
+
+  ## /analytics-facing summary
+
+      Metrics.get_analytics_summary()
+      # => %{
+      #      sessions_today: integer,
+      #      total_messages: integer,
+      #      tokens_used: integer,
+      #      top_tools: [{tool_name, call_count}, ...],
+      #      provider_calls: %{provider_atom => call_count}
+      #    }
   """
 
   use GenServer
@@ -72,9 +85,45 @@ defmodule OptimalSystemAgent.Telemetry.Metrics do
     %{
       tool_executions: summarize_tool_executions(Map.get(m, :tool_executions, %{})),
       provider_latency: summarize_latencies(Map.get(m, :provider_latency, %{})),
-      session_stats: Map.get(m, :session_stats, %{turns_by_session: %{}, messages_today: 0}),
+      provider_calls: Map.get(m, :provider_calls, %{}),
+      session_stats: Map.get(m, :session_stats, %{turns_by_session: %{}, messages_today: 0, sessions_today: 0}),
+      token_stats: Map.get(m, :token_stats, %{input_tokens: 0, output_tokens: 0}),
       noise_filter_rate: Float.round(filter_rate * 100, 2),
       signal_weight_distribution: Map.get(m, :signal_weights, empty_weight_buckets())
+    }
+  end
+
+  @doc """
+  Returns the summary map expected by the `/analytics` command and the
+  `/api/analytics` HTTP route.
+
+  Fields:
+    - `sessions_today`  — distinct session IDs seen since midnight (ETS-based)
+    - `total_messages`  — cumulative `:user_message` and `:llm_response` events
+    - `tokens_used`     — total input + output tokens from all `llm_response` events
+    - `top_tools`       — list of `{tool_name, call_count}` sorted descending by count
+    - `provider_calls`  — map of `provider_atom => call_count`
+  """
+  def get_analytics_summary do
+    m = get_metrics()
+
+    session_stats = Map.get(m, :session_stats, %{turns_by_session: %{}, messages_today: 0, sessions_today: 0})
+    token_stats = Map.get(m, :token_stats, %{input_tokens: 0, output_tokens: 0})
+    tool_executions = Map.get(m, :tool_executions, %{})
+    provider_calls = Map.get(m, :provider_calls, %{})
+
+    top_tools =
+      tool_executions
+      |> Enum.map(fn {name, stats} -> {name, stats.count} end)
+      |> Enum.sort_by(fn {_name, count} -> count end, :desc)
+      |> Enum.take(10)
+
+    %{
+      sessions_today: Map.get(session_stats, :sessions_today, 0),
+      total_messages: Map.get(session_stats, :messages_today, 0),
+      tokens_used: Map.get(token_stats, :input_tokens, 0) + Map.get(token_stats, :output_tokens, 0),
+      top_tools: top_tools,
+      provider_calls: provider_calls
     }
   end
 
@@ -111,6 +160,7 @@ defmodule OptimalSystemAgent.Telemetry.Metrics do
   @impl true
   def handle_cast({:provider_call, provider, latency_ms, _success}, state) do
     update_provider_latency(provider, latency_ms)
+    update_provider_call_count(provider)
     {:noreply, state}
   end
 
@@ -146,28 +196,65 @@ defmodule OptimalSystemAgent.Telemetry.Metrics do
   defp subscribe_to_events do
     self_pid = self()
 
+    # tool_result events emit `name:` (not `tool:`); also accept string key for
+    # goldrush-serialised payloads where atom keys become strings after gre.pairs().
     safe_register(:tool_result, fn payload ->
-      tool = Map.get(payload, :tool, Map.get(payload, "tool", "unknown"))
+      tool =
+        Map.get(payload, :name,
+          Map.get(payload, "name",
+            Map.get(payload, :tool,
+              Map.get(payload, "tool", "unknown"))))
+
+      # duration_ms is not present on tool_result events (it is on tool_call events);
+      # default to 0 so the count is still incremented correctly.
       duration = Map.get(payload, :duration_ms, Map.get(payload, "duration_ms", 0))
       send(self_pid, {:osa_event, {:tool_result, to_string(tool), duration}})
     end)
 
+    # llm_response events from Agent.Loop emit:
+    #   %{session_id:, duration_ms:, usage: %{input_tokens:, output_tokens:, ...}}
+    # There is no top-level :provider field — provider is inferred from session state,
+    # not forwarded in the event. We record :unknown as provider for the latency window
+    # but still capture duration_ms and token usage faithfully.
     safe_register(:llm_response, fn payload ->
       provider =
         payload
         |> Map.get(:provider, Map.get(payload, "provider", :unknown))
         |> to_atom_provider()
 
-      latency = Map.get(payload, :latency_ms, Map.get(payload, "latency_ms", 0))
+      latency = Map.get(payload, :duration_ms, Map.get(payload, "duration_ms", 0))
       success = Map.get(payload, :success, Map.get(payload, "success", true))
-      send(self_pid, {:osa_event, {:llm_response, provider, latency, success}})
+
+      usage =
+        payload
+        |> Map.get(:usage, Map.get(payload, "usage", %{}))
+        |> normalise_usage_map()
+
+      send(self_pid, {:osa_event, {:llm_response, provider, latency, success, usage}})
     end)
 
+    # user_message events are not emitted anywhere in the current codebase.
+    # The handler is kept so it fires automatically if/when the emission is added.
+    # session_stats are also incremented from :llm_response to ensure the counters
+    # are always live (see handle_event/1 below).
     safe_register(:user_message, fn payload ->
       session_id = Map.get(payload, :session_id, Map.get(payload, "session_id", "unknown"))
       send(self_pid, {:osa_event, {:user_message, to_string(session_id)}})
     end)
   end
+
+  # Accept both atom-key and string-key usage maps (goldrush serialises atom keys
+  # to strings via gre.pairs/1 -> Map.new/1).
+  defp normalise_usage_map(usage) when is_map(usage) do
+    %{
+      input_tokens:
+        Map.get(usage, :input_tokens, Map.get(usage, "input_tokens", 0)),
+      output_tokens:
+        Map.get(usage, :output_tokens, Map.get(usage, "output_tokens", 0))
+    }
+  end
+
+  defp normalise_usage_map(_), do: %{input_tokens: 0, output_tokens: 0}
 
   # Wraps Events.Bus.register_handler so that startup succeeds even when
   # Events.Bus is not running (e.g. mix test --no-start).
@@ -183,8 +270,20 @@ defmodule OptimalSystemAgent.Telemetry.Metrics do
     update_tool_execution(tool_name, duration_ms)
   end
 
+  # 5-tuple emitted by the subscribe_to_events :llm_response handler (includes usage).
+  defp handle_event({:llm_response, provider, latency_ms, _success, usage}) do
+    update_provider_latency(provider, latency_ms)
+    update_provider_call_count(provider)
+    update_token_stats(usage)
+    # Increment messages_today via llm_response since :user_message events are not
+    # currently emitted anywhere. Each LLM call corresponds to one user turn.
+    update_messages_today()
+  end
+
+  # Legacy 4-tuple (emitted by direct record_provider_call/3 callers; no usage data).
   defp handle_event({:llm_response, provider, latency_ms, _success}) do
     update_provider_latency(provider, latency_ms)
+    update_provider_call_count(provider)
   end
 
   defp handle_event({:user_message, session_id}) do
@@ -198,7 +297,9 @@ defmodule OptimalSystemAgent.Telemetry.Metrics do
   defp seed_table do
     :ets.insert(:osa_telemetry, {:tool_executions, %{}})
     :ets.insert(:osa_telemetry, {:provider_latency, %{}})
-    :ets.insert(:osa_telemetry, {:session_stats, %{turns_by_session: %{}, messages_today: 0}})
+    :ets.insert(:osa_telemetry, {:provider_calls, %{}})
+    :ets.insert(:osa_telemetry, {:session_stats, %{turns_by_session: %{}, messages_today: 0, sessions_today: 0}})
+    :ets.insert(:osa_telemetry, {:token_stats, %{input_tokens: 0, output_tokens: 0}})
     :ets.insert(:osa_telemetry, {:noise_filter, %{filtered: 0, clarify: 0, pass: 0}})
     :ets.insert(:osa_telemetry, {:signal_weights, empty_weight_buckets()})
   end
@@ -270,21 +371,52 @@ defmodule OptimalSystemAgent.Telemetry.Metrics do
   defp update_session_stats(session_id) do
     [{_, stats}] = :ets.lookup(:osa_telemetry, :session_stats)
 
+    is_new_session = not Map.has_key?(stats.turns_by_session, session_id)
     updated_turns = Map.update(stats.turns_by_session, session_id, 1, &(&1 + 1))
 
     updated = %{
       stats
       | turns_by_session: updated_turns,
-        messages_today: stats.messages_today + 1
+        messages_today: stats.messages_today + 1,
+        sessions_today: stats.sessions_today + if(is_new_session, do: 1, else: 0)
     }
 
     :ets.insert(:osa_telemetry, {:session_stats, updated})
   end
 
+  # Increments messages_today without requiring a session_id.
+  # Called from the :llm_response handler as a fallback since :user_message
+  # events are not currently emitted in the codebase.
+  defp update_messages_today do
+    [{_, stats}] = :ets.lookup(:osa_telemetry, :session_stats)
+    updated = %{stats | messages_today: stats.messages_today + 1}
+    :ets.insert(:osa_telemetry, {:session_stats, updated})
+  end
+
+  defp update_provider_call_count(provider) do
+    [{_, calls}] = :ets.lookup(:osa_telemetry, :provider_calls)
+    updated = Map.update(calls, provider, 1, &(&1 + 1))
+    :ets.insert(:osa_telemetry, {:provider_calls, updated})
+  end
+
+  defp update_token_stats(%{input_tokens: inp, output_tokens: out}) do
+    [{_, stats}] = :ets.lookup(:osa_telemetry, :token_stats)
+
+    updated = %{
+      stats
+      | input_tokens: stats.input_tokens + inp,
+        output_tokens: stats.output_tokens + out
+    }
+
+    :ets.insert(:osa_telemetry, {:token_stats, updated})
+  end
+
+  defp update_token_stats(_), do: :ok
+
   # ── Aggregation Helpers ──────────────────────────────────────────────
 
   defp build_metrics do
-    keys = [:tool_executions, :provider_latency, :session_stats, :noise_filter, :signal_weights]
+    keys = [:tool_executions, :provider_latency, :provider_calls, :session_stats, :token_stats, :noise_filter, :signal_weights]
 
     Enum.reduce(keys, %{}, fn key, acc ->
       case :ets.lookup(:osa_telemetry, key) do

@@ -189,6 +189,29 @@
           ]
         }
       ]
+    },
+    "review_loop": {
+      "description": "Write → review → revise → approve loop (3-step max). Agent 1 writes, agent 2 reviews and provides feedback, agent 1 revises based on feedback, agent 3 gives final approval. Iterates up to max_iterations (default 3) or until APPROVED signal.",
+      "agents": [
+        "@backend-go",
+        "@code-reviewer",
+        "@architect"
+      ],
+      "mode": "review_loop",
+      "finalizer": "@architect",
+      "alias_for": "review",
+      "note": "Dispatched via Patterns.review_loop/3. Agent 1 = writer, agent 2 = reviewer, agent 3 = approver."
+    },
+    "pipeline_chain": {
+      "description": "Sequential pipeline where each agent's output flows into the next agent's input. Alias for the 'pipeline' execution pattern.",
+      "agents": [
+        "@backend-go",
+        "@code-reviewer",
+        "@technical-writer"
+      ],
+      "mode": "pipeline",
+      "finalizer": "@technical-writer",
+      "alias_for": "pipeline"
     }
   },
   "defaults": {

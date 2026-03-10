@@ -383,52 +383,93 @@ defmodule OptimalSystemAgent.Commands.System do
     end
   end
 
-  @doc "Handle the `/analytics` command — show real SICA + budget + session metrics."
+  @doc "Handle the `/analytics` command — show real Telemetry.Metrics data."
   def cmd_analytics(_arg, _session_id) do
     try do
-      metrics = OptimalSystemAgent.Agent.Learning.metrics()
-      sessions = Registry.count(OptimalSystemAgent.Channels.SessionRegistry)
+      summary = OptimalSystemAgent.Telemetry.Metrics.get_summary()
 
-      budget_line =
+      # ── Session stats ────────────────────────────────────────────
+      session_stats = Map.get(summary, :session_stats, %{turns_by_session: %{}, messages_today: 0})
+      sessions_today = map_size(session_stats.turns_by_session)
+      messages_today = Map.get(session_stats, :messages_today, 0)
+
+      # ── Provider latency ─────────────────────────────────────────
+      provider_latency = Map.get(summary, :provider_latency, %{})
+
+      tokens_line =
         try do
           {:ok, status} = MiosaBudget.Budget.get_status()
           "  Tokens used:          #{status.tokens_used} / #{status.tokens_limit}"
         rescue
-          _ -> "  Budget tracker not available"
+          _ -> "  Tokens used:          (budget tracker not available)"
         end
 
-      compactor_line =
-        try do
-          stats = OptimalSystemAgent.Agent.Compactor.stats()
-          "  Compactions:          #{stats.total_compactions} (#{stats.tokens_saved} tokens saved)"
-        rescue
-          _ -> "  Compactor not available"
+      # ── Tool call table ──────────────────────────────────────────
+      tool_executions = Map.get(summary, :tool_executions, %{})
+
+      tool_table =
+        if map_size(tool_executions) == 0 do
+          "  (no tool calls recorded yet)"
+        else
+          header = "  #{String.pad_trailing("Tool", 30)} #{String.pad_leading("Calls", 7)} #{String.pad_leading("Avg ms", 8)} #{String.pad_leading("p99 ms", 8)}"
+          divider = "  " <> String.duplicate("-", 56)
+
+          rows =
+            tool_executions
+            |> Enum.sort_by(fn {_k, v} -> v.count end, :desc)
+            |> Enum.map_join("\n", fn {tool, stats} ->
+              "  #{String.pad_trailing(tool, 30)} #{String.pad_leading(to_string(stats.count), 7)} #{String.pad_leading(to_string(stats.avg_ms), 8)} #{String.pad_leading(to_string(stats.p99_ms), 8)}"
+            end)
+
+          [header, divider, rows] |> Enum.join("\n")
         end
+
+      # ── Provider latency table ───────────────────────────────────
+      provider_table =
+        if map_size(provider_latency) == 0 do
+          "  (no provider calls recorded yet)"
+        else
+          header = "  #{String.pad_trailing("Provider", 20)} #{String.pad_leading("Calls", 7)} #{String.pad_leading("Avg ms", 8)} #{String.pad_leading("p99 ms", 8)}"
+          divider = "  " <> String.duplicate("-", 46)
+
+          rows =
+            provider_latency
+            |> Enum.sort_by(fn {_k, v} -> v.count end, :desc)
+            |> Enum.map_join("\n", fn {provider, stats} ->
+              "  #{String.pad_trailing(to_string(provider), 20)} #{String.pad_leading(to_string(stats.count), 7)} #{String.pad_leading(to_string(stats.avg_ms), 8)} #{String.pad_leading(to_string(stats.p99_ms), 8)}"
+            end)
+
+          [header, divider, rows] |> Enum.join("\n")
+        end
+
+      # ── Noise filter ─────────────────────────────────────────────
+      filter_rate = Map.get(summary, :noise_filter_rate, 0.0)
 
       output = """
       Analytics
 
       Sessions:
-        Active sessions:      #{sessions}
+        Sessions today:       #{sessions_today}
+        Messages today:       #{messages_today}
 
-      Learning (SICA):
-        Total interactions:   #{metrics.total_interactions}
-        Patterns captured:    #{metrics.patterns_captured}
-        Skills generated:     #{metrics.skills_generated}
-        Errors recovered:     #{metrics.errors_recovered}
+      Tokens:
+      #{tokens_line}
 
-      Budget:
-      #{budget_line}
+      Top Tools:
+      #{tool_table}
 
-      Context:
-      #{compactor_line}
+      Provider Latency:
+      #{provider_table}
+
+      Noise Filter:
+        Filter rate:          #{filter_rate}%
       """
 
       {:command, String.trim(output)}
     rescue
       e ->
         Logger.warning("[cmd_analytics] error: #{inspect(e)}")
-        {:command, "Analytics not available — agent subsystems may not be fully initialized."}
+        {:command, "Analytics not available — Telemetry.Metrics subsystem may not be initialized."}
     end
   end
 
