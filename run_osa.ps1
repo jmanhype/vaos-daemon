@@ -103,10 +103,13 @@ Get-Content '.env' | ForEach-Object {
 }
 EXTRA_ENV_PLACEHOLDER
 $env:OSA_SKIP_NIF = 'true'
+# Redirect stdout+stderr to a log file so the Erlang VM does not crash
+# when this console window is closed (lost CONOUT$/CONIN$ HANDLE = :enotsup).
+$logFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), 'osa_backend.log')
 $emptyArchives = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), '_osa_no_archives')
 if (-not (Test-Path $emptyArchives)) { New-Item -ItemType Directory -Path $emptyArchives | Out-Null }
 $env:MIX_ARCHIVES = $emptyArchives
-& 'MIX_PATH_PLACEHOLDER' osa.serve
+& 'MIX_PATH_PLACEHOLDER' osa.serve *>> $logFile
 '@
 $backendScript = $backendScript -replace 'ELIXIR_BIN_PLACEHOLDER', $ELIXIR_BIN
 $backendScript = $backendScript -replace 'OSA_DIR_PLACEHOLDER',   $OSA_DIR

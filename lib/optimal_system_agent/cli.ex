@@ -38,7 +38,7 @@ defmodule OptimalSystemAgent.CLI do
   def version do
     Application.load(@app)
     vsn = Application.spec(@app, :vsn) |> to_string()
-    IO.puts("osagent v#{vsn}")
+    safe_puts("osagent v#{vsn}")
   end
 
   def serve do
@@ -47,7 +47,7 @@ defmodule OptimalSystemAgent.CLI do
     OptimalSystemAgent.Onboarding.apply_config()
 
     port = Application.get_env(@app, :http_port, 8089)
-    IO.puts("OSA serving on :#{port}")
+    safe_puts("OSA serving on :#{port}")
     Process.sleep(:infinity)
   end
 
@@ -66,5 +66,18 @@ defmodule OptimalSystemAgent.CLI do
         log: false
       )
     end
+  end
+
+  # On Windows a backgrounded process loses its console HANDLE; any IO call
+  # into prim_tty returns {:error, :enotsup} or raises ErlangError wrapping
+  # :eio.  This helper swallows those errors so the serve/version commands
+  # do not crash the VM when stdout is unavailable.
+  defp safe_puts(msg) do
+    IO.puts(msg)
+  rescue
+    ErlangError -> :ok
+  catch
+    :error, :enotsup -> :ok
+    :error, :eio     -> :ok
   end
 end
