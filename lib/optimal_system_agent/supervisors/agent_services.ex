@@ -36,7 +36,8 @@ defmodule OptimalSystemAgent.Supervisors.AgentServices do
       OptimalSystemAgent.Agent.Scheduler,
       OptimalSystemAgent.Agent.Compactor,
       OptimalSystemAgent.Agent.Cortex,
-      OptimalSystemAgent.Agent.ProactiveMode
+      OptimalSystemAgent.Agent.ProactiveMode,
+      OptimalSystemAgent.CommandCenter.EventHistory
     ]
 
     Supervisor.init(children, strategy: :one_for_one)

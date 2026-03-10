@@ -32,6 +32,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
   require Logger
 
   alias OptimalSystemAgent.CommandCenter
+  alias OptimalSystemAgent.CommandCenter.EventHistory
   alias OptimalSystemAgent.Sandbox.Provisioner
   alias OptimalSystemAgent.Agent.Scheduler
 
@@ -166,18 +167,47 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
     end
   end
 
-  # ── GET /events — SSE event stream ─────────────────────────────────
-  # TODO: re-implement via Events.Bus PubSub once Command Center SSE is scoped
+  # ── GET /events — live SSE firehose ────────────────────────────────
+  # Streams all OSA events to admin/monitoring clients.
+  # Subscribe to "osa:events" firehose via Bridge.PubSub.
 
   get "/events" do
-    json_error(conn, 501, "not_implemented", "SSE event stream not yet available")
+    conn =
+      conn
+      |> put_resp_content_type("text/event-stream")
+      |> put_resp_header("cache-control", "no-cache")
+      |> put_resp_header("connection", "keep-alive")
+      |> put_resp_header("x-accel-buffering", "no")
+      |> send_chunked(200)
+
+    Phoenix.PubSub.subscribe(OptimalSystemAgent.PubSub, "osa:events")
+
+    {:ok, conn} = chunk(conn, "event: connected\ndata: {\"channel\": \"command_center\"}\n\n")
+
+    Logger.debug("[CommandCenter] SSE client connected")
+    cc_sse_loop(conn)
   end
 
   # ── GET /events/history — recent event history ─────────────────────
-  # TODO: re-implement via Events.Bus once history storage is scoped
+  # Returns the last N events from the in-memory ring-buffer.
+  # Query param: limit (default 50, max 100)
 
   get "/events/history" do
-    json_error(conn, 501, "not_implemented", "Event history not yet available")
+    limit =
+      conn.query_params
+      |> Map.get("limit", "50")
+      |> Integer.parse()
+      |> case do
+        {n, _} when n > 0 -> min(n, 100)
+        _ -> 50
+      end
+
+    events = EventHistory.recent(limit)
+    body = Jason.encode!(%{events: events, count: length(events), limit: limit})
+
+    conn
+    |> put_resp_content_type("application/json")
+    |> send_resp(200, body)
   end
 
   # ── GET /scheduler — overall scheduler status ──────────────────────
@@ -377,5 +407,39 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
 
   match _ do
     json_error(conn, 404, "not_found", "Command Center endpoint not found")
+  end
+
+  # ── Private ───────────────────────────────────────────────────────────────
+
+  defp cc_sse_loop(conn) do
+    receive do
+      {:osa_event, event} ->
+        event_type =
+          case event do
+            %{type: t} -> to_string(t)
+            _ -> "event"
+          end
+
+        case Jason.encode(event) do
+          {:ok, data} ->
+            case chunk(conn, "event: #{event_type}\ndata: #{data}\n\n") do
+              {:ok, conn} ->
+                cc_sse_loop(conn)
+
+              {:error, _} ->
+                Logger.debug("[CommandCenter] SSE client disconnected")
+                conn
+            end
+
+          {:error, _} ->
+            cc_sse_loop(conn)
+        end
+    after
+      30_000 ->
+        case chunk(conn, ": keepalive\n\n") do
+          {:ok, conn} -> cc_sse_loop(conn)
+          {:error, _} -> conn
+        end
+    end
   end
 end
