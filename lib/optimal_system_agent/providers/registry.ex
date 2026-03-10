@@ -249,12 +249,31 @@ defmodule OptimalSystemAgent.Providers.Registry do
   @impl true
   def init(:ok) do
     providers = @providers
+    default = default_provider()
 
     Logger.info(
-      "Provider registry initialized with #{map_size(providers)} providers (default: #{default_provider()})"
+      "Provider registry initialized with #{map_size(providers)} providers (default: #{default})"
     )
 
     Logger.info("Providers: #{Map.keys(providers) |> Enum.join(", ")}")
+
+    # Bug 7 fix: probe Ollama reachability at boot so we surface a single clear
+    # log line instead of a Req.TransportError on every subsequent request.
+    if default == :ollama do
+      url = Application.get_env(:optimal_system_agent, :ollama_url, "http://localhost:11434")
+
+      case Req.get(url <> "/api/tags", receive_timeout: 2_000, retry: false) do
+        {:ok, %{status: status}} when status in 200..299 ->
+          Logger.info("[ProviderRegistry] Ollama reachable at #{url}")
+
+        _ ->
+          Logger.warning(
+            "[ProviderRegistry] Ollama not reachable at boot, skipping" <>
+              " (configure :ollama_url to enable)"
+          )
+      end
+    end
+
     {:ok, %{extra_providers: %{}}}
   end
 

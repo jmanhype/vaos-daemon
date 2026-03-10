@@ -38,6 +38,14 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.SwarmPlanner do
   @valid_patterns ~w(parallel pipeline debate review)a
   @valid_strategies ~w(merge vote chain)a
 
+  # Aliases accepted in LLM output and normalized to canonical atoms.
+  # review_loop → :review (dispatched to Patterns.review_loop/3)
+  # pipeline_chain → :pipeline
+  @pattern_aliases %{
+    "review_loop" => :review,
+    "pipeline_chain" => :pipeline
+  }
+
   # ── Public API ──────────────────────────────────────────────────────
 
   @doc """
@@ -178,15 +186,30 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.SwarmPlanner do
   defp build_plan(_), do: {:error, "LLM returned non-map JSON"}
 
   defp validate_pattern(p) when is_binary(p) do
-    atom = String.to_existing_atom(p)
+    # Check aliases first so "review_loop" and "pipeline_chain" don't cause
+    # String.to_existing_atom to raise (the atoms may not exist at boot time),
+    # which previously triggered the rescue clause and fell back to {:error, ...},
+    # causing SwarmPlanner.decompose/2 to silently use fallback_plan/1 (:parallel).
+    case Map.get(@pattern_aliases, p) do
+      canonical when not is_nil(canonical) ->
+        Logger.debug("SwarmPlanner: normalizing pattern alias '#{p}' -> :#{canonical}")
+        {:ok, canonical}
 
-    if atom in @valid_patterns do
-      {:ok, atom}
-    else
-      {:error, "Invalid pattern: #{p}"}
+      nil ->
+        atom =
+          try do
+            String.to_existing_atom(p)
+          rescue
+            _ -> nil
+          end
+
+        if atom in @valid_patterns do
+          {:ok, atom}
+        else
+          available = (@valid_patterns |> Enum.map(&Atom.to_string/1)) ++ Map.keys(@pattern_aliases)
+          {:error, "Unknown orchestration pattern: #{inspect(p)}. Available: #{Enum.join(available, ", ")}"}
+        end
     end
-  rescue
-    _ -> {:error, "Unknown pattern atom: #{inspect(p)}"}
   end
 
   defp validate_pattern(_), do: {:error, "Pattern must be a string"}

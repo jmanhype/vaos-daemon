@@ -35,7 +35,11 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.SwarmMode do
   @max_swarms 10
   # 5 minutes
   @default_timeout_ms 300_000
-  @valid_patterns [:parallel, :pipeline, :debate, :review]
+  # Canonical patterns plus their accepted aliases.
+  # :review_loop is the Patterns module's public function name; :review is the
+  # internal atom used by SwarmPlanner. Both are accepted here.
+  # :pipeline_chain is an alias for :pipeline used in some caller contexts.
+  @valid_patterns [:parallel, :pipeline, :pipeline_chain, :debate, :review, :review_loop]
 
   defstruct swarms: %{},
             active_count: 0
@@ -50,7 +54,12 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.SwarmMode do
   Launch a new swarm for a complex task.
 
   Options:
-    - `:pattern`    — override automatic pattern selection (:parallel | :pipeline | :debate | :review)
+    - `:pattern`    — override automatic pattern selection.
+                      Accepted atoms: :parallel | :pipeline | :pipeline_chain |
+                      :debate | :review | :review_loop.
+                      :pipeline_chain is an alias for :pipeline.
+                      :review_loop is an alias for :review.
+                      Unknown patterns are rejected with {:error, reason}.
     - `:timeout_ms` — swarm-level timeout in ms (default: #{@default_timeout_ms})
     - `:max_agents` — cap the number of agents (default: Roster.max_agents())
 
@@ -280,16 +289,20 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.SwarmMode do
   # ── Launch Logic ─────────────────────────────────────────────────────
 
   defp do_launch(task, opts, state) do
-    # 0. Validate pattern early — reject unknown patterns before spawning anything
+    # 0. Validate pattern early — reject unknown patterns before spawning anything.
+    # Known aliases: :pipeline_chain => :pipeline, :review_loop => :review.
+    # Any other atom not in @valid_patterns is rejected with a descriptive error.
     if Keyword.has_key?(opts, :pattern) do
       pattern = Keyword.get(opts, :pattern)
 
       if pattern not in @valid_patterns do
-        valid_str = @valid_patterns |> Enum.map_join(", ", &to_string/1)
+        available = @valid_patterns |> Enum.map_join(", ", &to_string/1)
+
+        Logger.warning("[SwarmMode] Rejected unknown pattern #{inspect(pattern)}. Available: #{available}")
 
         {:reply,
          {:error,
-          "Unknown swarm pattern: #{inspect(pattern)}. Valid patterns: #{valid_str}"},
+          "Unknown orchestration pattern: #{inspect(pattern)}. Available: #{available}"},
          state}
       else
         do_launch_validated(task, opts, state)
@@ -354,18 +367,28 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.SwarmMode do
               :parallel ->
                 Patterns.parallel(workers, plan.agents, swarm_id)
 
-              :pipeline ->
+              p when p in [:pipeline, :pipeline_chain] ->
+                if p == :pipeline_chain do
+                  Logger.warning("[SwarmMode] Pattern :pipeline_chain is an alias for :pipeline — executing as :pipeline")
+                end
                 Patterns.pipeline(workers, plan.agents, swarm_id)
 
               :debate ->
                 Patterns.debate(workers, plan.agents, swarm_id)
 
-              :review ->
+              p when p in [:review, :review_loop] ->
+                if p == :review_loop do
+                  Logger.warning("[SwarmMode] Pattern :review_loop dispatched as the review_loop handler (write → review → revise → approve)")
+                end
                 Patterns.review_loop(workers, plan.agents, swarm_id)
 
               other ->
-                Logger.error("Invalid swarm pattern #{inspect(other)} reached execution — this should have been caught by validation")
-                [{:error, "Invalid swarm pattern: #{inspect(other)}"}]
+                # This branch should never be reached — do_launch/3 validates patterns
+                # before workers are spawned. Defensive guard in case the validation
+                # logic and the dispatch table drift apart again.
+                available = @valid_patterns |> Enum.map_join(", ", &to_string/1)
+                Logger.error("[SwarmMode] Unknown pattern #{inspect(other)} reached execution — this must have been caught by validation. Available: #{available}")
+                [{:error, "Unknown orchestration pattern: #{inspect(other)}. Available: #{available}"}]
             end
 
           GenServer.cast(orchestrator, {:swarm_complete, swarm_id, results})
