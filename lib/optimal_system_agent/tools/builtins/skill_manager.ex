@@ -61,6 +61,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.SkillManager do
   end
 
   @impl true
+  def available?(), do: true
+
+  @impl true
+  def safety(), do: :write_safe
+
+  @impl true
   def execute(%{"action" => "list"}) do
     dir = Path.expand(skills_dir())
 
