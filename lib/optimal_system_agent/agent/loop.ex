@@ -44,6 +44,11 @@ defmodule OptimalSystemAgent.Agent.Loop do
   # Created in application.ex, written by cancel/1, read by run_loop.
   @cancel_table :osa_cancel_flags
 
+  # Minimum signal weight required to pass a tool list to the LLM.
+  # Messages with weight below this threshold get a plain chat call (no tools),
+  # preventing hallucinated tool sequences for low-information inputs like "ok" or "lol".
+  @tool_weight_threshold 0.20
+
   defstruct [
     :session_id,
     :user_id,
@@ -71,7 +76,11 @@ defmodule OptimalSystemAgent.Agent.Loop do
     # Defaults to ReAct for backward compatibility.
     strategy: nil,
     # Strategy-specific state managed by the active strategy module.
-    strategy_state: %{}
+    strategy_state: %{},
+    # Per-call signal weight (0.0–1.0 or nil).
+    # Set from :signal_weight opt before entering run_loop.
+    # Used to gate tool dispatch: weight < 0.20 → plain chat, no tools.
+    signal_weight: nil
   ]
 
   # --- Client API ---
@@ -232,6 +241,9 @@ defmodule OptimalSystemAgent.Agent.Loop do
     # signal_weight comes from an upstream classifier (e.g. HTTP handler that called
     # /api/v1/classify first). Defaults to nil (no weight check, Tier 1 regex only).
     signal_weight = Keyword.get(opts, :signal_weight, nil)
+
+    # Store weight on state so run_loop / do_run_loop can gate tool dispatch.
+    state = %{state | signal_weight: signal_weight}
 
     noise_result = NoiseFilter.check(message, signal_weight)
 
@@ -603,7 +615,20 @@ defmodule OptimalSystemAgent.Agent.Loop do
     # Call LLM with streaming — emits per-token SSE events for live TUI display.
     # Falls back to sync chat if streaming is unavailable.
     thinking_opts = LLMClient.thinking_config(state)
-    llm_opts = [tools: state.tools, temperature: LLMClient.temperature(), max_tokens: max_response_tokens()]
+
+    # Weight gate (Bug 9): if the caller supplied a signal weight below 0.20,
+    # the message is low-information ("ok", "lol", single emoji, etc.).
+    # Sending a full tool list for such inputs triggers hallucinated tool calls.
+    # Skip tools entirely and do a plain chat call instead.
+    tools_for_call =
+      if is_number(state.signal_weight) and state.signal_weight < @tool_weight_threshold do
+        Logger.debug("[loop] signal_weight=#{state.signal_weight} < #{@tool_weight_threshold} — skipping tools for low-weight input")
+        []
+      else
+        state.tools
+      end
+
+    llm_opts = [tools: tools_for_call, temperature: LLMClient.temperature(), max_tokens: max_response_tokens()]
     llm_opts = if thinking_opts, do: Keyword.put(llm_opts, :thinking, thinking_opts), else: llm_opts
     # LLM streaming call — idle-timeout detection is inside LLMClient.
     # Active streams can run indefinitely; only silent connections are killed.

@@ -84,6 +84,24 @@ defmodule OptimalSystemAgent.Providers.Ollama do
     end
   end
 
+  @doc """
+  Returns true when the Ollama server is reachable at the configured URL.
+
+  Uses a 2-second HTTP probe to /api/tags. Called by the shim
+  `MiosaProviders.Ollama.reachable?/0` and by `Onboarding` boot checks.
+  """
+  @spec reachable?() :: boolean()
+  def reachable? do
+    url = Application.get_env(:optimal_system_agent, :ollama_url, "http://localhost:11434")
+
+    case Req.get("#{url}/api/tags", [{:receive_timeout, 2_000}, {:retry, false}] ++ auth_headers()) do
+      {:ok, %{status: 200}} -> true
+      _ -> false
+    end
+  rescue
+    _ -> false
+  end
+
   @doc "List models available on the Ollama server."
   @spec list_models(String.t()) :: {:ok, list(map())} | {:error, term()}
   def list_models(url \\ nil) do
