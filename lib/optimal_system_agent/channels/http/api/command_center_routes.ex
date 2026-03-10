@@ -34,6 +34,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
   alias OptimalSystemAgent.CommandCenter
   alias OptimalSystemAgent.Sandbox.Provisioner
   alias OptimalSystemAgent.Agent.Scheduler
+  alias OptimalSystemAgent.Agent.HealthTracker
 
   plug :match
   plug :dispatch
@@ -62,6 +63,31 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
     conn
     |> put_resp_content_type("application/json")
     |> send_resp(200, body)
+  end
+
+  # ── GET /agents/health — all agents health summary ─────────────────
+
+  get "/agents/health" do
+    agents = HealthTracker.all()
+    body = Jason.encode!(%{agents: agents, count: length(agents)})
+
+    conn
+    |> put_resp_content_type("application/json")
+    |> send_resp(200, body)
+  end
+
+  # ── GET /agents/:name/health — single agent health ─────────────────
+
+  get "/agents/:name/health" do
+    case HealthTracker.get(name) do
+      {:ok, health} ->
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(200, Jason.encode!(health))
+
+      {:error, :not_found} ->
+        json_error(conn, 404, "not_found", "No health data for agent '#{name}'")
+    end
   end
 
   # ── GET /agents/:name — agent detail ───────────────────────────────
