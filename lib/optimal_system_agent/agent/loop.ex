@@ -2,17 +2,26 @@ defmodule OptimalSystemAgent.Agent.Loop do
   @moduledoc """
   Bounded ReAct agent loop — the core reasoning engine.
 
-  Message goes straight to the LLM with the system prompt. The LLM
-  self-classifies signals via Signal Theory instructions in SYSTEM.md.
-  No middleware between user and model.
+  Messages pass through several pre-LLM gates before the LLM is invoked:
+
+    0. Prompt injection check (Guardrails) — hard block, no memory write
+    1. Noise filter (NoiseFilter.check/2) — short-circuit low-signal messages
+       before they are persisted or reach the LLM (see Channels.NoiseFilter)
+    2. Genre routing (GenreRouter) — route by signal genre; some genres
+       return a canned response without tool invocation
+    3. Plan mode — single LLM call with no tools (when plan_mode is active)
+    4. Full ReAct loop — LLM + iterative tool calls
 
   Flow:
     1. Receive message from channel/bus
-    2. Build context (identity + memory + runtime)
-    3. Call LLM with available tools
-    4. If tool_calls: execute each, append results, re-prompt
-    5. When no tool_calls: return final response
-    6. Write to memory, notify channel
+    2. Prompt injection guard (Guardrails.prompt_injection?/1)
+    3. Noise filter (NoiseFilter.check/2) — filtered/clarify → return early
+    4. Persist user message to memory
+    5. Build context (identity + memory + runtime)
+    6. Call LLM with available tools
+    7. If tool_calls: execute each, append results, re-prompt
+    8. When no tool_calls: return final response
+    9. Write to memory, notify channel
   """
   use GenServer
   require Logger
@@ -35,6 +44,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
   alias OptimalSystemAgent.Intelligence.ConversationTracker
   alias OptimalSystemAgent.Intelligence.CommCoach
   alias OptimalSystemAgent.Intelligence.ContactDetector
+  alias OptimalSystemAgent.Telemetry.Metrics
 
   defp max_iterations, do: Application.get_env(:optimal_system_agent, :max_iterations, 30)
   defp auto_insights_interval, do: Application.get_env(:optimal_system_agent, :auto_insights_interval, 10)
@@ -236,15 +246,29 @@ defmodule OptimalSystemAgent.Agent.Loop do
     noise_result = NoiseFilter.check(message, signal_weight)
 
     if noise_result != :pass do
-      ack =
+      {outcome, ack} =
         case noise_result do
-          {:filtered, ack} -> ack
-          {:clarify, prompt} -> prompt
+          {:filtered, ack} -> {:filtered, ack}
+          {:clarify, prompt} -> {:clarify, prompt}
         end
+
+      # Instrument the noise filter result so Telemetry.Metrics tracks filter rate.
+      # This call is fire-and-forget via GenServer.cast — never blocks the loop.
+      try do
+        Metrics.record_noise_filter_result(outcome)
+      rescue
+        _ -> :ok
+      end
 
       state = %{state | status: :idle}
       {:reply, {:ok, ack}, state}
     else
+      # Record :pass so the denominator is correct in noise_filter_rate calculations.
+      try do
+        Metrics.record_noise_filter_result(:pass)
+      rescue
+        _ -> :ok
+      end
 
     # 1.5. Persist user message to JSONL session storage (only non-noise messages)
     Memory.append(state.session_id, %{role: "user", content: message, channel: state.channel})

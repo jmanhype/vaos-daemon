@@ -112,13 +112,17 @@ defmodule OptimalSystemAgent.Agent.Loop.ToolExecutor do
       session_id: state.session_id
     })
 
-    # Build tool message — images get structured content blocks
+    # Build tool message — images get structured content blocks.
+    # Both branches include `name: tool_call.name` so that on iteration 2+
+    # every provider's format_messages/1 can attribute the result back to
+    # the exact tool that was called (required by Ollama and OpenAI-compat).
     tool_msg =
       case tool_result do
         {:image, media_type, b64, path} ->
           %{
             role: "tool",
             tool_call_id: tool_call.id,
+            name: tool_call.name,
             content: [
               %{type: "text", text: "Image: #{path}"},
               %{type: "image", source: %{type: "base64", media_type: media_type, data: b64}}
@@ -135,7 +139,7 @@ defmodule OptimalSystemAgent.Agent.Loop.ToolExecutor do
               result_str
             end
 
-          %{role: "tool", tool_call_id: tool_call.id, content: content}
+          %{role: "tool", tool_call_id: tool_call.id, name: tool_call.name, content: content}
       end
 
     {tool_msg, result_str}

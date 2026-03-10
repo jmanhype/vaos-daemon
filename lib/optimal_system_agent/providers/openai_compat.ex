@@ -329,9 +329,16 @@ defmodule OptimalSystemAgent.Providers.OpenAICompat do
   @doc "Format messages into the OpenAI wire format."
   def format_messages(messages) do
     Enum.map(messages, fn
-      # Tool result messages — preserve tool_call_id for the API
-      %{role: "tool", content: content, tool_call_id: id} ->
-        %{"role" => "tool", "content" => to_string(content), "tool_call_id" => to_string(id)}
+      # Tool result messages — preserve tool_call_id and name for the API.
+      # `name` identifies which function produced this result; Groq and some
+      # OpenAI-compat providers require it to match the original tool call on
+      # iteration 2+ (Bug 5: tool name mismatch on 2nd iteration).
+      %{role: "tool", content: content, tool_call_id: id} = msg ->
+        base = %{"role" => "tool", "content" => to_string(content), "tool_call_id" => to_string(id)}
+        case Map.get(msg, :name) do
+          nil -> base
+          name -> Map.put(base, "name", to_string(name))
+        end
 
       # Assistant messages with tool_calls — preserve structured tool calls
       %{role: "assistant", content: content, tool_calls: calls} when is_list(calls) and calls != [] ->
