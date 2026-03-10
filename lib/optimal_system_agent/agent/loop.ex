@@ -179,6 +179,15 @@ defmodule OptimalSystemAgent.Agent.Loop do
       Logger.info("[loop] Restored checkpoint for session #{session_id} — iteration=#{iteration}, messages=#{length(messages)}")
     end
 
+    # Vault wake — detect dirty deaths, set dirty flag
+    try do
+      OptimalSystemAgent.Vault.wake(session_id)
+    rescue
+      _ -> :ok
+    catch
+      :exit, _ -> :ok
+    end
+
     {:ok, state}
   end
 
@@ -989,22 +998,36 @@ defmodule OptimalSystemAgent.Agent.Loop do
   @impl true
   def terminate(:normal, state) do
     Checkpoint.clear_checkpoint(state.session_id)
+    vault_sleep(state.session_id)
     :ok
   end
 
   def terminate(:shutdown, state) do
     Checkpoint.clear_checkpoint(state.session_id)
+    vault_sleep(state.session_id)
     :ok
   end
 
   def terminate({:shutdown, _}, state) do
     Checkpoint.clear_checkpoint(state.session_id)
+    vault_sleep(state.session_id)
     :ok
   end
 
   def terminate(_reason, _state) do
     # Abnormal termination — keep checkpoint for recovery
+    # Dirty flag stays for next wake to detect
     :ok
+  end
+
+  defp vault_sleep(session_id) do
+    try do
+      OptimalSystemAgent.Vault.sleep(session_id)
+    rescue
+      _ -> :ok
+    catch
+      :exit, _ -> :ok
+    end
   end
 
   # --- Plan Mode ---

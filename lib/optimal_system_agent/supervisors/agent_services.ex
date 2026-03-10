@@ -33,6 +33,7 @@ defmodule OptimalSystemAgent.Supervisors.AgentServices do
       OptimalSystemAgent.Agent.Learning,
       {MiosaKnowledge.Store, store_id: "osa_default", backend: knowledge_backend},
       OptimalSystemAgent.Agent.Memory.KnowledgeBridge,
+      OptimalSystemAgent.Vault.Supervisor,
       OptimalSystemAgent.Agent.Scheduler,
       OptimalSystemAgent.Agent.Compactor,
       OptimalSystemAgent.Agent.Cortex,

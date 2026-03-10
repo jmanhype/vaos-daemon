@@ -175,7 +175,16 @@ config :optimal_system_agent,
   # ---------------------------------------------------------------------------
   go_git_enabled: false,
   go_sysmon_enabled: false,
-  whatsapp_web_enabled: false
+  whatsapp_web_enabled: false,
+
+  # ---------------------------------------------------------------------------
+  # Vault — structured memory system
+  # ---------------------------------------------------------------------------
+  vault_enabled: true,
+  vault_checkpoint_interval: 10,
+  vault_observation_min_score: 0.4,
+  vault_observation_flush_interval: 60_000,
+  vault_context_max_chars: 3000
 
 # Database — SQLite3
 config :optimal_system_agent, OptimalSystemAgent.Store.Repo,

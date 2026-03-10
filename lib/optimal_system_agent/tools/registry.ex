@@ -768,7 +768,13 @@ defmodule OptimalSystemAgent.Tools.Registry do
       "notebook_edit" => OptimalSystemAgent.Tools.Builtins.NotebookEdit,
       "computer_use" => OptimalSystemAgent.Tools.Builtins.ComputerUse,
       "browser" => OptimalSystemAgent.Tools.Builtins.Browser,
-      "code_sandbox" => OptimalSystemAgent.Tools.Builtins.CodeSandbox
+      "code_sandbox" => OptimalSystemAgent.Tools.Builtins.CodeSandbox,
+      "vault_remember" => OptimalSystemAgent.Tools.Builtins.VaultRemember,
+      "vault_context" => OptimalSystemAgent.Tools.Builtins.VaultContext,
+      "vault_wake" => OptimalSystemAgent.Tools.Builtins.VaultWake,
+      "vault_sleep" => OptimalSystemAgent.Tools.Builtins.VaultSleep,
+      "vault_checkpoint" => OptimalSystemAgent.Tools.Builtins.VaultCheckpoint,
+      "vault_inject" => OptimalSystemAgent.Tools.Builtins.VaultInject
     }
   end
 

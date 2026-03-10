@@ -301,6 +301,14 @@ defmodule OptimalSystemAgent.Agent.Hooks do
         event: :session_end,
         priority: 90,
         handler: &session_cleanup/1
+      },
+
+      # Vault auto-checkpoint — periodic vault save on tool use (post_tool_use, priority 80)
+      %{
+        name: "vault_auto_checkpoint",
+        event: :post_tool_use,
+        priority: 80,
+        handler: &vault_auto_checkpoint/1
       }
     ]
 
@@ -474,6 +482,39 @@ defmodule OptimalSystemAgent.Agent.Hooks do
   end
 
   defp session_cleanup(payload), do: {:ok, payload}
+
+  # Vault auto-checkpoint — save vault state every N tool calls
+  defp vault_auto_checkpoint(%{session_id: sid} = payload) when is_binary(sid) do
+    # Use ETS counter to checkpoint every 10 tool calls
+    counter_key = {:vault_checkpoint_counter, sid}
+
+    count =
+      try do
+        :ets.update_counter(@metrics_table, counter_key, {2, 1})
+      rescue
+        ArgumentError ->
+          try do
+            :ets.insert_new(@metrics_table, {counter_key, 1})
+            1
+          rescue
+            _ -> 0
+          end
+      end
+
+    if count > 0 and rem(count, 10) == 0 do
+      try do
+        OptimalSystemAgent.Vault.checkpoint(sid)
+      rescue
+        _ -> :ok
+      catch
+        :exit, _ -> :ok
+      end
+    end
+
+    {:ok, payload}
+  end
+
+  defp vault_auto_checkpoint(payload), do: {:ok, payload}
 
   # MCP cache — pre_tool_use: inject cached schema if fresh (< 1 hour)
   defp mcp_cache_pre(%{tool_name: tool_name} = payload) when is_binary(tool_name) do
