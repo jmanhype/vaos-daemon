@@ -57,7 +57,13 @@ defmodule OptimalSystemAgent.Agent.Roster do
     OptimalSystemAgent.Agents.TypescriptExpert,
     OptimalSystemAgent.Agents.TailwindExpert,
     OptimalSystemAgent.Agents.GoConcurrency,
-    OptimalSystemAgent.Agents.OrmExpert
+    OptimalSystemAgent.Agents.OrmExpert,
+    OptimalSystemAgent.Agents.Researcher,
+    OptimalSystemAgent.Agents.Writer,
+    OptimalSystemAgent.Agents.Reviewer,
+    OptimalSystemAgent.Agents.Coder,
+    OptimalSystemAgent.Agents.Tester,
+    OptimalSystemAgent.Agents.QaLead
   ]
 
   @agents @agent_modules
