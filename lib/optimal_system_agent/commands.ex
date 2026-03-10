@@ -279,7 +279,7 @@ defmodule OptimalSystemAgent.Commands do
       # ── Agents ──
       {"agents", "List all agents in the roster", &Agents.cmd_agents/2},
       {"tiers", "Show model tier configuration", &Agents.cmd_tiers/2},
-      {"tier", "Set a tier model override", &Agents.cmd_tier_set/2},
+      {"tier-set", "Set a tier model override: /tier-set <tier> <model>", &Agents.cmd_tier_set/2},
       {"swarms", "List swarm presets", &Agents.cmd_swarms/2},
       {"swarm", "Launch a swarm: /swarm <preset> <task>", &Agents.cmd_swarm/2},
       {"hooks", "Show hook pipeline status", &Agents.cmd_hooks/2},

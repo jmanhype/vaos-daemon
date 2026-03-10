@@ -379,6 +379,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
 
       Bus.emit(:llm_response, %{
         session_id: state.session_id,
+        provider: state.provider,
         duration_ms: duration_ms,
         usage: usage
       })
@@ -620,6 +621,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
 
     Bus.emit(:llm_response, %{
       session_id: state.session_id,
+      provider: state.provider,
       duration_ms: duration_ms,
       usage: usage
     })
@@ -761,7 +763,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
               {tool_call, result}
 
             {_, tool_call} ->
-              timeout_msg = %{role: "tool", tool_call_id: tool_call.id, content: "Error: Tool execution timed out"}
+              timeout_msg = %{role: "tool", tool_call_id: tool_call.id, name: tool_call.name, content: "Error: Tool execution timed out"}
               {tool_call, {timeout_msg, "Error: Tool execution timed out"}}
           end)
 
