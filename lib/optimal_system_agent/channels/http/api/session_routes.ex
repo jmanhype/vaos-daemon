@@ -315,18 +315,31 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.SessionRoutes do
     # Check session exists before dispatching async
     case Registry.lookup(OptimalSystemAgent.SessionRegistry, session_id) do
       [{_pid, _}] ->
-        # Fire-and-forget — the loop processes in background.
-        # Client polls GET /sessions/:id/messages for results.
-        # Uses Task.Supervisor to ensure the task survives long LLM calls
-        # (Task.start would create an unsupervised process that may be reaped).
-        Task.Supervisor.start_child(
-          OptimalSystemAgent.TaskSupervisor,
-          fn -> Loop.process_message(session_id, message) end,
-          restart: :temporary
-        )
+        # Pre-filter noise before dispatching to the agent loop.
+        # Mirrors the same check done in orchestration_routes.ex.
+        case OptimalSystemAgent.Channels.NoiseFilter.check(message, nil) do
+          {:filtered, _ack} ->
+            resp = Jason.encode!(%{status: "filtered", session_id: session_id})
+            conn |> put_resp_content_type("application/json") |> send_resp(200, resp)
 
-        resp = Jason.encode!(%{status: "processing", session_id: session_id})
-        conn |> put_resp_content_type("application/json") |> send_resp(202, resp)
+          {:clarify, prompt} ->
+            resp = Jason.encode!(%{status: "clarify", prompt: prompt, session_id: session_id})
+            conn |> put_resp_content_type("application/json") |> send_resp(200, resp)
+
+          :pass ->
+            # Fire-and-forget — the loop processes in background.
+            # Client polls GET /sessions/:id/messages for results.
+            # Uses Task.Supervisor to ensure the task survives long LLM calls
+            # (Task.start would create an unsupervised process that may be reaped).
+            Task.Supervisor.start_child(
+              OptimalSystemAgent.TaskSupervisor,
+              fn -> Loop.process_message(session_id, message) end,
+              restart: :temporary
+            )
+
+            resp = Jason.encode!(%{status: "processing", session_id: session_id})
+            conn |> put_resp_content_type("application/json") |> send_resp(202, resp)
+        end
 
       [] ->
         json_error(conn, 404, "session_not_found", "Session #{session_id} not found")

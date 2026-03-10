@@ -329,6 +329,18 @@ defmodule OptimalSystemAgent.Commands.Agents do
           do: Float.round(status.monthly_spent / status.monthly_limit * 100, 1),
           else: 0.0
 
+      daily_reset =
+        case status[:daily_reset_at] do
+          nil -> "—"
+          dt -> Calendar.strftime(dt, "%Y-%m-%d %H:%M UTC")
+        end
+
+      monthly_reset =
+        case status[:monthly_reset_at] do
+          nil -> "—"
+          dt -> Calendar.strftime(dt, "%Y-%m-%d")
+        end
+
       output =
         """
         Budget Status
@@ -337,14 +349,13 @@ defmodule OptimalSystemAgent.Commands.Agents do
           Spent:     $#{Float.round(status.daily_spent, 4)}
           Limit:     $#{Float.round(status.daily_limit, 2)}
           Remaining: $#{Float.round(status.daily_remaining, 4)} (#{daily_pct}% used)
+          Resets:    #{daily_reset}
 
         Monthly:
           Spent:     $#{Float.round(status.monthly_spent, 4)}
           Limit:     $#{Float.round(status.monthly_limit, 2)}
           Remaining: $#{Float.round(status.monthly_remaining, 4)} (#{monthly_pct}% used)
-
-        Per-call limit: $#{Float.round(status.per_call_limit, 2)}
-        Ledger entries: #{status.ledger_entries}
+          Resets:    #{monthly_reset}
         """
         |> String.trim()
 

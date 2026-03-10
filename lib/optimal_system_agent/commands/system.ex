@@ -392,7 +392,13 @@ defmodule OptimalSystemAgent.Commands.System do
       budget_line =
         try do
           {:ok, status} = MiosaBudget.Budget.get_status()
-          "  Tokens used:          #{status.tokens_used} / #{status.tokens_limit}"
+
+          daily_pct =
+            if status.daily_limit > 0,
+              do: Float.round(status.daily_spent / status.daily_limit * 100, 1),
+              else: 0.0
+
+          "  Daily spend:          $#{Float.round(status.daily_spent, 4)} / $#{Float.round(status.daily_limit, 2)} (#{daily_pct}% used)"
         rescue
           _ -> "  Budget tracker not available"
         end

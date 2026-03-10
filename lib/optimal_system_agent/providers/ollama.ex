@@ -255,6 +255,34 @@ defmodule OptimalSystemAgent.Providers.Ollama do
 
   defp format_messages(messages) do
     Enum.map(messages, fn
+      # Assistant messages that carry tool_calls must preserve them so that
+      # the 2nd+ iteration has accurate conversation history.
+      %{role: "assistant", tool_calls: tool_calls} = msg when is_list(tool_calls) and tool_calls != [] ->
+        formatted_calls =
+          Enum.map(tool_calls, fn tc ->
+            %{
+              "id" => tc.id,
+              "type" => "function",
+              "function" => %{"name" => tc.name, "arguments" => tc.arguments}
+            }
+          end)
+
+        content = Map.get(msg, :content, "") || ""
+        %{"role" => "assistant", "content" => to_string(content), "tool_calls" => formatted_calls}
+
+      # Tool result messages — must carry tool_call_id and name so the model
+      # can attribute the result to the correct call on iteration 2+.
+      # This clause must come before the generic %{role, content} catch-all
+      # because that clause would silently drop tool_call_id and name.
+      %{role: "tool", content: content, tool_call_id: id} = msg ->
+        name = Map.get(msg, :name, "")
+        %{
+          "role" => "tool",
+          "content" => to_string(content),
+          "tool_call_id" => to_string(id),
+          "name" => to_string(name)
+        }
+
       %{role: role, content: content} ->
         %{"role" => to_string(role), "content" => to_string(content)}
 
@@ -334,7 +362,7 @@ defmodule OptimalSystemAgent.Providers.Ollama do
     Enum.map(calls, fn call ->
       %{
         id: call["id"] || generate_id(),
-        name: call["function"]["name"],
+        name: normalize_tool_name(call["function"]["name"]),
         arguments: call["function"]["arguments"] || %{}
       }
     end)
@@ -393,7 +421,7 @@ defmodule OptimalSystemAgent.Providers.Ollama do
           Enum.map(calls, fn call ->
             %{
               id: call["id"] || generate_id(),
-              name: call["function"]["name"],
+              name: normalize_tool_name(call["function"]["name"]),
               arguments: call["function"]["arguments"] || %{}
             }
           end)
@@ -404,6 +432,14 @@ defmodule OptimalSystemAgent.Providers.Ollama do
         acc
     end
   end
+
+  # Strip any arguments that some models concatenate to the tool name.
+  # e.g. "dir_list {\"path\": \".\"}" → "dir_list"
+  defp normalize_tool_name(name) when is_binary(name) do
+    name |> String.split(~r/[\s({]/) |> List.first() |> String.trim()
+  end
+
+  defp normalize_tool_name(name), do: name
 
   # Returns `[headers: [{"authorization", "Bearer <key>"}]]` when
   # OLLAMA_API_KEY is set (Ollama Cloud), empty list otherwise.
