@@ -14,7 +14,8 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
     /fleet       → FleetRoutes       POST /register|heartbeat|dispatch, GET /agents|/:id
     /orchestrate → OrchestrationRoutes  POST /|/complex, GET /tasks, GET /:id/progress
     /swarm       → OrchestrationRoutes  POST /launch, GET /|/:id, DELETE /:id
-    /stream      → AgentRoutes       GET /:session_id  (SSE)
+    /stream      → AgentRoutes       GET /tui_output (SSE alias), GET /:session_id  (SSE)
+    /tui         → TuiRoutes         GET /output (SSE), POST /input
     /tools       → ToolRoutes        GET /, POST /:name/execute
     /skills      → ToolRoutes        GET /, POST /create
     /commands    → ToolRoutes        GET /, POST /execute
@@ -90,6 +91,9 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
 
   # ── Agent SSE stream ─────────────────────────────────────────────────
   forward "/stream", to: API.AgentRoutes
+
+  # ── TUI input / output ───────────────────────────────────────────────
+  forward "/tui", to: API.TuiRoutes
 
   # ── Tools, skills, commands ──────────────────────────────────────────
   forward "/tools", to: API.ToolRoutes
