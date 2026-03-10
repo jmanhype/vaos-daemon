@@ -28,9 +28,22 @@ defmodule Mix.Tasks.Osa.Serve do
     end
 
     port = Application.get_env(:optimal_system_agent, :http_port, 8089)
-    IO.puts("OSA backend serving on http://localhost:#{port}")
-    IO.puts("Connect with: cd priv/go/tui-v2 && ./osa")
-    IO.puts("Or: curl http://localhost:#{port}/health")
+    safe_puts("OSA backend serving on http://localhost:#{port}")
+    safe_puts("Connect with: cd priv/go/tui-v2 && ./osa")
+    safe_puts("Or: curl http://localhost:#{port}/health")
     Process.sleep(:infinity)
+  end
+
+  # Guard against lost console HANDLE on Windows (backgrounded processes,
+  # piped output, or closed terminal windows).  Erlang raises ErlangError
+  # wrapping :enotsup / :eio when the prim_tty port loses its CONOUT$
+  # handle.  Silently drop the line rather than crash the VM.
+  defp safe_puts(msg) do
+    IO.puts(msg)
+  rescue
+    ErlangError -> :ok
+  catch
+    :error, :enotsup -> :ok
+    :error, :eio     -> :ok
   end
 end

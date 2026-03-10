@@ -126,7 +126,7 @@ defmodule OptimalSystemAgent.Channels.CLI.Spinner do
         clear_line()
         hint = tool_hint(state.active_tool)
         duration = format_duration(ms)
-        IO.puts("#{@dim}  ├─ #{name}#{hint} #{@cyan}(#{duration})#{@reset}")
+        safe_io_puts("#{@dim}  ├─ #{name}#{hint} #{@cyan}(#{duration})#{@reset}")
 
         spinner_loop(rest, %{
           state
@@ -142,7 +142,7 @@ defmodule OptimalSystemAgent.Channels.CLI.Spinner do
         # Show iteration marker when agent loops (tool → re-prompt)
         if new_iter > 1 do
           clear_line()
-          IO.puts("#{@dim}  │  iteration #{new_iter}#{@reset}")
+          safe_io_puts("#{@dim}  │  iteration #{new_iter}#{@reset}")
         end
 
         spinner_loop(rest, %{
@@ -175,7 +175,7 @@ defmodule OptimalSystemAgent.Channels.CLI.Spinner do
       end
 
     clear_line()
-    IO.write("#{@dim}  #{frame} #{status} (#{elapsed}#{tools_str}#{tokens_str})#{@reset}")
+    safe_io_write("#{@dim}  #{frame} #{status} (#{elapsed}#{tools_str}#{tokens_str})#{@reset}")
   end
 
   # --- Formatting helpers ---
@@ -212,6 +212,33 @@ defmodule OptimalSystemAgent.Channels.CLI.Spinner do
         _ -> 80
       end
 
-    IO.write("\r#{String.duplicate(" ", width)}\r")
+    safe_io_write("\r#{String.duplicate(" ", width)}\r")
+  end
+
+  # ── Safe IO helpers ─────────────────────────────────────────────────
+  #
+  # On Windows, when the Elixir process is backgrounded (or the terminal
+  # window is closed), the Windows console HANDLE becomes invalid.  Any
+  # call into the Erlang IO system that ends up in user_drv / prim_tty
+  # will return {:error, :enotsup} or raise ErlangError wrapping :eio.
+  # These wrappers swallow those errors so the spinner process silently
+  # degrades instead of crashing the VM.
+
+  defp safe_io_write(data) do
+    IO.write(data)
+  rescue
+    ErlangError -> :ok
+  catch
+    :error, :enotsup -> :ok
+    :error, :eio     -> :ok
+  end
+
+  defp safe_io_puts(data) do
+    IO.puts(data)
+  rescue
+    ErlangError -> :ok
+  catch
+    :error, :enotsup -> :ok
+    :error, :eio     -> :ok
   end
 end

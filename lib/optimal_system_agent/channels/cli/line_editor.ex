@@ -36,16 +36,25 @@ defmodule OptimalSystemAgent.Channels.CLI.LineEditor do
   """
   @spec readline(String.t(), list(String.t())) :: {:ok, String.t()} | :eof | :interrupt
   def readline(prompt, history \\ []) do
-    case open_tty() do
-      {:ok, tty} ->
-        result = interactive_readline(prompt, history, tty)
-        close_tty(tty)
-        result
+    # On Windows there is no /dev/tty; go straight to the safe fallback that
+    # guards against a lost console handle (backgrounded process, piped output).
+    if windows?() do
+      fallback_readline(prompt)
+    else
+      case open_tty() do
+        {:ok, tty} ->
+          result = interactive_readline(prompt, history, tty)
+          close_tty(tty)
+          result
 
-      {:error, _} ->
-        fallback_readline(prompt)
+        {:error, _} ->
+          fallback_readline(prompt)
+      end
     end
   end
+
+  # Returns true when the Erlang VM is running on Windows (win32 kernel).
+  defp windows?, do: match?({:win32, _}, :os.type())
 
   # --- Interactive mode ---
 
@@ -501,8 +510,13 @@ defmodule OptimalSystemAgent.Channels.CLI.LineEditor do
   defp fallback_readline(prompt) do
     case IO.gets(prompt) do
       :eof -> :eof
+      {:error, reason} when reason in [:enotsup, :eio, :closed] -> :eof
       data when is_binary(data) -> {:ok, String.trim_trailing(data, "\n")}
       _ -> :eof
     end
+  rescue
+    # Erlang raises ErlangError wrapping :enotsup / :eio when the Windows
+    # console HANDLE has been lost (process backgrounded / terminal closed).
+    ErlangError -> :eof
   end
 end
