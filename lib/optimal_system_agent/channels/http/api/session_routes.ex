@@ -329,6 +329,45 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.SessionRoutes do
     end
   end
 
+  # ── POST /sessions/:id/provider ── hot-swap LLM provider ──────────
+
+  post "/:id/provider" do
+    session_id = conn.params["id"]
+    body = conn.body_params
+
+    provider = body["provider"]
+    model = body["model"]
+
+    unless is_binary(provider) && provider != "" do
+      conn
+      |> put_resp_content_type("application/json")
+      |> send_resp(400, Jason.encode!(%{error: "missing or empty provider"}))
+      |> halt()
+    end
+
+    case Registry.lookup(OptimalSystemAgent.SessionRegistry, session_id) do
+      [{pid, _}] ->
+        case GenServer.call(pid, {:swap_provider, provider, model}) do
+          :ok ->
+            resp =
+              Jason.encode!(%{
+                status: "ok",
+                session_id: session_id,
+                provider: provider,
+                model: model
+              })
+
+            conn |> put_resp_content_type("application/json") |> send_resp(200, resp)
+
+          {:error, reason} ->
+            json_error(conn, 500, "swap_failed", inspect(reason))
+        end
+
+      [] ->
+        json_error(conn, 404, "session_not_found", "Session #{session_id} not found")
+    end
+  end
+
   match _ do
     json_error(conn, 404, "not_found", "Session endpoint not found")
   end

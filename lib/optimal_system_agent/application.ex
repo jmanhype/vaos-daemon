@@ -44,6 +44,10 @@ defmodule OptimalSystemAgent.Application do
     # Rows: {unique_integer, body_map, datetime}
     :ets.new(:osa_survey_responses, [:bag, :public, :named_table])
 
+    # ETS table for per-session provider/model overrides set via hot-swap API.
+    # Rows: {session_id, provider, model}
+    :ets.new(:osa_session_provider_overrides, [:named_table, :public, :set])
+
     children =
       platform_repo_children() ++
       [
