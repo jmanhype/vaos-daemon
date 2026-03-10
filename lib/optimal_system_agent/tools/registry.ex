@@ -112,27 +112,36 @@ defmodule OptimalSystemAgent.Tools.Registry do
 
   Returns `:ok` when arguments conform to the schema, or
   `{:error, message}` with a structured description of all validation failures.
+
+  When the `ex_json_schema` dependency is not compiled (optional dep),
+  validation is skipped and `:ok` is returned (fail-open).
   """
   @spec validate_arguments(module(), map()) :: :ok | {:error, String.t()}
   def validate_arguments(mod, arguments) do
-    schema = mod.parameters()
+    # Use apply/3 to avoid compile-time "undefined function" warnings when
+    # ex_json_schema is not fetched. Code.ensure_loaded? guards the runtime call.
+    unless Code.ensure_loaded?(ExJsonSchema.Schema) do
+      :ok
+    else
+      schema = mod.parameters()
 
-    try do
-      resolved = ExJsonSchema.Schema.resolve(schema)
+      try do
+        resolved = apply(ExJsonSchema.Schema, :resolve, [schema])
 
-      case ExJsonSchema.Validator.validate(resolved, arguments) do
-        :ok ->
+        case apply(ExJsonSchema.Validator, :validate, [resolved, arguments]) do
+          :ok ->
+            :ok
+
+          {:error, errors} ->
+            message = format_validation_errors(mod.name(), errors)
+            {:error, message}
+        end
+      rescue
+        e ->
+          Logger.warning("[Tools.Registry] Schema validation error for #{mod.name()}: #{inspect(e)}")
+          # Fail open: if the schema itself is malformed, let the tool handle its own args
           :ok
-
-        {:error, errors} ->
-          message = format_validation_errors(mod.name(), errors)
-          {:error, message}
       end
-    rescue
-      e ->
-        Logger.warning("[Tools.Registry] Schema validation error for #{mod.name()}: #{inspect(e)}")
-        # Fail open: if the schema itself is malformed, let the tool handle its own args
-        :ok
     end
   end
 
