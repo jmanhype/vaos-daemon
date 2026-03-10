@@ -66,5 +66,104 @@ defmodule OptimalSystemAgent.CommandsTest do
       assert {:command, output} = result
       assert is_binary(output)
     end
+
+    # ── Previously-missing slash commands (Bug 18) ──────────────────────────
+
+    test "/budget does not return :unknown" do
+      result = Commands.execute("budget", "test-session")
+      refute result == :unknown
+      assert {:command, _output} = result
+    end
+
+    test "/budget returns string output" do
+      {:command, output} = Commands.execute("budget", "test-session")
+      assert is_binary(output)
+    end
+
+    test "/thinking with no arg does not return :unknown" do
+      result = Commands.execute("thinking", "test-session")
+      refute result == :unknown
+      assert {:command, _output} = result
+    end
+
+    test "/thinking on enables extended thinking" do
+      {:command, output} = Commands.execute("thinking on", "test-session")
+      assert String.contains?(output, "enabled")
+    end
+
+    test "/thinking off disables extended thinking" do
+      Commands.execute("thinking on", "test-session")
+      {:command, output} = Commands.execute("thinking off", "test-session")
+      assert String.contains?(output, "disabled")
+    end
+
+    test "/thinking budget N sets budget tokens" do
+      {:command, output} = Commands.execute("thinking budget 8000", "test-session")
+      assert String.contains?(output, "8,000")
+    end
+
+    test "/export does not return :unknown" do
+      result = Commands.execute("export", "test-session")
+      refute result == :unknown
+      assert {:command, _output} = result
+    end
+
+    test "/export returns string output" do
+      {:command, output} = Commands.execute("export", "test-session")
+      assert is_binary(output)
+    end
+
+    test "/machines does not return :unknown" do
+      result = Commands.execute("machines", "test-session")
+      refute result == :unknown
+      assert {:command, _output} = result
+    end
+
+    test "/machines returns string output" do
+      {:command, output} = Commands.execute("machines", "test-session")
+      assert is_binary(output)
+    end
+
+    test "/providers does not return :unknown" do
+      result = Commands.execute("providers", "test-session")
+      refute result == :unknown
+      assert {:command, _output} = result
+    end
+
+    test "/providers returns string output" do
+      {:command, output} = Commands.execute("providers", "test-session")
+      assert is_binary(output)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # list_commands/0 registration check
+  # ---------------------------------------------------------------------------
+
+  describe "list_commands/0 - Bug 18 commands registered" do
+    test "budget is listed" do
+      names = Commands.list_commands() |> Enum.map(&elem(&1, 0))
+      assert "budget" in names
+    end
+
+    test "thinking is listed" do
+      names = Commands.list_commands() |> Enum.map(&elem(&1, 0))
+      assert "thinking" in names
+    end
+
+    test "export is listed" do
+      names = Commands.list_commands() |> Enum.map(&elem(&1, 0))
+      assert "export" in names
+    end
+
+    test "machines is listed" do
+      names = Commands.list_commands() |> Enum.map(&elem(&1, 0))
+      assert "machines" in names
+    end
+
+    test "providers is listed" do
+      names = Commands.list_commands() |> Enum.map(&elem(&1, 0))
+      assert "providers" in names
+    end
   end
 end
