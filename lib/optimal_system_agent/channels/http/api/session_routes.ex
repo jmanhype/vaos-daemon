@@ -387,6 +387,37 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.SessionRoutes do
     end
   end
 
+  # ── POST /sessions/:id/replay ──────────────────────────────────────
+
+  post "/:id/replay" do
+    source_session_id = conn.params["id"]
+    body = conn.body_params
+
+    opts =
+      []
+      |> then(fn o -> if b = body["session_id"], do: Keyword.put(o, :session_id, b), else: o end)
+      |> then(fn o -> if b = body["provider"], do: Keyword.put(o, :provider, b), else: o end)
+      |> then(fn o -> if b = body["model"], do: Keyword.put(o, :model, b), else: o end)
+
+    case OptimalSystemAgent.Agent.Replay.replay(source_session_id, opts) do
+      {:ok, replay_id} ->
+        resp =
+          Jason.encode!(%{
+            status: "replaying",
+            source_session_id: source_session_id,
+            replay_session_id: replay_id
+          })
+
+        conn |> put_resp_content_type("application/json") |> send_resp(202, resp)
+
+      {:error, :not_found} ->
+        json_error(conn, 404, "no_history", "No stored conversation for session #{source_session_id}")
+
+      {:error, reason} ->
+        json_error(conn, 500, "replay_failed", inspect(reason))
+    end
+  end
+
   match _ do
     json_error(conn, 404, "not_found", "Session endpoint not found")
   end
