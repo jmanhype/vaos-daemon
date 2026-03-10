@@ -55,6 +55,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
       OptimalSystemAgent.Agent.Roster.all()
       |> Map.values()
       |> Enum.sort_by(& &1.name)
+      |> Enum.map(&redact_agent_prompt/1)
 
     body = Jason.encode!(%{agents: agents, count: length(agents)})
 
@@ -70,7 +71,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
       {:ok, detail} ->
         conn
         |> put_resp_content_type("application/json")
-        |> send_resp(200, Jason.encode!(detail))
+        |> send_resp(200, Jason.encode!(redact_agent_prompt(detail)))
 
       {:error, :not_found} ->
         json_error(conn, 404, "not_found", "Agent '#{name}' not found")
@@ -377,5 +378,15 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
 
   match _ do
     json_error(conn, 404, "not_found", "Command Center endpoint not found")
+  end
+
+  # ── Private ──────────────────────────────────────────────────────────
+
+  # SECURITY: strip system prompt from agent representations before
+  # returning them over the API. Prompt leakage is FINDING-01 (Critical).
+  defp redact_agent_prompt(agent) when is_map(agent) do
+    agent
+    |> Map.drop([:prompt, "prompt"])
+    |> Map.put(:prompt, "[REDACTED]")
   end
 end
