@@ -6,6 +6,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.SessionRoutes do
     POST   /sessions
     GET    /sessions/:id
     GET    /sessions/:id/messages
+    GET    /sessions/:id/stream   — SSE event stream for the session
     POST   /sessions/:id/message
     POST   /sessions/:id/cancel
     POST   /sessions/:id/survey/answer
@@ -13,7 +14,9 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.SessionRoutes do
     DELETE /sessions/:id
   """
   use Plug.Router
+  import Plug.Conn
   import OptimalSystemAgent.Channels.HTTP.API.Shared
+  require Logger
 
   alias OptimalSystemAgent.Agent.Memory
   alias OptimalSystemAgent.Agent.Loop
@@ -151,6 +154,44 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.SessionRoutes do
     conn
     |> put_resp_content_type("application/json")
     |> send_resp(200, body)
+  end
+
+  # ── GET /sessions/:id/stream — SSE event stream ────────────────────
+  #
+  # Convenience alias for GET /stream/:id handled by AgentRoutes.
+  # Subscribes to the session-scoped PubSub topic "osa:session:{id}" and
+  # streams {:osa_event, event} messages as SSE frames until the client
+  # disconnects. A `: keepalive` comment is sent every 30 s to prevent
+  # proxy timeouts.
+  #
+  # Event frame format:
+  #   event: <event_type>\n
+  #   data: <json>\n\n
+  #
+  # system_event sub-events are unwrapped so that the TUI SSE parser
+  # receives the sub-event name as the SSE event type, matching the
+  # behaviour in AgentRoutes.sse_loop/2.
+
+  get "/:id/stream" do
+    session_id = conn.params["id"]
+    user_id = conn.assigns[:user_id] || "anonymous"
+
+    Phoenix.PubSub.subscribe(OptimalSystemAgent.PubSub, "osa:session:#{session_id}")
+
+    conn =
+      conn
+      |> put_resp_content_type("text/event-stream")
+      |> put_resp_header("cache-control", "no-cache")
+      |> put_resp_header("connection", "keep-alive")
+      |> put_resp_header("x-accel-buffering", "no")
+      |> send_chunked(200)
+
+    {:ok, conn} =
+      chunk(conn, "event: connected\ndata: {\"session_id\": \"#{session_id}\"}\n\n")
+
+    Logger.debug("[SSE] /sessions/#{session_id}/stream opened by #{user_id}")
+
+    session_sse_loop(conn, session_id)
   end
 
   # ── DELETE /sessions/:id ───────────────────────────────────────────
@@ -350,4 +391,47 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.SessionRoutes do
     json_error(conn, 404, "not_found", "Session endpoint not found")
   end
 
+  # ── SSE loop for session stream ──────────────────────────────────────
+  #
+  # Mirrors the loop in AgentRoutes so both entry points behave identically.
+  # Receives {:osa_event, event} messages from Phoenix.PubSub and writes
+  # each as an SSE frame. Sends a keepalive comment after 30 s of silence.
+  # Exits when the client disconnects (chunk/2 returns {:error, _}).
+
+  defp session_sse_loop(conn, session_id) do
+    receive do
+      {:osa_event, event} ->
+        event_type =
+          case event do
+            %{type: :system_event, event: sub} -> to_string(sub)
+            %{type: t} -> to_string(t)
+            _ -> "unknown"
+          end
+
+        case Jason.encode(event) do
+          {:ok, data} ->
+            Logger.debug("[SSE] session=#{session_id} sending #{event_type}")
+
+            case chunk(conn, "event: #{event_type}\ndata: #{data}\n\n") do
+              {:ok, conn} ->
+                session_sse_loop(conn, session_id)
+
+              {:error, _reason} ->
+                Logger.debug("[SSE] client disconnected: session=#{session_id}")
+                conn
+            end
+
+          {:error, reason} ->
+            Logger.warning("[SSE] session=#{session_id} encode failed for #{event_type}: #{inspect(reason)}")
+            session_sse_loop(conn, session_id)
+        end
+
+    after
+      30_000 ->
+        case chunk(conn, ": keepalive\n\n") do
+          {:ok, conn} -> session_sse_loop(conn, session_id)
+          {:error, _} -> conn
+        end
+    end
+  end
 end

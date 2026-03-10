@@ -1,7 +1,8 @@
 defmodule OptimalSystemAgent.Channels.HTTP.API.AgentRoutes do
   @moduledoc """
-  Agent SSE stream route.
+  Agent SSE stream routes.
 
+    GET /tui_output   — SSE output stream for the TUI (alias for /tui/output)
     GET /:session_id  — SSE event stream for a session
 
   This module is forwarded to from the parent router at /stream, so routes
@@ -13,6 +14,30 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.AgentRoutes do
 
   plug :match
   plug :dispatch
+
+  # ── GET /tui_output — TUI SSE output stream (alias) ────────────────
+  #
+  # The Rust TUI connects to /api/v1/stream/tui_output. This named route
+  # must appear before /:session_id so the router does not treat
+  # "tui_output" as a session ID.
+
+  get "/tui_output" do
+    Phoenix.PubSub.subscribe(OptimalSystemAgent.PubSub, "osa:tui:output")
+
+    conn =
+      conn
+      |> put_resp_content_type("text/event-stream")
+      |> put_resp_header("cache-control", "no-cache")
+      |> put_resp_header("connection", "keep-alive")
+      |> put_resp_header("x-accel-buffering", "no")
+      |> send_chunked(200)
+
+    {:ok, conn} = chunk(conn, "event: connected\ndata: {\"channel\": \"tui_output\"}\n\n")
+
+    Logger.debug("[TUI] /stream/tui_output opened by #{conn.assigns[:user_id]}")
+
+    sse_loop(conn, "tui_output")
+  end
 
   # ── GET /:session_id ───────────────────────────────────────────────
 

@@ -474,7 +474,8 @@ defmodule MiosaBudget.Budget do
       daily_remaining: max(0.0, state.daily_limit - state.daily_spent),
       monthly_remaining: max(0.0, state.monthly_limit - state.monthly_spent),
       daily_reset_at: state.daily_reset_at,
-      monthly_reset_at: state.monthly_reset_at
+      monthly_reset_at: state.monthly_reset_at,
+      ledger_entries: length(state.entries)
     }
     {:reply, {:ok, status}, state}
   end
