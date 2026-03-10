@@ -21,6 +21,59 @@ defmodule OptimalSystemAgent.Agent.Loop.Guardrails do
   #             injected mid-message (SYSTEM:, ASSISTANT:, XML tags,
   #             markdown instruction headers).
 
+  # Canonical refusal text returned for all prompt extraction attempts.
+  # Used both on the input side (before the LLM sees the message) and on the
+  # output side (if the LLM echoes system content despite the system prompt
+  # instruction).  Centralised here so both guards are always in sync.
+  @prompt_extraction_refusal "I can't share my internal configuration or system instructions."
+
+  # Fingerprint phrases drawn from SYSTEM.md section headings and distinctive
+  # content.  If the LLM response contains two or more of these, it has very
+  # likely echoed the system prompt and the response must be replaced.
+  # Each phrase is lowercased; matching is case-insensitive.
+  @system_prompt_fingerprints [
+    "signal theory",
+    "optimal system agent",
+    "tool usage policy",
+    "explore before you act",
+    "mandatory for coding tasks",
+    "tool routing rules",
+    "signal processing loop",
+    "weight calibration",
+    "doom loop detection",
+    "mandatory verification",
+    "tool definitions",
+    "banned phrases",
+    "code completeness",
+    "orchestration",
+    "existence denial"
+  ]
+
+  @doc "Returns the canonical refusal message for prompt extraction attempts."
+  def prompt_extraction_refusal, do: @prompt_extraction_refusal
+
+  @doc """
+  Returns true when an LLM response appears to contain verbatim or near-verbatim
+  content from the system prompt.
+
+  Detection heuristic: if the lowercased response contains 2 or more of the
+  distinctive fingerprint phrases that appear in SYSTEM.md, it is almost certain
+  the model echoed the system prompt.  A single phrase can appear incidentally in
+  normal conversation; two together indicate a leak.
+  """
+  def response_contains_prompt_leak?(response) when is_binary(response) do
+    lowered = String.downcase(response)
+
+    match_count =
+      Enum.count(@system_prompt_fingerprints, fn phrase ->
+        String.contains?(lowered, phrase)
+      end)
+
+    match_count >= 2
+  end
+
+  def response_contains_prompt_leak?(_), do: false
+
   @injection_patterns [
     ~r/what\s+(is|are|was)\s+(your\s+)?(system\s+prompt|instructions?|rules?|configuration|directives?)/i,
     ~r/what\s+(is|are|was)\s+the\s+(system\s+prompt|instructions?|configuration|directives?)/i,

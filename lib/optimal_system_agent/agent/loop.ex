@@ -220,7 +220,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
     # 0.5. Application-layer prompt injection guard — block before LLM ever sees it.
     # This catches weak local models (Ollama) that ignore system prompt instructions.
     if Guardrails.prompt_injection?(message) do
-      refusal = "I can't help with that."
+      refusal = Guardrails.prompt_extraction_refusal()
       Memory.append(state.session_id, %{role: "user", content: message, channel: state.channel})
       Memory.append(state.session_id, %{role: "assistant", content: refusal, channel: state.channel})
       state = %{state | status: :idle}
@@ -406,6 +406,16 @@ defmodule OptimalSystemAgent.Agent.Loop do
           state = %{state | plan_mode: false}
           {response, state} = run_loop(state)
 
+          # Output-side prompt-leak guard (Bug 17): if a weak model echoed the
+          # system prompt despite the input-side block, replace it before returning.
+          response =
+            if Guardrails.response_contains_prompt_leak?(response) do
+              Logger.warning("[loop] Output guardrail: LLM response contained system prompt content — replacing with refusal")
+              Guardrails.prompt_extraction_refusal()
+            else
+              response
+            end
+
           state = %{
             state
             | messages: state.messages ++ [%{role: "assistant", content: response}],
@@ -429,6 +439,16 @@ defmodule OptimalSystemAgent.Agent.Loop do
     else
       # Normal execution path — message goes straight to LLM
       {response, state} = run_loop(state)
+
+      # Output-side prompt-leak guard (Bug 17): if a weak model echoed the
+      # system prompt despite the input-side block, replace it before returning.
+      response =
+        if Guardrails.response_contains_prompt_leak?(response) do
+          Logger.warning("[loop] Output guardrail: LLM response contained system prompt content — replacing with refusal")
+          Guardrails.prompt_extraction_refusal()
+        else
+          response
+        end
 
       meta = %{iteration_count: state.iteration, tools_used: extract_tools_used(state.messages)}
 
