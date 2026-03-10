@@ -91,6 +91,9 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
   # ── Agent SSE stream ─────────────────────────────────────────────────
   forward "/stream", to: API.AgentRoutes
 
+  # Agent introspection
+  forward "/agent", to: API.AgentStateRoutes
+
   # ── Tools, skills, commands ──────────────────────────────────────────
   forward "/tools", to: API.ToolRoutes
   forward "/skills", to: API.ToolRoutes
