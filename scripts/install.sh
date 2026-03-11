@@ -224,20 +224,12 @@ ok "Dependencies ready"
 # ── Install binaries ──────────────────────────────────────────────
 mkdir -p "$INSTALL_DIR"
 
-# Copy TUI binary
-cp "$TUI_DIR/target/release/osagent" "$INSTALL_DIR/osagent"
-chmod +x "$INSTALL_DIR/osagent"
-
-# Ad-hoc sign on macOS (Gatekeeper kills unsigned copied binaries)
-if [ "$OS" = "macos" ]; then
-  codesign -s - "$INSTALL_DIR/osagent" 2>/dev/null || true
-fi
-
-ok "Installed osagent → $INSTALL_DIR/osagent"
-
-# Symlink launcher
+# Both `osa` and `osagent` point to the shell launcher which starts
+# backend + Rust TUI together.  The raw Rust binary stays internal.
 ln -sf "$AGENT_DIR/bin/osa" "$INSTALL_DIR/osa"
-ok "Linked osa → $INSTALL_DIR/osa"
+ln -sf "$AGENT_DIR/bin/osa" "$INSTALL_DIR/osagent"
+ok "Linked osa     → $INSTALL_DIR/osa"
+ok "Linked osagent → $INSTALL_DIR/osagent"
 
 # ── Ensure PATH ───────────────────────────────────────────────────
 path_updated=false
@@ -290,7 +282,7 @@ echo -e "${GREEN}${BOLD}  ◈ OSA Agent installed successfully!${RESET}"
 echo ""
 echo -e "  ${DIM}Locations:${RESET}"
 echo -e "    Agent:   $AGENT_DIR"
-echo -e "    Binary:  $INSTALL_DIR/osagent"
+echo -e "    Commands: $INSTALL_DIR/osa, $INSTALL_DIR/osagent"
 echo -e "    Config:  $OSA_DIR/.env"
 echo -e "    Logs:    $OSA_DIR/logs/"
 echo ""
@@ -302,11 +294,8 @@ if [ "$path_updated" = true ]; then
 fi
 
 echo -e "  ${DIM}Quick start:${RESET}"
-echo -e "    ${BOLD}osa${RESET}             Start backend + TUI"
-echo -e "    ${BOLD}osagent${RESET}         TUI only (auto-starts backend)"
-echo -e "    ${BOLD}osagent update${RESET}  Pull latest + recompile"
-echo ""
-echo -e "  ${DIM}Configure:${RESET}"
-echo -e "    ${BOLD}osagent setup${RESET}   Interactive setup wizard"
+echo -e "    ${BOLD}osa${RESET}             Start backend + TUI (same as osagent)"
+echo -e "    ${BOLD}osa update${RESET}      Pull latest + recompile"
+echo -e "    ${BOLD}osa setup${RESET}       Interactive setup wizard"
 echo -e "    ${DIM}Default: Ollama (local, no key needed)${RESET}"
 echo ""

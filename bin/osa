@@ -4,29 +4,44 @@
 # Starts the Elixir backend in the background, waits for it to be healthy,
 # launches the Rust TUI, and tears down the backend when you quit.
 #
-# Usage:
-#   bin/osa                    # default
-#   bin/osa --dev              # dev profile + port 19001
-#   bin/osa --profile staging  # named profile
+# Subcommands:
+#   osa                    Start backend + TUI (default)
+#   osa setup              Run the setup wizard
+#   osa update             Pull latest, recompile, rebuild TUI
+#   osa serve              Start backend only (headless HTTP API)
+#   osa doctor             Run health checks
+#   osa version            Print version
+#   osa --dev              Dev profile + port 19001
+#   osa --profile <name>   Named profile
 
 set -euo pipefail
 
-# Resolve symlinks to find the real script location
+# ── Colors ─────────────────────────────────────────────────────────
+if [ -t 1 ]; then
+  BOLD='\033[1m'
+  DIM='\033[2m'
+  GREEN='\033[0;32m'
+  RED='\033[0;31m'
+  CYAN='\033[0;36m'
+  RESET='\033[0m'
+else
+  BOLD='' DIM='' GREEN='' RED='' CYAN='' RESET=''
+fi
+
+# ── Resolve project root ──────────────────────────────────────────
 SCRIPT="$0"
 if [ -L "$SCRIPT" ]; then
-  # macOS readlink doesn't have -f, so resolve manually
   SCRIPT="$(cd "$(dirname "$SCRIPT")" && perl -e 'use Cwd "abs_path"; print abs_path(shift)' "$SCRIPT")"
 fi
 SCRIPT_DIR="$(cd "$(dirname "$SCRIPT")" && pwd)"
 
-# Find project root: script parent, or ~/.osa/project_root fallback
 if [ -f "$SCRIPT_DIR/../mix.exs" ]; then
   ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 elif [ -f "${HOME}/.osa/project_root" ]; then
   ROOT="$(cat "${HOME}/.osa/project_root")"
 else
-  echo "Error: Cannot find OSA project root."
-  echo "Run 'bin/install' from the project directory first."
+  echo -e "${RED}Error: Cannot find OSA project root.${RESET}"
+  echo "Run the installer: curl -fsSL https://raw.githubusercontent.com/Miosa-osa/OptimalSystemAgent/main/scripts/install.sh | bash"
   exit 1
 fi
 
@@ -37,6 +52,82 @@ BACKEND_PID=""
 
 mkdir -p "$LOG_DIR"
 
+# ── Subcommand dispatch ───────────────────────────────────────────
+case "${1:-}" in
+  version|--version|-v)
+    if [ -f "$ROOT/VERSION" ]; then
+      echo "osagent v$(cat "$ROOT/VERSION")"
+    else
+      (cd "$ROOT" && mix run -e "IO.puts(Application.spec(:optimal_system_agent, :vsn))" 2>/dev/null) || echo "osagent (version unknown)"
+    fi
+    exit 0
+    ;;
+
+  setup)
+    echo -e "${CYAN}→${RESET} Running setup wizard..."
+    (cd "$ROOT" && mix osa.setup)
+    exit 0
+    ;;
+
+  update)
+    echo -e "${CYAN}→${RESET} Updating OSA Agent..."
+    echo -e "${DIM}  Project: $ROOT${RESET}"
+
+    # Git pull
+    echo -e "${CYAN}→${RESET} Pulling latest..."
+    (cd "$ROOT" && git pull --ff-only origin main 2>&1) || echo -e "${RED}  git pull failed — continuing anyway${RESET}"
+
+    # Elixir deps + compile
+    echo -e "${CYAN}→${RESET} Fetching dependencies..."
+    (cd "$ROOT" && mix deps.get 2>&1 | tail -3)
+    echo -e "${CYAN}→${RESET} Compiling (--force)..."
+    (cd "$ROOT" && mix compile --force 2>&1 | tail -3)
+
+    # Rebuild Rust TUI
+    if [ -f "$TUI_DIR/Cargo.toml" ]; then
+      echo -e "${CYAN}→${RESET} Rebuilding TUI..."
+      (cd "$TUI_DIR" && cargo build --release 2>&1 | grep -E "Compiling|Finished|error" | tail -5)
+    fi
+
+    echo ""
+    echo -e "${GREEN}✓ Update complete.${RESET} Restart with: ${BOLD}osa${RESET}"
+    exit 0
+    ;;
+
+  serve)
+    echo -e "${CYAN}→${RESET} Starting backend (headless)..."
+    (cd "$ROOT" && mix osa.serve)
+    exit 0
+    ;;
+
+  doctor)
+    (cd "$ROOT" && mix run -e "OptimalSystemAgent.CLI.doctor()" 2>/dev/null) || \
+      (cd "$ROOT" && mix run -e "OptimalSystemAgent.CLI.Doctor.run()" 2>/dev/null) || \
+      echo "Doctor command not available. Try: mix osa.chat then type /doctor"
+    exit 0
+    ;;
+
+  help|--help|-h)
+    echo ""
+    echo -e "${BOLD}  OSA Agent${RESET} — Your OS, Supercharged"
+    echo ""
+    echo -e "  ${BOLD}Usage:${RESET}"
+    echo -e "    ${CYAN}osa${RESET}              Start backend + TUI (default)"
+    echo -e "    ${CYAN}osa setup${RESET}        Run the setup wizard"
+    echo -e "    ${CYAN}osa update${RESET}       Pull latest, recompile, rebuild TUI"
+    echo -e "    ${CYAN}osa serve${RESET}        Start backend only (headless HTTP API)"
+    echo -e "    ${CYAN}osa doctor${RESET}       Run health checks"
+    echo -e "    ${CYAN}osa version${RESET}      Print version"
+    echo ""
+    echo -e "  ${BOLD}Options:${RESET}"
+    echo -e "    ${CYAN}--dev${RESET}            Dev profile (port 19001)"
+    echo ""
+    exit 0
+    ;;
+esac
+
+# ── Default: start backend + TUI ─────────────────────────────────
+
 cleanup() {
   if [ -n "$BACKEND_PID" ] && kill -0 "$BACKEND_PID" 2>/dev/null; then
     kill "$BACKEND_PID" 2>/dev/null
@@ -45,14 +136,25 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# ── Build Rust TUI if needed ────────────────────────────────────
+# Build Rust TUI if needed
 if [ ! -f "$TUI_BIN" ]; then
-  echo "Building OSA TUI…"
-  (cd "$TUI_DIR" && cargo build --release)
-  echo ""
+  if [ -f "$TUI_DIR/Cargo.toml" ]; then
+    echo -e "${CYAN}→${RESET} Building TUI (first run, ~60s)..."
+    (cd "$TUI_DIR" && cargo build --release 2>&1 | tail -5)
+    if [ ! -f "$TUI_BIN" ]; then
+      echo -e "${RED}✗ TUI build failed.${RESET} Falling back to CLI mode."
+      echo -e "${DIM}  Check: cargo, rustc installed? Run: rustup update${RESET}"
+      (cd "$ROOT" && mix osa.chat)
+      exit $?
+    fi
+  else
+    echo -e "${RED}✗ TUI source not found.${RESET} Falling back to CLI mode."
+    (cd "$ROOT" && mix osa.chat)
+    exit $?
+  fi
 fi
 
-# ── Determine port ──────────────────────────────────────────────
+# Determine port
 PORT="${OSA_PORT:-8089}"
 for arg in "$@"; do
   if [ "$arg" = "--dev" ]; then
@@ -61,39 +163,33 @@ for arg in "$@"; do
   fi
 done
 
-# ── Check if backend is already running ─────────────────────────
+# Check if backend is already running
 URL="http://localhost:${PORT}/health"
 if curl -sf "$URL" >/dev/null 2>&1; then
-  echo "Backend already running on :${PORT}"
+  echo -e "${DIM}Backend already running on :${PORT}${RESET}"
 else
   # Check if port is occupied by something else
-  if lsof -i ":${PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
-    echo "Port ${PORT} is in use. Killing previous instance…"
+  if command -v lsof >/dev/null 2>&1 && lsof -i ":${PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
+    echo -e "${DIM}Port ${PORT} in use. Killing previous instance…${RESET}"
     lsof -ti ":${PORT}" -sTCP:LISTEN | xargs kill -9 2>/dev/null || true
     sleep 1
   fi
 
   export MIX_ENV="${MIX_ENV:-dev}"
   LOG_FILE="$LOG_DIR/backend.log"
-  echo "Starting backend on :${PORT}…"
+  echo -e "${CYAN}→${RESET} Starting backend on :${PORT}..."
 
   if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || "$OSTYPE" == "win32" ]]; then
-    # Windows (Git Bash / MSYS2 / Cygwin): redirect all I/O to prevent
-    # prim_tty crash — backgrounding detaches the console handle and
-    # Erlang's prim_tty fails with:
-    #   {case_clause,{error,{'SetConsoleModeInitIn','The handle is invalid.'}}}
     (cd "$ROOT" && elixir --no-halt \
       -e "Application.put_env(:elixir, :ansi_enabled, false)" \
       -S mix osa.serve) </dev/null >"$LOG_FILE" 2>&1 &
   else
-    # Unix: backend is backgrounded; send output to log file to keep
-    # the terminal clean for the TUI.
     (cd "$ROOT" && mix osa.serve) >"$LOG_FILE" 2>&1 &
   fi
   BACKEND_PID=$!
 fi
 
-# ── Wait for health ─────────────────────────────────────────────
+# Wait for health
 attempts=0
 max_attempts=30
 
@@ -106,11 +202,11 @@ while [ $attempts -lt $max_attempts ]; do
 done
 
 if [ $attempts -eq $max_attempts ]; then
-  echo "Backend did not become healthy after ${max_attempts}s."
-  echo "Check logs: $LOG_DIR/backend.log"
+  echo -e "${RED}✗ Backend did not become healthy after ${max_attempts}s.${RESET}"
+  echo "  Check logs: $LOG_DIR/backend.log"
   exit 1
 fi
 
-# ── Launch TUI ──────────────────────────────────────────────────
+# Launch TUI
 export OSA_URL="http://localhost:${PORT}"
 exec "$TUI_BIN" "$@"
