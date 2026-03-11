@@ -53,14 +53,23 @@
   }
 
   function handleKeydown(e: KeyboardEvent) {
+    // Slash menu navigation takes priority
+    if (showSlashMenu) {
+      handleSlashKeydown(e);
+      if (e.defaultPrevented) return;
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
+      if (showSlashMenu) {
+        showSlashMenu = false;
+      }
       send();
       return;
     }
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
       e.preventDefault();
       text = '';
+      showSlashMenu = false;
       if (textareaEl) textareaEl.style.height = 'auto';
     }
   }
@@ -78,6 +87,72 @@
       text = text ? `${text} ${transcript}` : transcript;
       resizeTextarea();
     });
+  }
+
+  // ── Slash command autocomplete ─────────────────────────────────────────────
+  const SLASH_COMMANDS = [
+    { name: 'help', desc: 'Show available commands' },
+    { name: 'clear', desc: 'Clear chat messages' },
+    { name: 'model', desc: 'Switch active model' },
+    { name: 'new', desc: 'Start a new session' },
+    { name: 'agents', desc: 'List available agents' },
+    { name: 'settings', desc: 'Open settings' },
+    { name: 'history', desc: 'View chat history' },
+    { name: 'reset', desc: 'Reset current session' },
+  ];
+
+  let showSlashMenu = $state(false);
+  let slashFilter = $state('');
+  let slashSelectedIndex = $state(0);
+
+  const filteredSlashCommands = $derived(
+    slashFilter
+      ? SLASH_COMMANDS.filter(c => c.name.startsWith(slashFilter))
+      : SLASH_COMMANDS
+  );
+
+  function handleInput() {
+    resizeTextarea();
+
+    // Show slash menu when text starts with "/" and cursor is right after it
+    if (text.startsWith('/') && !text.includes(' ') && text.length <= 20) {
+      showSlashMenu = true;
+      slashFilter = text.slice(1).toLowerCase();
+      slashSelectedIndex = 0;
+    } else {
+      showSlashMenu = false;
+    }
+  }
+
+  function selectSlashCommand(cmd: typeof SLASH_COMMANDS[number]) {
+    text = `/${cmd.name} `;
+    showSlashMenu = false;
+    textareaEl?.focus();
+  }
+
+  function handleSlashKeydown(e: KeyboardEvent) {
+    if (!showSlashMenu || filteredSlashCommands.length === 0) return;
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      slashSelectedIndex = (slashSelectedIndex + 1) % filteredSlashCommands.length;
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      slashSelectedIndex = (slashSelectedIndex - 1 + filteredSlashCommands.length) % filteredSlashCommands.length;
+      return;
+    }
+    if (e.key === 'Tab' || (e.key === 'Enter' && showSlashMenu)) {
+      e.preventDefault();
+      selectSlashCommand(filteredSlashCommands[slashSelectedIndex]);
+      return;
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      showSlashMenu = false;
+      return;
+    }
   }
 
   // Show voice mode dropdown
@@ -113,6 +188,27 @@
     </div>
   {/if}
 
+  <!-- Slash command autocomplete menu -->
+  {#if showSlashMenu && filteredSlashCommands.length > 0}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <div class="slash-menu" role="listbox" aria-label="Slash commands">
+      {#each filteredSlashCommands as cmd, i (cmd.name)}
+        <button
+          class="slash-item"
+          class:slash-item--selected={i === slashSelectedIndex}
+          role="option"
+          aria-selected={i === slashSelectedIndex}
+          onclick={() => selectSlashCommand(cmd)}
+          onmouseenter={() => { slashSelectedIndex = i; }}
+        >
+          <span class="slash-name">/{cmd.name}</span>
+          <span class="slash-desc">{cmd.desc}</span>
+        </button>
+      {/each}
+    </div>
+  {/if}
+
   <!-- Textarea -->
   <div class="textarea-row">
     <textarea
@@ -122,7 +218,7 @@
       {placeholder}
       rows={1}
       class="input-textarea"
-      oninput={resizeTextarea}
+      oninput={handleInput}
       onkeydown={handleKeydown}
       onfocus={() => { isFocused = true; }}
       onblur={() => { isFocused = false; }}
@@ -560,6 +656,58 @@
     border-color: rgba(255, 255, 255, 0.05);
     color: rgba(255, 255, 255, 0.12);
     cursor: not-allowed;
+  }
+
+  /* Slash command autocomplete */
+  .slash-menu {
+    position: absolute;
+    bottom: 100%;
+    left: 0;
+    right: 0;
+    margin-bottom: 4px;
+    background: rgba(18, 18, 22, 0.97);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    padding: 4px;
+    z-index: 200;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    max-height: 280px;
+    overflow-y: auto;
+  }
+
+  .slash-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 8px 12px;
+    background: none;
+    border: none;
+    border-radius: 7px;
+    color: rgba(255, 255, 255, 0.7);
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.08s;
+  }
+
+  .slash-item:hover,
+  .slash-item--selected {
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  .slash-name {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.85);
+    font-family: var(--font-mono, monospace);
+    min-width: 80px;
+  }
+
+  .slash-desc {
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.35);
   }
 
   .sr-only {

@@ -89,7 +89,15 @@ class ChatStore {
   }
 
   async createSession(title?: string, model?: string): Promise<Session> {
-    const { session } = await sessionsApi.create({ title, model });
+    const result = await sessionsApi.create({ title, model });
+    // Backend returns { id, status } — construct a Session object
+    const session: Session = {
+      id: result.id,
+      title: title ?? null,
+      created_at: new Date().toISOString(),
+      message_count: 0,
+      alive: true,
+    };
     this.sessions = [session, ...this.sessions];
     return session;
   }

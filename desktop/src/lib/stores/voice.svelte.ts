@@ -184,7 +184,13 @@ class VoiceStore {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     recognition.onerror = (e: any) => {
       if (e.error === "no-speech") return; // Ignore silence
-      this.error = `Speech error: ${e.error}`;
+      if (e.error === "aborted") return; // User-initiated stop
+      if (e.error === "service-not-allowed" || e.error === "not-allowed") {
+        this.error =
+          "Microphone access denied. Allow microphone in browser settings, or use Groq/OpenAI Whisper instead.";
+      } else {
+        this.error = `Speech error: ${e.error}`;
+      }
       this.isListening = false;
     };
 

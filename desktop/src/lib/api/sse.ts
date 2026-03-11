@@ -1,6 +1,11 @@
 // src/lib/api/sse.ts
 // fetch-based SSE client.
 // Uses fetch (not EventSource) for POST support and Authorization header control.
+//
+// Backend flow:
+//   1. GET  /api/v1/sessions/:id/stream   → opens SSE connection
+//   2. POST /api/v1/sessions/:id/message  → sends a message (async)
+//   3. Stream events arrive on the GET connection
 
 import type { StreamEvent } from "./types";
 import { getToken } from "./client";
@@ -32,25 +37,37 @@ export interface StreamController {
 
 /**
  * Parse a raw SSE message block (delimited by \n\n) into typed StreamEvents.
- * Handles multi-line messages and strips "data: " prefixes.
+ * Handles the `event:` + `data:` format from the backend.
  * Returns null for keep-alive or comment-only blocks.
  */
 function parseSSEBlock(block: string): StreamEvent | null {
   const lines = block.split("\n");
+  let eventType = "";
   let data = "";
 
   for (const line of lines) {
-    if (line.startsWith("data: ")) {
+    if (line.startsWith(":")) continue; // comment / keepalive
+    if (line.startsWith("event: ")) {
+      eventType = line.slice("event: ".length).trim();
+    } else if (line.startsWith("data: ")) {
       data = line.slice("data: ".length).trim();
     }
-    // ignore id:, event:, retry: lines for now
   }
 
   if (!data || data === "[DONE]") return null;
 
   try {
-    return JSON.parse(data) as StreamEvent;
+    const parsed = JSON.parse(data);
+    // If the backend sends an event type field, use it; otherwise trust the JSON's `type`
+    if (eventType && !parsed.type) {
+      parsed.type = eventType;
+    }
+    return parsed as StreamEvent;
   } catch {
+    // Not JSON — might be a plain text token delta
+    if (eventType === "streaming_token" || eventType === "token") {
+      return { type: "streaming_token", delta: data } as StreamEvent;
+    }
     return null;
   }
 }
@@ -97,7 +114,11 @@ async function consumeStream(
           return;
         }
         if (event.type === "error") {
-          callbacks.onError?.(new Error(event.message));
+          callbacks.onError?.(
+            new Error(
+              (event as { message?: string }).message ?? "Stream error",
+            ),
+          );
           return;
         }
       }
@@ -117,10 +138,14 @@ export interface ChatStreamOptions extends SSECallbacks {
 }
 
 /**
- * POST a chat message and stream the response.
- * Returns a controller with abort() for cancellation.
+ * Send a chat message and stream the response.
  *
- * Protocol: POST /api/v1/messages/stream → text/event-stream
+ * Backend flow:
+ *   1. Open GET SSE stream on /sessions/:id/stream
+ *   2. POST message to /sessions/:id/message
+ *   3. Response tokens arrive on the SSE connection
+ *
+ * Returns a controller with abort() for cancellation.
  */
 export function streamMessage(options: ChatStreamOptions): StreamController {
   const controller = new AbortController();
@@ -129,7 +154,6 @@ export function streamMessage(options: ChatStreamOptions): StreamController {
   (async () => {
     const token = getToken();
     const headers: Record<string, string> = {
-      "Content-Type": "application/json",
       Accept: "text/event-stream",
       "Cache-Control": "no-cache",
       "X-Accel-Buffering": "no",
@@ -137,24 +161,48 @@ export function streamMessage(options: ChatStreamOptions): StreamController {
     if (token) headers["Authorization"] = `Bearer ${token}`;
 
     try {
-      const response = await fetch(`${BASE_URL}${API_PREFIX}/messages/stream`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          session_id: options.sessionId,
-          content: options.content,
-          model: options.model,
-          stream: true,
-        }),
-        signal,
-      });
+      // Step 1: Open SSE stream (GET)
+      const streamResponse = await fetch(
+        `${BASE_URL}${API_PREFIX}/sessions/${options.sessionId}/stream`,
+        { headers, signal },
+      );
 
-      if (!response.ok) {
-        const body = await response.text().catch(() => "");
-        throw new Error(`HTTP ${response.status}: ${body}`);
+      if (!streamResponse.ok) {
+        const body = await streamResponse.text().catch(() => "");
+        throw new Error(`Stream HTTP ${streamResponse.status}: ${body}`);
       }
 
-      await consumeStream(response, options, signal);
+      // Step 2: POST the message (don't await the stream consumption first)
+      const msgHeaders: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (token) msgHeaders["Authorization"] = `Bearer ${token}`;
+
+      // Fire message POST in parallel with stream consumption
+      const messagePromise = fetch(
+        `${BASE_URL}${API_PREFIX}/sessions/${options.sessionId}/message`,
+        {
+          method: "POST",
+          headers: msgHeaders,
+          body: JSON.stringify({
+            message: options.content,
+            model: options.model,
+          }),
+          signal,
+        },
+      ).then(async (res) => {
+        if (!res.ok) {
+          const body = await res.text().catch(() => "");
+          throw new Error(`Message HTTP ${res.status}: ${body}`);
+        }
+      });
+
+      // Step 3: Consume stream events
+      // The stream will receive events from the message being processed
+      await Promise.all([
+        consumeStream(streamResponse, options, signal),
+        messagePromise,
+      ]);
     } catch (error) {
       if ((error as Error).name === "AbortError") return;
       options.onError?.(error as Error);

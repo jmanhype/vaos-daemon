@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { isTauri } from '$lib/utils/platform';
   import { restartBackend } from '$lib/utils/backend';
   import { BASE_URL, API_PREFIX, getToken } from '$lib/api/client';
 
@@ -9,6 +8,9 @@
   import type { FitAddon } from '@xterm/addon-fit';
   import type { SearchAddon } from '@xterm/addon-search';
 
+  // xterm CSS — MUST be imported for proper rendering
+  import '@xterm/xterm/css/xterm.css';
+
   // ── State ────────────────────────────────────────────────────────────────────
 
   let terminalEl = $state<HTMLDivElement | null>(null);
@@ -16,7 +18,6 @@
   let fitAddon = $state<FitAddon | null>(null);
   let searchAddon = $state<SearchAddon | null>(null);
 
-  let isDesktop = $state(false);
   let searchVisible = $state(false);
   let searchQuery = $state('');
   let fontSize = $state(13);
@@ -652,10 +653,6 @@
   // ── Lifecycle ────────────────────────────────────────────────────────────────
 
   onMount(async () => {
-    isDesktop = isTauri();
-
-    if (!isDesktop) return; // Browser dev mode — show placeholder
-
     // Wait one tick for terminalEl to be set by the DOM
     await Promise.resolve();
     if (terminalEl) {
@@ -804,43 +801,20 @@
 
   <!-- ── Terminal body ─────────────────────────────────────────────────────────── -->
   <div class="term-body">
-    {#if isDesktop}
-      <!-- xterm mount point -->
-      <div
-        bind:this={terminalEl}
-        class="xterm-container"
-        aria-label="Terminal"
-        role="application"
-      ></div>
+    <!-- xterm mount point -->
+    <div
+      bind:this={terminalEl}
+      class="xterm-container"
+      aria-label="Terminal"
+      role="application"
+    ></div>
 
-      <!-- Executing indicator -->
-      {#if isExecuting}
-        <div class="exec-indicator" aria-live="polite" aria-label="Executing command">
-          <span class="exec-dot"></span>
-          <span class="exec-dot"></span>
-          <span class="exec-dot"></span>
-        </div>
-      {/if}
-    {:else}
-      <!-- Browser dev mode placeholder -->
-      <div class="placeholder">
-        <div class="placeholder__icon" aria-hidden="true">
-          <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
-            <rect width="48" height="48" rx="10" fill="rgba(255,255,255,0.04)"
-                  stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
-            <path d="M11 18L20 24L11 30" stroke="rgba(255,255,255,0.3)" stroke-width="2"
-                  stroke-linecap="round" stroke-linejoin="round"/>
-            <line x1="23" y1="30" x2="37" y2="30" stroke="rgba(255,255,255,0.2)"
-                  stroke-width="2" stroke-linecap="round"/>
-          </svg>
-        </div>
-        <h2 class="placeholder__title">Terminal requires desktop app</h2>
-        <p class="placeholder__body">
-          Launch OSA Desktop to access the embedded terminal with full shell execution.
-        </p>
-        <div class="placeholder__hint">
-          <kbd>⌘4</kbd> to navigate here once inside the app
-        </div>
+    <!-- Executing indicator -->
+    {#if isExecuting}
+      <div class="exec-indicator" aria-live="polite" aria-label="Executing command">
+        <span class="exec-dot"></span>
+        <span class="exec-dot"></span>
+        <span class="exec-dot"></span>
       </div>
     {/if}
   </div>
@@ -1083,55 +1057,4 @@
     40%           { opacity: 1;   transform: scale(1); }
   }
 
-  /* ── Browser placeholder ────────────────────────────────────────────────── */
-
-  .placeholder {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    height: 100%;
-    gap: 16px;
-    padding: 40px;
-    text-align: center;
-  }
-
-  .placeholder__icon {
-    opacity: 0.6;
-  }
-
-  .placeholder__title {
-    font-size: 17px;
-    font-weight: 600;
-    color: rgba(255, 255, 255, 0.7);
-    letter-spacing: -0.01em;
-  }
-
-  .placeholder__body {
-    font-size: 14px;
-    color: rgba(255, 255, 255, 0.35);
-    max-width: 320px;
-    line-height: 1.6;
-  }
-
-  .placeholder__hint {
-    font-size: 13px;
-    color: rgba(255, 255, 255, 0.25);
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  kbd {
-    display: inline-flex;
-    align-items: center;
-    padding: 2px 7px;
-    background: rgba(255, 255, 255, 0.07);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 5px;
-    font-size: 12px;
-    font-family: var(--font-mono);
-    color: rgba(255, 255, 255, 0.5);
-    letter-spacing: 0.02em;
-  }
 </style>

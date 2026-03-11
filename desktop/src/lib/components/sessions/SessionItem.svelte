@@ -19,7 +19,7 @@
   let inputEl = $state<HTMLInputElement | null>(null);
 
   async function startEdit() {
-    editValue = session.title;
+    editValue = session.title ?? "";
     editing = true;
     await tick();
     inputEl?.select();
@@ -97,7 +97,7 @@
     return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
   }
 
-  const timeAgo = $derived(relativeTime(session.created_at));
+  const timeAgo = $derived(session.created_at ? relativeTime(session.created_at) : "");
 
   // ── Long-press (mobile / trackpad) for context menu ──────────────────────
 

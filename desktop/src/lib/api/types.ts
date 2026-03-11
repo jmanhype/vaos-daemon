@@ -24,9 +24,9 @@ export interface OnboardingStatus {
 
 export interface Session {
   id: string;
-  title: string;
+  title: string | null;
   message_count: number;
-  created_at: string;
+  created_at: string | null;
   /** Whether the session's agent loop is still running */
   alive: boolean;
 }
@@ -37,7 +37,9 @@ export interface CreateSessionRequest {
 }
 
 export interface CreateSessionResponse {
-  session: Session;
+  /** Backend returns { id, status } on session creation */
+  id: string;
+  status: string;
 }
 
 // ── Messages ──────────────────────────────────────────────────────────────────

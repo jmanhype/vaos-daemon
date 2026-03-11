@@ -247,7 +247,12 @@ export const onboarding = {
 // ── Sessions ──────────────────────────────────────────────────────────────────
 
 export const sessions = {
-  list: () => request<Session[]>("/sessions"),
+  list: async (): Promise<Session[]> => {
+    const data = await request<{ sessions: Session[]; count: number }>(
+      "/sessions",
+    );
+    return data.sessions ?? [];
+  },
   get: (id: string) => request<Session>(`/sessions/${id}`),
   create: (body: CreateSessionRequest = {}) =>
     request<CreateSessionResponse>("/sessions", {
@@ -266,8 +271,12 @@ export const sessions = {
 // ── Messages ──────────────────────────────────────────────────────────────────
 
 export const messages = {
-  list: (sessionId: string) =>
-    request<Message[]>(`/sessions/${sessionId}/messages`),
+  list: async (sessionId: string): Promise<Message[]> => {
+    const data = await request<{ messages: Message[]; count: number }>(
+      `/sessions/${sessionId}/messages`,
+    );
+    return data.messages ?? [];
+  },
 
   /**
    * POST a message. Returns a stream_id for subscribing via SSE.
@@ -283,7 +292,14 @@ export const messages = {
 // ── Models ────────────────────────────────────────────────────────────────────
 
 export const models = {
-  list: () => request<Model[]>("/models"),
+  list: async (): Promise<Model[]> => {
+    const data = await request<{
+      models: Model[];
+      current?: string;
+      provider?: string;
+    }>("/models");
+    return data.models ?? [];
+  },
   activate: (name: string) =>
     request<Model>(`/models/${encodeURIComponent(name)}/activate`, {
       method: "POST",
