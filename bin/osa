@@ -136,6 +136,64 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# Auto-install Rust if missing
+if ! command -v cargo >/dev/null 2>&1; then
+  echo -e "${CYAN}→${RESET} Rust not found — installing automatically..."
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --quiet
+  # shellcheck source=/dev/null
+  source "${HOME}/.cargo/env" 2>/dev/null || true
+  export PATH="${HOME}/.cargo/bin:$PATH"
+  if ! command -v cargo >/dev/null 2>&1; then
+    echo -e "${RED}✗ Rust installation failed.${RESET} Install manually: https://rustup.rs"
+    echo -e "${DIM}  Falling back to CLI mode.${RESET}"
+    (cd "$ROOT" && mix osa.chat)
+    exit $?
+  fi
+  echo -e "${GREEN}✓${RESET} Rust installed"
+fi
+
+# Auto-install Elixir if missing
+if ! command -v mix >/dev/null 2>&1; then
+  echo -e "${CYAN}→${RESET} Elixir not found — installing automatically..."
+  case "$(uname -s)" in
+    Darwin)
+      if ! command -v brew >/dev/null 2>&1; then
+        echo -e "${CYAN}→${RESET} Installing Homebrew first..."
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        if [ -f "/opt/homebrew/bin/brew" ]; then
+          eval "$(/opt/homebrew/bin/brew shellenv)"
+        elif [ -f "/usr/local/bin/brew" ]; then
+          eval "$(/usr/local/bin/brew shellenv)"
+        fi
+      fi
+      brew install erlang elixir
+      ;;
+    Linux)
+      if command -v apt-get >/dev/null 2>&1; then
+        sudo apt-get update -qq && sudo apt-get install -y -qq erlang elixir
+      elif command -v dnf >/dev/null 2>&1; then
+        sudo dnf install -y -q erlang elixir
+      elif command -v pacman >/dev/null 2>&1; then
+        sudo pacman -Sy --noconfirm erlang elixir
+      else
+        echo -e "${RED}✗ Cannot auto-install Elixir.${RESET} Install Erlang 27+ and Elixir 1.17+ manually."
+        exit 1
+      fi
+      ;;
+  esac
+  if ! command -v mix >/dev/null 2>&1; then
+    echo -e "${RED}✗ Elixir installation failed.${RESET}"
+    exit 1
+  fi
+  echo -e "${GREEN}✓${RESET} Elixir installed"
+  # First-time setup: fetch deps + compile
+  echo -e "${CYAN}→${RESET} Fetching dependencies..."
+  (cd "$ROOT" && mix local.hex --force --if-missing >/dev/null 2>&1 || true)
+  (cd "$ROOT" && mix local.rebar --force --if-missing >/dev/null 2>&1 || true)
+  (cd "$ROOT" && mix deps.get 2>&1 | tail -3)
+  (cd "$ROOT" && mix compile 2>&1 | tail -3)
+fi
+
 # Build Rust TUI if needed
 if [ ! -f "$TUI_BIN" ]; then
   if [ -f "$TUI_DIR/Cargo.toml" ]; then
