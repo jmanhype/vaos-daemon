@@ -101,6 +101,9 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
   # Agent skill self-creation: POST/GET /agent/skill (must be before /agent catch-all)
   forward "/agent/skill", to: API.SkillBootstrapRoutes
 
+  # Agent autonomous skill evolution: GET|POST /agent/evolve (before /agent catch-all)
+  forward "/agent/evolve", to: API.SkillEvolutionRoutes
+
   # Agent introspection
   forward "/agent", to: API.AgentStateRoutes
 
