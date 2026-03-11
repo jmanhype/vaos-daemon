@@ -295,6 +295,21 @@ defmodule OptimalSystemAgent.Commands.Info do
     {:command, Enum.reverse(parts) |> Enum.join("\n\n")}
   end
 
+  @doc "Handle the `/desktop` and `/gui` command."
+  def cmd_desktop(_arg, _session_id) do
+    port = Application.get_env(:optimal_system_agent, :desktop_port, 5199)
+    url = "http://localhost:#{port}"
+
+    # Try to open in default browser
+    case :os.type() do
+      {:unix, :darwin} -> System.cmd("open", [url], stderr_to_stdout: true)
+      {:unix, _} -> System.cmd("xdg-open", [url], stderr_to_stdout: true)
+      {:win32, _} -> System.cmd("cmd", ["/c", "start", url], stderr_to_stdout: true)
+    end
+
+    {:command, "Opening desktop at #{url}\n\nIf it doesn't open automatically, visit: #{url}"}
+  end
+
   # ── Formatting Helpers ─────────────────────────────────────────
 
   @doc "Format a DateTime or nil for display."

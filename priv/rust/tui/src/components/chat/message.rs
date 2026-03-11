@@ -21,7 +21,7 @@ pub enum MessageType {
 }
 
 /// Number of rendered lines for the Help message (must match `build_help_lines`).
-const HELP_LINE_COUNT: u16 = 27;
+const HELP_LINE_COUNT: u16 = 28;
 
 /// Stored tool call metadata for rich rendering.
 #[derive(Clone)]
@@ -473,6 +473,7 @@ fn build_help_lines(theme: &style::Theme) -> Vec<Line<'static>> {
         ("  /theme <name>", "Switch theme"),
         ("  /verbose", "Toggle tool detail"),
         ("  /yolo", "Toggle auto-approve (dangerous)"),
+        ("  /desktop", "Open desktop GUI in browser"),
         ("  /exit", "Quit"),
     ];
 

@@ -130,6 +130,7 @@ defmodule OptimalSystemAgent.Commands do
       n when n in ~w(verbose think plan config tier) -> "config"
       n when n in ~w(agents tiers tier swarms swarm hooks learning strategy) -> "agents"
       n when n in ~w(budget thinking export machines providers) -> "info"
+      n when n in ~w(desktop gui) -> "system"
       n when n in ~w(reload doctor setup create-command) -> "system"
       n when n in ~w(commit build test lint verify create-pr fix explain) -> "workflow"
       n when n in ~w(prime prime-backend prime-webdev prime-svelte prime-security prime-devops prime-testing prime-osa prime-miosa) -> "priming"
@@ -292,6 +293,10 @@ defmodule OptimalSystemAgent.Commands do
       {"export", "Export session to file", &Data.cmd_export/2},
       {"machines", "List connected machines", &Agents.cmd_machines/2},
       {"providers", "List available LLM providers", &Model.cmd_providers/2},
+
+      # ── Desktop GUI ──
+      {"desktop", "Open the desktop GUI in your browser", &Info.cmd_desktop/2},
+      {"gui", "Open the desktop GUI in your browser", &Info.cmd_desktop/2},
 
       # ── System ──
       {"reload", "Reload soul/skill files", &System.cmd_reload/2},

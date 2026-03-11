@@ -223,6 +223,32 @@ impl App {
                     crate::components::toast::ToastLevel::Info,
                 );
             }
+            "/desktop" | "/gui" => {
+                let url = "http://localhost:5199";
+                let result = if cfg!(target_os = "macos") {
+                    std::process::Command::new("open").arg(url).spawn()
+                } else if cfg!(target_os = "linux") {
+                    std::process::Command::new("xdg-open").arg(url).spawn()
+                } else if cfg!(target_os = "windows") {
+                    std::process::Command::new("cmd").args(["/c", "start", url]).spawn()
+                } else {
+                    Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "unsupported platform"))
+                };
+                match result {
+                    Ok(_) => {
+                        self.toasts.push(
+                            format!("Opening desktop at {}", url),
+                            crate::components::toast::ToastLevel::Info,
+                        );
+                    }
+                    Err(_) => {
+                        self.toasts.push(
+                            format!("Could not open browser. Visit {}", url),
+                            crate::components::toast::ToastLevel::Warning,
+                        );
+                    }
+                }
+            }
             _ => {
                 // Unknown slash command -> send to backend
                 let cmd_name = &cmd[1..]; // strip leading /
