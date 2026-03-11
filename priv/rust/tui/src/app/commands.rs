@@ -224,30 +224,12 @@ impl App {
                 );
             }
             "/desktop" | "/gui" => {
-                let url = "http://localhost:5199";
-                let result = if cfg!(target_os = "macos") {
-                    std::process::Command::new("open").arg(url).spawn()
-                } else if cfg!(target_os = "linux") {
-                    std::process::Command::new("xdg-open").arg(url).spawn()
-                } else if cfg!(target_os = "windows") {
-                    std::process::Command::new("cmd").args(["/c", "start", url]).spawn()
-                } else {
-                    Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "unsupported platform"))
-                };
-                match result {
-                    Ok(_) => {
-                        self.toasts.push(
-                            format!("Opening desktop at {}", url),
-                            crate::components::toast::ToastLevel::Info,
-                        );
-                    }
-                    Err(_) => {
-                        self.toasts.push(
-                            format!("Could not open browser. Visit {}", url),
-                            crate::components::toast::ToastLevel::Warning,
-                        );
-                    }
-                }
+                // Send to backend — it handles finding and launching the Tauri app
+                self.execute_backend_command("desktop", arg);
+                self.toasts.push(
+                    "Launching OSA Desktop...".to_string(),
+                    crate::components::toast::ToastLevel::Info,
+                );
             }
             _ => {
                 // Unknown slash command -> send to backend

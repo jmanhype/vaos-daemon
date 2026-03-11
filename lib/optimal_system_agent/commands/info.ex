@@ -297,17 +297,47 @@ defmodule OptimalSystemAgent.Commands.Info do
 
   @doc "Handle the `/desktop` and `/gui` command."
   def cmd_desktop(_arg, _session_id) do
-    port = Application.get_env(:optimal_system_agent, :desktop_port, 5199)
-    url = "http://localhost:#{port}"
+    osa_root = Application.get_env(:optimal_system_agent, :root_path, File.cwd!())
+    desktop_dir = Path.join(osa_root, "desktop")
 
-    # Try to open in default browser
-    case :os.type() do
-      {:unix, :darwin} -> System.cmd("open", [url], stderr_to_stdout: true)
-      {:unix, _} -> System.cmd("xdg-open", [url], stderr_to_stdout: true)
-      {:win32, _} -> System.cmd("cmd", ["/c", "start", url], stderr_to_stdout: true)
+    # Look for the built Tauri binary first, then fall back to dev mode
+    binary_paths = [
+      Path.join([desktop_dir, "src-tauri", "target", "release", "osa-desktop"]),
+      Path.join([desktop_dir, "src-tauri", "target", "debug", "osa-desktop"])
+    ]
+
+    case Enum.find(binary_paths, &File.exists?/1) do
+      nil ->
+        # No built binary — try launching dev mode in background
+        launch_desktop_dev(desktop_dir)
+
+      binary ->
+        # Launch the built Tauri app
+        port = Port.open({:spawn_executable, binary}, [:binary, :nouse_stdio, {:cd, desktop_dir}])
+        Port.close(port)
+        {:command, "Launching OSA Desktop (#{Path.basename(binary)})"}
     end
+  end
 
-    {:command, "Opening desktop at #{url}\n\nIf it doesn't open automatically, visit: #{url}"}
+  defp launch_desktop_dev(desktop_dir) do
+    npm = if match?({:win32, _}, :os.type()), do: "npm.cmd", else: "npm"
+
+    if File.exists?(Path.join(desktop_dir, "package.json")) do
+      # Install deps if needed
+      unless File.dir?(Path.join(desktop_dir, "node_modules")) do
+        System.cmd(npm, ["install"], cd: desktop_dir, stderr_to_stdout: true)
+      end
+
+      # Start tauri dev in background
+      Port.open(
+        {:spawn_executable, System.find_executable(npm)},
+        [:binary, :nouse_stdio, {:cd, desktop_dir}, {:args, ["run", "tauri:dev"]}]
+      )
+
+      {:command, "Starting OSA Desktop in dev mode...\nThe Tauri window will open shortly."}
+    else
+      {:command, "Desktop app not found at #{desktop_dir}\nRun from the OSA project root."}
+    end
   end
 
   # ── Formatting Helpers ─────────────────────────────────────────
