@@ -98,6 +98,9 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
   # ── TUI input / output ───────────────────────────────────────────────
   forward "/tui", to: API.TuiRoutes
 
+  # Agent tool synthesis: POST/GET/DELETE /agent/tools/synthesize (must be before /agent/skill and /agent catch-all)
+  forward "/agent/tools/synthesize", to: API.ToolSynthesisRoutes
+
   # Agent skill self-creation: POST/GET /agent/skill (must be before /agent catch-all)
   forward "/agent/skill", to: API.SkillBootstrapRoutes
 
