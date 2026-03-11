@@ -12,31 +12,40 @@ OSA Desktop is the native GUI for [OSA](https://github.com/Miosa-osa/OptimalSyst
 
 ### Prerequisites
 
-- **Node.js** 22+
-- **Rust** 1.75+ — `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
-- **Elixir** 1.17+ / OTP 27+ — required for the OSA backend
+- **Elixir** 1.17+ / OTP 27+ — the OSA backend
+- **Node.js** 22+ — the desktop frontend
+- **Rust** 1.75+ — only needed for native Tauri builds
 
-### Start the OSA backend
+### One Command (recommended)
+
+From the project root:
 
 ```bash
-cd ..
+./dev.sh               # Starts backend (:9089) + frontend (:5199) together
+./dev.sh --tauri       # Same, but opens as a native Tauri window
+```
+
+Open **http://localhost:5199** and you're in.
+
+### Manual Setup
+
+```bash
+# 1. Backend
 mix deps.get
-mix osa.serve          # Backend starts on localhost:9089
-```
+mix osa.serve                    # Elixir backend on :9089
 
-### Start the desktop app
-
-```bash
+# 2. Frontend (separate terminal)
+cd desktop
 npm install
-
-npm run dev            # Browser mode — http://localhost:5199
-npm run tauri dev      # Native desktop mode (Tauri window)
+npm run dev                      # Browser mode on :5199
+npm run tauri:dev                # Or native desktop mode
 ```
 
-### Production build
+### Production Build
 
 ```bash
-npm run tauri build    # Produces .dmg / .msi / .AppImage in src-tauri/target/release/bundle/
+cd desktop
+npm run tauri:build              # .dmg / .msi / .AppImage
 ```
 
 ---
@@ -76,7 +85,7 @@ The frontend is a compiled static SPA embedded in the Tauri shell. It communicat
 | Activity Logs | `/app/activity` | Real-time event feed with verbosity controls |
 | Usage & Analytics | `/app/usage` | Token usage, cost tracking, session metrics |
 | Memory Vault | `/app/memory` | Browse and manage structured Vault memory (facts, decisions, lessons) |
-| Scheduled Tasks | (settings tab) | Cron and heartbeat scheduler management |
+| Scheduled Tasks | `/app/tasks` | Cron job management, trigger scheduling, one-click execution |
 
 ---
 
