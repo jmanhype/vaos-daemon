@@ -48,15 +48,17 @@ defmodule OptimalSystemAgent.Onboarding do
   # Popular models available on Ollama Cloud (`:cloud` tag = runs remotely, no local GPU)
   @ollama_cloud_models [
     {"kimi-k2.5:cloud", "Kimi K2.5 — 1T MoE, vision+tools+thinking, 256K ctx"},
+    {"qwen3-coder:480b-cloud", "Qwen 3 Coder 480B — agentic coding, tools, 256K ctx"},
+    {"glm-5:cloud", "GLM-5 — 744B/40B MoE, reasoning+coding+agentic, 198K ctx"},
+    {"qwen3-coder-next:cloud", "Qwen 3 Coder Next — 80B/3B MoE, agentic coding, 256K ctx"},
     {"qwen3:235b-cloud", "Qwen 3 235B — flagship reasoning"},
-    {"qwen2.5-coder:32b-cloud", "Qwen 2.5 Coder 32B — code specialist"},
     {"deepseek-r1:cloud", "DeepSeek R1 — deep reasoning, 128K ctx"},
     {"llama3.3:70b-cloud", "Llama 3.3 70B — Meta flagship"},
     {"gemma3:27b-cloud", "Gemma 3 27B — Google open model"},
     {"mistral-large:cloud", "Mistral Large 2 — 128K ctx"},
+    {"devstral:cloud", "Devstral — Mistral coding agent, 128K ctx"},
     {"command-r-plus:cloud", "Command R+ — Cohere flagship, 128K ctx"},
     {"phi4:cloud", "Phi-4 14B — Microsoft compact reasoning"},
-    {"devstral:cloud", "Devstral — Mistral coding agent, 128K ctx"},
     {"custom", "Enter a custom model name..."}
   ]
 
@@ -850,8 +852,10 @@ defmodule OptimalSystemAgent.Onboarding do
         _ -> %{}
       end
 
-    # Save Ollama Cloud URL if set
-    ollama_url = Application.get_env(:optimal_system_agent, :ollama_url, "http://localhost:11434")
+    # Save Ollama Cloud URL if set (check state first, then Application env)
+    ollama_url =
+      Map.get(state, :ollama_url) ||
+        Application.get_env(:optimal_system_agent, :ollama_url, "http://localhost:11434")
 
     provider_config =
       if state.provider == "ollama" and not String.contains?(ollama_url, "localhost") do

@@ -140,17 +140,38 @@ defmodule OptimalSystemAgent.Channels.HTTP do
 
     case Jason.decode(raw) do
       {:ok, params} ->
+        raw_provider = Map.get(params, "provider", "ollama")
+
+        # Normalize "ollama_cloud" → "ollama" with remote URL + API key
+        {provider, ollama_url} =
+          if raw_provider == "ollama_cloud" do
+            url = Map.get(params, "ollama_url", "https://ollama.lunivate.com")
+            Application.put_env(:optimal_system_agent, :ollama_url, url)
+            {"ollama", url}
+          else
+            {raw_provider, nil}
+          end
+
+        api_key = Map.get(params, "api_key")
+
+        # For Ollama Cloud, ensure API key is propagated
+        if raw_provider == "ollama_cloud" and is_binary(api_key) and api_key != "" do
+          Application.put_env(:optimal_system_agent, :ollama_api_key, api_key)
+          System.put_env("OLLAMA_API_KEY", api_key)
+        end
+
         state = %{
           agent_name: Map.get(params, "agent_name", "OSA"),
           user_name: Map.get(params, "user_name"),
           user_context: Map.get(params, "user_context"),
-          provider: Map.get(params, "provider", "ollama"),
-          model: Map.get(params, "model", "llama3.2:latest"),
-          api_key: Map.get(params, "api_key"),
-          env_var: Map.get(params, "env_var"),
+          provider: provider,
+          model: Map.get(params, "model", "kimi-k2.5:cloud"),
+          api_key: api_key,
+          env_var: Map.get(params, "env_var") || (if raw_provider == "ollama_cloud", do: "OLLAMA_API_KEY"),
           machines: Map.get(params, "machines", %{"communication" => false, "productivity" => false, "research" => false}),
           channels_config: Map.get(params, "channels", %{}),
-          os_template: Map.get(params, "os_template")
+          os_template: Map.get(params, "os_template"),
+          ollama_url: ollama_url
         }
 
         case OptimalSystemAgent.Onboarding.write_setup(state) do
