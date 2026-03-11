@@ -24,7 +24,7 @@ defmodule OptimalSystemAgent.Onboarding do
   # {number, provider_key, display_name, default_model, env_var | nil}
   @providers [
     {1, "ollama", "Ollama (local)", "llama3.2:latest", nil},
-    {2, "ollama_cloud", "Ollama Cloud", "kimi-k2.5:latest", "OLLAMA_API_KEY"},
+    {2, "ollama_cloud", "Ollama Cloud", "kimi-k2.5:cloud", "OLLAMA_API_KEY"},
     {3, "anthropic", "Anthropic", "claude-sonnet-4-6", "ANTHROPIC_API_KEY"},
     {4, "openai", "OpenAI", "gpt-4o", "OPENAI_API_KEY"},
     {5, "groq", "Groq", "llama-3.3-70b-versatile", "GROQ_API_KEY"},
@@ -45,17 +45,18 @@ defmodule OptimalSystemAgent.Onboarding do
     {19, "baichuan", "Baichuan", "Baichuan4", "BAICHUAN_API_KEY"}
   ]
 
-  # Popular models available on Ollama Cloud
+  # Popular models available on Ollama Cloud (`:cloud` tag = runs remotely, no local GPU)
   @ollama_cloud_models [
-    {"kimi-k2.5:latest", "Kimi K2.5 (Moonshot) — 1T MoE, tool calling"},
-    {"qwen3:235b", "Qwen 3 235B — flagship reasoning"},
-    {"qwen2.5-coder:latest", "Qwen 2.5 Coder — code specialist"},
-    {"deepseek-r1:latest", "DeepSeek R1 — deep reasoning"},
-    {"llama3.3:latest", "Llama 3.3 70B — Meta flagship"},
-    {"gemma3:27b", "Gemma 3 27B — Google open model"},
-    {"mistral-large:latest", "Mistral Large — Mistral flagship"},
-    {"command-r-plus:latest", "Command R+ — Cohere flagship"},
-    {"phi4:latest", "Phi-4 14B — Microsoft compact"},
+    {"kimi-k2.5:cloud", "Kimi K2.5 — 1T MoE, vision+tools+thinking, 256K ctx"},
+    {"qwen3:235b-cloud", "Qwen 3 235B — flagship reasoning"},
+    {"qwen2.5-coder:32b-cloud", "Qwen 2.5 Coder 32B — code specialist"},
+    {"deepseek-r1:cloud", "DeepSeek R1 — deep reasoning, 128K ctx"},
+    {"llama3.3:70b-cloud", "Llama 3.3 70B — Meta flagship"},
+    {"gemma3:27b-cloud", "Gemma 3 27B — Google open model"},
+    {"mistral-large:cloud", "Mistral Large 2 — 128K ctx"},
+    {"command-r-plus:cloud", "Command R+ — Cohere flagship, 128K ctx"},
+    {"phi4:cloud", "Phi-4 14B — Microsoft compact reasoning"},
+    {"devstral:cloud", "Devstral — Mistral coding agent, 128K ctx"},
     {"custom", "Enter a custom model name..."}
   ]
 
@@ -614,7 +615,7 @@ defmodule OptimalSystemAgent.Onboarding do
       case Selector.select(model_lines) do
         {:selected, model_id} -> model_id
         {:input, custom_model} -> custom_model
-        _ -> "kimi-k2.5:latest"
+        _ -> "kimi-k2.5:cloud"
       end
 
     IO.puts("\n  #{@dim}Ollama Cloud requires a URL and API key from your provider.#{@reset}")
