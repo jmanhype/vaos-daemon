@@ -360,3 +360,21 @@ export const settings = {
       body: JSON.stringify(body),
     }),
 };
+
+// ── Scheduler ─────────────────────────────────────────────────────────────────
+
+export const scheduler = {
+  list: <T>() => request<T>("/scheduler/jobs"),
+  get: <T>(id: string) => request<T>(`/scheduler/jobs/${id}`),
+  create: <T>(body: unknown) =>
+    request<T>("/scheduler/jobs", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  delete: (id: string) =>
+    request<void>(`/scheduler/jobs/${id}`, { method: "DELETE" }),
+  toggle: <T>(id: string) =>
+    request<T>(`/scheduler/jobs/${id}/toggle`, { method: "POST" }),
+  runNow: (id: string) =>
+    request<void>(`/scheduler/jobs/${id}/run`, { method: "POST" }),
+};

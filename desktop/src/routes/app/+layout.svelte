@@ -44,8 +44,8 @@
     }
   }
 
-  // Nav routes mapped to keyboard shortcuts ⌘1–⌘6
-  const NAV_ROUTES = ['/app', '/app/agents', '/app/models', '/app/terminal', '/app/connectors', '/app/settings'];
+  // Nav routes mapped to keyboard shortcuts ⌘1–⌘0
+  const NAV_ROUTES = ['/app', '/app/agents', '/app/models', '/app/terminal', '/app/connectors', '/app/settings', '/app/activity', '/app/usage', '/app/memory', '/app/tasks'];
 
   // ── SSE Event Dispatcher ────────────────────────────────────────────────────
   //
@@ -211,8 +211,8 @@
         return;
       }
 
-      // ⌘1–⌘6 — navigate to route by position
-      const idx = ['1', '2', '3', '4', '5', '6'].indexOf(e.key);
+      // ⌘1–⌘0 — navigate to route by position
+      const idx = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'].indexOf(e.key);
       if (idx !== -1) {
         e.preventDefault();
         goto(NAV_ROUTES[idx]);
