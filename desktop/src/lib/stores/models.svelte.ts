@@ -283,6 +283,52 @@ export interface ProviderGroup {
   available: boolean;
 }
 
+// ── Smart model ranking ──────────────────────────────────────────────────────
+// Ranks models by quality. Higher score = better model.
+// Used to auto-select the best available local model on first load.
+
+function modelScore(m: Model): number {
+  const name = m.name.toLowerCase();
+
+  // Skip embedding models entirely
+  if (name.includes("embed") || name.includes("nomic")) return -1;
+
+  // Cloud catalog models (require API key) — rank high but below local
+  if (m.requires_api_key && !m.is_local) return 0;
+
+  // ── Local model ranking by capability ─────────────────────────────────
+  // Prefer: large params > coding specialization > recency > small params
+
+  // Coding specialists — top tier
+  if (name.includes("coder") && name.includes("480b")) return 950;
+  if (name.includes("kimi-k2")) return 900;
+
+  // Large general models (27B+)
+  if (name.includes("qwen3:32b")) return 850;
+  if (name.includes("qwen3:30b")) return 840;
+  if (name.includes("gemma3:27b")) return 830;
+
+  // Mid-tier (7-8B, recent gen)
+  if (name.includes("qwen3:8b")) return 700;
+  if (name.includes("llama3.2-vision")) return 680;
+  if (name.includes("glm-4")) return 670;
+  if (name.includes("qwen2.5:7b")) return 650;
+  if (name.includes("llama3.2:latest")) return 640;
+
+  // Small models
+  if (name.includes("llama3.2:3b")) return 400;
+  if (name.includes("qwen3:1.7b")) return 350;
+
+  // Fallback: score by size hint in name
+  const sizeMatch = name.match(/(\d+)b/);
+  if (sizeMatch) {
+    const params = parseInt(sizeMatch[1], 10);
+    return Math.min(params * 10, 800);
+  }
+
+  return 100; // unknown model, rank low
+}
+
 // ── Store ──────────────────────────────────────────────────────────────────────
 
 class ModelsStore {
@@ -358,6 +404,29 @@ class ModelsStore {
         (cm) => !backendNames.has(cm.name),
       );
       this.models = [...result, ...catalogExtras];
+
+      // Auto-select best local model if current active model is weak or none active
+      const active = result.find((m) => m.active);
+      const localModels = result.filter(
+        (m) => !m.requires_api_key && modelScore(m) > 0,
+      );
+
+      if (localModels.length > 0) {
+        const best = localModels.sort(
+          (a, b) => modelScore(b) - modelScore(a),
+        )[0];
+        const activeScore = active ? modelScore(active) : -1;
+        const bestScore = modelScore(best);
+
+        // Switch if: no active model, or active model scores much lower than best
+        if (
+          !active ||
+          (bestScore > activeScore + 100 && best.name !== active.name)
+        ) {
+          // Fire and forget — don't block the UI
+          this.activateModel(best.name).catch(() => {});
+        }
+      }
     } catch (err) {
       // Backend offline — show cloud catalog so users can still browse
       this.models = [...CLOUD_MODEL_CATALOG];
