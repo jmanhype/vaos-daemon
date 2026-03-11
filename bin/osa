@@ -20,7 +20,7 @@ HOME="${HOME:-/root}"
 export LC_ALL="${LC_ALL:-C.UTF-8}"
 export LANG="${LANG:-C.UTF-8}"
 
-# sudo helper: skip sudo when already root
+# sudo helper: skip when already root
 if [ "$(id -u)" -eq 0 ]; then
   SUDO=""
 else
@@ -32,12 +32,40 @@ if [ -t 1 ]; then
   BOLD='\033[1m'
   DIM='\033[2m'
   GREEN='\033[0;32m'
+  YELLOW='\033[0;33m'
   RED='\033[0;31m'
   CYAN='\033[0;36m'
   RESET='\033[0m'
 else
-  BOLD='' DIM='' GREEN='' RED='' CYAN='' RESET=''
+  BOLD='' DIM='' GREEN='' YELLOW='' RED='' CYAN='' RESET=''
 fi
+
+# ── Detect package manager ───────────────────────────────────────
+detect_pkg() {
+  if   command -v apt-get >/dev/null 2>&1; then PKG="apt"
+  elif command -v dnf     >/dev/null 2>&1; then PKG="dnf"
+  elif command -v pacman  >/dev/null 2>&1; then PKG="pacman"
+  elif command -v apk     >/dev/null 2>&1; then PKG="apk"
+  elif command -v zypper  >/dev/null 2>&1; then PKG="zypper"
+  elif command -v yum     >/dev/null 2>&1; then PKG="yum"
+  elif command -v brew    >/dev/null 2>&1; then PKG="brew"
+  else PKG="unknown"
+  fi
+}
+
+# Package install abstraction
+pkg_install() {
+  case "$PKG" in
+    apt)    $SUDO apt-get install -y -qq "$@" ;;
+    dnf)    $SUDO dnf install -y -q "$@" ;;
+    yum)    $SUDO yum install -y -q "$@" ;;
+    pacman) $SUDO pacman -Sy --noconfirm "$@" ;;
+    apk)    $SUDO apk add --no-cache "$@" ;;
+    zypper) $SUDO zypper install -y "$@" ;;
+    brew)   brew install "$@" ;;
+    *)      return 1 ;;
+  esac
+}
 
 # ── HTTP helper (curl → wget fallback) ───────────────────────────
 _http_ok() {
@@ -50,10 +78,21 @@ _http_ok() {
   fi
 }
 
+# Elixir version check (>= 1.17)
+check_elixir_version() {
+  local ver major minor
+  ver=$(elixir --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+  [ -z "$ver" ] && return 1
+  major=$(echo "$ver" | cut -d. -f1)
+  minor=$(echo "$ver" | cut -d. -f2)
+  [ "${major:-0}" -gt 1 ] && return 0
+  [ "${major:-0}" -eq 1 ] && [ "${minor:-0}" -ge 17 ] && return 0
+  return 1
+}
+
 # ── Resolve project root ──────────────────────────────────────────
 SCRIPT="$0"
 if [ -L "$SCRIPT" ]; then
-  # readlink -f works on Linux (GNU coreutils); macOS needs a fallback
   SCRIPT="$(readlink -f "$SCRIPT" 2>/dev/null || python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$SCRIPT" 2>/dev/null || perl -e 'use Cwd "abs_path"; print abs_path(shift)' "$SCRIPT")"
 fi
 SCRIPT_DIR="$(cd "$(dirname "$SCRIPT")" && pwd)"
@@ -96,20 +135,19 @@ case "${1:-}" in
     echo -e "${CYAN}→${RESET} Updating OSA Agent..."
     echo -e "${DIM}  Project: $ROOT${RESET}"
 
-    # Git pull
     echo -e "${CYAN}→${RESET} Pulling latest..."
     (cd "$ROOT" && git pull --ff-only origin main 2>&1) || echo -e "${RED}  git pull failed — continuing anyway${RESET}"
 
-    # Elixir deps + compile
     echo -e "${CYAN}→${RESET} Fetching dependencies..."
     (cd "$ROOT" && mix deps.get 2>&1 | tail -3)
     echo -e "${CYAN}→${RESET} Compiling (--force)..."
-    (cd "$ROOT" && mix compile --force 2>&1 | tail -3)
+    (cd "$ROOT" && mix compile --force 2>&1 | tail -5)
 
-    # Rebuild Rust TUI
     if [ -f "$TUI_DIR/Cargo.toml" ]; then
       echo -e "${CYAN}→${RESET} Rebuilding TUI..."
-      (cd "$TUI_DIR" && cargo build --release 2>&1 | grep -E "Compiling|Finished|error" | tail -5) || true
+      if ! (cd "$TUI_DIR" && cargo build --release 2>&1 | grep -E "Compiling|Finished|error" | tail -5); then
+        echo -e "${YELLOW}⚠${RESET} TUI rebuild had warnings — check above"
+      fi
     fi
 
     echo ""
@@ -119,7 +157,6 @@ case "${1:-}" in
 
   serve)
     echo -e "${CYAN}→${RESET} Starting backend (headless)..."
-    # Ensure deps are ready (handles fresh clone + serve)
     (cd "$ROOT" && mix local.hex --force --if-missing >/dev/null 2>&1 || true)
     (cd "$ROOT" && mix local.rebar --force --if-missing >/dev/null 2>&1 || true)
     (cd "$ROOT" && mix deps.get --quiet 2>&1 | tail -3)
@@ -163,25 +200,45 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+detect_pkg
+
 # ── Auto-install missing dependencies ────────────────────────────
 
-# Install system build deps on Linux (needed for Rust TUI native libs)
+# Install native build deps for Rust TUI on Linux
 install_linux_build_deps() {
-  if [ "$(uname -s)" = "Linux" ] && command -v apt-get >/dev/null 2>&1; then
-    local needed=()
-    command -v pkg-config >/dev/null 2>&1 || needed+=(pkg-config)
-    command -v gcc >/dev/null 2>&1        || needed+=(build-essential)
-    # Check for libs needed by Rust TUI crates (arboard, cpal, syntect, reqwest)
-    [ -f /usr/lib/*/libssl.so ] 2>/dev/null || [ -f /usr/lib/*/libssl.a ] 2>/dev/null || needed+=(libssl-dev)
-    [ -f /usr/lib/*/libxcb.so ] 2>/dev/null || [ -f /usr/lib/*/libxcb.a ] 2>/dev/null || needed+=(libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev)
-    [ -f /usr/lib/*/libasound.so ] 2>/dev/null || [ -f /usr/lib/*/libasound.a ] 2>/dev/null || needed+=(libasound2-dev)
-    [ -f /usr/lib/*/libonig.so ] 2>/dev/null || [ -f /usr/lib/*/libonig.a ] 2>/dev/null || needed+=(libonig-dev)
-    if [ ${#needed[@]} -gt 0 ]; then
-      echo -e "${CYAN}→${RESET} Installing build dependencies: ${needed[*]}..."
-      $SUDO apt-get update -qq 2>/dev/null || true
-      $SUDO apt-get install -y -qq "${needed[@]}" 2>/dev/null || true
-    fi
-  fi
+  [ "$(uname -s)" = "Linux" ] || return 0
+  # Quick check: if TUI binary already exists, skip
+  [ -f "$TUI_BIN" ] && return 0
+
+  echo -e "${CYAN}→${RESET} Checking build dependencies..."
+  case "$PKG" in
+    apt)
+      local needed=()
+      command -v pkg-config >/dev/null 2>&1 || needed+=(pkg-config)
+      command -v gcc >/dev/null 2>&1        || needed+=(build-essential)
+      [ -f /usr/lib/*/libssl.so ] 2>/dev/null || [ -f /usr/lib/*/libssl.a ] 2>/dev/null || needed+=(libssl-dev)
+      [ -f /usr/lib/*/libxcb.so ] 2>/dev/null || [ -f /usr/lib/*/libxcb.a ] 2>/dev/null || needed+=(libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev)
+      [ -f /usr/lib/*/libasound.so ] 2>/dev/null || [ -f /usr/lib/*/libasound.a ] 2>/dev/null || needed+=(libasound2-dev)
+      [ -f /usr/lib/*/libonig.so ] 2>/dev/null || [ -f /usr/lib/*/libonig.a ] 2>/dev/null || needed+=(libonig-dev)
+      if [ ${#needed[@]} -gt 0 ]; then
+        echo -e "${CYAN}→${RESET} Installing: ${needed[*]}..."
+        $SUDO apt-get update -qq 2>/dev/null || true
+        $SUDO apt-get install -y -qq "${needed[@]}" 2>/dev/null || true
+      fi
+      ;;
+    dnf|yum)
+      pkg_install gcc gcc-c++ make pkg-config openssl-devel libxcb-devel alsa-lib-devel oniguruma-devel 2>/dev/null || true
+      ;;
+    pacman)
+      pkg_install base-devel pkg-config openssl libxcb alsa-lib oniguruma 2>/dev/null || true
+      ;;
+    apk)
+      pkg_install build-base pkgconfig openssl-dev libxcb-dev alsa-lib-dev oniguruma-dev 2>/dev/null || true
+      ;;
+    zypper)
+      pkg_install gcc gcc-c++ make pkg-config libopenssl-devel libxcb-devel alsa-devel oniguruma-devel 2>/dev/null || true
+      ;;
+  esac
 }
 
 # Auto-install Rust if missing
@@ -192,7 +249,7 @@ if ! command -v cargo >/dev/null 2>&1; then
   elif command -v wget >/dev/null 2>&1; then
     wget -qO- https://sh.rustup.rs | sh -s -- -y --quiet
   else
-    echo -e "${RED}✗ Neither curl nor wget found.${RESET} Cannot install Rust."
+    echo -e "${RED}✗ Neither curl nor wget found.${RESET}"
     echo -e "${DIM}  Falling back to CLI mode.${RESET}"
     (cd "$ROOT" && mix osa.chat)
     exit $?
@@ -208,7 +265,29 @@ if ! command -v cargo >/dev/null 2>&1; then
   echo -e "${GREEN}✓${RESET} Rust installed"
 fi
 
-# Auto-install Elixir if missing
+# Auto-install Elixir if missing or too old
+install_elixir_prebuilt() {
+  local elixir_ver="1.18.3"
+  local otp_major
+  otp_major=$(erl -eval 'io:format("~s", [erlang:system_info(otp_release)]), halt().' -noshell 2>/dev/null || echo "27")
+  local url="https://github.com/elixir-lang/elixir/releases/download/v${elixir_ver}/elixir-otp-${otp_major}.zip"
+  echo -e "${CYAN}→${RESET} Installing Elixir ${elixir_ver} from prebuilt..."
+  local dest="/usr/local/lib/elixir"
+  $SUDO mkdir -p "$dest"
+  command -v unzip >/dev/null 2>&1 || pkg_install unzip 2>/dev/null || true
+  if curl -fsSLo /tmp/elixir.zip "$url" 2>/dev/null; then
+    $SUDO unzip -qo /tmp/elixir.zip -d "$dest"
+    rm -f /tmp/elixir.zip
+    for bin in elixir mix iex elixirc; do
+      $SUDO ln -sf "$dest/bin/$bin" /usr/local/bin/"$bin"
+    done
+    echo -e "${GREEN}✓${RESET} Elixir ${elixir_ver} installed"
+  else
+    echo -e "${RED}✗ Could not download Elixir prebuilt.${RESET}"
+    return 1
+  fi
+}
+
 if ! command -v mix >/dev/null 2>&1; then
   echo -e "${CYAN}→${RESET} Elixir not found — installing automatically..."
   case "$(uname -s)" in
@@ -225,32 +304,21 @@ if ! command -v mix >/dev/null 2>&1; then
       brew install erlang elixir
       ;;
     Linux)
-      # Ensure locale is set (Elixir requires UTF-8)
-      if command -v apt-get >/dev/null 2>&1; then
-        $SUDO apt-get update -qq
-        $SUDO apt-get install -y -qq locales 2>/dev/null || true
-        $SUDO locale-gen en_US.UTF-8 2>/dev/null || true
-        $SUDO apt-get install -y -qq software-properties-common apt-transport-https
-        # Try direct package first, then Erlang Solutions
-        $SUDO apt-get install -y -qq erlang elixir 2>/dev/null || {
-          curl -fsSLo /tmp/erlang-solutions.deb https://packages.erlang-solutions.com/erlang-solutions_2.0_all.deb 2>/dev/null || true
-          if [ -f /tmp/erlang-solutions.deb ]; then
-            $SUDO dpkg -i /tmp/erlang-solutions.deb 2>/dev/null || true
-            rm -f /tmp/erlang-solutions.deb
-            $SUDO apt-get update -qq
-            $SUDO apt-get install -y -qq esl-erlang elixir
-          else
-            echo -e "${RED}✗ Could not download Erlang Solutions package.${RESET}"
-            exit 1
-          fi
+      # Install Erlang from system packages
+      case "$PKG" in
+        apt) $SUDO apt-get update -qq; pkg_install erlang 2>/dev/null || true ;;
+        dnf|yum) pkg_install epel-release 2>/dev/null || true; pkg_install erlang 2>/dev/null || true ;;
+        pacman) pkg_install erlang 2>/dev/null || true ;;
+        apk) pkg_install erlang 2>/dev/null || true ;;
+        zypper) pkg_install erlang 2>/dev/null || true ;;
+      esac
+      # Try system Elixir, then prebuilt if version is wrong
+      pkg_install elixir 2>/dev/null || true
+      if ! command -v mix >/dev/null 2>&1 || ! check_elixir_version; then
+        install_elixir_prebuilt || {
+          echo -e "${RED}✗ Cannot install Elixir.${RESET}"
+          exit 1
         }
-      elif command -v dnf >/dev/null 2>&1; then
-        $SUDO dnf install -y -q erlang elixir
-      elif command -v pacman >/dev/null 2>&1; then
-        $SUDO pacman -Sy --noconfirm erlang elixir
-      else
-        echo -e "${RED}✗ Cannot auto-install Elixir.${RESET} Install Erlang 27+ and Elixir 1.17+ manually."
-        exit 1
       fi
       ;;
   esac
@@ -258,13 +326,16 @@ if ! command -v mix >/dev/null 2>&1; then
     echo -e "${RED}✗ Elixir installation failed.${RESET}"
     exit 1
   fi
-  echo -e "${GREEN}✓${RESET} Elixir installed"
-  # First-time setup: fetch deps + compile
+  echo -e "${GREEN}✓${RESET} Elixir ready"
+  # First-time setup
   echo -e "${CYAN}→${RESET} Fetching dependencies..."
   (cd "$ROOT" && mix local.hex --force --if-missing >/dev/null 2>&1 || true)
   (cd "$ROOT" && mix local.rebar --force --if-missing >/dev/null 2>&1 || true)
-  (cd "$ROOT" && mix deps.get 2>&1 | tail -3)
+  (cd "$ROOT" && mix deps.get 2>&1 | tail -5)
   (cd "$ROOT" && mix compile 2>&1 | tail -5)
+elif ! check_elixir_version; then
+  echo -e "${YELLOW}⚠${RESET} Elixir version too old (need 1.17+). Upgrading..."
+  install_elixir_prebuilt || echo -e "${RED}✗ Could not upgrade Elixir.${RESET}"
 fi
 
 # Install Linux build deps before Rust build
@@ -288,12 +359,12 @@ if [ ! -f "$TUI_BIN" ]; then
   fi
 fi
 
-# Ensure Elixir deps are compiled (handles git pull without recompile)
+# Ensure Elixir deps are compiled
 if [ ! -d "$ROOT/_build" ]; then
   echo -e "${CYAN}→${RESET} First-time compile..."
   (cd "$ROOT" && mix local.hex --force --if-missing >/dev/null 2>&1 || true)
   (cd "$ROOT" && mix local.rebar --force --if-missing >/dev/null 2>&1 || true)
-  (cd "$ROOT" && mix deps.get 2>&1 | tail -3)
+  (cd "$ROOT" && mix deps.get 2>&1 | tail -5)
   (cd "$ROOT" && mix compile 2>&1 | tail -5)
 fi
 
@@ -313,7 +384,7 @@ URL="http://localhost:${PORT}/health"
 if _http_ok "$URL"; then
   echo -e "${DIM}Backend already running on :${PORT}${RESET}"
 else
-  # Check if port is occupied by something else
+  # Kill anything on our port
   if command -v lsof >/dev/null 2>&1 && lsof -i ":${PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
     echo -e "${DIM}Port ${PORT} in use. Killing previous instance…${RESET}"
     lsof -ti ":${PORT}" -sTCP:LISTEN | xargs kill -9 2>/dev/null || true
@@ -321,11 +392,16 @@ else
   elif command -v fuser >/dev/null 2>&1; then
     fuser -k "${PORT}/tcp" 2>/dev/null || true
     sleep 1
+  elif command -v ss >/dev/null 2>&1; then
+    # Last resort: check with ss
+    if ss -tlnp 2>/dev/null | grep -q ":${PORT} "; then
+      echo -e "${YELLOW}⚠${RESET} Port ${PORT} in use but cannot kill (no lsof/fuser). May fail to start."
+    fi
   fi
 
   export MIX_ENV="${MIX_ENV:-dev}"
   LOG_FILE="$LOG_DIR/backend.log"
-  : > "$LOG_FILE"  # truncate log for this run
+  : > "$LOG_FILE"
   echo -e "${CYAN}→${RESET} Starting backend on :${PORT}..."
 
   if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || "$OSTYPE" == "win32" ]]; then
@@ -338,7 +414,7 @@ else
   BACKEND_PID=$!
 fi
 
-# Wait for health (90s to survive cold compile on slow VPS)
+# Wait for health (90s for cold compile on slow VPS)
 attempts=0
 max_attempts=90
 
@@ -346,7 +422,6 @@ while [ $attempts -lt $max_attempts ]; do
   if _http_ok "$URL"; then
     break
   fi
-  # Check if backend process died
   if [ -n "$BACKEND_PID" ] && ! kill -0 "$BACKEND_PID" 2>/dev/null; then
     echo -e "${RED}✗ Backend process exited unexpectedly.${RESET}"
     echo "  Last log lines:"
