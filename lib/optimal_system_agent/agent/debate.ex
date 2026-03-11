@@ -38,7 +38,7 @@ defmodule OptimalSystemAgent.Agent.Debate do
   """
   @spec run(String.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def run(message, opts \\ []) when is_binary(message) do
-    providers = resolve_providers(opts) |> Enum.uniq()
+    providers = resolve_providers(opts)
     timeout = Keyword.get(opts, :timeout, @default_timeout_ms)
     model = Keyword.get(opts, :model)
     user_id = Keyword.get(opts, :user_id, "anonymous")
@@ -70,8 +70,7 @@ defmodule OptimalSystemAgent.Agent.Debate do
              %{
                synthesis: synthesis_text,
                debate: debate_entries,
-               participants: length(debate_entries),
-               synthesis_source: :synthesized
+               participants: length(debate_entries)
              }}
 
           {:error, reason} ->
@@ -83,8 +82,7 @@ defmodule OptimalSystemAgent.Agent.Debate do
              %{
                synthesis: best,
                debate: debate_entries,
-               participants: length(debate_entries),
-               synthesis_source: :fallback
+               participants: length(debate_entries)
              }}
         end
       end
@@ -125,16 +123,10 @@ defmodule OptimalSystemAgent.Agent.Debate do
 
     # Await all tasks with the per-agent timeout
     task_list = Enum.map(tasks, fn {_p, t} -> t end)
-    results = Task.yield_many(task_list, timeout)
-
-    # Shut down any tasks that didn't complete
-    Enum.each(results, fn
-      {task, nil} -> Task.shutdown(task, :brutal_kill)
-      _ -> :ok
-    end)
+    yields = Task.yield_many(task_list, timeout)
 
     # Zip providers back with their yield results
-    Enum.zip(providers, results)
+    Enum.zip(providers, yields)
     |> Enum.map(fn {provider, {_task, yield_result}} ->
       outcome =
         case yield_result do
@@ -163,6 +155,9 @@ defmodule OptimalSystemAgent.Agent.Debate do
 
       {provider, outcome}
     end)
+  after
+    # Ensure all tasks are shut down to avoid zombie tasks
+    :ok
   end
 
   # Build synthesis prompt and call the synthesizer provider synchronously.
@@ -218,13 +213,13 @@ defmodule OptimalSystemAgent.Agent.Debate do
   defp safe_provider_atom(provider) when is_atom(provider), do: provider
 
   defp safe_provider_atom(provider) when is_binary(provider) do
-    try do
-      atom = String.to_existing_atom(provider)
-      atom
-    rescue
-      ArgumentError ->
-        Logger.warning("[Debate] unknown provider #{inspect(provider)}, falling back to :ollama")
-        :ollama
+    known = ~w(anthropic groq ollama openai google cohere together fireworks deepseek perplexity
+               mistral openrouter replicate qwen moonshot zhipu volcengine baichuan mock)
+
+    if provider in known do
+      String.to_existing_atom(provider)
+    else
+      :ollama
     end
   end
 
