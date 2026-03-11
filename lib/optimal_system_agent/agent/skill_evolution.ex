@@ -16,6 +16,8 @@ defmodule OptimalSystemAgent.Agent.SkillEvolution do
   alias OptimalSystemAgent.Events.Bus
   alias OptimalSystemAgent.Agent.Memory
 
+  @evolved_dir Path.expand("~/.osa/skills/evolved")
+
   defstruct evolved_count: 0,
             last_evolution: nil,
             bus_ref: nil
@@ -41,13 +43,11 @@ defmodule OptimalSystemAgent.Agent.SkillEvolution do
   @doc "List all skill names evolved under ~/.osa/skills/evolved/"
   @spec list_evolved_skills() :: [String.t()]
   def list_evolved_skills do
-    dir = evolved_dir()
-
-    if File.dir?(dir) do
-      dir
+    if File.dir?(@evolved_dir) do
+      @evolved_dir
       |> File.ls!()
       |> Enum.filter(fn entry ->
-        File.exists?(Path.join([dir, entry, "SKILL.md"]))
+        File.exists?(Path.join([@evolved_dir, entry, "SKILL.md"]))
       end)
     else
       []
@@ -126,13 +126,12 @@ defmodule OptimalSystemAgent.Agent.SkillEvolution do
   end
 
   @impl true
-  def handle_info(_msg, state), do: {:noreply, state}
-
-  @impl true
-  def terminate(_reason, state) do
-    if state.bus_ref, do: Bus.unregister_handler(:system_event, state.bus_ref)
-    :ok
+  def handle_info({:bus_event, payload}, state) do
+    maybe_trigger_from_event(payload)
+    {:noreply, state}
   end
+
+  def handle_info(_msg, state), do: {:noreply, state}
 
   # ── Private ─────────────────────────────────────────────────────────
 
@@ -158,6 +157,10 @@ defmodule OptimalSystemAgent.Agent.SkillEvolution do
         _ -> :ok
       end
     end
+  end
+
+  defp maybe_trigger_from_event(payload) do
+    handle_bus_event(payload)
   end
 
   defp do_evolve(session_id, failure_info) do
@@ -210,33 +213,18 @@ defmodule OptimalSystemAgent.Agent.SkillEvolution do
     "Agent entered a doom loop: tool '#{sig}' failed #{n} times consecutively."
   end
 
-  defp describe_failure(%{reason: "doom_loop_detected"} = info) do
-    sig = Map.get(info, :tool_signature)
-    n = Map.get(info, :consecutive_failures)
-    "Agent entered a doom loop: tool '#{sig}' failed #{n} times consecutively."
-  end
-
   defp describe_failure(%{reason: :agent_cancelled, iteration: iter}) do
     "Session was cancelled at iteration #{iter} — hit max reasoning limit."
   end
 
-  defp describe_failure(%{reason: "agent_cancelled"} = info) do
-    iter = Map.get(info, :iteration)
-    "Session was cancelled at iteration #{iter} — hit max reasoning limit."
+  defp describe_failure(info) do
+    "Session failed: #{inspect(info)}"
   end
-
-  defp describe_failure(%{reason: reason}) do
-    to_string(reason)
-  end
-
-  defp describe_failure(_), do: "unknown failure"
 
   defp generate_evolved_skill(session_id, user_requests, failure_context) do
     # Build a concise skill from the failure context without requiring a live LLM call.
     # If LLM is available, use it; otherwise fall back to a heuristic skill.
     skill_name = "evolved-#{String.slice(session_id, 0, 8)}"
-    # Sanitize to prevent path traversal
-    skill_name = skill_name |> String.replace(~r/[^a-zA-Z0-9\-_]/, "-") |> String.slice(0, 64)
 
     instructions = """
     ## Evolved Recovery Skill
@@ -260,7 +248,7 @@ defmodule OptimalSystemAgent.Agent.SkillEvolution do
   end
 
   defp write_evolved_skill(name, description, instructions, session_id) do
-    skill_dir = Path.join(evolved_dir(), name)
+    skill_dir = Path.join(@evolved_dir, name)
 
     try do
       File.mkdir_p!(skill_dir)
@@ -283,17 +271,18 @@ defmodule OptimalSystemAgent.Agent.SkillEvolution do
 
       Logger.info("[SkillEvolution] Wrote #{skill_path}")
 
-      # Reload registry so the skill is available for next turn (non-blocking)
-      Task.start(fn -> OptimalSystemAgent.Tools.Registry.reload_skills() end)
+      # Reload registry so the skill is available for next turn
+      try do
+        OptimalSystemAgent.Tools.Registry.reload_skills()
+      catch
+        :exit, _ -> :ok
+      rescue
+        _ -> :ok
+      end
 
       {:ok, name}
     rescue
       e -> {:error, Exception.message(e)}
     end
-  end
-
-  defp evolved_dir do
-    base = Application.get_env(:optimal_system_agent, :skills_dir, "~/.osa/skills")
-    Path.join(Path.expand(base), "evolved")
   end
 end
