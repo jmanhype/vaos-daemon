@@ -5,10 +5,10 @@
 #   curl -fsSL https://raw.githubusercontent.com/Miosa-osa/OptimalSystemAgent/main/scripts/install.sh | bash
 #
 # What it does:
-#   1. Checks prerequisites (Elixir, Rust, curl)
-#   2. Clones repo to ~/.osa/agent/ (or uses existing)
+#   1. Auto-installs prerequisites (Elixir, Erlang, Rust) — no questions asked
+#   2. Clones repo to ~/.osa/agent/ (or updates existing)
 #   3. Builds the Rust TUI
-#   4. Fetches Elixir dependencies
+#   4. Fetches Elixir dependencies & compiles
 #   5. Installs `osa` and `osagent` to ~/.local/bin
 #   6. Sets up PATH if needed
 #
@@ -65,83 +65,113 @@ if [ "$OS" = "windows" ]; then
   warn "Consider using WSL2 for the best experience."
 fi
 
-# ── Check prerequisites ───────────────────────────────────────────
+# ── Helper: check command exists ───────────────────────────────────
 check_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
 
-missing=()
-
+# ── Install git if missing ─────────────────────────────────────────
 if ! check_cmd git; then
-  missing+=("git")
+  if [ "$OS" = "macos" ]; then
+    info "Installing Xcode Command Line Tools (includes git)..."
+    xcode-select --install 2>/dev/null || true
+    # Wait for installation
+    until check_cmd git; do sleep 2; done
+  elif [ "$OS" = "linux" ]; then
+    info "Installing git..."
+    if check_cmd apt-get; then
+      sudo apt-get update -qq && sudo apt-get install -y -qq git
+    elif check_cmd dnf; then
+      sudo dnf install -y -q git
+    elif check_cmd pacman; then
+      sudo pacman -Sy --noconfirm git
+    else
+      fail "Cannot auto-install git. Install it manually and re-run."
+    fi
+  fi
+  check_cmd git || fail "git installation failed."
+  ok "git installed"
 fi
 
+# ── Install curl if missing ────────────────────────────────────────
 if ! check_cmd curl; then
-  missing+=("curl")
+  if [ "$OS" = "linux" ]; then
+    info "Installing curl..."
+    if check_cmd apt-get; then
+      sudo apt-get install -y -qq curl
+    elif check_cmd dnf; then
+      sudo dnf install -y -q curl
+    elif check_cmd pacman; then
+      sudo pacman -Sy --noconfirm curl
+    fi
+  fi
+  check_cmd curl || fail "curl is required. Install it manually."
+  ok "curl installed"
 fi
 
-# Check Elixir/Erlang
-has_elixir=false
-if check_cmd elixir && check_cmd mix; then
-  has_elixir=true
-fi
-
-# Check Rust
-has_rust=false
-if check_cmd cargo; then
-  has_rust=true
-fi
-
-if [ ${#missing[@]} -gt 0 ]; then
-  fail "Missing required tools: ${missing[*]}. Install them first."
-fi
-
-# ── Install Rust if needed ─────────────────────────────────────────
-if [ "$has_rust" = false ]; then
-  info "Rust not found. Installing via rustup..."
+# ── Install Rust if missing ───────────────────────────────────────
+if ! check_cmd cargo; then
+  info "Installing Rust (needed for the TUI)..."
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --quiet
   # shellcheck source=/dev/null
   source "${HOME}/.cargo/env" 2>/dev/null || true
-  if ! check_cmd cargo; then
-    fail "Rust installation failed. Install manually: https://rustup.rs"
-  fi
+  export PATH="${HOME}/.cargo/bin:$PATH"
+  check_cmd cargo || fail "Rust installation failed. Install manually: https://rustup.rs"
   ok "Rust installed"
+else
+  ok "Rust found: $(rustc --version 2>/dev/null || echo 'unknown')"
 fi
 
-# ── Install Elixir if needed ──────────────────────────────────────
-if [ "$has_elixir" = false ]; then
-  echo ""
-  warn "Elixir/Erlang not found."
-  echo ""
-  if [ "$OS" = "macos" ]; then
-    echo "  Install with Homebrew:"
-    echo -e "    ${BOLD}brew install elixir${RESET}"
-  elif [ "$OS" = "linux" ]; then
-    echo "  Install with your package manager, e.g.:"
-    echo -e "    ${BOLD}sudo apt install elixir erlang${RESET}"
-    echo "  Or use asdf:"
-    echo -e "    ${BOLD}asdf plugin add erlang && asdf install erlang latest${RESET}"
-    echo -e "    ${BOLD}asdf plugin add elixir && asdf install elixir latest${RESET}"
-  fi
-  echo ""
+# ── Install Erlang + Elixir if missing ────────────────────────────
+if ! check_cmd elixir || ! check_cmd mix; then
+  info "Installing Erlang + Elixir..."
 
-  # Try brew on macOS automatically
-  if [ "$OS" = "macos" ] && check_cmd brew; then
-    read -rp "Install Elixir via Homebrew now? [Y/n] " yn
-    yn="${yn:-Y}"
-    if [[ "$yn" =~ ^[Yy]$ ]]; then
-      info "Installing Elixir..."
-      brew install elixir
-      if check_cmd elixir; then
-        ok "Elixir installed"
-        has_elixir=true
+  if [ "$OS" = "macos" ]; then
+    # Install Homebrew if missing
+    if ! check_cmd brew; then
+      info "Installing Homebrew first..."
+      /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+      # Add brew to PATH for this session
+      if [ -f "/opt/homebrew/bin/brew" ]; then
+        eval "$(/opt/homebrew/bin/brew shellenv)"
+      elif [ -f "/usr/local/bin/brew" ]; then
+        eval "$(/usr/local/bin/brew shellenv)"
       fi
     fi
+    brew install erlang elixir
+    ok "Erlang + Elixir installed via Homebrew"
+
+  elif [ "$OS" = "linux" ]; then
+    if check_cmd apt-get; then
+      # Ubuntu/Debian: use Erlang Solutions repo for latest versions
+      info "Adding Erlang Solutions repo..."
+      sudo apt-get update -qq
+      sudo apt-get install -y -qq software-properties-common apt-transport-https
+      # Try direct package first (works on Ubuntu 22.04+)
+      sudo apt-get install -y -qq erlang elixir 2>/dev/null || {
+        # Fallback: install from Erlang Solutions
+        wget -q https://packages.erlang-solutions.com/erlang-solutions_2.0_all.deb
+        sudo dpkg -i erlang-solutions_2.0_all.deb 2>/dev/null || true
+        rm -f erlang-solutions_2.0_all.deb
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq esl-erlang elixir
+      }
+    elif check_cmd dnf; then
+      sudo dnf install -y -q erlang elixir
+    elif check_cmd pacman; then
+      sudo pacman -Sy --noconfirm erlang elixir
+    else
+      fail "Cannot auto-install Elixir. Install Erlang 27+ and Elixir 1.17+ manually."
+    fi
+    ok "Erlang + Elixir installed"
   fi
 
-  if [ "$has_elixir" = false ]; then
-    fail "Elixir is required. Install it and re-run this script."
+  # Verify
+  if ! check_cmd elixir; then
+    fail "Elixir installation failed. Install Erlang 27+ and Elixir 1.17+ manually."
   fi
+else
+  ok "Elixir found: $(elixir --version 2>/dev/null | tail -1 || echo 'unknown')"
 fi
 
 # ── Clone or update repo ──────────────────────────────────────────
@@ -161,7 +191,6 @@ else
 fi
 
 # Also support running from a local checkout (e.g. during development)
-# If this script is run from inside a repo, use that instead
 SCRIPT_SELF="${BASH_SOURCE[0]:-$0}"
 if [ -f "$(dirname "$SCRIPT_SELF")/../mix.exs" ] 2>/dev/null; then
   AGENT_DIR="$(cd "$(dirname "$SCRIPT_SELF")/.." && pwd)"
@@ -213,7 +242,6 @@ ok "Linked osa → $INSTALL_DIR/osa"
 # ── Ensure PATH ───────────────────────────────────────────────────
 path_updated=false
 if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
-  # Detect shell config file
   SHELL_NAME="$(basename "${SHELL:-/bin/bash}")"
   case "$SHELL_NAME" in
     zsh)  SHELL_RC="$HOME/.zshrc" ;;
@@ -227,7 +255,6 @@ if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
     EXPORT_LINE='set -gx PATH $HOME/.local/bin $PATH'
   fi
 
-  # Add to shell config if not already there
   if [ -f "$SHELL_RC" ] && grep -qF '.local/bin' "$SHELL_RC" 2>/dev/null; then
     : # Already present
   else
@@ -257,9 +284,6 @@ ENVEOF
   ok "Created config template → $OSA_DIR/.env"
 fi
 
-# ── Create logs dir ───────────────────────────────────────────────
-mkdir -p "$OSA_DIR/logs"
-
 # ── Success ────────────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}${BOLD}  ◈ OSA Agent installed successfully!${RESET}"
@@ -280,8 +304,9 @@ fi
 echo -e "  ${DIM}Quick start:${RESET}"
 echo -e "    ${BOLD}osa${RESET}             Start backend + TUI"
 echo -e "    ${BOLD}osagent${RESET}         TUI only (auto-starts backend)"
+echo -e "    ${BOLD}osagent update${RESET}  Pull latest + recompile"
 echo ""
 echo -e "  ${DIM}Configure:${RESET}"
-echo -e "    ${BOLD}nano ~/.osa/.env${RESET} Set API keys for cloud providers"
+echo -e "    ${BOLD}osagent setup${RESET}   Interactive setup wizard"
 echo -e "    ${DIM}Default: Ollama (local, no key needed)${RESET}"
 echo ""
