@@ -24,7 +24,7 @@ defmodule OptimalSystemAgent.Onboarding do
   # {number, provider_key, display_name, default_model, env_var | nil}
   @providers [
     {1, "ollama", "Ollama (local)", "llama3.2:latest", nil},
-    {2, "ollama", "Ollama Cloud", "llama3.2:latest", "OLLAMA_API_KEY"},
+    {2, "ollama_cloud", "Ollama Cloud", "kimi-k2.5:latest", "OLLAMA_API_KEY"},
     {3, "anthropic", "Anthropic", "claude-sonnet-4-6", "ANTHROPIC_API_KEY"},
     {4, "openai", "OpenAI", "gpt-4o", "OPENAI_API_KEY"},
     {5, "groq", "Groq", "llama-3.3-70b-versatile", "GROQ_API_KEY"},
@@ -43,6 +43,20 @@ defmodule OptimalSystemAgent.Onboarding do
     {17, "zhipu", "Zhipu AI", "glm-4-plus", "ZHIPU_API_KEY"},
     {18, "volcengine", "VolcEngine", "doubao-pro-128k", "VOLCENGINE_API_KEY"},
     {19, "baichuan", "Baichuan", "Baichuan4", "BAICHUAN_API_KEY"}
+  ]
+
+  # Popular models available on Ollama Cloud
+  @ollama_cloud_models [
+    {"kimi-k2.5:latest", "Kimi K2.5 (Moonshot) — 1T MoE, tool calling"},
+    {"qwen3:235b", "Qwen 3 235B — flagship reasoning"},
+    {"qwen2.5-coder:latest", "Qwen 2.5 Coder — code specialist"},
+    {"deepseek-r1:latest", "DeepSeek R1 — deep reasoning"},
+    {"llama3.3:latest", "Llama 3.3 70B — Meta flagship"},
+    {"gemma3:27b", "Gemma 3 27B — Google open model"},
+    {"mistral-large:latest", "Mistral Large — Mistral flagship"},
+    {"command-r-plus:latest", "Command R+ — Cohere flagship"},
+    {"phi4:latest", "Phi-4 14B — Microsoft compact"},
+    {"custom", "Enter a custom model name..."}
   ]
 
   # ── Public API ──────────────────────────────────────────────────
@@ -257,6 +271,15 @@ defmodule OptimalSystemAgent.Onboarding do
           p when is_binary(p) -> {p, config["model"]}
           _ -> {nil, config["model"]}
         end
+
+      # Ollama Cloud URL — apply if present in provider config
+      case config["provider"] do
+        %{"ollama_url" => url} when is_binary(url) and url != "" ->
+          Application.put_env(:optimal_system_agent, :ollama_url, url)
+
+        _ ->
+          :ok
+      end
 
       provider_atom =
         if is_binary(provider) and provider != "" do
@@ -528,11 +551,29 @@ defmodule OptimalSystemAgent.Onboarding do
         {"ollama", "llama3.2:latest", nil, nil}
 
       {:selected, {provider, model, env_var}} ->
-        api_key =
-          if env_var do
-            IO.puts("\n  #{@dim}(or set #{env_var} and press Enter)#{@reset}")
-            key = prompt("API key", "")
-            if key == "", do: nil, else: key
+        # Normalize provider key to lowercase (display names may leak through)
+        provider = provider |> to_string() |> String.downcase() |> String.trim()
+
+        # Normalize env_var — :all or other atoms mean "no env var"
+        env_var =
+          case env_var do
+            v when is_binary(v) and v != "" -> v
+            _ -> nil
+          end
+
+        # Ollama Cloud gets special handling — model sub-selector + URL + API key
+        {provider, model, api_key, env_var} =
+          if provider == "ollama_cloud" do
+            step_ollama_cloud()
+          else
+            api_key =
+              if env_var do
+                IO.puts("\n  #{@dim}(or set #{env_var} and press Enter)#{@reset}")
+                key = prompt("API key", "")
+                if key == "", do: nil, else: key
+              end
+
+            {provider, model, api_key, env_var}
           end
 
         IO.puts("\n  #{@dim}Testing connectivity...#{@reset}")
@@ -547,7 +588,54 @@ defmodule OptimalSystemAgent.Onboarding do
         end
 
         {provider, model, api_key, env_var}
+
+      other ->
+        # Unexpected selector return — log and fall back to Ollama
+        Logger.warning("[Onboarding] Unexpected selector result: #{inspect(other)}, defaulting to Ollama")
+        {"ollama", "llama3.2:latest", nil, nil}
     end
+  end
+
+  defp step_ollama_cloud do
+    IO.puts("\n  #{@bold}Ollama Cloud — Select Model#{@reset}\n")
+
+    model_lines =
+      @ollama_cloud_models
+      |> Enum.map(fn {model_id, desc} ->
+        if model_id == "custom" do
+          {:input, "  #{desc}", "Model name (e.g. mymodel:latest):"}
+        else
+          pad = String.pad_trailing(model_id, 28)
+          {:option, "#{pad}#{@dim}#{desc}#{@reset}", model_id}
+        end
+      end)
+
+    model =
+      case Selector.select(model_lines) do
+        {:selected, model_id} -> model_id
+        {:input, custom_model} -> custom_model
+        _ -> "kimi-k2.5:latest"
+      end
+
+    IO.puts("\n  #{@dim}Ollama Cloud requires a URL and API key from your provider.#{@reset}")
+    IO.puts("  #{@dim}(e.g. https://api.ollama.cloud, or any OpenAI-compatible Ollama host)#{@reset}\n")
+
+    url = prompt("Ollama Cloud URL", "https://ollama.lunivate.com")
+    api_key = prompt("API key", "")
+    api_key = if api_key == "", do: nil, else: api_key
+
+    # Apply Ollama Cloud config to Application env immediately
+    if url != "" do
+      Application.put_env(:optimal_system_agent, :ollama_url, url)
+    end
+
+    if api_key do
+      Application.put_env(:optimal_system_agent, :ollama_api_key, api_key)
+      System.put_env("OLLAMA_API_KEY", api_key)
+    end
+
+    # Provider is "ollama" (same provider module), just with remote URL + key
+    {"ollama", model, api_key, "OLLAMA_API_KEY"}
   end
 
   defp build_provider_lines do
@@ -761,14 +849,21 @@ defmodule OptimalSystemAgent.Onboarding do
         _ -> %{}
       end
 
+    # Save Ollama Cloud URL if set
+    ollama_url = Application.get_env(:optimal_system_agent, :ollama_url, "http://localhost:11434")
+
+    provider_config =
+      if state.provider == "ollama" and not String.contains?(ollama_url, "localhost") do
+        %{"default" => "ollama", "model" => state.model, "ollama_url" => ollama_url}
+      else
+        %{"default" => state.provider, "model" => state.model}
+      end
+
     Jason.encode!(
       %{
         "version" => "1.0",
         "agent" => %{"name" => state.agent_name},
-        "provider" => %{
-          "default" => state.provider,
-          "model" => state.model
-        },
+        "provider" => provider_config,
         "api_keys" => api_keys,
         "machines" => Map.get(state, :machines, %{
           "communication" => false,
@@ -1049,11 +1144,24 @@ defmodule OptimalSystemAgent.Onboarding do
 
   # ── Provider Connectivity ─────────────────────────────────────
 
-  defp test_provider_connectivity("ollama", _model, _key) do
+  defp test_provider_connectivity("ollama", _model, api_key) do
     url = Application.get_env(:optimal_system_agent, :ollama_url, "http://localhost:11434")
 
-    case Req.get("#{url}/api/tags", receive_timeout: 5_000, connect_options: [timeout: 5_000]) do
+    headers =
+      if is_binary(api_key) and api_key != "" do
+        [{"authorization", "Bearer #{api_key}"}]
+      else
+        []
+      end
+
+    case Req.get("#{url}/api/tags",
+           headers: headers,
+           receive_timeout: 5_000,
+           connect_options: [timeout: 5_000]
+         ) do
       {:ok, %Req.Response{status: 200}} -> :ok
+      {:ok, %Req.Response{status: 401}} -> {:error, "Invalid API key for #{url}"}
+      {:ok, %Req.Response{status: s}} -> {:error, "Ollama returned HTTP #{s} at #{url}"}
       _ -> {:error, "Ollama not reachable at #{url}"}
     end
   rescue
