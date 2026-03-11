@@ -136,8 +136,19 @@ defmodule OptimalSystemAgent.Channels.HTTP do
   end
 
   post "/onboarding/setup" do
-    {:ok, raw, conn} = Plug.Conn.read_body(conn)
+    case Plug.Conn.read_body(conn) do
+      {:ok, raw, conn} ->
+        setup_onboarding(conn, raw)
 
+      {:more, _partial, conn} ->
+        conn |> put_resp_content_type("application/json") |> send_resp(413, ~s({"error":"payload_too_large"}))
+
+      {:error, _reason} ->
+        conn |> put_resp_content_type("application/json") |> send_resp(400, ~s({"error":"read_failed"}))
+    end
+  end
+
+  defp setup_onboarding(conn, raw) do
     case Jason.decode(raw) do
       {:ok, params} ->
         raw_provider = Map.get(params, "provider", "ollama")

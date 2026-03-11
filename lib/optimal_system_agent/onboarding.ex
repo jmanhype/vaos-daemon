@@ -296,10 +296,9 @@ defmodule OptimalSystemAgent.Onboarding do
       if provider_atom do
         Application.put_env(:optimal_system_agent, :default_provider, provider_atom)
 
-        if is_binary(model) and model != "" do
-          model_key = :"#{provider}_model"
-          Application.put_env(:optimal_system_agent, model_key, model)
-        end
+        model = if is_binary(model) and model != "", do: model, else: "llama3.2:latest"
+        model_key = :"#{provider}_model"
+        Application.put_env(:optimal_system_agent, model_key, model)
       end
 
       # API keys → both System env and Application env
@@ -574,6 +573,8 @@ defmodule OptimalSystemAgent.Onboarding do
                 IO.puts("\n  #{@dim}(or set #{env_var} and press Enter)#{@reset}")
                 key = prompt("API key", "")
                 if key == "", do: nil, else: key
+              else
+                nil
               end
 
             {provider, model, api_key, env_var}
@@ -858,7 +859,7 @@ defmodule OptimalSystemAgent.Onboarding do
         Application.get_env(:optimal_system_agent, :ollama_url, "http://localhost:11434")
 
     provider_config =
-      if state.provider == "ollama" and not String.contains?(ollama_url, "localhost") do
+      if state.provider == "ollama" and is_binary(ollama_url) and not String.contains?(ollama_url, "localhost") do
         %{"default" => "ollama", "model" => state.model, "ollama_url" => ollama_url}
       else
         %{"default" => state.provider, "model" => state.model}
@@ -1356,6 +1357,7 @@ defmodule OptimalSystemAgent.Onboarding do
       {:ok, content} ->
         case Jason.decode(content) do
           {:ok, %{"provider" => %{"default" => p}}} when is_binary(p) and p != "" -> true
+          {:ok, %{"provider" => p}} when is_binary(p) and p != "" -> true
           _ -> false
         end
 

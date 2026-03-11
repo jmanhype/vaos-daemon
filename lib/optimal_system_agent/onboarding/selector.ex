@@ -138,6 +138,10 @@ defmodule OptimalSystemAgent.Onboarding.Selector do
                   trimmed = String.trim(text)
                   if trimmed == "", do: nil, else: {:input, trimmed}
               end
+
+            _ ->
+              clear(total)
+              nil
           end
       end
     after
