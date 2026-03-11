@@ -63,7 +63,7 @@ defmodule OptimalSystemAgent.Telemetry.Metrics do
 
   @doc "Record a signal weight value (0.0–1.0) for distribution tracking."
   def record_signal_weight(weight) when is_float(weight) or is_integer(weight) do
-    GenServer.cast(__MODULE__, {:signal_weight, weight / 1})
+    GenServer.cast(__MODULE__, {:signal_weight, weight / 1.0})
   end
 
   @doc "Returns raw metrics map from ETS."
@@ -86,6 +86,7 @@ defmodule OptimalSystemAgent.Telemetry.Metrics do
       tool_executions: summarize_tool_executions(Map.get(m, :tool_executions, %{})),
       provider_latency: summarize_latencies(Map.get(m, :provider_latency, %{})),
       provider_calls: Map.get(m, :provider_calls, %{}),
+      provider_errors: Map.get(m, :provider_errors, %{}),
       session_stats: Map.get(m, :session_stats, %{turns_by_session: %{}, messages_today: 0, sessions_today: 0}),
       token_stats: Map.get(m, :token_stats, %{input_tokens: 0, output_tokens: 0}),
       noise_filter_rate: Float.round(filter_rate * 100, 2),
@@ -158,9 +159,10 @@ defmodule OptimalSystemAgent.Telemetry.Metrics do
   end
 
   @impl true
-  def handle_cast({:provider_call, provider, latency_ms, _success}, state) do
+  def handle_cast({:provider_call, provider, latency_ms, success}, state) do
     update_provider_latency(provider, latency_ms)
     update_provider_call_count(provider)
+    unless success, do: update_provider_error_count(provider)
     {:noreply, state}
   end
 
@@ -271,9 +273,10 @@ defmodule OptimalSystemAgent.Telemetry.Metrics do
   end
 
   # 5-tuple emitted by the subscribe_to_events :llm_response handler (includes usage).
-  defp handle_event({:llm_response, provider, latency_ms, _success, usage}) do
+  defp handle_event({:llm_response, provider, latency_ms, success, usage}) do
     update_provider_latency(provider, latency_ms)
     update_provider_call_count(provider)
+    unless success, do: update_provider_error_count(provider)
     update_token_stats(usage)
     # Increment messages_today via llm_response since :user_message events are not
     # currently emitted anywhere. Each LLM call corresponds to one user turn.
@@ -281,9 +284,10 @@ defmodule OptimalSystemAgent.Telemetry.Metrics do
   end
 
   # Legacy 4-tuple (emitted by direct record_provider_call/3 callers; no usage data).
-  defp handle_event({:llm_response, provider, latency_ms, _success}) do
+  defp handle_event({:llm_response, provider, latency_ms, success}) do
     update_provider_latency(provider, latency_ms)
     update_provider_call_count(provider)
+    unless success, do: update_provider_error_count(provider)
   end
 
   defp handle_event({:user_message, session_id}) do
@@ -300,6 +304,7 @@ defmodule OptimalSystemAgent.Telemetry.Metrics do
     :ets.insert(:osa_telemetry, {:provider_calls, %{}})
     :ets.insert(:osa_telemetry, {:session_stats, %{turns_by_session: %{}, messages_today: 0, sessions_today: 0}})
     :ets.insert(:osa_telemetry, {:token_stats, %{input_tokens: 0, output_tokens: 0}})
+    :ets.insert(:osa_telemetry, {:provider_errors, %{}})
     :ets.insert(:osa_telemetry, {:noise_filter, %{filtered: 0, clarify: 0, pass: 0}})
     :ets.insert(:osa_telemetry, {:signal_weights, empty_weight_buckets()})
   end
@@ -399,6 +404,12 @@ defmodule OptimalSystemAgent.Telemetry.Metrics do
     :ets.insert(:osa_telemetry, {:provider_calls, updated})
   end
 
+  defp update_provider_error_count(provider) do
+    [{_, errors}] = :ets.lookup(:osa_telemetry, :provider_errors)
+    updated = Map.update(errors, provider, 1, &(&1 + 1))
+    :ets.insert(:osa_telemetry, {:provider_errors, updated})
+  end
+
   defp update_token_stats(%{input_tokens: inp, output_tokens: out}) do
     [{_, stats}] = :ets.lookup(:osa_telemetry, :token_stats)
 
@@ -416,7 +427,7 @@ defmodule OptimalSystemAgent.Telemetry.Metrics do
   # ── Aggregation Helpers ──────────────────────────────────────────────
 
   defp build_metrics do
-    keys = [:tool_executions, :provider_latency, :provider_calls, :session_stats, :token_stats, :noise_filter, :signal_weights]
+    keys = [:tool_executions, :provider_latency, :provider_calls, :provider_errors, :session_stats, :token_stats, :noise_filter, :signal_weights]
 
     Enum.reduce(keys, %{}, fn key, acc ->
       case :ets.lookup(:osa_telemetry, key) do

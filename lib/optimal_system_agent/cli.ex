@@ -7,6 +7,8 @@ defmodule OptimalSystemAgent.CLI do
     osagent setup     configure provider, API keys
     osagent version   print version
     osagent serve     headless HTTP API mode
+    osagent doctor    system health check
+    osagent update    pull latest code, recompile, restart
   """
 
   @app :optimal_system_agent
@@ -21,12 +23,13 @@ defmodule OptimalSystemAgent.CLI do
 
     migrate!()
 
+    # Zero-config: auto-detect a provider and continue (never blocks)
+    OptimalSystemAgent.Onboarding.auto_configure()
+
     if OptimalSystemAgent.Onboarding.first_run?() do
-      OptimalSystemAgent.Onboarding.run()
       OptimalSystemAgent.Soul.reload()
     end
 
-    OptimalSystemAgent.Onboarding.apply_config()
     OptimalSystemAgent.Channels.CLI.start()
   end
 
@@ -44,11 +47,69 @@ defmodule OptimalSystemAgent.CLI do
   def serve do
     {:ok, _} = Application.ensure_all_started(@app)
     migrate!()
-    OptimalSystemAgent.Onboarding.apply_config()
+    OptimalSystemAgent.Onboarding.auto_configure()
 
     port = Application.get_env(@app, :http_port, 8089)
     safe_puts("OSA serving on :#{port}")
     Process.sleep(:infinity)
+  end
+
+  def doctor do
+    OptimalSystemAgent.CLI.Doctor.run()
+  end
+
+  def update do
+    safe_puts("Updating OSA Agent...")
+
+    # Find project root
+    root =
+      case File.read(Path.join([System.user_home!(), ".osa", "project_root"])) do
+        {:ok, path} -> String.trim(path)
+        _ ->
+          # Fallback: walk up from priv dir
+          :code.priv_dir(@app) |> to_string() |> Path.join("..") |> Path.expand()
+      end
+
+    if not File.exists?(Path.join(root, "mix.exs")) do
+      safe_puts("Error: Cannot find project at #{root}")
+      System.halt(1)
+    end
+
+    safe_puts("  Project: #{root}")
+
+    # Git pull
+    safe_puts("  Pulling latest...")
+    case System.cmd("git", ["pull", "--ff-only", "origin", "main"], cd: root, stderr_to_stdout: true) do
+      {output, 0} ->
+        safe_puts("  #{String.trim(output)}")
+
+      {output, _} ->
+        safe_puts("  Warning: git pull failed: #{String.trim(output)}")
+        safe_puts("  Continuing with recompile...")
+    end
+
+    # Deps + compile
+    safe_puts("  Fetching dependencies...")
+    System.cmd("mix", ["deps.get"], cd: root, stderr_to_stdout: true)
+
+    safe_puts("  Compiling...")
+    case System.cmd("mix", ["compile"], cd: root, stderr_to_stdout: true) do
+      {_, 0} -> safe_puts("  ✓ Compiled successfully")
+      {output, _} -> safe_puts("  Warning: #{String.trim(output)}")
+    end
+
+    # Rebuild Rust TUI if it exists
+    tui_dir = Path.join([root, "priv", "rust", "tui"])
+    if File.exists?(Path.join(tui_dir, "Cargo.toml")) do
+      safe_puts("  Rebuilding TUI...")
+      case System.cmd("cargo", ["build", "--release"], cd: tui_dir, stderr_to_stdout: true) do
+        {_, 0} -> safe_puts("  ✓ TUI rebuilt")
+        {output, _} -> safe_puts("  Warning: TUI build: #{String.trim(output)}")
+      end
+    end
+
+    safe_puts("")
+    safe_puts("✓ Update complete. Restart OSA to use the new version.")
   end
 
   # ── Migrations ──────────────────────────────────────────────────

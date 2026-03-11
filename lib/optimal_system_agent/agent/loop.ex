@@ -50,6 +50,17 @@ defmodule OptimalSystemAgent.Agent.Loop do
   defp auto_insights_interval, do: Application.get_env(:optimal_system_agent, :auto_insights_interval, 10)
   defp max_response_tokens, do: Application.get_env(:optimal_system_agent, :max_response_tokens, 8_192)
 
+  # Output-side prompt-leak guard (Bug 17): if a weak model echoed the
+  # system prompt despite the input-side block, replace it before returning.
+  defp maybe_scrub_prompt_leak(response) do
+    if Guardrails.response_contains_prompt_leak?(response) do
+      Logger.warning("[loop] Output guardrail: LLM response contained system prompt content — replacing with refusal")
+      Guardrails.prompt_extraction_refusal()
+    else
+      response
+    end
+  end
+
   # ETS table for cancel flags — checked each loop iteration.
   # Created in application.ex, written by cancel/1, read by run_loop.
   @cancel_table :osa_cancel_flags
@@ -460,15 +471,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
           state = %{state | plan_mode: false}
           {response, state} = run_loop(state)
 
-          # Output-side prompt-leak guard (Bug 17): if a weak model echoed the
-          # system prompt despite the input-side block, replace it before returning.
-          response =
-            if Guardrails.response_contains_prompt_leak?(response) do
-              Logger.warning("[loop] Output guardrail: LLM response contained system prompt content — replacing with refusal")
-              Guardrails.prompt_extraction_refusal()
-            else
-              response
-            end
+          response = maybe_scrub_prompt_leak(response)
 
           state = %{
             state
@@ -494,15 +497,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
       # Normal execution path — message goes straight to LLM
       {response, state} = run_loop(state)
 
-      # Output-side prompt-leak guard (Bug 17): if a weak model echoed the
-      # system prompt despite the input-side block, replace it before returning.
-      response =
-        if Guardrails.response_contains_prompt_leak?(response) do
-          Logger.warning("[loop] Output guardrail: LLM response contained system prompt content — replacing with refusal")
-          Guardrails.prompt_extraction_refusal()
-        else
-          response
-        end
+      response = maybe_scrub_prompt_leak(response)
 
       meta = %{iteration_count: state.iteration, tools_used: extract_tools_used(state.messages)}
 

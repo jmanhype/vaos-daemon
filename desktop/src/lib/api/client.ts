@@ -1,5 +1,5 @@
 // src/lib/api/client.ts
-// HTTP API client for the OSA backend at localhost:8089/api/v1
+// HTTP API client for the OSA backend at localhost:9089/api/v1
 
 import { load as loadStore } from "@tauri-apps/plugin-store";
 import type {
@@ -21,7 +21,7 @@ import type {
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
-export const BASE_URL = "http://127.0.0.1:8089";
+export const BASE_URL = "http://127.0.0.1:9089";
 export const API_PREFIX = "/api/v1";
 
 // ── Token Store ───────────────────────────────────────────────────────────────
@@ -214,20 +214,45 @@ async function request<T>(
 // ── Health ────────────────────────────────────────────────────────────────────
 
 export const health = {
-  get: () => request<HealthResponse>("/health"),
+  /** Health endpoint is at root level, not under /api/v1 */
+  get: async (): Promise<HealthResponse> => {
+    const res = await fetch(`${BASE_URL}/health`, {
+      headers: { Accept: "application/json" },
+    });
+    if (!res.ok) throw new ApiError(res.status, "Health check failed");
+    return res.json() as Promise<HealthResponse>;
+  },
 };
 
 // ── Onboarding ────────────────────────────────────────────────────────────────
 
 export const onboarding = {
-  status: () => request<OnboardingStatus>("/onboarding/status"),
-  complete: () => request<void>("/onboarding/complete", { method: "POST" }),
+  /** Onboarding endpoints are at root level, not under /api/v1 */
+  status: async (): Promise<OnboardingStatus> => {
+    const res = await fetch(`${BASE_URL}/onboarding/status`, {
+      headers: { Accept: "application/json" },
+    });
+    if (!res.ok) throw new ApiError(res.status, "Onboarding status failed");
+    return res.json() as Promise<OnboardingStatus>;
+  },
+  complete: async (): Promise<void> => {
+    const res = await fetch(`${BASE_URL}/onboarding/complete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!res.ok) throw new ApiError(res.status, "Onboarding complete failed");
+  },
 };
 
 // ── Sessions ──────────────────────────────────────────────────────────────────
 
 export const sessions = {
-  list: () => request<Session[]>("/sessions"),
+  list: async (): Promise<Session[]> => {
+    const data = await request<{ sessions: Session[]; count: number }>(
+      "/sessions",
+    );
+    return data.sessions ?? [];
+  },
   get: (id: string) => request<Session>(`/sessions/${id}`),
   create: (body: CreateSessionRequest = {}) =>
     request<CreateSessionResponse>("/sessions", {
@@ -246,8 +271,12 @@ export const sessions = {
 // ── Messages ──────────────────────────────────────────────────────────────────
 
 export const messages = {
-  list: (sessionId: string) =>
-    request<Message[]>(`/sessions/${sessionId}/messages`),
+  list: async (sessionId: string): Promise<Message[]> => {
+    const data = await request<{ messages: Message[]; count: number }>(
+      `/sessions/${sessionId}/messages`,
+    );
+    return data.messages ?? [];
+  },
 
   /**
    * POST a message. Returns a stream_id for subscribing via SSE.
@@ -263,7 +292,14 @@ export const messages = {
 // ── Models ────────────────────────────────────────────────────────────────────
 
 export const models = {
-  list: () => request<Model[]>("/models"),
+  list: async (): Promise<Model[]> => {
+    const data = await request<{
+      models: Model[];
+      current?: string;
+      provider?: string;
+    }>("/models");
+    return data.models ?? [];
+  },
   activate: (name: string) =>
     request<Model>(`/models/${encodeURIComponent(name)}/activate`, {
       method: "POST",
@@ -323,4 +359,22 @@ export const settings = {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
+};
+
+// ── Scheduler ─────────────────────────────────────────────────────────────────
+
+export const scheduler = {
+  list: <T>() => request<T>("/scheduler/jobs"),
+  get: <T>(id: string) => request<T>(`/scheduler/jobs/${id}`),
+  create: <T>(body: unknown) =>
+    request<T>("/scheduler/jobs", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  delete: (id: string) =>
+    request<void>(`/scheduler/jobs/${id}`, { method: "DELETE" }),
+  toggle: <T>(id: string) =>
+    request<T>(`/scheduler/jobs/${id}/toggle`, { method: "POST" }),
+  runNow: (id: string) =>
+    request<void>(`/scheduler/jobs/${id}/run`, { method: "POST" }),
 };

@@ -1,5 +1,5 @@
 // src/lib/api/types.ts
-// All TypeScript types for the OSA API (localhost:8089/api/v1)
+// All TypeScript types for the OSA API (localhost:9089/api/v1)
 
 // ── Health ────────────────────────────────────────────────────────────────────
 
@@ -24,9 +24,9 @@ export interface OnboardingStatus {
 
 export interface Session {
   id: string;
-  title: string;
+  title: string | null;
   message_count: number;
-  created_at: string;
+  created_at: string | null;
   /** Whether the session's agent loop is still running */
   alive: boolean;
 }
@@ -37,7 +37,9 @@ export interface CreateSessionRequest {
 }
 
 export interface CreateSessionResponse {
-  session: Session;
+  /** Backend returns { id, status } on session creation */
+  id: string;
+  status: string;
 }
 
 // ── Messages ──────────────────────────────────────────────────────────────────
@@ -170,6 +172,7 @@ export interface Agent {
 
 export type ModelProvider =
   | "ollama"
+  | "ollama-cloud"
   | "anthropic"
   | "openai"
   | "groq"
@@ -205,7 +208,7 @@ export interface Settings {
   working_dir: string;
   budget_daily_usd: number;
   budget_monthly_usd: number;
-  theme: "dark" | "system";
+  theme: "dark" | "light" | "system";
   telemetry: boolean;
 }
 

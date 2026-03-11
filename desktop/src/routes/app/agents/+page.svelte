@@ -3,6 +3,7 @@
   import { slide } from 'svelte/transition';
   import { agentsStore } from '$lib/stores/agents.svelte';
   import { agents as agentsApi } from '$lib/api/client';
+  import { restartBackend } from '$lib/utils/backend';
   import type { Agent, AgentStatus } from '$lib/api/types';
   import AgentTree from '$lib/components/agents/AgentTree.svelte';
 
@@ -226,11 +227,19 @@
   <main class="page-content" id="agents-main">
 
     {#if agentsStore.error}
-      <div class="error-banner" role="alert">
-        <span class="error-icon" aria-hidden="true">!</span>
-        <span>{agentsStore.error}</span>
+      <div class="status-banner" role="status">
+        <span class="status-banner-dot"></span>
+        <span class="status-banner-text">Backend offline</span>
+        <span class="status-banner-hint">Start OSA backend on port 9089</span>
         <button
-          class="error-retry"
+          class="status-banner-btn"
+          onclick={() => { restartBackend().catch(() => {}); }}
+          aria-label="Restart backend"
+        >
+          Restart
+        </button>
+        <button
+          class="status-banner-btn"
           onclick={() => agentsStore.fetchAgents()}
           aria-label="Retry fetching agents"
         >
@@ -592,48 +601,55 @@
     scrollbar-color: rgba(255, 255, 255, 0.08) transparent;
   }
 
-  /* ── Error banner ── */
+  /* ── Status banner (subtle, not alarming) ── */
 
-  .error-banner {
+  .status-banner {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 10px 14px;
-    background: rgba(239, 68, 68, 0.08);
-    border: 1px solid rgba(239, 68, 68, 0.2);
+    gap: 8px;
+    padding: 6px 16px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
     border-radius: var(--radius-md);
-    font-size: 0.8125rem;
-    color: rgba(239, 68, 68, 0.9);
+    font-size: 0.7rem;
+    color: var(--text-tertiary);
     margin-bottom: 16px;
   }
 
-  .error-icon {
-    font-weight: 700;
-    flex-shrink: 0;
-    width: 16px;
-    height: 16px;
+  .status-banner-dot {
+    width: 6px;
+    height: 6px;
     border-radius: 50%;
-    background: rgba(239, 68, 68, 0.2);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.625rem;
+    background: rgba(251, 191, 36, 0.6);
+    flex-shrink: 0;
   }
 
-  .error-retry {
+  .status-banner-text {
+    color: var(--text-secondary);
+  }
+
+  .status-banner-hint {
     margin-left: auto;
-    padding: 3px 10px;
-    background: rgba(239, 68, 68, 0.15);
-    border: 1px solid rgba(239, 68, 68, 0.25);
-    border-radius: var(--radius-full);
-    color: rgba(239, 68, 68, 0.9);
-    font-size: 0.75rem;
-    font-weight: 500;
-    transition: background 0.15s;
+    color: var(--text-muted);
   }
 
-  .error-retry:hover {
-    background: rgba(239, 68, 68, 0.25);
+  .status-banner-btn {
+    padding: 3px 10px;
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: var(--radius-full);
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 0.65rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    flex-shrink: 0;
+  }
+
+  .status-banner-btn:hover {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.2);
+    color: var(--text-primary);
   }
 
   /* ── Empty state ── */

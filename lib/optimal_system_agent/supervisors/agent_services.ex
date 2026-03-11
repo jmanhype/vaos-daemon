@@ -17,11 +17,6 @@ defmodule OptimalSystemAgent.Supervisors.AgentServices do
 
   @impl true
   def init(_init_arg) do
-    knowledge_backend =
-      if Mix.env() == :test,
-        do: MiosaKnowledge.Backend.ETS,
-        else: MiosaKnowledge.Backend.Mnesia
-
     children = [
       OptimalSystemAgent.Agent.Memory,
       OptimalSystemAgent.Agent.HeartbeatState,
@@ -31,8 +26,6 @@ defmodule OptimalSystemAgent.Supervisors.AgentServices do
       OptimalSystemAgent.Agent.Progress,
       OptimalSystemAgent.Agent.Hooks,
       OptimalSystemAgent.Agent.Learning,
-      {MiosaKnowledge.Store, store_id: "osa_default", backend: knowledge_backend},
-      OptimalSystemAgent.Agent.Memory.KnowledgeBridge,
       OptimalSystemAgent.Vault.Supervisor,
       OptimalSystemAgent.Agent.Scheduler,
       OptimalSystemAgent.Agent.Compactor,

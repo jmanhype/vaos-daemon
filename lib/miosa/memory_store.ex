@@ -29,7 +29,7 @@ defmodule MiosaMemory.Store do
   """
   use GenServer
   require Logger
-  alias OptimalSystemAgent.Store.{Repo, Message}
+  alias OptimalSystemAgent.Agent.Memory.SQLiteBridge
 
   # Resolve at runtime to avoid baking in compile-host paths (/Users/runner/.osa)
   defp sessions_dir do
@@ -1039,60 +1039,12 @@ defmodule MiosaMemory.Store do
   # ────────────────────────────────────────────────────────────────────
 
   defp persist_to_sqlite(session_id, entry, _timestamp) do
-    attrs = %{
-      session_id: session_id,
-      role: to_string(Map.get(entry, :role, Map.get(entry, "role", "user"))),
-      content: ensure_utf8(Map.get(entry, :content, Map.get(entry, "content", ""))),
-      tool_calls: Map.get(entry, :tool_calls, Map.get(entry, "tool_calls")),
-      tool_call_id: Map.get(entry, :tool_call_id, Map.get(entry, "tool_call_id")),
-      token_count: parse_int(Map.get(entry, :token_count, Map.get(entry, "token_count"))),
-      channel: get_string(entry, :channel),
-      metadata: Map.get(entry, :metadata, Map.get(entry, "metadata", %{}))
-    }
-
-    case Message.changeset(attrs) |> Repo.insert() do
-      {:ok, _msg} ->
-        :ok
-
-      {:error, changeset} ->
-        Logger.warning("Failed to persist message to SQLite: #{inspect(changeset.errors)}")
-    end
-  rescue
-    e ->
-      Logger.warning("SQLite write error: #{Exception.message(e)}")
+    SQLiteBridge.append(session_id, entry)
   end
 
   defp load_from_sqlite(session_id) do
-    import Ecto.Query
-
-    messages =
-      from(m in Message,
-        where: m.session_id == ^session_id,
-        order_by: [asc: m.inserted_at]
-      )
-      |> Repo.all()
-      |> Enum.map(fn msg ->
-        # Return string-keyed maps for backward compat with JSONL format
-        base = %{
-          "role" => msg.role,
-          "content" => msg.content,
-          "timestamp" => NaiveDateTime.to_iso8601(msg.inserted_at)
-        }
-
-        base
-        |> maybe_put("tool_calls", msg.tool_calls)
-        |> maybe_put("tool_call_id", msg.tool_call_id)
-        |> maybe_put("token_count", msg.token_count)
-        |> maybe_put("channel", msg.channel)
-      end)
-
-    if messages == [], do: nil, else: messages
-  rescue
-    _ -> nil
+    SQLiteBridge.load(session_id)
   end
-
-  defp maybe_put(map, _key, nil), do: map
-  defp maybe_put(map, key, val), do: Map.put(map, key, val)
 
   defp load_from_jsonl(sessions_dir, session_id) do
     path = session_path(sessions_dir, session_id)
@@ -1114,104 +1066,12 @@ defmodule MiosaMemory.Store do
   end
 
   defp do_search_messages(query, opts) do
-    import Ecto.Query
-
-    limit = Keyword.get(opts, :limit, 20)
-    pattern = "%#{query}%"
-
-    from(m in Message,
-      where: like(m.content, ^pattern),
-      order_by: [desc: m.inserted_at],
-      limit: ^limit,
-      select: %{
-        id: m.id,
-        session_id: m.session_id,
-        role: m.role,
-        content: m.content,
-        inserted_at: m.inserted_at
-      }
-    )
-    |> Repo.all()
-  rescue
-    e ->
-      Logger.warning("Message search error: #{Exception.message(e)}")
-      []
+    SQLiteBridge.search_messages(query, opts)
   end
 
   defp do_session_stats(session_id) do
-    import Ecto.Query
-
-    stats =
-      from(m in Message,
-        where: m.session_id == ^session_id,
-        select: %{
-          count: count(m.id),
-          total_tokens: sum(m.token_count),
-          first_at: min(m.inserted_at),
-          last_at: max(m.inserted_at)
-        }
-      )
-      |> Repo.one()
-
-    role_counts =
-      from(m in Message,
-        where: m.session_id == ^session_id,
-        group_by: m.role,
-        select: {m.role, count(m.id)}
-      )
-      |> Repo.all()
-      |> Map.new()
-
-    Map.put(stats || %{}, :roles, role_counts)
-  rescue
-    _ -> %{count: 0, total_tokens: 0, roles: %{}}
+    SQLiteBridge.session_stats(session_id)
   end
-
-  defp get_string(entry, key) do
-    case Map.get(entry, key, Map.get(entry, to_string(key))) do
-      nil -> nil
-      val -> to_string(val)
-    end
-  end
-
-  defp parse_int(nil), do: nil
-  defp parse_int(i) when is_integer(i), do: i
-
-  defp parse_int(s) when is_binary(s) do
-    case Integer.parse(s) do
-      {i, _} -> i
-      :error -> nil
-    end
-  end
-
-  defp parse_int(_), do: nil
-
-  # Ensure a value is a valid UTF-8 binary before SQLite storage.
-  # Handles: nil, charlists (from Erlang), binaries with invalid bytes,
-  # and arbitrary terms. Without this, multi-byte characters (Japanese,
-  # emoji, CJK) can be mangled into '?????' sequences.
-  defp ensure_utf8(nil), do: ""
-
-  # Charlists are lists of Unicode codepoints. Pass :unicode as the input
-  # encoding so :unicode.characters_to_binary/2 emits a valid UTF-8 binary.
-  # The 1-arity form defaults to :latin1 input, which corrupts any codepoint
-  # above 127 (accented letters, CJK, emoji become replacement characters).
-  defp ensure_utf8(val) when is_list(val), do: :unicode.characters_to_binary(val, :unicode)
-  defp ensure_utf8(val) when is_binary(val) do
-    if String.valid?(val) do
-      val
-    else
-      # Replace invalid bytes — preserves valid UTF-8 portions
-      val
-      |> :unicode.characters_to_binary(:utf8, :utf8)
-      |> case do
-        bin when is_binary(bin) -> bin
-        {:error, good, _bad} -> good
-        {:incomplete, good, _rest} -> good
-      end
-    end
-  end
-  defp ensure_utf8(val), do: to_string(val)
 
   # ────────────────────────────────────────────────────────────────────
   # Sidecar Integration

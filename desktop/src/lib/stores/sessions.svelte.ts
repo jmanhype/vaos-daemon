@@ -53,7 +53,14 @@ class SessionsStore {
   async createSession(title?: string, model?: string): Promise<Session | null> {
     this.error = null;
     try {
-      const { session } = await sessionsApi.create({ title, model });
+      const result = await sessionsApi.create({ title, model });
+      const session: Session = {
+        id: result.id,
+        title: title ?? null,
+        created_at: new Date().toISOString(),
+        message_count: 0,
+        alive: true,
+      };
       this.sessions = [session, ...this.sessions];
       return session;
     } catch (e) {

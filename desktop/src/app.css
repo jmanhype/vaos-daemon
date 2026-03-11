@@ -103,6 +103,129 @@
   --font-mono: 'SF Mono', SFMono-Regular, ui-monospace, Menlo, Consolas, monospace;
 }
 
+/* Light theme overrides */
+:root[data-theme="light"] {
+  /* Foundation text hierarchy */
+  --dt:  #111;
+  --dt2: #555;
+  --dt3: #888;
+  --dt4: #aaa;
+
+  /* Foundation background hierarchy */
+  --dbg:  #f5f5f5;
+  --dbg2: #ebebeb;
+  --dbg3: #e0e0e0;
+
+  /* Foundation border hierarchy */
+  --dbd:  #d4d4d4;
+  --dbd2: #e0e0e0;
+
+  /* Semantic backgrounds */
+  --bg-primary:    #fafafa;
+  --bg-secondary:  #f0f0f0;
+  --bg-tertiary:   #e8e8e8;
+  --bg-surface:    rgba(0, 0, 0, 0.03);
+  --bg-elevated:   rgba(0, 0, 0, 0.05);
+
+  /* Borders */
+  --border-default: rgba(0, 0, 0, 0.1);
+  --border-hover:   rgba(0, 0, 0, 0.2);
+  --border-focus:   rgba(0, 0, 0, 0.35);
+
+  /* Text */
+  --text-primary:   #111111;
+  --text-secondary: #555555;
+  --text-tertiary:  #888888;
+  --text-muted:     #bbbbbb;
+
+  /* Glass tokens — light */
+  --glass-bg:     rgba(255, 255, 255, 0.75);
+  --glass-border: rgba(0, 0, 0, 0.1);
+  --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.08);
+}
+
+/* Light mode scrollbar */
+:root[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+}
+
+:root[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+/* Light mode hljs */
+:root[data-theme="light"] .hljs {
+  color: #24292e;
+}
+
+/* Light mode glass surfaces */
+:root[data-theme="light"] .glass {
+  background: rgba(255, 255, 255, 0.65);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+:root[data-theme="light"] .glass-card {
+  background: rgba(255, 255, 255, 0.7);
+  border-color: rgba(0, 0, 0, 0.08);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+}
+
+:root[data-theme="light"] .glass-panel {
+  background: rgba(255, 255, 255, 0.6);
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+:root[data-theme="light"] .glass-panel-dark {
+  background: rgba(255, 255, 255, 0.8);
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+:root[data-theme="light"] .settings-group {
+  background: rgba(255, 255, 255, 0.8);
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+:root[data-theme="light"] .settings-item {
+  color: rgba(0, 0, 0, 0.85);
+  border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+
+:root[data-theme="light"] .settings-item:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+:root[data-theme="light"] .sidebar {
+  background: #f5f5f5;
+  border-right-color: rgba(0, 0, 0, 0.08);
+}
+
+:root[data-theme="light"] .card {
+  background: #fff;
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+:root[data-theme="light"] .glass-input {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: rgba(0, 0, 0, 0.12);
+  color: rgba(0, 0, 0, 0.85);
+}
+
+:root[data-theme="light"] .glass-input::placeholder {
+  color: rgba(0, 0, 0, 0.35);
+}
+
+:root[data-theme="light"] .glass-badge {
+  background: rgba(0, 0, 0, 0.06);
+  border-color: rgba(0, 0, 0, 0.1);
+  color: rgba(0, 0, 0, 0.8);
+}
+
+/* Light mode body */
+:root[data-theme="light"] body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
 /* -----------------------------------------------------------------------------
    2. Reset
 ----------------------------------------------------------------------------- */

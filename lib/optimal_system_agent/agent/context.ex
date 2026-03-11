@@ -197,7 +197,6 @@ defmodule OptimalSystemAgent.Agent.Context do
       {workflow_block(state), 1, "workflow"},
       {skills_block(state), 2, "skills"},
       {scratchpad_block(state), 1, "scratchpad"},
-      {knowledge_block(state), 2, "knowledge"},
       {vault_block(state), 2, "vault"}
     ]
     |> Enum.reject(fn {content, _, _} -> is_nil(content) or content == "" end)
@@ -744,20 +743,6 @@ defmodule OptimalSystemAgent.Agent.Context do
       Scratchpad.instruction()
     else
       nil
-    end
-  end
-
-  defp knowledge_block(state) do
-    store_ref = {:via, Registry, {MiosaKnowledge.Registry, "osa_default"}}
-
-    try do
-      agent_id = Map.get(state, :session_id) || "default"
-      ctx = MiosaKnowledge.Context.for_agent(store_ref, agent_id: agent_id)
-      MiosaKnowledge.Context.to_prompt(ctx)
-    rescue
-      _ -> ""
-    catch
-      :exit, _ -> ""
     end
   end
 

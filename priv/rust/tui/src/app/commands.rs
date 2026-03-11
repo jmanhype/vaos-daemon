@@ -223,6 +223,14 @@ impl App {
                     crate::components::toast::ToastLevel::Info,
                 );
             }
+            "/desktop" | "/gui" => {
+                // Send to backend — it handles finding and launching the Tauri app
+                self.execute_backend_command("desktop", arg);
+                self.toasts.push(
+                    "Launching OSA Desktop...".to_string(),
+                    crate::components::toast::ToastLevel::Info,
+                );
+            }
             _ => {
                 // Unknown slash command -> send to backend
                 let cmd_name = &cmd[1..]; // strip leading /

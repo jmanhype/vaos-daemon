@@ -279,18 +279,36 @@ defmodule MiosaMemory.Cortex do
 end
 
 defmodule MiosaMemory.Episodic do
-  @moduledoc "Shim — delegates to OptimalSystemAgent.Agent.Memory.Episodic."
+  @moduledoc """
+  Shim — delegates to OptimalSystemAgent.Agent.Memory.Episodic (the real GenServer).
 
-  defdelegate start_link(opts \\ []), to: OptimalSystemAgent.Agent.Memory.Episodic
-  defdelegate child_spec(opts), to: OptimalSystemAgent.Agent.Memory.Episodic
-  defdelegate record(event_type, data, session_id),
-    to: OptimalSystemAgent.Agent.Memory.Episodic
-  defdelegate recall(query, opts \\ []), to: OptimalSystemAgent.Agent.Memory.Episodic
-  defdelegate recent(session_id, limit \\ 20), to: OptimalSystemAgent.Agent.Memory.Episodic
-  defdelegate stats(), to: OptimalSystemAgent.Agent.Memory.Episodic
-  defdelegate clear_session(session_id), to: OptimalSystemAgent.Agent.Memory.Episodic
-  defdelegate temporal_decay(timestamp, half_life_hours),
-    to: OptimalSystemAgent.Agent.Memory.Episodic
+  This shim exists so callers using the MiosaMemory.Episodic namespace compile
+  and route to the actual ETS-backed implementation.
+  """
+
+  def start_link(opts \\ []),
+    do: OptimalSystemAgent.Agent.Memory.Episodic.start_link(opts)
+
+  def child_spec(opts),
+    do: OptimalSystemAgent.Agent.Memory.Episodic.child_spec(opts)
+
+  def record(event_type, data, session_id),
+    do: OptimalSystemAgent.Agent.Memory.Episodic.record(event_type, data, session_id)
+
+  def recall(query, opts \\ []),
+    do: OptimalSystemAgent.Agent.Memory.Episodic.recall(query, opts)
+
+  def recent(session_id, limit \\ 20),
+    do: OptimalSystemAgent.Agent.Memory.Episodic.recent(session_id, limit)
+
+  def stats,
+    do: OptimalSystemAgent.Agent.Memory.Episodic.stats()
+
+  def clear_session(session_id),
+    do: OptimalSystemAgent.Agent.Memory.Episodic.clear_session(session_id)
+
+  def temporal_decay(timestamp, half_life_hours),
+    do: OptimalSystemAgent.Agent.Memory.Episodic.temporal_decay(timestamp, half_life_hours)
 end
 
 defmodule MiosaMemory.Injector do
@@ -321,17 +339,39 @@ defmodule MiosaMemory.Taxonomy do
 end
 
 defmodule MiosaMemory.Learning do
-  @moduledoc "Shim — delegates to OptimalSystemAgent.Agent.Learning."
+  @moduledoc """
+  Shim — delegates to OptimalSystemAgent.Agent.Learning (the real GenServer).
 
-  defdelegate start_link(opts \\ []), to: OptimalSystemAgent.Agent.Learning
-  defdelegate child_spec(opts), to: OptimalSystemAgent.Agent.Learning
-  defdelegate observe(interaction), to: OptimalSystemAgent.Agent.Learning
-  defdelegate correction(what_was_wrong, what_is_right), to: OptimalSystemAgent.Agent.Learning
-  defdelegate error(tool_name, error_message, context), to: OptimalSystemAgent.Agent.Learning
-  defdelegate metrics(), to: OptimalSystemAgent.Agent.Learning
-  defdelegate patterns(), to: OptimalSystemAgent.Agent.Learning
-  defdelegate solutions(), to: OptimalSystemAgent.Agent.Learning
-  defdelegate consolidate(), to: OptimalSystemAgent.Agent.Learning
+  This shim exists so callers using the MiosaMemory.Learning namespace compile
+  and route to the actual ETS-backed implementation.
+  """
+
+  def start_link(opts \\ []),
+    do: OptimalSystemAgent.Agent.Learning.start_link(opts)
+
+  def child_spec(opts),
+    do: OptimalSystemAgent.Agent.Learning.child_spec(opts)
+
+  def observe(interaction),
+    do: OptimalSystemAgent.Agent.Learning.observe(interaction)
+
+  def correction(what_was_wrong, what_is_right),
+    do: OptimalSystemAgent.Agent.Learning.correction(what_was_wrong, what_is_right)
+
+  def error(tool_name, error_message, context),
+    do: OptimalSystemAgent.Agent.Learning.error(tool_name, error_message, context)
+
+  def metrics,
+    do: OptimalSystemAgent.Agent.Learning.metrics()
+
+  def patterns,
+    do: OptimalSystemAgent.Agent.Learning.patterns()
+
+  def solutions,
+    do: OptimalSystemAgent.Agent.Learning.solutions()
+
+  def consolidate,
+    do: OptimalSystemAgent.Agent.Learning.consolidate()
 end
 
 defmodule MiosaMemory.Parser do
@@ -347,12 +387,29 @@ defmodule MiosaMemory.Parser do
     end)
   end
 
-  @doc "Extract keywords from text."
+  @stop_words MapSet.new(~w(
+    the and for are but not you all any can had her was one our out day been have
+    from this that with what when will more about which them than been would make
+    like time just know take people into year your good some could over such after
+    come made find back only first great even give most those down should well
+    being work through where much other also life between know years hand high
+    because large turn each long next look state want head around move both
+    think still might school world kind keep never really need does going right
+    used every last very just said same tell call before mean also actually thing
+    many then those however these while most only must since well still under
+    again too own part here there where help using really trying getting doing
+    went got let its use way may new now old see try run put set did get how
+    has him his she her its who why yes yet able
+  ))
+
+  @doc "Extract keywords from text with stop-word filtering."
   def extract_keywords(text) when is_binary(text) do
     text
     |> String.downcase()
     |> String.split(~r/\W+/, trim: true)
-    |> Enum.reject(&(String.length(&1) < 3))
+    |> Enum.reject(fn word -> MapSet.member?(@stop_words, word) end)
+    |> Enum.filter(fn word -> String.length(word) >= 3 end)
+    |> Enum.reject(fn word -> Regex.match?(~r/^\d+$/, word) end)
     |> Enum.uniq()
   end
 end
@@ -492,7 +549,7 @@ defmodule MiosaBudget.Budget do
     state = %{state |
       daily_spent: state.daily_spent + cost,
       monthly_spent: state.monthly_spent + cost,
-      entries: [entry | state.entries]
+      entries: Enum.take([entry | state.entries], 10_000)
     }
     {:noreply, state}
   end

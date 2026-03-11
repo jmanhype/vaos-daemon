@@ -55,8 +55,15 @@ defmodule OptimalSystemAgent.Onboarding.Selector do
       nil
     else
       case open_tty() do
-        {:ok, tty} -> select_interactive(tty, lines, options, default_index)
-        {:error, _} -> select_fallback(options, default_index)
+        {:ok, tty} ->
+          try do
+            select_interactive(tty, lines, options, default_index)
+          catch
+            {:fallback, opts, idx} -> select_fallback(opts, idx)
+          end
+
+        {:error, _} ->
+          select_fallback(options, default_index)
       end
     end
   end
@@ -65,7 +72,16 @@ defmodule OptimalSystemAgent.Onboarding.Selector do
 
   defp select_interactive(tty, lines, options, selected) do
     saved = save_stty()
-    set_raw_mode()
+
+    case set_raw_mode() do
+      {:ok, _} -> :ok
+      {:error, _} ->
+        # Raw mode failed — close tty and fall back to numbered menu
+        close_tty(tty)
+        restore_stty(saved)
+        throw({:fallback, options, selected})
+    end
+
     IO.write(@hide_cursor)
     total = length(lines)
 
@@ -122,6 +138,10 @@ defmodule OptimalSystemAgent.Onboarding.Selector do
                   trimmed = String.trim(text)
                   if trimmed == "", do: nil, else: {:input, trimmed}
               end
+
+            _ ->
+              clear(total)
+              nil
           end
       end
     after
@@ -220,7 +240,14 @@ defmodule OptimalSystemAgent.Onboarding.Selector do
   # ── Terminal I/O ──────────────────────────────────────────────
 
   defp open_tty do
-    :file.open(~c"/dev/tty", [:read, :write, :raw, :binary])
+    case :os.type() do
+      {:win32, _} ->
+        # Windows has no /dev/tty — always use fallback mode
+        {:error, :windows}
+
+      _ ->
+        :file.open(~c"/dev/tty", [:read, :write, :raw, :binary])
+    end
   end
 
   defp close_tty(tty), do: :file.close(tty)
@@ -366,4 +393,6 @@ defmodule OptimalSystemAgent.Onboarding.Selector do
         if trimmed == "", do: nil, else: {:input, trimmed}
     end
   end
+
+  defp fallback_select_item(nil), do: nil
 end

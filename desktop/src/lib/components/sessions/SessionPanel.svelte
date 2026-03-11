@@ -11,7 +11,7 @@
   const filtered = $derived(
     query.trim()
       ? sessionsStore.sessions.filter((s) =>
-          s.title.toLowerCase().includes(query.trim().toLowerCase()),
+          (s.title ?? "").toLowerCase().includes(query.trim().toLowerCase()),
         )
       : sessionsStore.sessions,
   );

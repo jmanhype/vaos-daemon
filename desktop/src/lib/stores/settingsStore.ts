@@ -1,6 +1,6 @@
 /**
  * Settings store — in-memory state for OSA Desktop settings.
- * Source of truth is the Elixir HTTP API at localhost:8089.
+ * Source of truth is the Elixir HTTP API at localhost:9089.
  * This store holds the client-side mirror of that state.
  */
 import { writable } from "svelte/store";

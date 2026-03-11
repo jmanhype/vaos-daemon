@@ -9,22 +9,22 @@
   let sessionId = $state('');
 
   onMount(async () => {
-    const stored = sessionStorage.getItem('osa-session-id');
-    if (stored) {
-      sessionId = stored;
-    } else {
-      const id = crypto.randomUUID();
-      sessionStorage.setItem('osa-session-id', id);
-      sessionId = id;
-    }
+    // Check URL for a specific session ID (e.g. /app?session=abc)
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlSession = urlParams.get('session');
 
-    // Load message history if the session already exists on the backend.
-    if (sessionId && chatStore.currentSession?.id !== sessionId) {
+    if (urlSession) {
+      // URL-specified session — load it from backend
+      sessionId = urlSession;
       try {
         await chatStore.loadSession(sessionId);
       } catch {
-        // Session not found — first visit, chat starts empty.
+        // Session not found or backend error — start fresh
+        chatStore.error = null;
       }
+    } else {
+      // No session specified — start empty, a session will be created on first message
+      sessionId = '';
     }
   });
 </script>

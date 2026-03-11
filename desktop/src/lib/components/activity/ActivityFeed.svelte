@@ -3,6 +3,23 @@
   import { activityStore } from '$lib/stores/activity.svelte';
   import type { Activity } from '$lib/stores/activity.svelte';
 
+  // SVG icon paths keyed by icon name
+  const ICON_PATHS: Record<string, string> = {
+    terminal: '<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>',
+    file: '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>',
+    edit: '<path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/>',
+    'file-plus': '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/>',
+    trash: '<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>',
+    folder: '<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>',
+    search: '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
+    globe: '<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>',
+    monitor: '<rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>',
+    camera: '<path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/>',
+    cpu: '<rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/>',
+    list: '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>',
+    tool: '<path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>',
+  };
+
   // ── Elapsed time formatting ──────────────────────────────────────────────────
 
   function formatMs(ms: number): string {
@@ -70,7 +87,7 @@
       <!-- Current activity indicator -->
       {#if activityStore.currentActivity}
         {@const cur = activityStore.currentActivity}
-        <span class="feed-emoji" aria-hidden="true">{cur.emoji}</span>
+        <span class="feed-icon" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{@html ICON_PATHS[cur.icon] ?? ICON_PATHS['tool']}</svg></span>
         <span class="feed-current-label">
           {cur.label || cur.tool}
         </span>
@@ -131,7 +148,7 @@
             class:feed-item--error={activity.isError}
             role="listitem"
           >
-            <span class="feed-item-emoji" aria-hidden="true">{activity.emoji}</span>
+            <span class="feed-item-icon" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{@html ICON_PATHS[activity.icon] ?? ICON_PATHS['tool']}</svg></span>
             <span class="feed-item-label">{activity.label || activity.tool}</span>
             {#if activityStore.verbosity === 'verbose' && activity.summary}
               <span class="feed-item-summary">{activity.summary}</span>
@@ -142,7 +159,7 @@
             {#if activity.isError}
               <span class="feed-item-error-dot" aria-label="Error" title="Tool returned error">!</span>
             {:else if activity.finishedAt !== null}
-              <span class="feed-item-done-dot" aria-hidden="true">✓</span>
+              <span class="feed-item-done-dot" aria-hidden="true"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>
             {/if}
           </div>
         {/each}
@@ -186,9 +203,11 @@
     background: rgba(255, 255, 255, 0.05);
   }
 
-  .feed-emoji {
-    font-size: 0.875rem;
+  .feed-icon {
     flex-shrink: 0;
+    color: rgba(255, 255, 255, 0.5);
+    display: flex;
+    align-items: center;
   }
 
   .feed-current-label {
@@ -317,9 +336,11 @@
     background: rgba(239, 68, 68, 0.04);
   }
 
-  .feed-item-emoji {
-    font-size: 0.8125rem;
+  .feed-item-icon {
     flex-shrink: 0;
+    color: rgba(255, 255, 255, 0.45);
+    display: flex;
+    align-items: center;
   }
 
   .feed-item-label {

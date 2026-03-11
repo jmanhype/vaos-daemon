@@ -3,6 +3,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { modelsStore } from '$lib/stores/models.svelte';
+  import { restartBackend } from '$lib/utils/backend';
   import type { Model } from '$lib/api/types';
 
   // ── State ──────────────────────────────────────────────────────────────────
@@ -31,28 +32,32 @@
     const name = model.name.toLowerCase();
     const desc = (model.description ?? '').toLowerCase();
 
-    if (name.includes('vision') || desc.includes('vision') || desc.includes('image')) {
+    if (name.includes('vision') || desc.includes('vision') || desc.includes('image') || desc.includes('multimodal')) {
       caps.push('vision');
     }
     if (
-      name.includes('reason') ||
-      desc.includes('reason') ||
-      name.includes('thinking') ||
-      desc.includes('thinking') ||
-      name.includes('r1') ||
-      name.includes('o1') ||
-      name.includes('o3')
+      name.includes('reason') || desc.includes('reason') ||
+      name.includes('thinking') || desc.includes('thinking') ||
+      name.includes('r1') || name.includes('o1') || name.includes('o3') || name.includes('o4') ||
+      name.includes('qwq')
     ) {
       caps.push('reasoning');
     }
     if (name.includes('code') || desc.includes('code') || desc.includes('coding')) {
       caps.push('code');
     }
+    if (desc.includes('tool use') || desc.includes('tool_use') ||
+        name.includes('claude') || name.includes('gpt-4') || name.includes('llama-3.3') || name.includes('llama-4')) {
+      caps.push('tool use');
+    }
     if (model.context_window >= 100_000) {
       caps.push('long ctx');
     }
     if (model.is_local) {
       caps.push('local');
+    }
+    if (model.requires_api_key && !model.is_local) {
+      caps.push('cloud');
     }
     return caps;
   }
@@ -125,28 +130,41 @@
     </div>
   </header>
 
+  <!-- ── Recommendation banner ──────────────────────────────────────────── -->
+  <div class="mb-recommend" role="note">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+      <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+    </svg>
+    <span>For best agent performance, use models with <strong>tool use</strong>, <strong>code generation</strong>, and <strong>long context</strong> (32K+). Recommended: Claude Opus 4.6 / Sonnet 4.6, GPT-4.1, Llama 3.3 70B, o3/o4-mini for reasoning. Configure API keys in Settings to unlock cloud models.</span>
+  </div>
+
   <!-- ── Error banner ───────────────────────────────────────────────────── -->
   {#if modelsStore.error}
-    <div class="mb-error" role="alert">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-           stroke-width="2" aria-hidden="true">
-        <circle cx="12" cy="12" r="10"/>
-        <line x1="12" y1="8" x2="12" y2="12"/>
-        <line x1="12" y1="16" x2="12.01" y2="16"/>
-      </svg>
-      {modelsStore.error}
+    <div class="mb-status-banner" role="status">
+      <span class="mb-status-dot-indicator"></span>
+      <span class="mb-status-text">Backend offline</span>
+      <span class="mb-status-hint">Start OSA backend on port 9089</span>
+      <button
+        class="mb-restart-btn"
+        onclick={() => { restartBackend().then(() => modelsStore.fetchModels()).catch(() => {}); }}
+        aria-label="Restart backend"
+      >
+        Restart
+      </button>
+      <button
+        class="mb-restart-btn"
+        onclick={() => modelsStore.fetchModels()}
+        aria-label="Retry"
+      >
+        Retry
+      </button>
     </div>
   {/if}
 
   {#if switchError}
-    <div class="mb-error" role="alert">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-           stroke-width="2" aria-hidden="true">
-        <circle cx="12" cy="12" r="10"/>
-        <line x1="12" y1="8" x2="12" y2="12"/>
-        <line x1="12" y1="16" x2="12.01" y2="16"/>
-      </svg>
-      {switchError}
+    <div class="mb-status-banner" role="alert">
+      <span class="mb-status-dot-indicator"></span>
+      <span class="mb-status-text">{switchError}</span>
     </div>
   {/if}
 
@@ -247,7 +265,15 @@
                 >
                   <!-- Left: name + badges -->
                   <div class="mb-model-info">
-                    <span class="mb-model-name">{model.name}</span>
+                    <div class="mb-model-name-row">
+                      <span class="mb-model-name">{model.name}</span>
+                      {#if model.size}
+                        <span class="mb-model-size">{model.size}</span>
+                      {/if}
+                    </div>
+                    {#if model.description}
+                      <span class="mb-model-desc">{model.description}</span>
+                    {/if}
 
                     <div class="mb-model-badges" aria-label="Model details">
                       <!-- Context window -->
@@ -314,7 +340,8 @@
     height: 100%;
     padding: 24px;
     gap: 16px;
-    overflow: hidden;
+    overflow-x: hidden;
+    overflow-y: auto;
   }
 
   /* ── Header ────────────────────────────────────────────────────────────── */
@@ -388,18 +415,80 @@
     padding-left: 34px;
   }
 
-  /* ── Error banner ──────────────────────────────────────────────────────── */
-  .mb-error {
+  /* ── Status banner (subtle, not alarming) ──────────────────────────────── */
+  .mb-recommend {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 10px 16px;
+    margin: 0 16px 8px;
+    font-size: 0.75rem;
+    line-height: 1.5;
+    color: rgba(255, 255, 255, 0.45);
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 10px;
+    flex-shrink: 0;
+  }
+
+  .mb-recommend svg {
+    flex-shrink: 0;
+    margin-top: 1px;
+    color: rgba(255, 255, 255, 0.3);
+  }
+
+  .mb-recommend strong {
+    color: rgba(255, 255, 255, 0.65);
+    font-weight: 600;
+  }
+
+  .mb-status-banner {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 10px 14px;
-    background: rgba(239, 68, 68, 0.08);
-    border: 1px solid rgba(239, 68, 68, 0.2);
+    padding: 6px 16px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
     border-radius: var(--radius-md);
-    font-size: 13px;
-    color: #fca5a5;
+    font-size: 0.7rem;
+    color: var(--text-tertiary);
     flex-shrink: 0;
+  }
+
+  .mb-status-dot-indicator {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: rgba(251, 191, 36, 0.6);
+    flex-shrink: 0;
+  }
+
+  .mb-status-text {
+    color: var(--text-secondary);
+  }
+
+  .mb-status-hint {
+    margin-left: auto;
+    color: var(--text-muted);
+  }
+
+  .mb-restart-btn {
+    padding: 3px 10px;
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: var(--radius-full);
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 0.65rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    flex-shrink: 0;
+  }
+
+  .mb-restart-btn:hover {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.2);
+    color: var(--text-primary);
   }
 
   /* ── Loading skeletons ─────────────────────────────────────────────────── */
@@ -470,10 +559,9 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    overflow-y: auto;
-    flex: 1;
-    min-height: 0;
-    padding-right: 2px; /* avoid clipping scrollbar */
+    /* No flex:1 / min-height:0 here — let .mb-root (overflow-y:auto) scroll */
+    padding-right: 2px;
+    padding-bottom: 24px;
   }
 
   /* ── Provider section ──────────────────────────────────────────────────── */
@@ -603,6 +691,13 @@
     flex: 1;
   }
 
+  .mb-model-name-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
   .mb-model-name {
     font-size: 13px;
     font-weight: 600;
@@ -611,6 +706,24 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .mb-model-size {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-tertiary);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .mb-model-desc {
+    font-size: 11px;
+    line-height: 1.4;
+    color: var(--text-muted, rgba(255, 255, 255, 0.35));
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 500px;
   }
 
   .mb-model-badges {
@@ -644,6 +757,7 @@
     border-color: rgba(255, 255, 255, 0.06);
     color: var(--text-tertiary);
   }
+
 
   .mb-badge--active {
     background: rgba(34, 197, 94, 0.1);
@@ -691,7 +805,7 @@
     padding: 5px 14px;
     background: rgba(255, 255, 255, 0.07);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-full);
     font-size: 12px;
     font-weight: 600;
     color: var(--text-primary);

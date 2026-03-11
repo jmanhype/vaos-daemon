@@ -144,11 +144,11 @@ defmodule OptimalSystemAgent.Tools.Builtins.CodeSymbols do
 
       cond do
         Regex.match?(~r/^defmodule\s+/, stripped) ->
-          [_, name] = Regex.run(~r/^defmodule\s+(\S+)/, stripped)
+          [_, name] = Regex.run(~r/^defmodule\s+(\S+)/, stripped) || [nil, ""]
           [%{line: num, kind: "module", name: name}]
 
         Regex.match?(~r/^def\s+\w/, stripped) ->
-          [_, name] = Regex.run(~r/^def\s+(\w+[?!]?)/, stripped)
+          [_, name] = Regex.run(~r/^def\s+(\w+[?!]?)/, stripped) || [nil, ""]
           [%{line: num, kind: "def", name: name}]
 
         include_private && String.starts_with?(stripped, "defp ") ->
@@ -158,11 +158,11 @@ defmodule OptimalSystemAgent.Tools.Builtins.CodeSymbols do
           end
 
         Regex.match?(~r/^defmacro\s+\w/, stripped) ->
-          [_, name] = Regex.run(~r/^defmacro\s+(\w+[?!]?)/, stripped)
+          [_, name] = Regex.run(~r/^defmacro\s+(\w+[?!]?)/, stripped) || [nil, ""]
           [%{line: num, kind: "defmacro", name: name}]
 
         Regex.match?(~r/^@behaviour\s+/, stripped) ->
-          [_, name] = Regex.run(~r/^@behaviour\s+(\S+)/, stripped)
+          [_, name] = Regex.run(~r/^@behaviour\s+(\S+)/, stripped) || [nil, ""]
           [%{line: num, kind: "behaviour", name: name}]
 
         true ->
@@ -187,7 +187,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.CodeSymbols do
             else: []
 
         Regex.match?(~r/^type\s+\w+\s+(struct|interface)/, stripped) ->
-          [_, name, kind] = Regex.run(~r/^type\s+(\w+)\s+(struct|interface)/, stripped)
+          [_, name, kind] = Regex.run(~r/^type\s+(\w+)\s+(struct|interface)/, stripped) || [nil, "", ""]
           exported = String.match?(name, ~r/^[A-Z]/)
           if include_private or exported,
             do: [%{line: num, kind: kind, name: name}],
@@ -208,11 +208,11 @@ defmodule OptimalSystemAgent.Tools.Builtins.CodeSymbols do
 
       cond do
         Regex.match?(~r/^export\s+(?:default\s+)?(?:async\s+)?(?:function|class)\s+\w/, stripped) ->
-          [_, name] = Regex.run(~r/^export\s+(?:default\s+)?(?:async\s+)?(?:function|class)\s+(\w+)/, stripped)
+          [_, name] = Regex.run(~r/^export\s+(?:default\s+)?(?:async\s+)?(?:function|class)\s+(\w+)/, stripped) || [nil, ""]
           [%{line: num, kind: "export", name: name}]
 
         Regex.match?(~r/^export\s+(?:const|let|var)\s+\w/, stripped) ->
-          [_, name] = Regex.run(~r/^export\s+(?:const|let|var)\s+(\w+)/, stripped)
+          [_, name] = Regex.run(~r/^export\s+(?:const|let|var)\s+(\w+)/, stripped) || [nil, ""]
           [%{line: num, kind: "export const", name: name}]
 
         include_private && Regex.match?(~r/^(?:async\s+)?function\s+\w+/, stripped) ->
@@ -242,17 +242,17 @@ defmodule OptimalSystemAgent.Tools.Builtins.CodeSymbols do
 
       cond do
         Regex.match?(~r/^class\s+\w/, stripped) ->
-          [_, name] = Regex.run(~r/^class\s+(\w+)/, stripped)
+          [_, name] = Regex.run(~r/^class\s+(\w+)/, stripped) || [nil, ""]
           [%{line: num, kind: "class", name: name}]
 
         Regex.match?(~r/^(?:async\s+)?def\s+\w/, stripped) ->
-          [_, name] = Regex.run(~r/^(?:async\s+)?def\s+(\w+)/, stripped)
+          [_, name] = Regex.run(~r/^(?:async\s+)?def\s+(\w+)/, stripped) || [nil, ""]
           if include_private or not String.starts_with?(name, "_"),
             do: [%{line: num, kind: "def", name: name}],
             else: []
 
         Regex.match?(~r/^    (?:async\s+)?def\s+\w/, line) ->
-          [_, name] = Regex.run(~r/^    (?:async\s+)?def\s+(\w+)/, line)
+          [_, name] = Regex.run(~r/^    (?:async\s+)?def\s+(\w+)/, line) || [nil, ""]
           if include_private or not String.starts_with?(name, "_"),
             do: [%{line: num, kind: "method", name: name}],
             else: []
@@ -279,15 +279,15 @@ defmodule OptimalSystemAgent.Tools.Builtins.CodeSymbols do
             else: []
 
         Regex.match?(~r/^(?:pub\s+)?struct\s+\w/, stripped) ->
-          [_, _, name] = Regex.run(~r/^(pub\s+)?struct\s+(\w+)/, stripped)
+          [_, _, name] = Regex.run(~r/^(pub\s+)?struct\s+(\w+)/, stripped) || [nil, "", ""]
           [%{line: num, kind: "struct", name: name}]
 
         Regex.match?(~r/^(?:pub\s+)?trait\s+\w/, stripped) ->
-          [_, _, name] = Regex.run(~r/^(pub\s+)?trait\s+(\w+)/, stripped)
+          [_, _, name] = Regex.run(~r/^(pub\s+)?trait\s+(\w+)/, stripped) || [nil, "", ""]
           [%{line: num, kind: "trait", name: name}]
 
         Regex.match?(~r/^(?:pub\s+)?enum\s+\w/, stripped) ->
-          [_, _, name] = Regex.run(~r/^(pub\s+)?enum\s+(\w+)/, stripped)
+          [_, _, name] = Regex.run(~r/^(pub\s+)?enum\s+(\w+)/, stripped) || [nil, "", ""]
           [%{line: num, kind: "enum", name: name}]
 
         true ->

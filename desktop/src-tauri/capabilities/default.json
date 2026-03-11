@@ -20,7 +20,6 @@
     "fs:allow-appdata-write-recursive",
     "notification:default",
     "os:default",
-    "process:default",
-    "updater:default"
+    "process:default"
   ]
 }

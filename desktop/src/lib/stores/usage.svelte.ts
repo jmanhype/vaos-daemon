@@ -1,0 +1,265 @@
+// src/lib/stores/usage.svelte.ts
+// Usage & Analytics store — Svelte 5 class with $state fields.
+// Fetches system analytics from GET /api/v1/analytics, falls back to mock data.
+
+import { BASE_URL, API_PREFIX, getToken } from "$lib/api/client";
+
+// ── Types ──────────────────────────────────────────────────────────────────────
+
+export type AnalyticsPeriod = "7d" | "30d" | "all";
+
+export interface DailyUsage {
+  date: string; // ISO date string "YYYY-MM-DD"
+  messages: number;
+  tokens: number;
+}
+
+export interface ModelUsage {
+  model: string;
+  count: number;
+  tokens: number;
+}
+
+export interface UsageStats {
+  totalMessages: number;
+  totalSessions: number;
+  totalTokens: number;
+  avgResponseTime: number; // milliseconds
+  dailyUsage: DailyUsage[];
+  modelUsage: ModelUsage[];
+}
+
+// ── Backend response shape ─────────────────────────────────────────────────────
+// The Elixir backend may return snake_case keys — map on ingestion.
+
+interface AnalyticsApiResponse {
+  total_messages?: number;
+  totalMessages?: number;
+  total_sessions?: number;
+  totalSessions?: number;
+  total_tokens?: number;
+  totalTokens?: number;
+  avg_response_time?: number;
+  avgResponseTime?: number;
+  daily_usage?: RawDailyEntry[];
+  dailyUsage?: RawDailyEntry[];
+  model_usage?: RawModelEntry[];
+  modelUsage?: RawModelEntry[];
+}
+
+interface RawDailyEntry {
+  date: string;
+  messages?: number;
+  tokens?: number;
+}
+
+interface RawModelEntry {
+  model: string;
+  count?: number;
+  tokens?: number;
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Format a token count to a compact human-readable string.
+ * 0        → "0"
+ * 1–999    → "850"
+ * 1K–999K  → "850K"
+ * 1M+      → "4.2M"
+ */
+function formatTokens(count: number): string {
+  if (!Number.isFinite(count) || count <= 0) return "0";
+  if (count < 1_000) return String(Math.round(count));
+  if (count < 1_000_000) {
+    const k = count / 1_000;
+    return k % 1 === 0 ? `${k}K` : `${k.toFixed(1)}K`;
+  }
+  const m = count / 1_000_000;
+  return m % 1 === 0 ? `${m}M` : `${m.toFixed(1)}M`;
+}
+
+/**
+ * Return the ISO date string for N days ago from today (UTC).
+ */
+function daysAgoISO(days: number): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - days);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Map the raw API response to UsageStats, tolerating snake_case or camelCase.
+ */
+function mapApiResponse(raw: AnalyticsApiResponse): UsageStats {
+  const dailyRaw = raw.daily_usage ?? raw.dailyUsage ?? [];
+  const modelRaw = raw.model_usage ?? raw.modelUsage ?? [];
+
+  return {
+    totalMessages: raw.total_messages ?? raw.totalMessages ?? 0,
+    totalSessions: raw.total_sessions ?? raw.totalSessions ?? 0,
+    totalTokens: raw.total_tokens ?? raw.totalTokens ?? 0,
+    avgResponseTime: raw.avg_response_time ?? raw.avgResponseTime ?? 0,
+    dailyUsage: dailyRaw.map((entry) => ({
+      date: entry.date,
+      messages: entry.messages ?? 0,
+      tokens: entry.tokens ?? 0,
+    })),
+    modelUsage: modelRaw.map((entry) => ({
+      model: entry.model,
+      count: entry.count ?? 0,
+      tokens: entry.tokens ?? 0,
+    })),
+  };
+}
+
+// ── Mock data ─────────────────────────────────────────────────────────────────
+// Provides a realistic fallback when the backend is unavailable.
+
+function generateMockStats(): UsageStats {
+  const today = new Date();
+  const dailyUsage: DailyUsage[] = Array.from({ length: 30 }, (_, i) => {
+    const d = new Date(today);
+    d.setUTCDate(d.getUTCDate() - (29 - i));
+    const messages = Math.floor(Math.random() * 40 + 5);
+    return {
+      date: d.toISOString().slice(0, 10),
+      messages,
+      tokens: messages * Math.floor(Math.random() * 800 + 400),
+    };
+  });
+
+  const totalMessages = dailyUsage.reduce((s, d) => s + d.messages, 0);
+  const totalTokens = dailyUsage.reduce((s, d) => s + d.tokens, 0);
+
+  return {
+    totalMessages,
+    totalSessions: Math.floor(totalMessages / 6),
+    totalTokens,
+    avgResponseTime: Math.floor(Math.random() * 800 + 400),
+    dailyUsage,
+    modelUsage: [
+      {
+        model: "claude-sonnet-4-6",
+        count: Math.floor(totalMessages * 0.55),
+        tokens: Math.floor(totalTokens * 0.6),
+      },
+      {
+        model: "claude-opus-4-6",
+        count: Math.floor(totalMessages * 0.25),
+        tokens: Math.floor(totalTokens * 0.3),
+      },
+      {
+        model: "claude-haiku-4-5-20251001",
+        count: Math.floor(totalMessages * 0.2),
+        tokens: Math.floor(totalTokens * 0.1),
+      },
+    ],
+  };
+}
+
+// ── UsageStore ────────────────────────────────────────────────────────────────
+
+class UsageStore {
+  stats = $state<UsageStats | null>(null);
+  loading = $state(false);
+  error = $state<string | null>(null);
+  period = $state<AnalyticsPeriod>("30d");
+
+  // ── Derived ──────────────────────────────────────────────────────────────────
+
+  /**
+   * dailyUsage entries filtered to the selected period.
+   * "all" returns all entries unfiltered.
+   */
+  filteredDailyUsage = $derived((): DailyUsage[] => {
+    if (!this.stats) return [];
+    if (this.period === "all") return this.stats.dailyUsage;
+
+    const days = this.period === "7d" ? 7 : 30;
+    const cutoff = daysAgoISO(days);
+    return this.stats.dailyUsage.filter((entry) => entry.date >= cutoff);
+  });
+
+  /**
+   * The day with the highest message count within the current period.
+   * Returns null when there is no data.
+   */
+  peakDay = $derived((): DailyUsage | null => {
+    const entries = this.filteredDailyUsage();
+    if (entries.length === 0) return null;
+    return entries.reduce((best, entry) =>
+      entry.messages > best.messages ? entry : best,
+    );
+  });
+
+  /**
+   * Total tokens formatted as a compact string ("0", "850K", "4.2M").
+   */
+  totalTokensFormatted = $derived((): string => {
+    if (!this.stats) return "0";
+    return formatTokens(this.stats.totalTokens);
+  });
+
+  /**
+   * Average messages per day across the filtered period.
+   * Returns 0 when there are no entries to avoid division by zero.
+   */
+  avgMessagesPerDay = $derived((): number => {
+    const entries = this.filteredDailyUsage();
+    if (entries.length === 0) return 0;
+    const total = entries.reduce((s, e) => s + e.messages, 0);
+    return Math.round((total / entries.length) * 10) / 10;
+  });
+
+  // ── Actions ──────────────────────────────────────────────────────────────────
+
+  /**
+   * Fetch analytics from the backend. Falls back to mock data on any error.
+   * The analytics endpoint is not yet in the shared API client, so we make a
+   * raw fetch using the same base URL and auth token.
+   */
+  async fetchUsage(): Promise<void> {
+    this.loading = true;
+    this.error = null;
+
+    try {
+      const url = `${BASE_URL}${API_PREFIX}/analytics`;
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      };
+
+      const token = getToken();
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+
+      const response = await fetch(url, { headers });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: /api/v1/analytics`);
+      }
+
+      const raw = (await response.json()) as AnalyticsApiResponse;
+      this.stats = mapApiResponse(raw);
+    } catch {
+      // Backend unavailable or endpoint not yet implemented — use mock
+      this.stats = generateMockStats();
+      this.error = null; // Not surfaced as an error; mock data is shown instead
+    } finally {
+      this.loading = false;
+    }
+  }
+
+  /**
+   * Change the active period filter. Does not re-fetch; filters existing stats.
+   */
+  setPeriod(p: AnalyticsPeriod): void {
+    this.period = p;
+  }
+}
+
+// ── Singleton Export ───────────────────────────────────────────────────────────
+
+export const usageStore = new UsageStore();

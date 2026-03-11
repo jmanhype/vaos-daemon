@@ -8,8 +8,8 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_shell::process::CommandChild;
 use tauri_plugin_shell::ShellExt;
 
-pub const BACKEND_PORT: u16 = 8089;
-pub const HEALTH_URL: &str = "http://127.0.0.1:8089/health";
+pub const BACKEND_PORT: u16 = 9089;
+pub const HEALTH_URL: &str = "http://127.0.0.1:9089/health";
 
 /// Global flag so tray/commands can query sidecar status.
 pub static SIDECAR_RUNNING: AtomicBool = AtomicBool::new(false);
@@ -17,7 +17,7 @@ pub static SIDECAR_RUNNING: AtomicBool = AtomicBool::new(false);
 /// Managed state holding the live sidecar child process.
 pub struct SidecarState(pub Mutex<Option<CommandChild>>);
 
-/// Checks if something is already listening on port 8089.
+/// Checks if something is already listening on the backend port.
 async fn port_in_use() -> bool {
     reqwest::get(HEALTH_URL)
         .await
@@ -56,11 +56,14 @@ async fn wait_for_healthy(timeout_secs: u64) -> Result<(), String> {
 
 /// Spawns the Elixir sidecar and waits for it to be healthy.
 pub async fn start_sidecar(app: &AppHandle) -> Result<(), String> {
+    // Always show window immediately — don't block on backend
+    show_main_window(app);
+
     // Dev mode: if backend already running, skip sidecar spawn
     if port_in_use().await {
-        log::info!("Port 8089 already in use — connecting to existing backend");
+        log::info!("Port {} already in use — connecting to existing backend", BACKEND_PORT);
         SIDECAR_RUNNING.store(true, Ordering::Relaxed);
-        show_main_window(app);
+        app.emit("backend-ready", ()).ok();
         return Ok(());
     }
 
@@ -68,37 +71,45 @@ pub async fn start_sidecar(app: &AppHandle) -> Result<(), String> {
 
     let shell = app.shell();
 
+    let port_str = BACKEND_PORT.to_string();
     let env = vec![
-        ("OSA_PORT", "8089"),
+        ("OSA_HTTP_PORT", port_str.as_str()),
         ("OSA_LOG_LEVEL", "warn"),
         ("OSA_HEADLESS", "true"),
     ];
 
-    let (rx, child) = shell
+    let spawn_result = shell
         .sidecar("osagent")
-        .map_err(|e| format!("Failed to create sidecar command: {}", e))?
-        .envs(env)
-        .args(["serve", "--port", "8089"])
-        .spawn()
-        .map_err(|e| format!("Failed to spawn sidecar: {}", e))?;
+        .and_then(|cmd| Ok(cmd.envs(env).args(["serve", "--port", &port_str]).spawn()?));
 
-    // Store child handle for graceful shutdown
-    if let Some(state) = app.try_state::<SidecarState>() {
-        if let Ok(mut guard) = state.0.lock() {
-            *guard = Some(child);
+    match spawn_result {
+        Ok((rx, child)) => {
+            // Store child handle for graceful shutdown
+            if let Some(state) = app.try_state::<SidecarState>() {
+                if let Ok(mut guard) = state.0.lock() {
+                    *guard = Some(child);
+                }
+            }
+
+            spawn_log_monitor(app.clone(), rx);
+
+            // Non-blocking health check — emit event when ready
+            match wait_for_healthy(30).await {
+                Ok(_) => {
+                    log::info!("Sidecar healthy at http://127.0.0.1:{}", BACKEND_PORT);
+                    app.emit("backend-ready", ()).ok();
+                }
+                Err(e) => {
+                    log::warn!("Sidecar health check failed: {} — app still usable", e);
+                    app.emit("backend-unavailable", ()).ok();
+                }
+            }
+        }
+        Err(e) => {
+            log::warn!("Sidecar not available: {} — running in standalone mode", e);
+            app.emit("backend-unavailable", ()).ok();
         }
     }
-
-    // Log stdout/stderr in background — must spawn before any awaits
-    // since rx is not Send
-    spawn_log_monitor(app.clone(), rx);
-
-    // Wait for healthy response
-    wait_for_healthy(30).await?;
-
-    log::info!("Sidecar healthy at http://127.0.0.1:{}", BACKEND_PORT);
-    app.emit("backend-ready", ()).ok();
-    show_main_window(app);
 
     Ok(())
 }

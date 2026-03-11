@@ -295,6 +295,51 @@ defmodule OptimalSystemAgent.Commands.Info do
     {:command, Enum.reverse(parts) |> Enum.join("\n\n")}
   end
 
+  @doc "Handle the `/desktop` and `/gui` command."
+  def cmd_desktop(_arg, _session_id) do
+    osa_root = Application.get_env(:optimal_system_agent, :root_path, File.cwd!())
+    desktop_dir = Path.join(osa_root, "desktop")
+
+    # Look for the built Tauri binary first, then fall back to dev mode
+    binary_paths = [
+      Path.join([desktop_dir, "src-tauri", "target", "release", "osa-desktop"]),
+      Path.join([desktop_dir, "src-tauri", "target", "debug", "osa-desktop"])
+    ]
+
+    case Enum.find(binary_paths, &File.exists?/1) do
+      nil ->
+        # No built binary — try launching dev mode in background
+        launch_desktop_dev(desktop_dir)
+
+      binary ->
+        # Launch the built Tauri app
+        port = Port.open({:spawn_executable, binary}, [:binary, :nouse_stdio, {:cd, desktop_dir}])
+        Port.close(port)
+        {:command, "Launching OSA Desktop (#{Path.basename(binary)})"}
+    end
+  end
+
+  defp launch_desktop_dev(desktop_dir) do
+    npm = if match?({:win32, _}, :os.type()), do: "npm.cmd", else: "npm"
+
+    if File.exists?(Path.join(desktop_dir, "package.json")) do
+      # Install deps if needed
+      unless File.dir?(Path.join(desktop_dir, "node_modules")) do
+        System.cmd(npm, ["install"], cd: desktop_dir, stderr_to_stdout: true)
+      end
+
+      # Start tauri dev in background
+      Port.open(
+        {:spawn_executable, System.find_executable(npm)},
+        [:binary, :nouse_stdio, {:cd, desktop_dir}, {:args, ["run", "tauri:dev"]}]
+      )
+
+      {:command, "Starting OSA Desktop in dev mode...\nThe Tauri window will open shortly."}
+    else
+      {:command, "Desktop app not found at #{desktop_dir}\nRun from the OSA project root."}
+    end
+  end
+
   # ── Formatting Helpers ─────────────────────────────────────────
 
   @doc "Format a DateTime or nil for display."

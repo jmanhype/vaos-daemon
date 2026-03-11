@@ -74,14 +74,30 @@ class ChatStore {
       const data = await sessionsApi.list();
       this.sessions = data;
     } catch (e) {
-      this.error = (e as Error).message;
+      // Only surface connectivity errors — not API-level issues
+      const msg = (e as Error).message ?? String(e);
+      if (
+        msg.includes("fetch") ||
+        msg.includes("network") ||
+        msg.includes("Failed")
+      ) {
+        this.error = msg;
+      }
     } finally {
       this.isLoadingSessions = false;
     }
   }
 
   async createSession(title?: string, model?: string): Promise<Session> {
-    const { session } = await sessionsApi.create({ title, model });
+    const result = await sessionsApi.create({ title, model });
+    // Backend returns { id, status } — construct a Session object
+    const session: Session = {
+      id: result.id,
+      title: title ?? null,
+      created_at: new Date().toISOString(),
+      message_count: 0,
+      alive: true,
+    };
     this.sessions = [session, ...this.sessions];
     return session;
   }
@@ -102,7 +118,17 @@ class ChatStore {
       this.messages = msgs;
       this.pendingUserMessage = null;
     } catch (e) {
-      this.error = (e as Error).message;
+      const err = e as { status?: number; message?: string };
+      // Distinguish API errors (session not found = 404/500) from
+      // real connectivity failures (fetch throws TypeError).
+      if (err.status !== undefined) {
+        // Got a response from the server — it's online, just session issue
+        this.currentSession = null;
+        this.messages = [];
+      } else {
+        // Network-level failure — backend truly offline
+        this.error = err.message ?? String(e);
+      }
     } finally {
       this.isLoadingMessages = false;
     }
@@ -147,10 +173,9 @@ class ChatStore {
     this.isStreaming = true;
 
     try {
-      // POST the message — backend returns a stream_id
-      await messagesApi.send({ session_id: sessionId, content, model });
-
-      // Open the SSE stream
+      // Open the SSE stream (which POSTs the message and streams the response)
+      // Note: we do NOT call messagesApi.send() separately — the stream endpoint
+      // handles both receiving the message and streaming the response.
       this.#streamController = streamMessage({
         sessionId,
         content,
