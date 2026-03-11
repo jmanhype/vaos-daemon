@@ -75,11 +75,7 @@ defmodule OptimalSystemAgent.Channels.NoiseFilter do
       tier1_match?(trimmed) ->
         {:filtered, acknowledgment(trimmed)}
 
-      # Tier 2: definitely noise (single chars, pure emoji) — 0.0–definitely_noise
-      is_number(signal_weight) and signal_weight < thresholds.definitely_noise ->
-        {:filtered, acknowledgment(trimmed)}
-
-      # Tier 2: likely noise (confirmations, filler) — definitely_noise–likely_noise
+      # Tier 2: noise (single chars, pure emoji, confirmations, filler) — 0.0–likely_noise
       is_number(signal_weight) and signal_weight < thresholds.likely_noise ->
         {:filtered, acknowledgment(trimmed)}
 

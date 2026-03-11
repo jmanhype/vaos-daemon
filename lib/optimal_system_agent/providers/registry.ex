@@ -275,14 +275,7 @@ defmodule OptimalSystemAgent.Providers.Registry do
   end
 
   defp ollama_reachable? do
-    url = Application.get_env(:optimal_system_agent, :ollama_url, "http://localhost:11434")
-
-    case Req.get("#{url}/api/tags", receive_timeout: 2_000, retry: false) do
-      {:ok, %{status: 200}} -> true
-      _ -> false
-    end
-  rescue
-    _ -> false
+    OptimalSystemAgent.Providers.Ollama.reachable?()
   end
 
   @impl true

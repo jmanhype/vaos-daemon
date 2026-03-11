@@ -179,6 +179,9 @@ defmodule OptimalSystemAgent.MixProject do
       serve)
         exec "$RELEASE_BIN" eval "OptimalSystemAgent.CLI.serve()"
         ;;
+      doctor)
+        exec "$RELEASE_BIN" eval "OptimalSystemAgent.CLI.doctor()"
+        ;;
       chat|*)
         exec "$RELEASE_BIN" eval "OptimalSystemAgent.CLI.chat()"
         ;;

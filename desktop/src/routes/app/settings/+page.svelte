@@ -1,17 +1,20 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { invoke } from '@tauri-apps/api/core';
   import { open as openDialog } from '@tauri-apps/plugin-dialog';
   import { openUrl } from '@tauri-apps/plugin-opener';
   import { getVersion } from '@tauri-apps/api/app';
   import { health, providers, settings } from '$lib/api/client';
   import { permissionStore } from '$lib/stores/permissions.svelte';
+  import { voiceStore } from '$lib/stores/voice.svelte';
+  import { themeStore } from '$lib/stores/theme.svelte';
+  import type { ThemeMode } from '$lib/stores/theme.svelte';
   import { PROVIDERS } from '$lib/onboarding/types';
+  import { restartBackend as restartBackendUtil } from '$lib/utils/backend';
   import type { Provider, Settings, HealthResponse } from '$lib/api/types';
 
   // ── Tab definitions ──────────────────────────────────────────────────────────
 
-  type TabId = 'general' | 'provider' | 'permissions' | 'advanced' | 'about';
+  type TabId = 'general' | 'provider' | 'voice' | 'permissions' | 'advanced' | 'about';
 
   interface Tab {
     id: TabId;
@@ -22,6 +25,7 @@
   const TABS: Tab[] = [
     { id: 'general',     label: 'General',     icon: 'sliders' },
     { id: 'provider',    label: 'Provider',     icon: 'cpu' },
+    { id: 'voice',       label: 'Voice',        icon: 'mic' },
     { id: 'permissions', label: 'Permissions',  icon: 'shield' },
     { id: 'advanced',    label: 'Advanced',     icon: 'terminal' },
     { id: 'about',       label: 'About',        icon: 'info' },
@@ -53,7 +57,7 @@
   let permTier      = $state<'full' | 'workspace' | 'readonly'>('full');
 
   // Advanced
-  let backendUrl  = $state('http://127.0.0.1:8089');
+  let backendUrl  = $state('http://127.0.0.1:9089');
   let logLevel    = $state<'error' | 'warn' | 'info' | 'debug'>('info');
   let doctorOutput = $state('');
   let runningDoctor = $state(false);
@@ -164,7 +168,7 @@
   async function restartBackend() {
     restartingBackend = true;
     try {
-      await invoke('restart_backend');
+      await restartBackendUtil();
     } catch {
       // command may not exist in dev — ignore
     } finally {
@@ -247,6 +251,8 @@
                 <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75"/></svg>
               {:else if tab.icon === 'cpu'}
                 <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 002.25-2.25V6.75a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25zm.75-12h9v9h-9v-9z"/></svg>
+              {:else if tab.icon === 'mic'}
+                <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23" stroke-width="1.75" stroke-linecap="round"/><line x1="8" y1="23" x2="16" y2="23" stroke-width="1.75" stroke-linecap="round"/></svg>
               {:else if tab.icon === 'shield'}
                 <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z"/></svg>
               {:else if tab.icon === 'terminal'}
@@ -329,10 +335,17 @@
             <div class="settings-item">
               <div class="item-meta">
                 <span class="item-label">Theme</span>
-                <span class="item-hint">Appearance mode.</span>
+                <span class="item-hint">Follows system setting when set to System.</span>
               </div>
-              <select class="field-select" bind:value={theme} aria-label="Theme">
+              <select
+                class="field-select"
+                value={themeStore.mode}
+                onchange={(e) => themeStore.setMode((e.target as HTMLSelectElement).value as ThemeMode)}
+                aria-label="Theme"
+              >
+                <option value="system">System</option>
                 <option value="dark">Dark</option>
+                <option value="light">Light</option>
               </select>
             </div>
           </div>
@@ -416,35 +429,56 @@
           <!-- API key (only for providers that require it) -->
           {#if PROVIDERS.find(p => p.id === selectedProvider)?.requiresKey}
             <div class="settings-group" style="margin-top: 20px;">
-              <div class="settings-item settings-item--col">
-                <div class="item-meta">
-                  <span class="item-label">API key</span>
-                  <span class="item-hint">Stored locally. Never transmitted to third parties.</span>
+              {#if selectedProvider === 'ollama-cloud'}
+                <!-- Ollama Cloud needs endpoint URL -->
+                <div class="settings-item settings-item--col">
+                  <div class="item-meta">
+                    <span class="item-label">Ollama endpoint URL</span>
+                    <span class="item-hint">The URL of your remote Ollama instance (e.g. http://server:11434).</span>
+                  </div>
+                  <div class="sk-input-wrap" style="margin-top: 8px;">
+                    <input
+                      type="text"
+                      class="field-input sk-mono"
+                      bind:value={apiKey}
+                      placeholder="http://your-server:11434"
+                      autocomplete="off"
+                      spellcheck={false}
+                      aria-label="Ollama cloud endpoint URL"
+                    />
+                  </div>
                 </div>
-                <div class="sk-input-wrap" style="margin-top: 8px;">
-                  <input
-                    type={showApiKey ? 'text' : 'password'}
-                    class="field-input sk-mono"
-                    bind:value={apiKey}
-                    placeholder={PROVIDERS.find(p => p.id === selectedProvider)?.keyPlaceholder ?? ''}
-                    autocomplete="off"
-                    spellcheck={false}
-                    aria-label="API key"
-                  />
-                  <button
-                    type="button"
-                    class="sk-eye"
-                    aria-label={showApiKey ? 'Hide API key' : 'Show API key'}
-                    onclick={() => { showApiKey = !showApiKey; }}
-                  >
-                    {#if showApiKey}
-                      <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"/></svg>
-                    {:else}
-                      <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
-                    {/if}
-                  </button>
+              {:else}
+                <div class="settings-item settings-item--col">
+                  <div class="item-meta">
+                    <span class="item-label">API key</span>
+                    <span class="item-hint">Stored locally. Never transmitted to third parties.</span>
+                  </div>
+                  <div class="sk-input-wrap" style="margin-top: 8px;">
+                    <input
+                      type={showApiKey ? 'text' : 'password'}
+                      class="field-input sk-mono"
+                      bind:value={apiKey}
+                      placeholder={PROVIDERS.find(p => p.id === selectedProvider)?.keyPlaceholder ?? ''}
+                      autocomplete="off"
+                      spellcheck={false}
+                      aria-label="API key"
+                    />
+                    <button
+                      type="button"
+                      class="sk-eye"
+                      aria-label={showApiKey ? 'Hide API key' : 'Show API key'}
+                      onclick={() => { showApiKey = !showApiKey; }}
+                    >
+                      {#if showApiKey}
+                        <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"/></svg>
+                      {:else}
+                        <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                      {/if}
+                    </button>
+                  </div>
                 </div>
-              </div>
+              {/if}
             </div>
           {/if}
 
@@ -471,6 +505,118 @@
               </span>
             {:else if connectionStatus === 'error'}
               <span class="status-pill status-pill--error">{connectionMessage}</span>
+            {/if}
+          </div>
+        </section>
+
+      <!-- ── Voice ──────────────────────────────────────────────────────────── -->
+      {:else if activeTab === 'voice'}
+        <section class="section">
+          <h2 class="section-title">Voice Input</h2>
+          <p class="section-desc">Configure speech-to-text for voice commands.</p>
+
+          <div class="settings-group">
+            <!-- Voice provider -->
+            <div class="settings-item">
+              <div class="item-meta">
+                <span class="item-label">Transcription provider</span>
+                <span class="item-hint">How voice audio is converted to text.</span>
+              </div>
+              <select
+                class="field-select"
+                value={voiceStore.provider}
+                onchange={(e) => voiceStore.setProvider((e.target as HTMLSelectElement).value as 'local' | 'groq' | 'openai' | 'browser')}
+                aria-label="Voice provider"
+              >
+                <option value="local">Local (no key needed, live transcript)</option>
+                <option value="groq">Groq Whisper (fast, cloud)</option>
+                <option value="openai">OpenAI Whisper (cloud)</option>
+                <option value="browser" disabled={!voiceStore.hasBrowserSpeech}>
+                  Browser Speech API {voiceStore.hasBrowserSpeech ? '' : '(not available)'}
+                </option>
+              </select>
+            </div>
+
+            <div class="item-divider"></div>
+
+            <!-- Groq API key -->
+            <div class="settings-item">
+              <div class="item-meta">
+                <span class="item-label">Groq API key</span>
+                <span class="item-hint">For Groq Whisper transcription. Get one at console.groq.com</span>
+              </div>
+              <div class="key-row">
+                <input
+                  type="password"
+                  class="field-input"
+                  value={voiceStore.groqKey}
+                  onchange={(e) => voiceStore.setGroqKey((e.target as HTMLInputElement).value)}
+                  placeholder="gsk_..."
+                  aria-label="Groq API key"
+                  spellcheck={false}
+                  autocomplete="off"
+                />
+                {#if voiceStore.groqKey}
+                  <span class="key-status key-status--ok">Set</span>
+                {:else}
+                  <span class="key-status key-status--missing">Missing</span>
+                {/if}
+              </div>
+            </div>
+
+            <div class="item-divider"></div>
+
+            <!-- OpenAI API key -->
+            <div class="settings-item">
+              <div class="item-meta">
+                <span class="item-label">OpenAI API key</span>
+                <span class="item-hint">For OpenAI Whisper transcription.</span>
+              </div>
+              <div class="key-row">
+                <input
+                  type="password"
+                  class="field-input"
+                  value={voiceStore.openaiKey}
+                  onchange={(e) => voiceStore.setOpenaiKey((e.target as HTMLInputElement).value)}
+                  placeholder="sk-..."
+                  aria-label="OpenAI API key"
+                  spellcheck={false}
+                  autocomplete="off"
+                />
+                {#if voiceStore.openaiKey}
+                  <span class="key-status key-status--ok">Set</span>
+                {:else}
+                  <span class="key-status key-status--missing">Missing</span>
+                {/if}
+              </div>
+            </div>
+
+            <div class="item-divider"></div>
+
+            <!-- Test voice -->
+            <div class="settings-item">
+              <div class="item-meta">
+                <span class="item-label">Test voice input</span>
+                <span class="item-hint">Record a short clip to verify your setup works.</span>
+              </div>
+              <button
+                type="button"
+                class="btn-ghost btn-sm"
+                onclick={() => {
+                  voiceStore.toggle((text) => {
+                    alert(`Transcribed: "${text}"`);
+                  });
+                }}
+                aria-label="Test voice"
+              >
+                {voiceStore.isListening ? 'Stop' : voiceStore.isTranscribing ? 'Transcribing...' : 'Test mic'}
+              </button>
+            </div>
+
+            {#if voiceStore.error}
+              <div class="voice-settings-error">
+                {voiceStore.error}
+              </div>
             {/if}
           </div>
         </section>
@@ -571,7 +717,7 @@
                 type="url"
                 class="field-input"
                 bind:value={backendUrl}
-                placeholder="http://127.0.0.1:8089"
+                placeholder="http://127.0.0.1:9089"
                 spellcheck={false}
                 aria-label="Backend URL"
               />
@@ -721,7 +867,8 @@
 
   .settings-root {
     display: flex;
-    height: 100%;
+    flex: 1;
+    min-height: 0;
     overflow: hidden;
     background: var(--bg-secondary);
   }
@@ -1325,17 +1472,20 @@
     padding: 8px 18px;
     background: rgba(255, 255, 255, 0.1);
     border: 1px solid rgba(255, 255, 255, 0.14);
-    border-radius: 8px;
+    border-radius: 9999px;
     color: rgba(255, 255, 255, 0.9);
     font-size: 13px;
     font-weight: 500;
     cursor: pointer;
-    transition: background 0.15s ease, border-color 0.15s ease;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
   }
 
   .btn-primary:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.14);
-    border-color: rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.16);
+    border-color: rgba(255, 255, 255, 0.22);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
   }
 
   .btn-primary:disabled {
@@ -1355,7 +1505,7 @@
     padding: 7px 14px;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 8px;
+    border-radius: 9999px;
     color: rgba(255, 255, 255, 0.6);
     font-size: 13px;
     font-weight: 450;
@@ -1453,5 +1603,43 @@
     clip: rect(0, 0, 0, 0);
     white-space: nowrap;
     border-width: 0;
+  }
+
+  /* Voice settings */
+  .key-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .key-status {
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    padding: 2px 8px;
+    border-radius: 9999px;
+    flex-shrink: 0;
+  }
+
+  .key-status--ok {
+    color: #4ade80;
+    background: rgba(74, 222, 128, 0.1);
+    border: 1px solid rgba(74, 222, 128, 0.2);
+  }
+
+  .key-status--missing {
+    color: rgba(255, 255, 255, 0.35);
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .voice-settings-error {
+    margin-top: 8px;
+    padding: 8px 12px;
+    font-size: 0.75rem;
+    color: rgba(251, 191, 36, 0.8);
+    background: rgba(251, 191, 36, 0.06);
+    border: 1px solid rgba(251, 191, 36, 0.1);
+    border-radius: 8px;
   }
 </style>

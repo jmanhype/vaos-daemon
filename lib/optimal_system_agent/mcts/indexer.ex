@@ -139,7 +139,7 @@ defmodule OptimalSystemAgent.MCTS.Indexer do
   defp run_iterations(tree, root_path, keywords, max_iter, max_depth) do
     Enum.reduce(1..max_iter, tree, fn _i, acc_tree ->
       {selected_path, acc_tree} = select_and_expand(acc_tree, root_path, keywords, max_depth, 0)
-      reward = simulate(acc_tree, selected_path, keywords)
+      reward = simulate(acc_tree, selected_path, keywords, root_path)
       backpropagate(acc_tree, selected_path, reward)
     end)
   end
@@ -264,20 +264,20 @@ defmodule OptimalSystemAgent.MCTS.Indexer do
   # Simulation — estimate reward without full tree traversal
   # ---------------------------------------------------------------------------
 
-  defp simulate(tree, path, keywords) do
+  defp simulate(tree, path, keywords, root_dir) do
     node = Map.get(tree, path)
-    if is_nil(node), do: 0.0, else: do_simulate(node, keywords)
+    if is_nil(node), do: 0.0, else: do_simulate(node, keywords, root_dir)
   end
 
-  defp do_simulate(%Node{type: :dir} = node, keywords) do
+  defp do_simulate(%Node{type: :dir} = node, keywords, _root_dir) do
     filename_relevance(node.path, keywords) * 0.5
   end
 
-  defp do_simulate(%Node{type: :file} = node, keywords) do
+  defp do_simulate(%Node{type: :file} = node, keywords, root_dir) do
     ext_score = file_type_score(Path.extname(node.path))
     name_score = filename_relevance(node.path, keywords)
     content_score = content_relevance(node.content_summary, keywords)
-    penalty = depth_penalty(node.path)
+    penalty = depth_penalty(node.path, root_dir)
 
     raw = ext_score * 0.3 + name_score * 0.4 + content_score * 0.3 - penalty
     max(raw, 0.0)
@@ -333,9 +333,9 @@ defmodule OptimalSystemAgent.MCTS.Indexer do
   defp file_type_score(ext) when ext in @doc_extensions, do: 0.3
   defp file_type_score(_), do: 0.1
 
-  defp depth_penalty(path) do
-    # Penalize paths deeper than 3 levels (arbitrary project root depth)
-    depth = path |> Path.split() |> length()
+  defp depth_penalty(path, root_dir) do
+    # Penalize paths deeper than 3 levels relative to the project root
+    depth = (path |> Path.split() |> length()) - (root_dir |> Path.split() |> length())
     max((depth - 3) * 0.05, 0.0)
   end
 
@@ -406,7 +406,11 @@ defmodule OptimalSystemAgent.MCTS.Indexer do
   defp ensure_cache_table do
     case :ets.info(@cache_table) do
       :undefined ->
-        :ets.new(@cache_table, [:named_table, :set, :public, read_concurrency: true])
+        try do
+          :ets.new(@cache_table, [:named_table, :set, :public, read_concurrency: true])
+        rescue
+          ArgumentError -> :ok
+        end
       _ ->
         :ok
     end

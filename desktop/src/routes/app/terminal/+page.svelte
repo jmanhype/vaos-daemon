@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { isTauri } from '$lib/utils/platform';
+  import { restartBackend } from '$lib/utils/backend';
   import { BASE_URL, API_PREFIX, getToken } from '$lib/api/client';
 
   // ── xterm types (imported dynamically to avoid SSR issues) ──────────────────
@@ -20,10 +21,46 @@
   let searchQuery = $state('');
   let fontSize = $state(13);
   let inputBuffer = $state('');
+  let cursorPos = $state(0);
   let isExecuting = $state(false);
   let searchInputEl = $state<HTMLInputElement | null>(null);
   let resizeObserver: ResizeObserver | null = null;
   let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // ── Command history ─────────────────────────────────────────────────────────
+  const MAX_HISTORY = 100;
+  let history: string[] = [];
+  let historyIndex = -1;
+  let savedInput = ''; // saves current input when browsing history
+
+  function addToHistory(cmd: string) {
+    if (!cmd.trim()) return;
+    // Skip consecutive duplicates
+    if (history.length > 0 && history[0] === cmd) return;
+    history.unshift(cmd);
+    if (history.length > MAX_HISTORY) history.pop();
+    historyIndex = -1;
+  }
+
+  // ── Line editing helpers ────────────────────────────────────────────────────
+  function clearLine(t: XTerminal) {
+    // Move cursor back to start of input, clear to end
+    if (inputBuffer.length > 0) {
+      // Move left by cursorPos chars, then clear to end of line
+      if (cursorPos > 0) t.write(`\x1b[${cursorPos}D`);
+      t.write('\x1b[K');
+    }
+  }
+
+  function redrawInput(t: XTerminal, newBuffer: string, newCursorPos?: number) {
+    clearLine(t);
+    inputBuffer = newBuffer;
+    cursorPos = newCursorPos ?? newBuffer.length;
+    t.write(newBuffer);
+    // Move cursor back if not at end
+    const diff = newBuffer.length - cursorPos;
+    if (diff > 0) t.write(`\x1b[${diff}D`);
+  }
 
   // ── Terminal theme ───────────────────────────────────────────────────────────
 
@@ -121,6 +158,143 @@
     }
   }
 
+  // ── Slash command autocomplete ──────────────────────────────────────────────
+
+  const SLASH_COMMANDS = ['help', 'clear', 'model', 'new', 'history', 'restart'];
+
+  /** Returns the best matching slash command for the current input, or null */
+  function getSlashCompletion(buf: string): string | null {
+    if (!buf.startsWith('/') || buf.length < 2) return null;
+    const typed = buf.slice(1).toLowerCase();
+    const match = SLASH_COMMANDS.find(c => c.startsWith(typed) && c !== typed);
+    return match ?? null;
+  }
+
+  /** Ghost text state — the remaining chars to show as preview */
+  let ghostText = $state('');
+
+  function updateGhost() {
+    if (!inputBuffer.startsWith('/') || cursorPos !== inputBuffer.length) {
+      ghostText = '';
+      return;
+    }
+    const match = getSlashCompletion(inputBuffer);
+    ghostText = match ? match.slice(inputBuffer.length - 1) : '';
+  }
+
+  /** Write ghost text in dim color after cursor, then move cursor back */
+  function renderGhost(t: XTerminal) {
+    if (!ghostText) return;
+    // Write dim ghost text
+    t.write(`\x1b[38;5;240m${ghostText}\x1b[0m`);
+    // Move cursor back to where it was
+    t.write(`\x1b[${ghostText.length}D`);
+  }
+
+  /** Clear any rendered ghost text */
+  function clearGhost(t: XTerminal) {
+    if (!ghostText) return;
+    // From cursor position, clear to end of line
+    t.write('\x1b[K');
+  }
+
+  // ── Slash commands ──────────────────────────────────────────────────────────
+
+  function handleSlashCommand(cmd: string, t: XTerminal) {
+    const parts = cmd.slice(1).split(/\s+/);
+    const name = parts[0]?.toLowerCase() ?? '';
+
+    t.write('\r\n');
+
+    switch (name) {
+      case 'help':
+        t.writeln('\x1b[1m\x1b[38;5;39mAvailable commands:\x1b[0m');
+        t.writeln('  \x1b[38;5;39m/help\x1b[0m          Show this help');
+        t.writeln('  \x1b[38;5;39m/clear\x1b[0m         Clear the terminal');
+        t.writeln('  \x1b[38;5;39m/model\x1b[0m         Show active model');
+        t.writeln('  \x1b[38;5;39m/new\x1b[0m           Start new session');
+        t.writeln('  \x1b[38;5;39m/history\x1b[0m       Show command history');
+        t.writeln('  \x1b[38;5;39m/restart\x1b[0m       Restart the backend');
+        t.writeln('');
+        t.writeln('\x1b[1mKeyboard shortcuts:\x1b[0m');
+        t.writeln('  \x1b[38;5;240mCtrl+L\x1b[0m   Clear screen');
+        t.writeln('  \x1b[38;5;240mCtrl+C\x1b[0m   Cancel / clear line');
+        t.writeln('  \x1b[38;5;240mCtrl+F\x1b[0m   Toggle search');
+        t.writeln('  \x1b[38;5;240mCtrl+A\x1b[0m   Jump to start');
+        t.writeln('  \x1b[38;5;240mCtrl+E\x1b[0m   Jump to end');
+        t.writeln('  \x1b[38;5;240mCtrl+K\x1b[0m   Delete to end of line');
+        t.writeln('  \x1b[38;5;240mCtrl+U\x1b[0m   Delete to start of line');
+        t.writeln('  \x1b[38;5;240mCtrl+W\x1b[0m   Delete word back');
+        t.writeln('  \x1b[38;5;240m↑/↓\x1b[0m      History navigation');
+        break;
+      case 'clear':
+        t.clear();
+        inputBuffer = '';
+        cursorPos = 0;
+        break;
+      case 'model':
+        t.writeln('\x1b[38;5;240mQuerying active model...\x1b[0m');
+        void (async () => {
+          try {
+            const token = getToken();
+            const headers: Record<string, string> = { Accept: 'application/json' };
+            if (token) headers['Authorization'] = `Bearer ${token}`;
+            const res = await fetch(`${BASE_URL}${API_PREFIX}/models`, { headers });
+            if (res.ok) {
+              const models = await res.json() as Array<{ name: string; active?: boolean }>;
+              const active = models.find(m => m.active);
+              if (active) {
+                t.writeln(`\x1b[38;5;39mActive model:\x1b[0m ${active.name}`);
+              } else {
+                t.writeln('\x1b[38;5;240mNo active model set\x1b[0m');
+              }
+            } else {
+              t.writeln('\x1b[31mBackend offline\x1b[0m');
+            }
+          } catch {
+            t.writeln('\x1b[31mBackend offline\x1b[0m');
+          }
+          writePrompt(t);
+        })();
+        return; // Don't write prompt — async handler does it
+      case 'history':
+        if (history.length === 0) {
+          t.writeln('\x1b[38;5;240mNo command history\x1b[0m');
+        } else {
+          t.writeln('\x1b[1mCommand history:\x1b[0m');
+          const show = history.slice(0, 20);
+          show.forEach((h, i) => {
+            t.writeln(`  \x1b[38;5;240m${i + 1}.\x1b[0m ${h}`);
+          });
+          if (history.length > 20) {
+            t.writeln(`  \x1b[38;5;240m... and ${history.length - 20} more\x1b[0m`);
+          }
+        }
+        break;
+      case 'new':
+        t.writeln('\x1b[38;5;39mStarting new session...\x1b[0m');
+        history = [];
+        historyIndex = -1;
+        t.clear();
+        t.writeln('\x1b[1m\x1b[38;5;39mOSA\x1b[0m \x1b[38;5;240mTerminal\x1b[0m');
+        t.writeln('\x1b[38;5;240mNew session started. Type /help for commands.\x1b[0m');
+        break;
+      case 'restart':
+        t.writeln('\x1b[38;5;39mSending restart signal...\x1b[0m');
+        restartBackend()
+          .then(() => t.writeln('\x1b[38;5;39mRestart signal sent\x1b[0m'))
+          .catch(() => t.writeln('\x1b[31mBackend offline — cannot restart\x1b[0m'))
+          .finally(() => writePrompt(t));
+        return;
+      default:
+        t.writeln(`\x1b[31mUnknown command: /${name}\x1b[0m`);
+        t.writeln('\x1b[38;5;240mType /help for available commands.\x1b[0m');
+        break;
+    }
+
+    writePrompt(t);
+  }
+
   // ── xterm initialization ─────────────────────────────────────────────────────
 
   async function initTerminal(container: HTMLDivElement) {
@@ -157,30 +331,50 @@
 
     // Banner
     t.writeln('\x1b[1m\x1b[38;5;39mOSA\x1b[0m \x1b[38;5;240mTerminal\x1b[0m');
-    t.writeln('\x1b[38;5;240mType a command and press Enter. Ctrl+L clears. Ctrl+F toggles search.\x1b[0m');
+    t.writeln('\x1b[38;5;240mType a command or /help for available commands.\x1b[0m');
+    t.writeln('\x1b[38;5;240mCtrl+L clear | Ctrl+F search | ↑↓ history | Ctrl+A/E home/end\x1b[0m');
     writePrompt(t);
 
-    // Key handler
+    // Key handler — full readline emulation
     t.onKey(({ key, domEvent }) => {
       const ev = domEvent;
 
-      // Ctrl+C — interrupt (visual only; no real PTY)
+      // Tab — complete slash command
+      if (ev.key === 'Tab') {
+        ev.preventDefault();
+        const match = getSlashCompletion(inputBuffer);
+        if (match && cursorPos === inputBuffer.length) {
+          clearGhost(t);
+          const completion = match.slice(inputBuffer.length - 1);
+          inputBuffer += completion;
+          cursorPos = inputBuffer.length;
+          t.write(completion);
+          ghostText = '';
+        }
+        return;
+      }
+
+      // Ctrl+C — interrupt
       if (ev.ctrlKey && ev.key === 'c') {
+        clearGhost(t);
         if (isExecuting) {
           isExecuting = false;
           t.write('^C');
         } else {
           t.write('^C');
           inputBuffer = '';
+          cursorPos = 0;
         }
+        ghostText = '';
         writePrompt(t);
         return;
       }
 
-      // Ctrl+L — clear
+      // Ctrl+L — clear screen
       if (ev.ctrlKey && ev.key === 'l') {
         t.clear();
         inputBuffer = '';
+        cursorPos = 0;
         writePrompt(t);
         return;
       }
@@ -194,21 +388,179 @@
         return;
       }
 
+      // Ctrl+A — jump to start of line
+      if (ev.ctrlKey && ev.key === 'a') {
+        if (cursorPos > 0) {
+          t.write(`\x1b[${cursorPos}D`);
+          cursorPos = 0;
+        }
+        return;
+      }
+
+      // Ctrl+E — jump to end of line
+      if (ev.ctrlKey && ev.key === 'e') {
+        const diff = inputBuffer.length - cursorPos;
+        if (diff > 0) {
+          t.write(`\x1b[${diff}C`);
+          cursorPos = inputBuffer.length;
+        }
+        return;
+      }
+
+      // Ctrl+K — delete from cursor to end of line
+      if (ev.ctrlKey && ev.key === 'k') {
+        if (cursorPos < inputBuffer.length) {
+          t.write('\x1b[K');
+          inputBuffer = inputBuffer.slice(0, cursorPos);
+        }
+        return;
+      }
+
+      // Ctrl+U — delete from start to cursor
+      if (ev.ctrlKey && ev.key === 'u') {
+        if (cursorPos > 0) {
+          const rest = inputBuffer.slice(cursorPos);
+          t.write(`\x1b[${cursorPos}D\x1b[K`);
+          inputBuffer = rest;
+          cursorPos = 0;
+          t.write(rest);
+          if (rest.length > 0) t.write(`\x1b[${rest.length}D`);
+        }
+        return;
+      }
+
+      // Ctrl+W — delete word back
+      if (ev.ctrlKey && ev.key === 'w') {
+        if (cursorPos > 0) {
+          const before = inputBuffer.slice(0, cursorPos);
+          const after = inputBuffer.slice(cursorPos);
+          const wordStart = before.trimEnd().lastIndexOf(' ') + 1;
+          const deleted = cursorPos - wordStart;
+          if (deleted > 0) {
+            const newBuf = before.slice(0, wordStart) + after;
+            t.write(`\x1b[${deleted}D\x1b[K`);
+            cursorPos = wordStart;
+            inputBuffer = newBuf;
+            t.write(after);
+            if (after.length > 0) t.write(`\x1b[${after.length}D`);
+          }
+        }
+        return;
+      }
+
       if (isExecuting) return;
 
       // Enter — execute
       if (ev.key === 'Enter') {
+        clearGhost(t);
+        ghostText = '';
         const cmd = inputBuffer;
+        addToHistory(cmd);
         inputBuffer = '';
+        cursorPos = 0;
+        historyIndex = -1;
+
+        // Handle slash commands locally
+        if (cmd.startsWith('/')) {
+          handleSlashCommand(cmd, t);
+          return;
+        }
+
         void executeCommand(cmd);
         return;
       }
 
-      // Backspace
+      // Up arrow — history back
+      if (ev.key === 'ArrowUp') {
+        clearGhost(t);
+        ghostText = '';
+        if (history.length === 0) return;
+        if (historyIndex === -1) savedInput = inputBuffer;
+        if (historyIndex < history.length - 1) {
+          historyIndex++;
+          redrawInput(t, history[historyIndex]);
+        }
+        return;
+      }
+
+      // Down arrow — history forward
+      if (ev.key === 'ArrowDown') {
+        clearGhost(t);
+        ghostText = '';
+        if (historyIndex <= 0) {
+          if (historyIndex === 0) {
+            historyIndex = -1;
+            redrawInput(t, savedInput);
+          }
+          return;
+        }
+        historyIndex--;
+        redrawInput(t, history[historyIndex]);
+        return;
+      }
+
+      // Left arrow — move cursor left
+      if (ev.key === 'ArrowLeft') {
+        if (cursorPos > 0) {
+          cursorPos--;
+          t.write('\x1b[D');
+        }
+        return;
+      }
+
+      // Right arrow — move cursor right
+      if (ev.key === 'ArrowRight') {
+        if (cursorPos < inputBuffer.length) {
+          cursorPos++;
+          t.write('\x1b[C');
+        }
+        return;
+      }
+
+      // Home — jump to start
+      if (ev.key === 'Home') {
+        if (cursorPos > 0) {
+          t.write(`\x1b[${cursorPos}D`);
+          cursorPos = 0;
+        }
+        return;
+      }
+
+      // End — jump to end
+      if (ev.key === 'End') {
+        const diff = inputBuffer.length - cursorPos;
+        if (diff > 0) {
+          t.write(`\x1b[${diff}C`);
+          cursorPos = inputBuffer.length;
+        }
+        return;
+      }
+
+      // Backspace — delete char before cursor
       if (ev.key === 'Backspace') {
-        if (inputBuffer.length > 0) {
-          inputBuffer = inputBuffer.slice(0, -1);
-          t.write('\b \b');
+        clearGhost(t);
+        if (cursorPos > 0) {
+          const before = inputBuffer.slice(0, cursorPos - 1);
+          const after = inputBuffer.slice(cursorPos);
+          inputBuffer = before + after;
+          cursorPos--;
+          t.write('\b');
+          t.write(after + ' ');
+          t.write(`\x1b[${after.length + 1}D`);
+          updateGhost();
+          renderGhost(t);
+        }
+        return;
+      }
+
+      // Delete — delete char at cursor
+      if (ev.key === 'Delete') {
+        if (cursorPos < inputBuffer.length) {
+          const before = inputBuffer.slice(0, cursorPos);
+          const after = inputBuffer.slice(cursorPos + 1);
+          inputBuffer = before + after;
+          t.write(after + ' ');
+          t.write(`\x1b[${after.length + 1}D`);
         }
         return;
       }
@@ -217,9 +569,18 @@
       if (ev.ctrlKey || ev.altKey || ev.metaKey) return;
       if (key.length !== 1) return;
 
-      // Printable character
-      inputBuffer += key;
-      t.write(key);
+      // Printable character — insert at cursor position
+      clearGhost(t);
+      const before = inputBuffer.slice(0, cursorPos);
+      const after = inputBuffer.slice(cursorPos);
+      inputBuffer = before + key + after;
+      cursorPos++;
+      t.write(key + after);
+      if (after.length > 0) t.write(`\x1b[${after.length}D`);
+
+      // Show ghost text for slash commands
+      updateGhost();
+      renderGhost(t);
     });
 
     term      = t;

@@ -4,22 +4,29 @@
   import { onMount } from 'svelte';
   import { fade } from 'svelte/transition';
   import Sidebar from '$lib/components/layout/Sidebar.svelte';
-  import TitleBar from '$lib/components/layout/TitleBar.svelte';
+  // TitleBar removed — using native decorations
   import PermissionOverlay from '$lib/components/permissions/PermissionOverlay.svelte';
   import SurveyDialog from '$lib/components/survey/SurveyDialog.svelte';
   import TaskCard from '$lib/components/tasks/TaskCard.svelte';
   import CommandPalette from '$lib/components/palette/CommandPalette.svelte';
-  import { isTauri, isMacOS } from '$lib/utils/platform';
+  import { restartBackend } from '$lib/utils/backend';
   import { settingsStore } from '$lib/stores/settingsStore';
   import { permissionStore } from '$lib/stores/permissions.svelte';
   import { surveyStore } from '$lib/stores/survey.svelte';
   import { taskStore } from '$lib/stores/tasks.svelte';
   import { chatStore } from '$lib/stores/chat.svelte';
   import { paletteStore } from '$lib/stores/palette.svelte';
+  import { themeStore } from '$lib/stores/theme.svelte';
   import type { StreamEvent } from '$lib/api/types';
   import type { Survey } from '$lib/stores/survey.svelte';
 
   let { children } = $props();
+
+  // Initialize theme on mount — themeStore constructor handles DOM application
+  // We reference it here to ensure it's created in the browser context
+  $effect(() => {
+    void themeStore.resolved; // subscribe to theme changes
+  });
 
   // Sidebar collapsed state — persisted to localStorage
   let sidebarCollapsed = $state(false);
@@ -37,13 +44,8 @@
     }
   }
 
-  // Platform flags
-  const isDesktop = $derived(browser && isTauri());
-  const onMac = $derived(browser && isMacOS());
-  const showTitleBar = $derived(isDesktop && onMac);
-
-  // Nav routes mapped to keyboard shortcuts ⌘1–⌘5
-  const NAV_ROUTES = ['/chat', '/agents', '/models', '/terminal', '/settings'];
+  // Nav routes mapped to keyboard shortcuts ⌘1–⌘6
+  const NAV_ROUTES = ['/app', '/app/agents', '/app/models', '/app/terminal', '/app/connectors', '/app/settings'];
 
   // ── SSE Event Dispatcher ────────────────────────────────────────────────────
   //
@@ -70,7 +72,7 @@
             (decision) => {
               // POST decision back to backend if we have a session
               if (!sessionId) return;
-              const BASE = 'http://127.0.0.1:8089/api/v1';
+              const BASE = 'http://127.0.0.1:9089/api/v1';
               fetch(`${BASE}/sessions/${sessionId}/tool_calls/${toolUseId}/decision`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -127,7 +129,21 @@
   // Cleaned up automatically when the layout is destroyed.
   onMount(() => {
     chatStore.addStreamListener(dispatchStreamEvent);
-    return () => chatStore.removeStreamListener(dispatchStreamEvent);
+
+    // Listen for osa:send-message events from Connectors page and other sources
+    function handleOSASend(e: Event) {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.message) {
+        chatStore.sendMessage(detail.message);
+        goto('/app'); // Navigate to chat
+      }
+    }
+    window.addEventListener('osa:send-message', handleOSASend);
+
+    return () => {
+      chatStore.removeStreamListener(dispatchStreamEvent);
+      window.removeEventListener('osa:send-message', handleOSASend);
+    };
   });
 
   // ── Command Palette — register builtins ──────────────────────────────────────
@@ -136,13 +152,13 @@
     paletteStore.registerBuiltins(goto, {
       newSession: () => {
         void chatStore.createSession().then((session) => {
-          void goto(`/app/chat?session=${session.id}`);
+          void goto(`/app?session=${session.id}`);
         });
       },
       clearChat: () => {
         // Start a fresh session — the idiomatic "clear" in OSA
         void chatStore.createSession().then((session) => {
-          void goto(`/app/chat?session=${session.id}`);
+          void goto(`/app?session=${session.id}`);
         });
       },
       toggleYolo: () => {
@@ -150,8 +166,7 @@
         else permissionStore.enableYolo();
       },
       restartBackend: () => {
-        // Fire-and-forget: POST to the backend restart endpoint (best-effort)
-        fetch('http://127.0.0.1:8089/api/v1/system/restart', { method: 'POST' }).catch(() => {});
+        restartBackend().catch(() => {});
       },
     });
   });
@@ -196,8 +211,8 @@
         return;
       }
 
-      // ⌘1–⌘5 — navigate to route by position
-      const idx = ['1', '2', '3', '4', '5'].indexOf(e.key);
+      // ⌘1–⌘6 — navigate to route by position
+      const idx = ['1', '2', '3', '4', '5', '6'].indexOf(e.key);
       if (idx !== -1) {
         e.preventDefault();
         goto(NAV_ROUTES[idx]);
@@ -224,9 +239,7 @@
     pointer-events: none on the bar itself ensures clicks
     pass through to sidebar toggle and nav links below.
   -->
-  {#if showTitleBar}
-    <TitleBar title="OSA" />
-  {/if}
+  <!-- TitleBar removed — native decorations handle window chrome now -->
 
   <!-- Icon sidebar -->
   <Sidebar

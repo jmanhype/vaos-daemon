@@ -5,7 +5,7 @@
 import type { StreamEvent } from "./types";
 import { getToken } from "./client";
 
-const BASE_URL = "http://127.0.0.1:8089";
+const BASE_URL = "http://127.0.0.1:9089";
 const API_PREFIX = "/api/v1";
 
 // ── Back-off Constants ────────────────────────────────────────────────────────

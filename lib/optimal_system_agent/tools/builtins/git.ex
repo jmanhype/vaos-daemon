@@ -29,7 +29,9 @@ defmodule OptimalSystemAgent.Tools.Builtins.Git do
           "enum" => [
             "status", "diff", "log", "commit", "add",
             "push", "pull", "clone", "branch", "show",
-            "stash", "reset", "remote", "tag"
+            "stash", "reset", "remote", "tag",
+            "blame", "search", "cherry_pick", "worktree",
+            "bisect", "reflog", "pr_diff"
           ],
           "description" =>
             "Git operation: status, diff, log, commit, add, push, pull, clone, branch, show, " <>
@@ -234,24 +236,18 @@ defmodule OptimalSystemAgent.Tools.Builtins.Git do
         {:error, "commit message cannot be empty"}
 
       message ->
-        # Stage all tracked + new files, then commit
-        case git(["add", "-A"], dir) do
-          {:ok, _} ->
-            case git(["commit", "-m", message], dir) do
-              {:ok, output} ->
-                {:ok, output}
+        # Commit whatever is staged — agent should use "add" operation first
+        case git(["commit", "-m", message], dir) do
+          {:ok, output} ->
+            {:ok, output}
 
-              {:error, output} ->
-                # Nothing to commit is not a fatal error
-                if String.contains?(output, "nothing to commit") do
-                  {:ok, output}
-                else
-                  {:error, output}
-                end
+          {:error, output} ->
+            # Nothing to commit is not a fatal error
+            if String.contains?(output, "nothing to commit") do
+              {:ok, output}
+            else
+              {:error, output}
             end
-
-          {:error, reason} ->
-            {:error, "git add failed: #{reason}"}
         end
     end
   end
@@ -422,7 +418,8 @@ defmodule OptimalSystemAgent.Tools.Builtins.Git do
       "push" -> git(["stash", "push"], dir)
       "pop" -> git(["stash", "pop"], dir)
       "list" -> git(["stash", "list"], dir)
-      other -> {:error, "Unknown stash action: #{other}. Use push, pop, or list."}
+      "drop" -> git(["stash", "drop"], dir)
+      other -> {:error, "Unknown stash action: #{other}. Use push, pop, list, or drop."}
     end
   end
 

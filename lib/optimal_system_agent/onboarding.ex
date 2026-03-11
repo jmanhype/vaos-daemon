@@ -107,6 +107,88 @@ defmodule OptimalSystemAgent.Onboarding do
     _ -> false
   end
 
+  @doc """
+  Non-blocking zero-config auto-detection at startup.
+
+  Probes local providers (Ollama, LM Studio) via HTTP, then checks for
+  cloud API keys in the environment. If a usable provider is found, writes
+  a default config.json and applies it — no user interaction required.
+
+  Returns `:ok` regardless of outcome. If no provider is found, OSA starts
+  anyway with a warning; the frontend can check `/onboarding/status` to
+  prompt the user through setup.
+  """
+  @spec auto_configure() :: :ok
+  def auto_configure do
+    config_path = Path.join(config_dir(), "config.json")
+
+    # Skip if already configured
+    if File.exists?(config_path) and config_has_provider?(config_path) do
+      apply_config()
+      :ok
+    else
+      case detect_provider() do
+        {:ok, provider, model, env_var, api_key} ->
+          Logger.info("[Onboarding] Auto-detected provider: #{provider} (#{model})")
+
+          state = %{
+            agent_name: "OSA",
+            provider: provider,
+            model: model,
+            api_key: api_key,
+            env_var: env_var
+          }
+
+          write_setup(state)
+          apply_config()
+          :ok
+
+        :none ->
+          Logger.warning(
+            "[Onboarding] No LLM provider detected. " <>
+              "Run `osagent setup` or configure via the web UI at /onboarding/status"
+          )
+
+          # Ensure bootstrap directories exist even without a provider
+          dir = config_dir()
+          File.mkdir_p!(dir)
+          File.mkdir_p!(Path.join(dir, "sessions"))
+          File.mkdir_p!(Path.join(dir, "data"))
+          :ok
+      end
+    end
+  end
+
+  @doc """
+  Probe for available LLM providers. Checks in order:
+  1. Ollama at localhost:11434 (HTTP GET /api/tags, 2s timeout)
+  2. LM Studio at localhost:1234 (HTTP GET /v1/models, 2s timeout)
+  3. Cloud providers with API keys in environment
+
+  Returns `{:ok, provider, model, env_var, api_key}` or `:none`.
+  """
+  @spec detect_provider() :: {:ok, String.t(), String.t(), String.t() | nil, String.t() | nil} | :none
+  def detect_provider do
+    # 1. Probe Ollama
+    case probe_http("http://localhost:11434/api/tags") do
+      {:ok, body} ->
+        model = extract_ollama_model(body)
+        {:ok, "ollama", model, nil, nil}
+
+      :error ->
+        # 2. Probe LM Studio
+        case probe_http("http://localhost:1234/v1/models") do
+          {:ok, body} ->
+            model = extract_lmstudio_model(body)
+            {:ok, "lmstudio", model, nil, nil}
+
+          :error ->
+            # 3. Check cloud API keys
+            detect_cloud_provider()
+        end
+    end
+  end
+
   @doc "Run the full onboarding wizard. Writes all bootstrap files."
   @spec run() :: :ok
   def run do
@@ -314,6 +396,62 @@ defmodule OptimalSystemAgent.Onboarding do
       runtimes: runtimes,
       ollama: ollama
     }
+  end
+
+  # ── Auto-Detection Helpers ─────────────────────────────────────
+
+  defp probe_http(url) do
+    case Req.get(url, receive_timeout: 2_000, connect_options: [timeout: 2_000]) do
+      {:ok, %Req.Response{status: 200, body: body}} ->
+        decoded = if is_binary(body), do: Jason.decode(body), else: {:ok, body}
+
+        case decoded do
+          {:ok, map} when is_map(map) -> {:ok, map}
+          _ -> :error
+        end
+
+      _ ->
+        :error
+    end
+  rescue
+    _ -> :error
+  end
+
+  defp extract_ollama_model(%{"models" => [first | _]}) when is_map(first) do
+    Map.get(first, "name", "qwen2.5:7b")
+  end
+
+  defp extract_ollama_model(_), do: "qwen2.5:7b"
+
+  defp extract_lmstudio_model(%{"data" => [first | _]}) when is_map(first) do
+    Map.get(first, "id", "default")
+  end
+
+  defp extract_lmstudio_model(_), do: "default"
+
+  @cloud_providers_detect [
+    {"anthropic", "claude-sonnet-4-6", "ANTHROPIC_API_KEY"},
+    {"openai", "gpt-4o", "OPENAI_API_KEY"},
+    {"groq", "llama-3.3-70b-versatile", "GROQ_API_KEY"},
+    {"openrouter", "meta-llama/llama-3.3-70b-instruct", "OPENROUTER_API_KEY"},
+    {"google", "gemini-2.0-flash", "GOOGLE_API_KEY"},
+    {"deepseek", "deepseek-chat", "DEEPSEEK_API_KEY"},
+    {"mistral", "mistral-large-latest", "MISTRAL_API_KEY"},
+    {"together", "meta-llama/Llama-3.3-70B-Instruct-Turbo", "TOGETHER_API_KEY"},
+    {"fireworks", "accounts/fireworks/models/llama-v3p3-70b-instruct", "FIREWORKS_API_KEY"},
+    {"cohere", "command-r-plus", "CO_API_KEY"}
+  ]
+
+  defp detect_cloud_provider do
+    Enum.find_value(@cloud_providers_detect, :none, fn {provider, model, env_var} ->
+      case System.get_env(env_var) do
+        key when is_binary(key) and key != "" ->
+          {:ok, provider, model, env_var, key}
+
+        _ ->
+          nil
+      end
+    end)
   end
 
   # ── Wizard Steps ────────────────────────────────────────────────

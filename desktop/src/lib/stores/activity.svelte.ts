@@ -21,8 +21,8 @@ export interface Activity {
   label: string;
   /** Brief argument / path summary (first path or truncated input) */
   summary: string;
-  /** Emoji prefix matching the TUI pattern */
-  emoji: string;
+  /** Icon key for the activity feed */
+  icon: string;
   /** Epoch ms when the tool call began */
   startedAt: number;
   /** Epoch ms when the result arrived, or null if still running */
@@ -31,29 +31,29 @@ export interface Activity {
   isError: boolean;
 }
 
-// ── Tool emoji / label map (matches TUI conventions) ─────────────────────────
+// ── Tool icon / label map (matches TUI conventions) ──────────────────────────
 
-const TOOL_META: Record<string, { emoji: string; verb: string }> = {
-  bash: { emoji: "⚡", verb: "Running" },
-  execute: { emoji: "⚡", verb: "Running" },
-  read_file: { emoji: "📖", verb: "Reading" },
-  write_file: { emoji: "✏️", verb: "Writing" },
-  edit_file: { emoji: "✏️", verb: "Editing" },
-  create_file: { emoji: "📄", verb: "Creating" },
-  delete_file: { emoji: "🗑️", verb: "Deleting" },
-  list_directory: { emoji: "📁", verb: "Listing" },
-  search_files: { emoji: "🔍", verb: "Searching" },
-  grep: { emoji: "🔍", verb: "Searching" },
-  glob: { emoji: "🔍", verb: "Globbing" },
-  web_search: { emoji: "🌐", verb: "Searching web" },
-  fetch_url: { emoji: "🌐", verb: "Fetching" },
-  computer: { emoji: "🖥️", verb: "Controlling" },
-  screenshot: { emoji: "📷", verb: "Capturing" },
-  think: { emoji: "💭", verb: "Thinking" },
-  plan: { emoji: "📋", verb: "Planning" },
+const TOOL_META: Record<string, { icon: string; verb: string }> = {
+  bash: { icon: "terminal", verb: "Running" },
+  execute: { icon: "terminal", verb: "Running" },
+  read_file: { icon: "file", verb: "Reading" },
+  write_file: { icon: "edit", verb: "Writing" },
+  edit_file: { icon: "edit", verb: "Editing" },
+  create_file: { icon: "file-plus", verb: "Creating" },
+  delete_file: { icon: "trash", verb: "Deleting" },
+  list_directory: { icon: "folder", verb: "Listing" },
+  search_files: { icon: "search", verb: "Searching" },
+  grep: { icon: "search", verb: "Searching" },
+  glob: { icon: "search", verb: "Globbing" },
+  web_search: { icon: "globe", verb: "Searching web" },
+  fetch_url: { icon: "globe", verb: "Fetching" },
+  computer: { icon: "monitor", verb: "Controlling" },
+  screenshot: { icon: "camera", verb: "Capturing" },
+  think: { icon: "cpu", verb: "Thinking" },
+  plan: { icon: "list", verb: "Planning" },
 };
 
-function metaForTool(tool: string): { emoji: string; verb: string } {
+function metaForTool(tool: string): { icon: string; verb: string } {
   // Normalize: strip namespaces like "str_replace_editor" → try suffix match
   const lower = tool.toLowerCase();
   for (const [key, meta] of Object.entries(TOOL_META)) {
@@ -65,7 +65,7 @@ function metaForTool(tool: string): { emoji: string; verb: string } {
       return meta;
     }
   }
-  return { emoji: "🔧", verb: "Running" };
+  return { icon: "tool", verb: "Running" };
 }
 
 function summaryFromInput(input: Record<string, unknown>): string {
@@ -180,7 +180,7 @@ class ActivityStore {
       tool: event.tool_name,
       label: `${meta.verb} ${summary}`.trim(),
       summary,
-      emoji: meta.emoji,
+      icon: meta.icon,
       startedAt: Date.now(),
       finishedAt: null,
       isError: false,

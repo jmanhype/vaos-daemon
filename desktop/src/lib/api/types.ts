@@ -1,5 +1,5 @@
 // src/lib/api/types.ts
-// All TypeScript types for the OSA API (localhost:8089/api/v1)
+// All TypeScript types for the OSA API (localhost:9089/api/v1)
 
 // ── Health ────────────────────────────────────────────────────────────────────
 
@@ -170,6 +170,7 @@ export interface Agent {
 
 export type ModelProvider =
   | "ollama"
+  | "ollama-cloud"
   | "anthropic"
   | "openai"
   | "groq"
@@ -205,7 +206,7 @@ export interface Settings {
   working_dir: string;
   budget_daily_usd: number;
   budget_monthly_usd: number;
-  theme: "dark" | "system";
+  theme: "dark" | "light" | "system";
   telemetry: boolean;
 }
 

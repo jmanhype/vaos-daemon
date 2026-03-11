@@ -5,7 +5,7 @@
   "identifier": "ai.osa.desktop",
   "build": {
     "frontendDist": "../build",
-    "devUrl": "http://localhost:5173",
+    "devUrl": "http://localhost:5199",
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build"
   },
@@ -19,15 +19,16 @@
         "minHeight": 600,
         "resizable": true,
         "fullscreen": false,
-        "decorations": false,
-        "transparent": true,
+        "decorations": true,
+        "transparent": false,
         "center": true,
         "visible": false,
-        "label": "main"
+        "label": "main",
+        "theme": "Dark"
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' http://localhost:8089; style-src 'self' 'unsafe-inline'; script-src 'self'"
+      "csp": "default-src 'self'; connect-src 'self' http://localhost:9089 http://127.0.0.1:9089; style-src 'self' 'unsafe-inline'; script-src 'self'"
     },
     "trayIcon": {
       "iconPath": "icons/32x32.png",
@@ -36,24 +37,7 @@
   },
   "plugins": {
     "shell": {
-      "open": true,
-      "sidecar": true,
-      "scope": [
-        {
-          "name": "osagent",
-          "sidecar": true,
-          "args": true
-        }
-      ]
-    },
-    "updater": {
-      "active": false
-    },
-    "notification": {
-      "all": true
-    },
-    "dialog": {
-      "all": true
+      "open": true
     }
   },
   "bundle": {

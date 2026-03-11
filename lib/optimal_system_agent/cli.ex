@@ -7,6 +7,7 @@ defmodule OptimalSystemAgent.CLI do
     osagent setup     configure provider, API keys
     osagent version   print version
     osagent serve     headless HTTP API mode
+    osagent doctor    system health check
   """
 
   @app :optimal_system_agent
@@ -21,12 +22,13 @@ defmodule OptimalSystemAgent.CLI do
 
     migrate!()
 
+    # Zero-config: auto-detect a provider and continue (never blocks)
+    OptimalSystemAgent.Onboarding.auto_configure()
+
     if OptimalSystemAgent.Onboarding.first_run?() do
-      OptimalSystemAgent.Onboarding.run()
       OptimalSystemAgent.Soul.reload()
     end
 
-    OptimalSystemAgent.Onboarding.apply_config()
     OptimalSystemAgent.Channels.CLI.start()
   end
 
@@ -44,11 +46,15 @@ defmodule OptimalSystemAgent.CLI do
   def serve do
     {:ok, _} = Application.ensure_all_started(@app)
     migrate!()
-    OptimalSystemAgent.Onboarding.apply_config()
+    OptimalSystemAgent.Onboarding.auto_configure()
 
     port = Application.get_env(@app, :http_port, 8089)
     safe_puts("OSA serving on :#{port}")
     Process.sleep(:infinity)
+  end
+
+  def doctor do
+    OptimalSystemAgent.CLI.Doctor.run()
   end
 
   # ── Migrations ──────────────────────────────────────────────────

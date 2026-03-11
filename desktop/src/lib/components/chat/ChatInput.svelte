@@ -1,15 +1,35 @@
 <script lang="ts">
+  import { voiceStore } from '$lib/stores/voice.svelte';
+
   interface Props {
     disabled?: boolean;
     onSend: (text: string) => void;
     placeholder?: string;
+    isListening?: boolean;
+    onFilesAttach?: (files: FileList | File[]) => void;
   }
 
   let {
     disabled = false,
     onSend,
     placeholder = 'Message OSA… (Enter to send, Shift+Enter for newline)',
+    isListening = $bindable(false),
+    onFilesAttach,
   }: Props = $props();
+
+  let fileInputEl = $state<HTMLInputElement | null>(null);
+
+  function triggerFilePicker() {
+    fileInputEl?.click();
+  }
+
+  function handleFileInput(e: Event) {
+    const input = e.target as HTMLInputElement;
+    if (input.files && input.files.length > 0 && onFilesAttach) {
+      onFilesAttach(input.files);
+      input.value = '';
+    }
+  }
 
   let text = $state('');
   let textareaEl = $state<HTMLTextAreaElement | null>(null);
@@ -17,14 +37,18 @@
 
   const canSend = $derived(!disabled && text.trim().length > 0);
 
+  // Sync voiceStore.isListening → bindable prop (read isListening to satisfy TS)
+  $effect(() => {
+    const _prev = isListening;
+    void _prev;
+    isListening = voiceStore.isListening;
+  });
+
   function send() {
     if (!canSend) return;
     const value = text.trim();
     text = '';
-    // Reset height after clearing
-    if (textareaEl) {
-      textareaEl.style.height = 'auto';
-    }
+    if (textareaEl) textareaEl.style.height = 'auto';
     onSend(value);
   }
 
@@ -34,7 +58,6 @@
       send();
       return;
     }
-    // Cmd/Ctrl+K: clear input
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
       e.preventDefault();
       text = '';
@@ -48,46 +71,21 @@
     textareaEl.style.height = `${Math.min(textareaEl.scrollHeight, 200)}px`;
   }
 
-  // Voice input (Web Speech API — available in Tauri webview on macOS/Windows)
-  let isListening = $state(false);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let recognition: any = null;
-
-  const hasVoice = $derived(
-    typeof window !== 'undefined' &&
-      ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)
-  );
-
+  // Voice — uses voiceStore which handles local recording + backend transcription
   function toggleVoice() {
-    if (isListening) {
-      recognition?.stop();
-      isListening = false;
-      return;
-    }
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const SR = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
-    if (!SR) return;
-
-    recognition = new SR();
-    recognition.continuous = false;
-    recognition.interimResults = true;
-    recognition.lang = 'en-US';
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    recognition.onresult = (e: any) => {
-      text = Array.from(e.results as ArrayLike<{ 0: { transcript: string } }>)
-        .map((r) => r[0].transcript)
-        .join('');
+    voiceStore.toggle((transcript) => {
+      // Append transcribed text
+      text = text ? `${text} ${transcript}` : transcript;
       resizeTextarea();
-    };
+    });
+  }
 
-    recognition.onend = () => {
-      isListening = false;
-    };
+  // Show voice mode dropdown
+  let showVoiceMenu = $state(false);
 
-    recognition.start();
-    isListening = true;
+  function setVoiceProvider(provider: 'local' | 'groq' | 'openai' | 'browser') {
+    voiceStore.setProvider(provider);
+    showVoiceMenu = false;
   }
 </script>
 
@@ -96,6 +94,25 @@
   class:input-root--focused={isFocused}
   class:input-root--disabled={disabled}
 >
+  <!-- Voice status indicators -->
+  {#if voiceStore.isTranscribing}
+    <div class="interim-bar">
+      <span class="interim-text">Transcribing...</span>
+    </div>
+  {:else if voiceStore.interimText}
+    <div class="interim-bar">
+      <span class="interim-text">{voiceStore.interimText}</span>
+    </div>
+  {/if}
+
+  <!-- Voice error -->
+  {#if voiceStore.error}
+    <div class="voice-error">
+      <span>{voiceStore.error}</span>
+      <button class="voice-error-dismiss" onclick={() => (voiceStore.error = null)}>×</button>
+    </div>
+  {/if}
+
   <!-- Textarea -->
   <div class="textarea-row">
     <textarea
@@ -107,29 +124,60 @@
       class="input-textarea"
       oninput={resizeTextarea}
       onkeydown={handleKeydown}
-      onfocus={() => {
-        isFocused = true;
-      }}
-      onblur={() => {
-        isFocused = false;
-      }}
+      onfocus={() => { isFocused = true; }}
+      onblur={() => { isFocused = false; }}
       aria-label="Chat message input"
       aria-multiline="true"
     ></textarea>
   </div>
 
+  <!-- Hidden file input -->
+  <input
+    bind:this={fileInputEl}
+    type="file"
+    multiple
+    accept="image/*,text/*,.md,.json,.csv,.yaml,.yml,.toml,.py,.go,.rs,.svelte,.tsx,.jsx,.sh,.sql,.log,.xml,.html,.css,.js,.ts,.pdf"
+    onchange={handleFileInput}
+    class="sr-only"
+    aria-hidden="true"
+    tabindex={-1}
+  />
+
   <!-- Toolbar -->
   <div class="toolbar">
     <div class="toolbar-left">
-      <!-- Voice input -->
-      {#if hasVoice}
+      <!-- Attach files -->
+      <button
+        class="toolbar-btn"
+        onclick={triggerFilePicker}
+        {disabled}
+        aria-label="Attach files"
+        title="Attach files"
+      >
+        <svg
+          width="15"
+          height="15"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
+        </svg>
+      </button>
+
+      <!-- Voice input — always available (local recording works everywhere) -->
+      <div class="voice-group">
         <button
           class="toolbar-btn"
-          class:toolbar-btn--active={isListening}
+          class:toolbar-btn--active={voiceStore.isListening}
           onclick={toggleVoice}
           {disabled}
-          aria-label={isListening ? 'Stop voice input' : 'Start voice input'}
-          title={isListening ? 'Stop listening' : 'Voice input'}
+          aria-label={voiceStore.isListening ? 'Stop voice input' : 'Start voice input'}
+          title={voiceStore.isListening ? 'Stop listening' : `Voice input (${voiceStore.provider})`}
         >
           <svg
             width="15"
@@ -146,7 +194,79 @@
             <line x1="8" y1="23" x2="16" y2="23" />
           </svg>
         </button>
-      {/if}
+
+        <!-- Voice mode selector (tiny dropdown) -->
+        <button
+          class="voice-mode-btn"
+          onclick={() => (showVoiceMenu = !showVoiceMenu)}
+          title="Voice mode"
+          aria-label="Change voice mode"
+        >
+          <svg width="8" height="8" viewBox="0 0 8 8" fill="none" aria-hidden="true">
+            <path d="M1 3L4 6L7 3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+
+        {#if showVoiceMenu}
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="voice-menu" onclick={(e) => e.stopPropagation()}>
+            <button
+              class="voice-menu-item"
+              class:voice-menu-item--active={voiceStore.provider === 'local'}
+              onclick={() => setVoiceProvider('local')}
+            >
+              <span class="voice-menu-icon">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><circle cx="12" cy="12" r="4"/></svg>
+              </span>
+              <div>
+                <div class="voice-menu-label">Local (no key)</div>
+                <div class="voice-menu-desc">{voiceStore.hasBrowserSpeech ? 'Live transcript' : 'Not available'}</div>
+              </div>
+            </button>
+            <button
+              class="voice-menu-item"
+              class:voice-menu-item--active={voiceStore.provider === 'groq'}
+              onclick={() => setVoiceProvider('groq')}
+            >
+              <span class="voice-menu-icon">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              </span>
+              <div>
+                <div class="voice-menu-label">Groq Whisper</div>
+                <div class="voice-menu-desc">{voiceStore.groqKey ? 'Key set' : 'Add key in Settings'}</div>
+              </div>
+            </button>
+            <button
+              class="voice-menu-item"
+              class:voice-menu-item--active={voiceStore.provider === 'openai'}
+              onclick={() => setVoiceProvider('openai')}
+            >
+              <span class="voice-menu-icon">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/></svg>
+              </span>
+              <div>
+                <div class="voice-menu-label">OpenAI Whisper</div>
+                <div class="voice-menu-desc">{voiceStore.openaiKey ? 'Key set' : 'Add key in Settings'}</div>
+              </div>
+            </button>
+            <button
+              class="voice-menu-item"
+              class:voice-menu-item--active={voiceStore.provider === 'browser'}
+              onclick={() => setVoiceProvider('browser')}
+              disabled={!voiceStore.hasBrowserSpeech}
+            >
+              <span class="voice-menu-icon">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+              </span>
+              <div>
+                <div class="voice-menu-label">Browser</div>
+                <div class="voice-menu-desc">{voiceStore.hasBrowserSpeech ? 'Web Speech API' : 'Not available'}</div>
+              </div>
+            </button>
+          </div>
+        {/if}
+      </div>
     </div>
 
     <div class="toolbar-right">
@@ -159,16 +279,18 @@
         title="Send (Enter)"
       >
         <svg
-          width="15"
-          height="15"
+          width="16"
+          height="16"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
-          stroke-width="2.5"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
           aria-hidden="true"
         >
-          <line x1="22" y1="2" x2="11" y2="13" />
-          <polygon points="22 2 15 22 11 13 2 9 22 2" />
+          <path d="M12 19V5" />
+          <path d="M5 12l7-7 7 7" />
         </svg>
       </button>
     </div>
@@ -185,7 +307,8 @@
     transition:
       border-color 0.15s,
       box-shadow 0.15s;
-    overflow: hidden;
+    overflow: visible;
+    position: relative;
   }
 
   .input-root--focused {
@@ -196,6 +319,39 @@
   .input-root--disabled {
     opacity: 0.5;
     pointer-events: none;
+  }
+
+  /* Interim voice text */
+  .interim-bar {
+    padding: 4px 14px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  }
+
+  .interim-text {
+    font-size: 0.8125rem;
+    color: rgba(255, 255, 255, 0.4);
+    font-style: italic;
+  }
+
+  /* Voice error */
+  .voice-error {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 14px;
+    font-size: 0.75rem;
+    color: rgba(251, 191, 36, 0.8);
+    background: rgba(251, 191, 36, 0.06);
+    border-bottom: 1px solid rgba(251, 191, 36, 0.1);
+  }
+
+  .voice-error-dismiss {
+    background: none;
+    border: none;
+    color: rgba(255, 255, 255, 0.4);
+    cursor: pointer;
+    font-size: 1rem;
+    padding: 0 4px;
   }
 
   /* Textarea */
@@ -240,6 +396,12 @@
     gap: 4px;
   }
 
+  .voice-group {
+    display: flex;
+    align-items: center;
+    position: relative;
+  }
+
   .toolbar-btn {
     width: 32px;
     height: 32px;
@@ -266,6 +428,85 @@
     animation: pulse-opacity 1s ease-in-out infinite;
   }
 
+  .voice-mode-btn {
+    width: 16px;
+    height: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    color: rgba(255, 255, 255, 0.2);
+    cursor: pointer;
+    border-radius: 4px;
+    margin-left: -4px;
+  }
+
+  .voice-mode-btn:hover {
+    color: rgba(255, 255, 255, 0.5);
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  /* Voice mode dropdown */
+  .voice-menu {
+    position: absolute;
+    bottom: 100%;
+    left: 0;
+    margin-bottom: 6px;
+    background: rgba(20, 20, 24, 0.95);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    padding: 4px;
+    min-width: 180px;
+    z-index: 100;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  }
+
+  .voice-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 10px;
+    background: none;
+    border: none;
+    border-radius: 7px;
+    color: rgba(255, 255, 255, 0.7);
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.1s;
+  }
+
+  .voice-menu-item:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  .voice-menu-item--active {
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .voice-menu-item:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .voice-menu-icon {
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+
+  .voice-menu-label {
+    font-size: 0.8125rem;
+    font-weight: 500;
+  }
+
+  .voice-menu-desc {
+    font-size: 0.6875rem;
+    color: rgba(255, 255, 255, 0.35);
+  }
+
   @keyframes pulse-opacity {
     0%,
     100% {
@@ -284,31 +525,52 @@
     padding: 0 4px;
   }
 
+  /* Foundation pill-icon send button — monochrome dark */
   .send-btn {
-    width: 36px;
-    height: 36px;
+    width: 32px;
+    height: 32px;
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: 8px;
-    border: none;
-    background: rgba(255, 255, 255, 0.9);
-    color: #000;
+    border-radius: 9999px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.7);
     cursor: pointer;
     transition:
-      background 0.12s,
+      background 0.15s,
+      border-color 0.15s,
+      color 0.15s,
       transform 0.1s;
     flex-shrink: 0;
   }
 
   .send-btn:hover:not(:disabled) {
-    background: #fff;
-    transform: scale(1.05);
+    background: rgba(255, 255, 255, 0.14);
+    border-color: rgba(255, 255, 255, 0.2);
+    color: #fff;
+  }
+
+  .send-btn:active:not(:disabled) {
+    transform: scale(0.94);
   }
 
   .send-btn:disabled {
-    background: rgba(255, 255, 255, 0.12);
-    color: rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.03);
+    border-color: rgba(255, 255, 255, 0.05);
+    color: rgba(255, 255, 255, 0.12);
     cursor: not-allowed;
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
   }
 </style>

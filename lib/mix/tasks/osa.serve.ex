@@ -16,11 +16,8 @@ defmodule Mix.Tasks.Osa.Serve do
     Logger.configure(level: :warning)
     Mix.Task.run("app.start")
 
-    if OptimalSystemAgent.Onboarding.first_run?() do
-      Logger.info("First run detected — complete setup via TUI or: mix osa.setup")
-    end
-
-    OptimalSystemAgent.Onboarding.apply_config()
+    # Zero-config: auto-detect a provider and continue (never blocks)
+    OptimalSystemAgent.Onboarding.auto_configure()
 
     if Application.get_env(:optimal_system_agent, :default_provider) == :ollama do
       MiosaProviders.Ollama.auto_detect_model()

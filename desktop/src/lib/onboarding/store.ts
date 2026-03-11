@@ -35,7 +35,7 @@ export async function completeOnboarding(opts: {
 
   // Notify the backend of the selected provider, model, and API key
   try {
-    await fetch("http://127.0.0.1:8089/onboarding/setup", {
+    await fetch("http://127.0.0.1:9089/onboarding/setup", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

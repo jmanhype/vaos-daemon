@@ -1,4 +1,10 @@
-export type Provider = "ollama" | "lmstudio" | "anthropic" | "openai" | "groq";
+export type Provider =
+  | "ollama"
+  | "ollama-cloud"
+  | "lmstudio"
+  | "anthropic"
+  | "openai"
+  | "groq";
 export type OnboardingStep = 1 | 2 | 3 | "complete";
 
 export interface DetectionResult {
@@ -27,11 +33,19 @@ export interface ProviderMeta {
 export const PROVIDERS: ProviderMeta[] = [
   {
     id: "ollama",
-    name: "Ollama",
-    tagline: "Local · Free",
+    name: "Ollama (Local)",
+    tagline: "Local · Free · Auto-detected",
     requiresKey: false,
     keyPlaceholder: "",
     keyDocsUrl: "",
+  },
+  {
+    id: "ollama-cloud",
+    name: "Ollama (Cloud)",
+    tagline: "Remote Ollama instance",
+    requiresKey: true,
+    keyPlaceholder: "http://your-server:11434",
+    keyDocsUrl: "https://github.com/ollama/ollama/blob/main/docs/faq.md",
   },
   {
     id: "lmstudio",

@@ -18,7 +18,7 @@ pub fn run() {
     tauri::Builder::default()
         // ── Plugins ──────────────────────────────────────────────────────
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        // .plugin(tauri_plugin_updater::Builder::new().build()) // TODO: enable when signing key is configured
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
@@ -43,22 +43,12 @@ pub fn run() {
             // Build system tray
             tray::setup_tray(&handle)?;
 
-            // Spawn sidecar in background task
+            // Spawn sidecar in background — non-blocking, app opens immediately
             let sidecar_handle = handle.clone();
             tauri::async_runtime::spawn(async move {
                 match sidecar::start_sidecar(&sidecar_handle).await {
-                    Ok(_) => log::info!("Sidecar started and healthy"),
-                    Err(e) => {
-                        log::error!("Sidecar failed to start: {}", e);
-                        // Show error dialog — don't crash silently
-                        let _ = tauri_plugin_dialog::DialogExt::dialog(&sidecar_handle)
-                            .message(format!(
-                                "OSA backend failed to start:\n\n{}\n\nPlease restart the app.",
-                                e
-                            ))
-                            .title("Startup Error")
-                            .blocking_show();
-                    }
+                    Ok(_) => log::info!("Sidecar lifecycle complete"),
+                    Err(e) => log::warn!("Sidecar: {}", e),
                 }
             });
 

@@ -18,14 +18,12 @@ defmodule Mix.Tasks.Osa.Chat do
     # Restore warnings after boot
     Logger.configure(level: :warning)
 
+    # Zero-config: auto-detect a provider and continue (never blocks)
+    OptimalSystemAgent.Onboarding.auto_configure()
+
     if OptimalSystemAgent.Onboarding.first_run?() do
-      OptimalSystemAgent.Onboarding.run()
       OptimalSystemAgent.Soul.reload()
     end
-
-    # Always apply config.json — overrides runtime.exs env var auto-detection
-    # so the user's explicit provider choice in config.json is respected.
-    OptimalSystemAgent.Onboarding.apply_config()
 
     # Re-run Ollama auto-detect AFTER apply_config, because config.json may
     # contain the onboarding default "llama3.2:latest" which overwrites
