@@ -18,7 +18,6 @@ defmodule OptimalSystemAgent.Agent.SkillBootstrap do
   """
   require Logger
 
-  alias OptimalSystemAgent.Agent.Orchestrator.SkillManager
   alias OptimalSystemAgent.SDK.Session
 
   @doc """
@@ -130,24 +129,41 @@ defmodule OptimalSystemAgent.Agent.SkillBootstrap do
   end
 
   defp reload_registry do
-    OptimalSystemAgent.Tools.Registry.reload_skills()
-    :ok
-  rescue
-    _ -> :ok
+    try do
+      OptimalSystemAgent.Tools.Registry.reload_skills()
+      :ok
+    catch
+      :exit, _ -> :ok
+    rescue
+      _ -> :ok
+    end
   end
 
   defp start_session(opts) do
     create_opts = Keyword.merge([channel: :http, user_id: "skill_bootstrap"], opts)
-    Session.create(create_opts)
+
+    try do
+      Session.create(create_opts)
+    catch
+      :exit, reason -> {:error, {:session_start_failed, reason}}
+    rescue
+      e -> {:error, Exception.message(e)}
+    end
   end
 
   # Send the trigger message as a fire-and-forget task.
   defp dispatch_skill(session_id, message) do
-    Task.Supervisor.start_child(
-      OptimalSystemAgent.TaskSupervisor,
-      fn -> OptimalSystemAgent.Agent.Loop.process_message(session_id, message) end,
-      restart: :temporary
-    )
+    try do
+      Task.Supervisor.start_child(
+        OptimalSystemAgent.TaskSupervisor,
+        fn -> OptimalSystemAgent.Agent.Loop.process_message(session_id, message) end,
+        restart: :temporary
+      )
+    catch
+      :exit, _ -> :ok
+    rescue
+      _ -> :ok
+    end
   end
 
   # Build a trigger message that will match at least one of the skill's triggers.
