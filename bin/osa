@@ -12,9 +12,20 @@
 #   osa doctor             Run health checks
 #   osa version            Print version
 #   osa --dev              Dev profile + port 19001
-#   osa --profile <name>   Named profile
 
 set -euo pipefail
+
+# ── Safe defaults ────────────────────────────────────────────────
+HOME="${HOME:-/root}"
+export LC_ALL="${LC_ALL:-C.UTF-8}"
+export LANG="${LANG:-C.UTF-8}"
+
+# sudo helper: skip sudo when already root
+if [ "$(id -u)" -eq 0 ]; then
+  SUDO=""
+else
+  SUDO="sudo"
+fi
 
 # ── Colors ─────────────────────────────────────────────────────────
 if [ -t 1 ]; then
@@ -28,10 +39,22 @@ else
   BOLD='' DIM='' GREEN='' RED='' CYAN='' RESET=''
 fi
 
+# ── HTTP helper (curl → wget fallback) ───────────────────────────
+_http_ok() {
+  if command -v curl >/dev/null 2>&1; then
+    curl -sf "$1" >/dev/null 2>&1
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO /dev/null "$1" 2>/dev/null
+  else
+    return 1
+  fi
+}
+
 # ── Resolve project root ──────────────────────────────────────────
 SCRIPT="$0"
 if [ -L "$SCRIPT" ]; then
-  SCRIPT="$(cd "$(dirname "$SCRIPT")" && perl -e 'use Cwd "abs_path"; print abs_path(shift)' "$SCRIPT")"
+  # readlink -f works on Linux (GNU coreutils); macOS needs a fallback
+  SCRIPT="$(readlink -f "$SCRIPT" 2>/dev/null || python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$SCRIPT" 2>/dev/null || perl -e 'use Cwd "abs_path"; print abs_path(shift)' "$SCRIPT")"
 fi
 SCRIPT_DIR="$(cd "$(dirname "$SCRIPT")" && pwd)"
 
@@ -86,7 +109,7 @@ case "${1:-}" in
     # Rebuild Rust TUI
     if [ -f "$TUI_DIR/Cargo.toml" ]; then
       echo -e "${CYAN}→${RESET} Rebuilding TUI..."
-      (cd "$TUI_DIR" && cargo build --release 2>&1 | grep -E "Compiling|Finished|error" | tail -5)
+      (cd "$TUI_DIR" && cargo build --release 2>&1 | grep -E "Compiling|Finished|error" | tail -5) || true
     fi
 
     echo ""
@@ -96,6 +119,10 @@ case "${1:-}" in
 
   serve)
     echo -e "${CYAN}→${RESET} Starting backend (headless)..."
+    # Ensure deps are ready (handles fresh clone + serve)
+    (cd "$ROOT" && mix local.hex --force --if-missing >/dev/null 2>&1 || true)
+    (cd "$ROOT" && mix local.rebar --force --if-missing >/dev/null 2>&1 || true)
+    (cd "$ROOT" && mix deps.get --quiet 2>&1 | tail -3)
     (cd "$ROOT" && mix osa.serve)
     exit 0
     ;;
@@ -136,12 +163,41 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# ── Auto-install missing dependencies ────────────────────────────
+
+# Install system build deps on Linux (needed for Rust TUI native libs)
+install_linux_build_deps() {
+  if [ "$(uname -s)" = "Linux" ] && command -v apt-get >/dev/null 2>&1; then
+    local needed=()
+    command -v pkg-config >/dev/null 2>&1 || needed+=(pkg-config)
+    command -v gcc >/dev/null 2>&1        || needed+=(build-essential)
+    # Check for libs needed by Rust TUI crates (arboard, cpal, syntect, reqwest)
+    [ -f /usr/lib/*/libssl.so ] 2>/dev/null || [ -f /usr/lib/*/libssl.a ] 2>/dev/null || needed+=(libssl-dev)
+    [ -f /usr/lib/*/libxcb.so ] 2>/dev/null || [ -f /usr/lib/*/libxcb.a ] 2>/dev/null || needed+=(libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev)
+    [ -f /usr/lib/*/libasound.so ] 2>/dev/null || [ -f /usr/lib/*/libasound.a ] 2>/dev/null || needed+=(libasound2-dev)
+    [ -f /usr/lib/*/libonig.so ] 2>/dev/null || [ -f /usr/lib/*/libonig.a ] 2>/dev/null || needed+=(libonig-dev)
+    if [ ${#needed[@]} -gt 0 ]; then
+      echo -e "${CYAN}→${RESET} Installing build dependencies: ${needed[*]}..."
+      $SUDO apt-get update -qq 2>/dev/null || true
+      $SUDO apt-get install -y -qq "${needed[@]}" 2>/dev/null || true
+    fi
+  fi
+}
+
 # Auto-install Rust if missing
 if ! command -v cargo >/dev/null 2>&1; then
   echo -e "${CYAN}→${RESET} Rust not found — installing automatically..."
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --quiet
-  # shellcheck source=/dev/null
-  source "${HOME}/.cargo/env" 2>/dev/null || true
+  if command -v curl >/dev/null 2>&1; then
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --quiet
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO- https://sh.rustup.rs | sh -s -- -y --quiet
+  else
+    echo -e "${RED}✗ Neither curl nor wget found.${RESET} Cannot install Rust."
+    echo -e "${DIM}  Falling back to CLI mode.${RESET}"
+    (cd "$ROOT" && mix osa.chat)
+    exit $?
+  fi
+  . "${HOME}/.cargo/env" 2>/dev/null || true
   export PATH="${HOME}/.cargo/bin:$PATH"
   if ! command -v cargo >/dev/null 2>&1; then
     echo -e "${RED}✗ Rust installation failed.${RESET} Install manually: https://rustup.rs"
@@ -169,12 +225,29 @@ if ! command -v mix >/dev/null 2>&1; then
       brew install erlang elixir
       ;;
     Linux)
+      # Ensure locale is set (Elixir requires UTF-8)
       if command -v apt-get >/dev/null 2>&1; then
-        sudo apt-get update -qq && sudo apt-get install -y -qq erlang elixir
+        $SUDO apt-get update -qq
+        $SUDO apt-get install -y -qq locales 2>/dev/null || true
+        $SUDO locale-gen en_US.UTF-8 2>/dev/null || true
+        $SUDO apt-get install -y -qq software-properties-common apt-transport-https
+        # Try direct package first, then Erlang Solutions
+        $SUDO apt-get install -y -qq erlang elixir 2>/dev/null || {
+          curl -fsSLo /tmp/erlang-solutions.deb https://packages.erlang-solutions.com/erlang-solutions_2.0_all.deb 2>/dev/null || true
+          if [ -f /tmp/erlang-solutions.deb ]; then
+            $SUDO dpkg -i /tmp/erlang-solutions.deb 2>/dev/null || true
+            rm -f /tmp/erlang-solutions.deb
+            $SUDO apt-get update -qq
+            $SUDO apt-get install -y -qq esl-erlang elixir
+          else
+            echo -e "${RED}✗ Could not download Erlang Solutions package.${RESET}"
+            exit 1
+          fi
+        }
       elif command -v dnf >/dev/null 2>&1; then
-        sudo dnf install -y -q erlang elixir
+        $SUDO dnf install -y -q erlang elixir
       elif command -v pacman >/dev/null 2>&1; then
-        sudo pacman -Sy --noconfirm erlang elixir
+        $SUDO pacman -Sy --noconfirm erlang elixir
       else
         echo -e "${RED}✗ Cannot auto-install Elixir.${RESET} Install Erlang 27+ and Elixir 1.17+ manually."
         exit 1
@@ -191,14 +264,17 @@ if ! command -v mix >/dev/null 2>&1; then
   (cd "$ROOT" && mix local.hex --force --if-missing >/dev/null 2>&1 || true)
   (cd "$ROOT" && mix local.rebar --force --if-missing >/dev/null 2>&1 || true)
   (cd "$ROOT" && mix deps.get 2>&1 | tail -3)
-  (cd "$ROOT" && mix compile 2>&1 | tail -3)
+  (cd "$ROOT" && mix compile 2>&1 | tail -5)
 fi
+
+# Install Linux build deps before Rust build
+install_linux_build_deps
 
 # Build Rust TUI if needed
 if [ ! -f "$TUI_BIN" ]; then
   if [ -f "$TUI_DIR/Cargo.toml" ]; then
     echo -e "${CYAN}→${RESET} Building TUI (first run, ~60s)..."
-    (cd "$TUI_DIR" && cargo build --release 2>&1 | tail -5)
+    (cd "$TUI_DIR" && cargo build --release 2>&1 | tail -10)
     if [ ! -f "$TUI_BIN" ]; then
       echo -e "${RED}✗ TUI build failed.${RESET} Falling back to CLI mode."
       echo -e "${DIM}  Check: cargo, rustc installed? Run: rustup update${RESET}"
@@ -212,18 +288,29 @@ if [ ! -f "$TUI_BIN" ]; then
   fi
 fi
 
-# Determine port
+# Ensure Elixir deps are compiled (handles git pull without recompile)
+if [ ! -d "$ROOT/_build" ]; then
+  echo -e "${CYAN}→${RESET} First-time compile..."
+  (cd "$ROOT" && mix local.hex --force --if-missing >/dev/null 2>&1 || true)
+  (cd "$ROOT" && mix local.rebar --force --if-missing >/dev/null 2>&1 || true)
+  (cd "$ROOT" && mix deps.get 2>&1 | tail -3)
+  (cd "$ROOT" && mix compile 2>&1 | tail -5)
+fi
+
+# Determine port (strip --dev from args passed to TUI)
 PORT="${OSA_PORT:-8089}"
+TUI_ARGS=()
 for arg in "$@"; do
   if [ "$arg" = "--dev" ]; then
     PORT="${OSA_PORT:-19001}"
-    break
+  else
+    TUI_ARGS+=("$arg")
   fi
 done
 
 # Check if backend is already running
 URL="http://localhost:${PORT}/health"
-if curl -sf "$URL" >/dev/null 2>&1; then
+if _http_ok "$URL"; then
   echo -e "${DIM}Backend already running on :${PORT}${RESET}"
 else
   # Check if port is occupied by something else
@@ -231,10 +318,14 @@ else
     echo -e "${DIM}Port ${PORT} in use. Killing previous instance…${RESET}"
     lsof -ti ":${PORT}" -sTCP:LISTEN | xargs kill -9 2>/dev/null || true
     sleep 1
+  elif command -v fuser >/dev/null 2>&1; then
+    fuser -k "${PORT}/tcp" 2>/dev/null || true
+    sleep 1
   fi
 
   export MIX_ENV="${MIX_ENV:-dev}"
   LOG_FILE="$LOG_DIR/backend.log"
+  : > "$LOG_FILE"  # truncate log for this run
   echo -e "${CYAN}→${RESET} Starting backend on :${PORT}..."
 
   if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || "$OSTYPE" == "win32" ]]; then
@@ -247,13 +338,20 @@ else
   BACKEND_PID=$!
 fi
 
-# Wait for health
+# Wait for health (90s to survive cold compile on slow VPS)
 attempts=0
-max_attempts=30
+max_attempts=90
 
 while [ $attempts -lt $max_attempts ]; do
-  if curl -sf "$URL" >/dev/null 2>&1; then
+  if _http_ok "$URL"; then
     break
+  fi
+  # Check if backend process died
+  if [ -n "$BACKEND_PID" ] && ! kill -0 "$BACKEND_PID" 2>/dev/null; then
+    echo -e "${RED}✗ Backend process exited unexpectedly.${RESET}"
+    echo "  Last log lines:"
+    tail -15 "$LOG_DIR/backend.log" 2>/dev/null | sed 's/^/    /'
+    exit 1
   fi
   attempts=$((attempts + 1))
   sleep 1
@@ -261,10 +359,11 @@ done
 
 if [ $attempts -eq $max_attempts ]; then
   echo -e "${RED}✗ Backend did not become healthy after ${max_attempts}s.${RESET}"
-  echo "  Check logs: $LOG_DIR/backend.log"
+  echo "  Last log lines:"
+  tail -15 "$LOG_DIR/backend.log" 2>/dev/null | sed 's/^/    /'
   exit 1
 fi
 
 # Launch TUI
 export OSA_URL="http://localhost:${PORT}"
-exec "$TUI_BIN" "$@"
+exec "$TUI_BIN" "${TUI_ARGS[@]}"
