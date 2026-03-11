@@ -2,11 +2,12 @@
 # scripts/install.sh — One-line installer for OSA Agent.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/Miosa-osa/OptimalSystemAgent/main/scripts/install.sh | bash
+#   macOS/Linux: curl -fsSL https://raw.githubusercontent.com/Miosa-osa/OptimalSystemAgent/main/scripts/install.sh | bash
+#   Windows:     irm https://raw.githubusercontent.com/Miosa-osa/OptimalSystemAgent/main/scripts/install.ps1 | iex
 #
 # Supported:
 #   macOS (ARM + Intel), Ubuntu, Debian, Fedora, RHEL/Rocky/Alma,
-#   Arch, Alpine, openSUSE, Amazon Linux, WSL2
+#   Arch, Alpine, openSUSE, Amazon Linux, WSL2, Windows (via install.ps1)
 #
 # What it does:
 #   1. Auto-installs ALL prerequisites — no questions asked
@@ -88,8 +89,20 @@ detect_os() {
 detect_os
 
 if [ "$OS" = "windows" ]; then
-  warn "Windows detected. Native Windows support is experimental."
-  warn "Consider using WSL2 for the best experience."
+  warn "Windows detected via Git Bash/MSYS2."
+  info "For best results, use the PowerShell installer instead:"
+  echo ""
+  echo "    irm https://raw.githubusercontent.com/Miosa-osa/OptimalSystemAgent/main/scripts/install.ps1 | iex"
+  echo ""
+  info "Or use WSL2 (Ubuntu) for a full Linux experience."
+  echo ""
+  # Try to run the PowerShell installer directly if powershell is available
+  if command -v powershell.exe >/dev/null 2>&1; then
+    info "Launching PowerShell installer..."
+    powershell.exe -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/Miosa-osa/OptimalSystemAgent/main/scripts/install.ps1 | iex"
+    exit $?
+  fi
+  fail "Cannot auto-install on Windows from bash. Use the PowerShell command above."
 fi
 
 echo -e "${DIM}  OS: $OS | Package manager: $PKG${RESET}"
