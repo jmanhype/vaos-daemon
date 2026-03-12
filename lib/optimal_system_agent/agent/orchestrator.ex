@@ -24,6 +24,7 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
   alias OptimalSystemAgent.Agent.{Appraiser, Loop, Roster, Tasks}
   alias OptimalSystemAgent.Agent.Orchestrator.{Complexity, SkillManager, Decomposer, AgentRunner, WaveExecutor, GitVersioning, ComplexityScaler, StateMachine, Negotiation}
   alias OptimalSystemAgent.Events.Bus
+  alias OptimalSystemAgent.Tools.Registry, as: Tools
   alias MiosaProviders.Registry, as: Providers
 
   defstruct tasks: %{},
@@ -695,11 +696,22 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
             end
         end
 
+        # Resolve skills triggered by the parent session's original message.
+        # These are propagated to ALL sub-agents regardless of their task description,
+        # so skills that were relevant to the overall goal remain available.
+        parent_triggered_skills =
+          case task_state do
+            %{message: msg} when is_binary(msg) and msg != "" ->
+              matched = Tools.Registry.match_skill_triggers(msg)
+              Enum.map(matched, fn {name, _} -> name end)
+            _ -> []
+          end
+
         # Spawn all agents in this wave, collecting refs and agent states
         spawn_results =
           Enum.map(wave, fn sub_task ->
             dep_context = Decomposer.build_dependency_context(sub_task.depends_on, task_state.results)
-            sub_task_with_context = %{sub_task | context: dep_context}
+            sub_task_with_context = %{sub_task | context: dep_context, inherited_skills: parent_triggered_skills}
 
             {agent_id, agent_state, task_ref} =
               AgentRunner.spawn_agent(sub_task_with_context, task_id, session_id, cached_tools, batch_id: batch_id, permission_tier: permission_tier)
