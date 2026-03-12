@@ -35,11 +35,13 @@ compute_vm(operation: create, template_id: autoresearch, size: medium)
 → note the vm_id
 ```
 
-Then poll until status = `running` (VM takes 10–30s to boot):
+Then wait until running (replaces manual polling):
 ```
-compute_vm(operation: status, vm_id: <id>)
-# Repeat every 5s until you see "status=running"
+compute_vm(operation: wait, vm_id: <id>)
+→ returns "VM <id> is running" once boot completes
 ```
+
+The `wait` operation polls every 3 seconds and times out after 120 seconds by default. If the VM reaches a terminal state (stopped, destroyed, error) it fails immediately.
 
 ### 2. Run prepare.py once
 
@@ -61,57 +63,90 @@ compute_vm(operation: exec, vm_id: <id>,
 compute_vm(operation: read_file, vm_id: <id>, path: /workspace/val_bpb.txt)
 ```
 
-Note this as `best_val_bpb` (your starting point). Save it with `memory_save`.
+Note this as `best_val_bpb` (your starting point). Save it with `memory_save`. This is also the starting row in your Research Log.
+
+## Research Log
+
+Maintain a running experiment table in working memory. Print the full table after each experiment.
+
+```
+| # | param | old → new | val_bpb | delta | kept |
+|---|-------|-----------|---------|-------|------|
+| 0 | baseline | — | 1.34 | — | ✓ |
+| 1 | learning_rate | 3e-4 → 1e-3 | 1.31 | -0.03 | ✓ |
+| 2 | dropout | 0.1 → 0.0 | 1.33 | +0.02 | ✗ |
+```
+
+Before proposing each new experiment, review the Research Log and apply these rules:
+
+- **No repeats.** Never retry a (param, direction) pair that already appears in the log.
+- **Exhaustion check.** A param axis is exhausted when both directions have been tried and neither helped. Move on.
+- **Plateau detection.** If the last 5 experiments all appear in the log with `kept = ✗`, trigger the Convergence Rule below.
 
 ## Experiment Loop
 
 ```
 FOR experiment 1 to N:
 
-  1. Read current train.py:
+  1. Review Research Log — identify which params and directions are exhausted.
+
+  2. Read current train.py:
      compute_vm(operation: read_file, vm_id: <id>, path: /workspace/train.py)
 
-  2. Read program.md for guidance:
+  3. Read program.md for guidance:
      compute_vm(operation: read_file, vm_id: <id>, path: /workspace/program.md)
 
-  3. Think: propose ONE change with a hypothesis
+  4. Think: propose ONE change with a hypothesis, avoiding exhausted axes.
      Examples:
        - "increase learning_rate from 3e-4 to 1e-3 — hypothesis: LR too low for this model size"
        - "increase n_embd from 128 to 256 — hypothesis: more capacity needed"
        - "set dropout=0.0 — hypothesis: small model should not regularize this aggressively"
 
-  4. Write modified train.py:
+  5. Write modified train.py:
      compute_vm(operation: write_file, vm_id: <id>,
                 path: /workspace/train.py, content: <new_train_py>)
 
-  5. Run experiment (run_experiment.sh auto-backs up train.py → train.py.prev):
+  6. Run experiment (run_experiment.sh auto-backs up train.py → train.py.prev):
      compute_vm(operation: exec, vm_id: <id>,
                 command: "bash /workspace/run_experiment.sh",
                 timeout: 360)
 
-  6. Read result:
+  7. Read result:
      compute_vm(operation: read_file, vm_id: <id>, path: /workspace/val_bpb.txt)
      → single float, e.g. "1.342871"
 
-  7. Compare to best_val_bpb:
+  8. Compare to best_val_bpb:
      IMPROVED (lower) → keep train.py, update best_val_bpb
      NOT IMPROVED     → revert:
        compute_vm(operation: exec, vm_id: <id>,
                   command: "cp /workspace/train.py.prev /workspace/train.py",
                   timeout: 10)
 
-  8. Log experiment result (see Output Format below)
+  9. Update Research Log and print the full table.
+
+ 10. Log experiment result (see Output Format below).
 
 END
 ```
+
+## Convergence Rule
+
+If the same hyperparameter space has been explored in all directions with no improvement in the last 5 consecutive experiments, switch axes:
+
+- Move to **architectural changes**: `n_layer`, `n_head`, `n_embd`
+- Announce the switch explicitly: "Hyperparameter search exhausted — switching to architecture exploration."
+- Reset the plateau counter when an architectural change produces an improvement.
+
+If architectural changes are also exhausted after 5 non-improvements, stop early and summarize findings.
 
 ## Saving State Between Experiments
 
 Use `memory_save` after each kept experiment to record:
 - Experiment number, change made, val_bpb achieved
 - Full modified train.py content (so you can resume if the session is interrupted)
+- Current Research Log table
 
-Use `memory_recall` at the start to check for a previous session's best train.py.
+Use `memory_recall` at the start to check for a previous session's best train.py and Research Log.
 
 ## Cleanup
 
@@ -130,6 +165,8 @@ After each experiment, report:
          Result: KEPT ✓ | REVERTED ✗
 ```
 
+Then print the current Research Log table.
+
 Final summary:
 ```
 ## AutoResearch Complete
@@ -147,3 +184,4 @@ Final summary:
 - Stop if val_bpb stops improving for 10 consecutive experiments
 - Never modify prepare.py, program.md, or run_experiment.sh — only train.py
 - If exec returns an error, read `/workspace/out/last_run.log` to diagnose
+- Always consult the Research Log before proposing a change — never retry a failed direction

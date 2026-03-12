@@ -15,6 +15,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputeVm do
 
     - `create`     — boot a new VM from a template
     - `status`     — poll VM state (creating | running | paused | stopped)
+    - `wait`       — block until VM reaches running state (polls every 3s, default 120s timeout)
     - `exec`       — run a shell command inside the VM and return stdout/stderr
     - `read_file`  — read a file from the VM filesystem
     - `write_file` — write/overwrite a file on the VM filesystem
@@ -26,18 +27,22 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputeVm do
       compute_vm(operation: create, template_id: python-ml, size: medium)
       # → {vm_id: "vm_abc123"}
 
-      # 2. Write train.py
+      # 2. Wait until running
+      compute_vm(operation: wait, vm_id: vm_abc123)
+      # → "VM vm_abc123 is running"
+
+      # 3. Write train.py
       compute_vm(operation: write_file, vm_id: vm_abc123, path: /workspace/train.py, content: "...")
 
-      # 3. Run 5-minute experiment
+      # 4. Run 5-minute experiment
       compute_vm(operation: exec, vm_id: vm_abc123,
                  command: "timeout 300 python train.py 2>&1 | tail -20",
                  timeout: 320)
 
-      # 4. Read result
+      # 5. Read result
       compute_vm(operation: read_file, vm_id: vm_abc123, path: /workspace/val_bpb.txt)
 
-      # 5. Cleanup
+      # 6. Cleanup
       compute_vm(operation: destroy, vm_id: vm_abc123)
   """
 
@@ -54,7 +59,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputeVm do
   def description,
     do:
       "Manage Firecracker microVMs for isolated ML experiments. " <>
-        "Supports: create, status, exec (run shell command), read_file, write_file, destroy."
+        "Supports: create, status, wait (poll until running), exec (run shell command), read_file, write_file, destroy."
 
   @impl true
   def parameters do
@@ -63,7 +68,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputeVm do
       "properties" => %{
         "operation" => %{
           "type" => "string",
-          "enum" => ["create", "status", "exec", "read_file", "write_file", "destroy"],
+          "enum" => ["create", "status", "wait", "exec", "read_file", "write_file", "destroy"],
           "description" => "The operation to perform on the VM"
         },
         "vm_id" => %{
@@ -80,6 +85,14 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputeVm do
           "enum" => ["small", "medium", "large"],
           "description" =>
             "VM size (create only): small=1vCPU/512MB, medium=2vCPU/2GB, large=2vCPU/4GB"
+        },
+        "gpu" => %{
+          "type" => "boolean",
+          "description" => "Request GPU passthrough (requires GPU-enabled host)"
+        },
+        "timeout_s" => %{
+          "type" => "integer",
+          "description" => "Wait timeout in seconds (wait only, default 120)"
         },
         "command" => %{
           "type" => "string",
@@ -116,6 +129,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputeVm do
           get_vm(base, vm_id)
         end
 
+      "wait" ->
+        with {:ok, vm_id} <- require_param(params, "vm_id") do
+          timeout_s = Map.get(params, "timeout_s", 120)
+          wait_until_running(base, vm_id, timeout_s)
+        end
+
       "exec" ->
         with {:ok, vm_id} <- require_param(params, "vm_id"),
              {:ok, command} <- require_param(params, "command") do
@@ -142,7 +161,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputeVm do
 
       _ ->
         {:error,
-         "Unknown operation '#{op}'. Valid: create, status, exec, read_file, write_file, destroy"}
+         "Unknown operation '#{op}'. Valid: create, status, wait, exec, read_file, write_file, destroy"}
     end
   end
 
@@ -155,6 +174,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputeVm do
       %{}
       |> maybe_put("template_id", Map.get(params, "template_id", "python-ml"))
       |> maybe_put("size", Map.get(params, "size", "medium"))
+      |> maybe_put("gpu", Map.get(params, "gpu"))
 
     case post(base, "/api/v1/vms", body) do
       {:ok, %{"id" => id, "status" => status}} ->
@@ -182,6 +202,37 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputeVm do
 
       {:error, reason} ->
         {:error, "status failed: #{reason}"}
+    end
+  end
+
+  @wait_poll_interval_ms 3_000
+  @terminal_vm_states ["stopped", "destroyed", "error"]
+
+  defp wait_until_running(base, vm_id, timeout_s) do
+    deadline_ms = System.monotonic_time(:millisecond) + timeout_s * 1_000
+    do_wait(base, vm_id, deadline_ms, timeout_s)
+  end
+
+  defp do_wait(base, vm_id, deadline_ms, timeout_s) do
+    case get(base, "/api/v1/vms/#{vm_id}") do
+      {:ok, %{"status" => "running"}} ->
+        {:ok, "VM #{vm_id} is running"}
+
+      {:ok, %{"status" => status}} when status in @terminal_vm_states ->
+        {:error, "VM #{vm_id} reached terminal state '#{status}' — cannot continue waiting"}
+
+      {:ok, _} ->
+        now_ms = System.monotonic_time(:millisecond)
+
+        if now_ms >= deadline_ms do
+          {:error, "VM did not reach running state in #{timeout_s}s"}
+        else
+          Process.sleep(@wait_poll_interval_ms)
+          do_wait(base, vm_id, deadline_ms, timeout_s)
+        end
+
+      {:error, reason} ->
+        {:error, "wait failed while polling VM #{vm_id}: #{reason}"}
     end
   end
 
