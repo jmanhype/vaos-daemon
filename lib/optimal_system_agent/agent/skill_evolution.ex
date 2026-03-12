@@ -18,6 +18,8 @@ defmodule OptimalSystemAgent.Agent.SkillEvolution do
 
   @evolved_dir Path.expand("~/.osa/skills/evolved")
 
+  @metrics_table :osa_skill_metrics
+
   defstruct evolved_count: 0,
             last_evolution: nil,
             bus_ref: nil
@@ -26,6 +28,78 @@ defmodule OptimalSystemAgent.Agent.SkillEvolution do
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+  end
+
+  @doc """
+  Record a skill use outcome. Call this whenever an evolved skill is matched and used.
+
+  `outcome` is either `:success` or `:failure`.
+  """
+  @spec record_skill_use(String.t(), :success | :failure) :: :ok
+  def record_skill_use(skill_name, outcome) when is_binary(skill_name) and outcome in [:success, :failure] do
+    ensure_metrics_table()
+
+    key = {skill_name, :metrics}
+
+    current =
+      case :ets.lookup(@metrics_table, key) do
+        [{^key, m}] -> m
+        _ -> %{used_count: 0, success_count: 0, failure_count: 0, last_used_at: nil}
+      end
+
+    updated =
+      current
+      |> Map.update!(:used_count, &(&1 + 1))
+      |> Map.put(:last_used_at, DateTime.utc_now())
+      |> then(fn m ->
+        case outcome do
+          :success -> Map.update!(m, :success_count, &(&1 + 1))
+          :failure -> Map.update!(m, :failure_count, &(&1 + 1))
+        end
+      end)
+
+    :ets.insert(@metrics_table, {key, updated})
+    :ok
+  rescue
+    _ -> :ok
+  end
+
+  @doc """
+  Return metrics for a single evolved skill.
+
+  Returns `%{used_count: N, success_count: N, failure_count: N, last_used_at: datetime | nil}`
+  or a zeroed map if the skill has never been recorded.
+  """
+  @spec skill_metrics(String.t()) :: map()
+  def skill_metrics(skill_name) when is_binary(skill_name) do
+    ensure_metrics_table()
+    key = {skill_name, :metrics}
+
+    case :ets.lookup(@metrics_table, key) do
+      [{^key, m}] -> m
+      _ -> %{used_count: 0, success_count: 0, failure_count: 0, last_used_at: nil}
+    end
+  rescue
+    _ -> %{used_count: 0, success_count: 0, failure_count: 0, last_used_at: nil}
+  end
+
+  @doc """
+  Return the top `n` evolved skills ranked by `success_count` descending.
+
+  Each entry is `{skill_name, metrics_map}`.
+  """
+  @spec top_skills(pos_integer()) :: [{String.t(), map()}]
+  def top_skills(n) when is_integer(n) and n > 0 do
+    ensure_metrics_table()
+
+    @metrics_table
+    |> :ets.tab2list()
+    |> Enum.filter(fn {{_name, tag}, _} -> tag == :metrics end)
+    |> Enum.map(fn {{name, :metrics}, m} -> {name, m} end)
+    |> Enum.sort_by(fn {_name, m} -> -m.success_count end)
+    |> Enum.take(n)
+  rescue
+    _ -> []
   end
 
   @doc "Returns stats: evolved_count and last_evolution datetime."
@@ -73,6 +147,9 @@ defmodule OptimalSystemAgent.Agent.SkillEvolution do
   @impl true
   def init(_opts) do
     state = %__MODULE__{}
+
+    # Initialize ETS table for skill impact metrics
+    ensure_metrics_table()
 
     # Subscribe to system_event for doom_loop and cancellation signals
     ref =
@@ -140,22 +217,39 @@ defmodule OptimalSystemAgent.Agent.SkillEvolution do
     event = Map.get(payload, :event) || Map.get(payload, "event")
     session_id = Map.get(payload, :session_id) || Map.get(payload, "session_id")
 
-    if event in [:doom_loop_detected, :agent_cancelled] and is_binary(session_id) do
-      failure_info = %{
-        reason: event,
-        iteration: Map.get(payload, :iteration),
-        tool_signature: Map.get(payload, :tool_signature),
-        consecutive_failures: Map.get(payload, :consecutive_failures)
-      }
+    cond do
+      event in [:doom_loop_detected, :agent_cancelled] and is_binary(session_id) ->
+        failure_info = %{
+          reason: event,
+          iteration: Map.get(payload, :iteration),
+          tool_signature: Map.get(payload, :tool_signature),
+          consecutive_failures: Map.get(payload, :consecutive_failures)
+        }
 
-      # Dispatch to our GenServer to avoid blocking the bus
-      try do
-        GenServer.cast(__MODULE__, {:evolve, session_id, failure_info})
-      catch
-        :exit, _ -> :ok
-      rescue
-        _ -> :ok
-      end
+        # Dispatch to our GenServer to avoid blocking the bus
+        try do
+          GenServer.cast(__MODULE__, {:evolve, session_id, failure_info})
+        catch
+          :exit, _ -> :ok
+        rescue
+          _ -> :ok
+        end
+
+      event == :skills_triggered ->
+        # Record a use for each matched evolved skill so metrics stay current.
+        # We record :success here (trigger = the skill was relevant and used).
+        # Failure tracking happens if/when the session ends with doom_loop or cancel.
+        skills = Map.get(payload, :skills) || Map.get(payload, "skills") || []
+        evolved = list_evolved_skills()
+
+        Enum.each(skills, fn skill_name ->
+          if skill_name in evolved do
+            record_skill_use(skill_name, :success)
+          end
+        end)
+
+      true ->
+        :ok
     end
   end
 
@@ -245,6 +339,17 @@ defmodule OptimalSystemAgent.Agent.SkillEvolution do
     """
 
     write_evolved_skill(skill_name, failure_context, instructions, session_id)
+  end
+
+  defp ensure_metrics_table do
+    case :ets.whereis(@metrics_table) do
+      :undefined ->
+        :ets.new(@metrics_table, [:named_table, :public, :set, read_concurrency: true, write_concurrency: true])
+      _ ->
+        @metrics_table
+    end
+  rescue
+    _ -> @metrics_table
   end
 
   defp write_evolved_skill(name, description, instructions, session_id) do
