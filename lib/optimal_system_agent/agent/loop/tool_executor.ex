@@ -64,7 +64,10 @@ defmodule OptimalSystemAgent.Agent.Loop.ToolExecutor do
           "Blocked: security pipeline unavailable"
 
         _ ->
-          case Tools.execute(tool_call.name, tool_call.arguments) do
+          # Inject session_id so tools like ask_user can register pending state
+          enriched_args = Map.put(tool_call.arguments, "__session_id__", state.session_id)
+
+          case Tools.execute(tool_call.name, enriched_args) do
             {:ok, {:image, %{media_type: mt, data: b64, path: p}}} ->
               {:image, mt, b64, p}
 
@@ -76,7 +79,7 @@ defmodule OptimalSystemAgent.Agent.Loop.ToolExecutor do
                 {:ok, alt_tool} ->
                   Logger.info("[loop] Tool '#{tool_call.name}' failed (#{inspect(reason)}), trying fallback '#{alt_tool}'")
 
-                  case Tools.execute(alt_tool, tool_call.arguments) do
+                  case Tools.execute(alt_tool, enriched_args) do
                     {:ok, {:image, %{media_type: mt, data: b64, path: p}}} ->
                       {:image, mt, b64, p}
 

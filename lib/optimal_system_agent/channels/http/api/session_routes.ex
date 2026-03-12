@@ -456,6 +456,34 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.SessionRoutes do
     end
   end
 
+  # ── GET /:id/pending_questions ─────────────────────────────────────────
+
+  get "/:id/pending_questions" do
+    session_id = conn.params["id"]
+
+    questions =
+      try do
+        :ets.tab2list(:osa_pending_questions)
+        |> Enum.filter(fn {_ref, meta} -> meta.session_id == session_id end)
+        |> Enum.map(fn {ref, meta} ->
+          %{
+            ref: ref,
+            question: meta.question,
+            options: meta.options,
+            asked_at: meta.asked_at
+          }
+        end)
+      rescue
+        _ -> []
+      end
+
+    body = Jason.encode!(%{pending_questions: questions, count: length(questions)})
+
+    conn
+    |> put_resp_content_type("application/json")
+    |> send_resp(200, body)
+  end
+
   match _ do
     json_error(conn, 404, "not_found", "Session endpoint not found")
   end

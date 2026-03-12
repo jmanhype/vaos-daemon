@@ -42,30 +42,55 @@ defmodule OptimalSystemAgent.Tools.Builtins.AskUser do
   @impl true
   def execute(%{"question" => question} = params) do
     options = params["options"] || []
+    session_id = params["__session_id__"]
     ref = make_ref()
+    ref_str = inspect(ref)
     caller = self()
+
+    # Register pending question so TUI can poll GET /sessions/:id/pending_questions
+    if is_binary(session_id) and session_id != "" do
+      try do
+        :ets.insert(:osa_pending_questions, {ref_str, %{
+          session_id: session_id,
+          question: question,
+          options: options,
+          asked_at: DateTime.utc_now() |> DateTime.to_iso8601()
+        }})
+      rescue
+        _ -> :ok
+      end
+    end
 
     # Emit ask_user event — the channel will render this and send back the answer
     Bus.emit(:system_event, %{
       event: :ask_user,
       question: question,
       options: options,
-      ref: inspect(ref),
+      ref: ref_str,
       reply_to: caller
     })
 
-    # Wait for the response from the channel
-    receive do
-      {:ask_user_response, ^ref, answer} when is_binary(answer) ->
-        {:ok, "User answered: #{answer}"}
+    result =
+      receive do
+        {:ask_user_response, ^ref, answer} when is_binary(answer) ->
+          {:ok, "User answered: #{answer}"}
 
-      {:ask_user_response, _ref, answer} when is_binary(answer) ->
-        # Accept even if ref doesn't match (single ask_user at a time)
-        {:ok, "User answered: #{answer}"}
-    after
-      @timeout_ms ->
-        {:error, "User did not respond within 5 minutes"}
+        {:ask_user_response, _ref, answer} when is_binary(answer) ->
+          # Accept even if ref doesn't match (single ask_user at a time)
+          {:ok, "User answered: #{answer}"}
+      after
+        @timeout_ms ->
+          {:error, "User did not respond within 5 minutes"}
+      end
+
+    # Deregister once answered or timed out
+    try do
+      :ets.delete(:osa_pending_questions, ref_str)
+    rescue
+      _ -> :ok
     end
+
+    result
   end
 
   def execute(_), do: {:error, "Missing required parameter: question"}
