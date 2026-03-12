@@ -12,7 +12,8 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.ToolRoutes do
     POST /tools/:name/execute
     GET  /skills
     POST /skills/create
-    GET  /commands
+    GET  /commands           — list all commands
+    GET  /commands?q=term    — fuzzy-search commands + skills, ranked by relevance
     POST /commands/execute
   """
   use Plug.Router
@@ -196,16 +197,75 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.ToolRoutes do
   end
 
   defp handle_list_commands(conn) do
-    commands =
+    conn = Plug.Conn.fetch_query_params(conn)
+    q = conn.query_params["q"]
+
+    if is_binary(q) and q != "" do
+      handle_command_palette_search(conn, q)
+    else
+      commands =
+        Commands.list_commands()
+        |> Enum.map(fn {name, description, category} ->
+          %{name: name, description: description, category: category}
+        end)
+
+      body = Jason.encode!(%{commands: commands, count: length(commands)})
+
+      conn
+      |> put_resp_content_type("application/json")
+      |> send_resp(200, body)
+    end
+  end
+
+  # Fuzzy command palette: merges commands and skills, ranked by relevance score.
+  #
+  # Scoring uses a simple substring match strategy:
+  #   - name exact match:      1.0
+  #   - name starts with q:   0.8
+  #   - name contains q:      0.6
+  #   - description contains q: 0.3
+  #
+  # Commands and skills with score > 0.0 are included. Results are sorted
+  # descending by score. Type field distinguishes "command" from "skill".
+  defp handle_command_palette_search(conn, q) do
+    q_lower = String.downcase(q)
+
+    command_results =
       Commands.list_commands()
       |> Enum.map(fn {name, description, category} ->
-        %{name: name, description: description, category: category}
+        score = fuzzy_score(name, description, q_lower)
+        %{type: "command", name: name, description: description, category: category, score: score}
+      end)
+      |> Enum.filter(fn item -> item.score > 0.0 end)
+
+    skill_results =
+      Tools.search(q)
+      |> Enum.map(fn {name, description, score} ->
+        %{type: "skill", name: name, description: description, category: "skill", score: score}
       end)
 
-    body = Jason.encode!(%{commands: commands, count: length(commands)})
+    all =
+      (command_results ++ skill_results)
+      |> Enum.sort_by(fn item -> item.score end, :desc)
+
+    body = Jason.encode!(%{results: all, count: length(all), query: q})
 
     conn
     |> put_resp_content_type("application/json")
     |> send_resp(200, body)
+  end
+
+  # Score a name + description pair against a lowercase query token.
+  defp fuzzy_score(name, description, q_lower) do
+    name_lower = String.downcase(name)
+    desc_lower = String.downcase(description)
+
+    cond do
+      name_lower == q_lower -> 1.0
+      String.starts_with?(name_lower, q_lower) -> 0.8
+      String.contains?(name_lower, q_lower) -> 0.6
+      String.contains?(desc_lower, q_lower) -> 0.3
+      true -> 0.0
+    end
   end
 end
