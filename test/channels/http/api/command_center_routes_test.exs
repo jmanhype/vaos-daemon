@@ -284,24 +284,22 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutesTest do
   # ── GET /events — SSE event stream ─────────────────────────────────
 
   describe "GET /events" do
-    test "returns 501 not implemented" do
+    test "returns 200 SSE stream" do
       conn = json_get("/events")
 
-      assert conn.status == 501
-      body = decode_body(conn)
-      assert body["error"] == "not_implemented"
+      assert conn.status == 200
     end
   end
 
   # ── GET /events/history ─────────────────────────────────────────────
 
   describe "GET /events/history" do
-    test "returns 501 not implemented" do
+    test "returns 200 with a list of events" do
       conn = json_get("/events/history")
 
-      assert conn.status == 501
+      assert conn.status == 200
       body = decode_body(conn)
-      assert body["error"] == "not_implemented"
+      assert is_list(body["events"])
     end
   end
 
