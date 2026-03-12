@@ -395,11 +395,34 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.AgentRunner do
 
     max_iters = Tier.max_iterations(agent_tier)
 
-    # Inject skills triggered by the task description
+    # Inject skills: match by task description AND include parent-inherited skills.
+    inherited_block =
+      case Map.get(sub_task, :inherited_skills, []) do
+        [] -> nil
+        names ->
+          skills = :persistent_term.get({OptimalSystemAgent.Tools.Registry, :skills}, %{})
+          ctx =
+            names
+            |> Enum.flat_map(fn name ->
+              case Map.get(skills, to_string(name)) do
+                nil -> []
+                skill ->
+                  inst = skill.instructions |> to_string() |> String.trim()
+                  if inst != "", do: ["### Inherited Skill: #{skill.name}\n\n#{inst}"], else: []
+              end
+            end)
+            |> Enum.join("\n\n")
+          if ctx == "", do: nil, else: ctx
+      end
+
+    matched_block = Tools.active_skills_context(sub_task.description)
+
     skills_block =
-      case Tools.active_skills_context(sub_task.description) do
-        nil -> ""
-        ctx -> "\n## Active Skills\n#{ctx}\n"
+      case {matched_block, inherited_block} do
+        {nil, nil} -> ""
+        {nil, i} -> "\n## Active Skills\n#{i}\n"
+        {m, nil} -> "\n## Active Skills\n#{m}\n"
+        {m, i} -> "\n## Active Skills\n#{m}\n\n#{i}\n"
       end
 
     # Environment context so the agent knows where it's working
