@@ -130,10 +130,8 @@ defmodule OptimalSystemAgent.Bridge.PubSubTuiEventsTest do
     test "unrelated system_event subtype does not reach TUI" do
       drain_tui()
       emit_event(:system_event, %{event: :some_internal_housekeeping, detail: "nothing"})
-      refute_receive {:osa_event, event} when is_map(event) and
-                       (Map.get(event, :data, %{})[:event] == :some_internal_housekeeping or
-                        Map.get(event, :event) == :some_internal_housekeeping),
-                     500
+      refute_receive {:osa_event, %{event: :some_internal_housekeeping}}, 500
+      refute_receive {:osa_event, %{data: %{event: :some_internal_housekeeping}}}, 500
     end
   end
 

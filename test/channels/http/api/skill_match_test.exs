@@ -144,7 +144,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.SkillMatchTest do
       assert body["matched_count"] >= 1
     end
 
-    test "returns zero matches when message has no trigger keyword" do
+    test "returns zero matches when message has no trigger keyword", %{skill_name: name} do
       conn = json_post("/match", %{"message" => "completely unrelated request with no trigger"})
 
       assert conn.status == 200

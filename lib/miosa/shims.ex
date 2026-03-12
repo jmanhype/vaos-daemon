@@ -74,6 +74,8 @@ defmodule MiosaProviders.Registry do
   defdelegate context_window(model), to: OptimalSystemAgent.Providers.Registry
   defdelegate provider_configured?(provider), to: OptimalSystemAgent.Providers.Registry
   defdelegate register_provider(name, module), to: OptimalSystemAgent.Providers.Registry
+  defdelegate provider_info(provider), to: OptimalSystemAgent.Providers.Registry
+  defdelegate provider_configured?(provider), to: OptimalSystemAgent.Providers.Registry
 end
 
 defmodule MiosaProviders.Ollama do
@@ -88,6 +90,11 @@ defmodule MiosaProviders.Ollama do
   defdelegate chat_stream(messages, callback, opts \\ []),
     to: OptimalSystemAgent.Providers.Ollama
   defdelegate pick_best_model(models), to: OptimalSystemAgent.Providers.Ollama
+  defdelegate name(), to: OptimalSystemAgent.Providers.Ollama
+  defdelegate default_model(), to: OptimalSystemAgent.Providers.Ollama
+  defdelegate available_models(), to: OptimalSystemAgent.Providers.Ollama
+  defdelegate split_ndjson(data), to: OptimalSystemAgent.Providers.Ollama
+  defdelegate process_ndjson_line(line, callback, acc), to: OptimalSystemAgent.Providers.Ollama
 end
 
 # ---------------------------------------------------------------------------
@@ -965,4 +972,38 @@ defmodule MiosaTools.Pipeline do
         end)
     end
   end
+end
+
+defmodule MiosaProviders.OpenAICompat do
+  @moduledoc "Shim — delegates to OptimalSystemAgent.Providers.OpenAICompat."
+
+  defdelegate parse_tool_calls(msg), to: OptimalSystemAgent.Providers.OpenAICompat
+  defdelegate parse_tool_calls(msg, model), to: OptimalSystemAgent.Providers.OpenAICompat
+  defdelegate parse_tool_calls_from_content(content), to: OptimalSystemAgent.Providers.OpenAICompat
+  defdelegate format_messages(messages), to: OptimalSystemAgent.Providers.OpenAICompat
+  defdelegate normalize_tool_name(name), to: OptimalSystemAgent.Providers.OpenAICompat
+  defdelegate chat(messages, opts \\ []), to: OptimalSystemAgent.Providers.OpenAICompat
+  defdelegate chat_stream(messages, callback, opts \\ []), to: OptimalSystemAgent.Providers.OpenAICompat
+  defdelegate format_tools(tools), to: OptimalSystemAgent.Providers.OpenAICompat
+end
+
+defmodule MiosaProviders.Anthropic do
+  @moduledoc "Shim — delegates to OptimalSystemAgent.Providers.Anthropic."
+
+  defdelegate chat(messages, opts \\ []), to: OptimalSystemAgent.Providers.Anthropic
+  defdelegate chat_stream(messages, callback, opts \\ []), to: OptimalSystemAgent.Providers.Anthropic
+  defdelegate format_messages(messages), to: OptimalSystemAgent.Providers.Anthropic
+  def format_messages_with_thinking(messages),
+    do: OptimalSystemAgent.Providers.Anthropic.format_messages(messages)
+  defdelegate extract_thinking(response), to: OptimalSystemAgent.Providers.Anthropic
+  defdelegate extract_usage(response), to: OptimalSystemAgent.Providers.Anthropic
+  defdelegate maybe_add_thinking(body, thinking), to: OptimalSystemAgent.Providers.Anthropic
+  defdelegate build_headers(api_key, thinking), to: OptimalSystemAgent.Providers.Anthropic
+  defdelegate available_models(), to: OptimalSystemAgent.Providers.Anthropic
+  defdelegate default_model(), to: OptimalSystemAgent.Providers.Anthropic
+end
+
+defmodule MiosaProviders.Behaviour do
+  @moduledoc "Shim — re-exports OptimalSystemAgent.Providers.Behaviour."
+  defdelegate __using__(opts), to: OptimalSystemAgent.Providers.Behaviour
 end

@@ -31,7 +31,7 @@ defmodule OptimalSystemAgent.Tools.SynthesizerTest do
     %{
       "description" => Keyword.get(opts, :description, "A test tool"),
       "params" => Keyword.get(opts, :params, ["input"]),
-      "body" => Keyword.get(opts, :body, ~s({:ok, "result: " <> Map.get(params, "input", "")}))
+      "body" => Keyword.get(opts, :body, ~s[{:ok, "result: " <> Map.get(params, "input", "")}])
     }
   end
 
@@ -140,7 +140,7 @@ defmodule OptimalSystemAgent.Tools.SynthesizerTest do
 
     test "generated file contains the execute/1 function with the provided body" do
       name = unique_name("exec-fn")
-      body = ~s({:ok, "synthesized: " <> Map.get(params, "x", "none")})
+      body = ~s[{:ok, "synthesized: " <> Map.get(params, "x", "none")}]
       spec = valid_spec(body: body, params: ["x"])
 
       case Synthesizer.synthesize(name, spec) do
@@ -159,7 +159,7 @@ defmodule OptimalSystemAgent.Tools.SynthesizerTest do
 
     test "Code.eval_string loads the module into the VM" do
       name = unique_name("eval-load")
-      spec = valid_spec(body: ~s({:ok, "hello from #{unique_name()}"}))
+      spec = valid_spec(body: ~s[{:ok, "hello from #{unique_name()}"}])
 
       case Synthesizer.synthesize(name, spec) do
         {:ok, module_name} ->
@@ -285,7 +285,7 @@ defmodule OptimalSystemAgent.Tools.SynthesizerTest do
         "name" => name,
         "description" => "A generated test tool",
         "params" => ["input"],
-        "body" => ~s({:ok, "done"})
+        "body" => ~s[{:ok, "done"}]
       })
 
       # Either synthesized (201) or synthesis error (500) — both indicate the

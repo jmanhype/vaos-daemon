@@ -123,11 +123,11 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputeVmTest do
   @tag :integration
   describe "integration — create / exec / read_file / write_file / destroy" do
     setup do
-      unless System.get_env("MIOSA_COMPUTE_URL") do
-        skip("MIOSA_COMPUTE_URL not set — skipping integration tests")
+      if is_nil(System.get_env("MIOSA_COMPUTE_URL")) do
+        {:ok, skip: true}
+      else
+        :ok
       end
-
-      :ok
     end
 
     test "full lifecycle" do
