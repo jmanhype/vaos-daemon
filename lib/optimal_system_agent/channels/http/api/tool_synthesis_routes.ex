@@ -66,10 +66,10 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.ToolSynthesisRoutes do
         result =
           try do
             Synthesizer.synthesize(name, spec)
-          catch
-            :exit, _ -> {:error, "synthesizer process not available"}
           rescue
             e -> {:error, Exception.message(e)}
+          catch
+            :exit, _ -> {:error, "synthesizer process not available"}
           end
 
         case result do
@@ -98,10 +98,10 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.ToolSynthesisRoutes do
     tools =
       try do
         Synthesizer.list_synthesized()
-      catch
-        :exit, _ -> []
       rescue
         _ -> []
+      catch
+        :exit, _ -> []
       end
 
     body = Jason.encode!(%{tools: tools, count: length(tools)})

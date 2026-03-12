@@ -107,10 +107,10 @@ defmodule OptimalSystemAgent.Agent.SkillEvolution do
   def stats do
     try do
       GenServer.call(__MODULE__, :stats)
-    catch
-      :exit, _ -> {:ok, %{evolved_count: 0, last_evolution: nil}}
     rescue
       _ -> {:ok, %{evolved_count: 0, last_evolution: nil}}
+    catch
+      :exit, _ -> {:ok, %{evolved_count: 0, last_evolution: nil}}
     end
   end
 
@@ -135,10 +135,10 @@ defmodule OptimalSystemAgent.Agent.SkillEvolution do
   def trigger_evolution(session_id, failure_info \\ %{}) do
     try do
       GenServer.cast(__MODULE__, {:evolve, session_id, failure_info})
-    catch
-      :exit, _ -> :ok
     rescue
       _ -> :ok
+    catch
+      :exit, _ -> :ok
     end
   end
 
@@ -157,10 +157,10 @@ defmodule OptimalSystemAgent.Agent.SkillEvolution do
         Bus.register_handler(:system_event, fn payload ->
           handle_bus_event(payload)
         end)
-      catch
-        :exit, _ -> nil
       rescue
         _ -> nil
+      catch
+        :exit, _ -> nil
       end
 
     Logger.info("[SkillEvolution] Started — watching for failure events")
@@ -229,10 +229,10 @@ defmodule OptimalSystemAgent.Agent.SkillEvolution do
         # Dispatch to our GenServer to avoid blocking the bus
         try do
           GenServer.cast(__MODULE__, {:evolve, session_id, failure_info})
-        catch
-          :exit, _ -> :ok
         rescue
           _ -> :ok
+        catch
+          :exit, _ -> :ok
         end
 
       event == :skills_triggered ->
@@ -279,10 +279,10 @@ defmodule OptimalSystemAgent.Agent.SkillEvolution do
         {:ok, msgs} when is_list(msgs) -> msgs
         _ -> []
       end
-    catch
-      :exit, _ -> []
     rescue
       _ -> []
+    catch
+      :exit, _ -> []
     end
   end
 
@@ -379,10 +379,10 @@ defmodule OptimalSystemAgent.Agent.SkillEvolution do
       # Reload registry so the skill is available for next turn
       try do
         OptimalSystemAgent.Tools.Registry.reload_skills()
-      catch
-        :exit, _ -> :ok
       rescue
         _ -> :ok
+      catch
+        :exit, _ -> :ok
       end
 
       {:ok, name}
