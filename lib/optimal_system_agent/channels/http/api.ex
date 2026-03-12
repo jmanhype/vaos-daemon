@@ -14,6 +14,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
     /fleet       → FleetRoutes       POST /register|heartbeat|dispatch, GET /agents|/:id
     /orchestrate → OrchestrationRoutes  POST /|/complex, GET /tasks, GET /:id/progress
     /swarm       → OrchestrationRoutes  POST /launch, GET /|/:id, DELETE /:id
+    /debate      → DebateRoutes       POST / (multi-agent debate + synthesis)
     /stream      → AgentRoutes       GET /tui_output (SSE alias), GET /:session_id  (SSE)
     /tui         → TuiRoutes         GET /output (SSE), POST /input
     /tools       → ToolRoutes        GET /, POST /:name/execute
@@ -91,6 +92,9 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
   # clients that used the longer form (e.g. POST /orchestrator/complex).
   forward "/orchestrator", to: API.OrchestrationRoutes
   forward "/swarm", to: API.OrchestrationRoutes
+
+  # ── Multi-agent debate ────────────────────────────────────────────────
+  forward "/debate", to: API.DebateRoutes
 
   # ── Agent SSE stream ─────────────────────────────────────────────────
   forward "/stream", to: API.AgentRoutes
