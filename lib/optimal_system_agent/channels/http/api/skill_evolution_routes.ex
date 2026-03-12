@@ -45,7 +45,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.SkillEvolutionRoutes do
         json_error(conn, 400, "missing_session_id", "'session_id' is required")
 
       true ->
-        failure_info = %{reason: reason}
+        failure_info = %{reason: String.to_atom(reason)}
         SkillEvolution.trigger_evolution(session_id, failure_info)
 
         body = Jason.encode!(%{status: "triggered", session_id: session_id})

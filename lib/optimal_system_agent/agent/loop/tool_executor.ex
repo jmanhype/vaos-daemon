@@ -72,7 +72,24 @@ defmodule OptimalSystemAgent.Agent.Loop.ToolExecutor do
               content
 
             {:error, reason} ->
-              "Error: #{reason}"
+              case Tools.suggest_fallback_tool(tool_call.name) do
+                {:ok, alt_tool} ->
+                  Logger.info("[loop] Tool '#{tool_call.name}' failed (#{inspect(reason)}), trying fallback '#{alt_tool}'")
+
+                  case Tools.execute(alt_tool, tool_call.arguments) do
+                    {:ok, {:image, %{media_type: mt, data: b64, path: p}}} ->
+                      {:image, mt, b64, p}
+
+                    {:ok, alt_content} ->
+                      "[used #{alt_tool} as fallback for #{tool_call.name}]\n#{alt_content}"
+
+                    {:error, _alt_reason} ->
+                      "Error: #{reason}"
+                  end
+
+                :no_alternative ->
+                  "Error: #{reason}"
+              end
           end
       end
       end

@@ -343,6 +343,23 @@ defmodule OptimalSystemAgent.Tools.Registry do
     base = active_skills_context()
     matched = match_skill_triggers(message)
 
+    # Emit a bus event so TUI and command center can show which skills are active.
+    if matched != [] do
+      skill_names = Enum.map(matched, fn {name, _} -> name end)
+
+      try do
+        OptimalSystemAgent.Events.Bus.emit(:system_event, %{
+          event: :skills_triggered,
+          skills: skill_names,
+          message_preview: String.slice(message, 0, 120)
+        })
+      rescue
+        _ -> :ok
+      catch
+        :exit, _ -> :ok
+      end
+    end
+
     injected =
       Enum.flat_map(matched, fn {_name, skill} ->
         inst = skill.instructions |> to_string() |> String.trim()
@@ -798,7 +815,8 @@ defmodule OptimalSystemAgent.Tools.Registry do
       "vault_wake" => OptimalSystemAgent.Tools.Builtins.VaultWake,
       "vault_sleep" => OptimalSystemAgent.Tools.Builtins.VaultSleep,
       "vault_checkpoint" => OptimalSystemAgent.Tools.Builtins.VaultCheckpoint,
-      "vault_inject" => OptimalSystemAgent.Tools.Builtins.VaultInject
+      "vault_inject" => OptimalSystemAgent.Tools.Builtins.VaultInject,
+      "compute_vm" => OptimalSystemAgent.Tools.Builtins.ComputeVm
     }
   end
 
