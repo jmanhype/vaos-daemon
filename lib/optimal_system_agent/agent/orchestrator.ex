@@ -42,7 +42,8 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
       :role,
       :tools_needed,
       depends_on: [],
-      context: nil
+      context: nil,
+      inherited_skills: []
     ]
   end
 
@@ -702,7 +703,7 @@ defmodule OptimalSystemAgent.Agent.Orchestrator do
         parent_triggered_skills =
           case task_state do
             %{message: msg} when is_binary(msg) and msg != "" ->
-              matched = Tools.Registry.match_skill_triggers(msg)
+              matched = Tools.match_skill_triggers(msg)
               Enum.map(matched, fn {name, _} -> name end)
             _ -> []
           end
