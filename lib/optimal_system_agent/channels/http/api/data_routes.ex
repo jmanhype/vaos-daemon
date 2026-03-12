@@ -4,7 +4,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.DataRoutes do
 
   Forwarded prefixes → effective routes:
     /memory     → GET /recall, GET /search, POST /
-    /models     → GET /, POST /switch
+    /models     → GET /, POST /switch, GET /current, POST /current
     /analytics  → GET /
     /scheduler  → GET /jobs, POST /reload
     /webhooks   → POST /:trigger_id
@@ -151,6 +151,94 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.DataRoutes do
         conn
         |> put_resp_content_type("application/json")
         |> send_resp(400, Jason.encode!(%{error: "missing or invalid provider/model"}))
+    end
+  end
+
+  # ── GET /current — active model ────────────────────────────────────
+  # Effective path: GET /models/current
+
+  get "/current" do
+    provider =
+      Application.get_env(:optimal_system_agent, :default_provider, :ollama)
+      |> to_string()
+
+    model =
+      Application.get_env(:optimal_system_agent, :default_model) ||
+        Application.get_env(:optimal_system_agent, :ollama_model, "llama3.2:latest")
+
+    model_name = to_string(model)
+
+    context_window =
+      try do
+        MiosaProviders.Registry.context_window(model_name)
+      rescue
+        _ -> nil
+      end
+
+    body =
+      Jason.encode!(%{
+        provider: provider,
+        model: model_name,
+        context_window: context_window
+      })
+
+    conn
+    |> put_resp_content_type("application/json")
+    |> send_resp(200, body)
+  end
+
+  # ── POST /current — switch active model ────────────────────────────
+  # Effective path: POST /models/current
+  # Body: {"provider": "...", "model": "..."}
+
+  post "/current" do
+    valid_providers = MiosaProviders.Registry.list_providers()
+    valid_names = Enum.map(valid_providers, &Atom.to_string/1)
+
+    with %{"provider" => prov_str, "model" => model_name} <- conn.body_params,
+         true <- is_binary(prov_str) and prov_str != "",
+         true <- is_binary(model_name) and model_name != "",
+         true <- prov_str in valid_names,
+         provider <- String.to_existing_atom(prov_str) do
+      Application.put_env(:optimal_system_agent, :default_provider, provider)
+      Application.put_env(:optimal_system_agent, :default_model, model_name)
+
+      if provider == :ollama do
+        Application.put_env(:optimal_system_agent, :ollama_model, model_name)
+      end
+
+      persist_model_selection(prov_str, model_name)
+
+      Logger.info("[Models] Switched (current) to #{prov_str}/#{model_name}")
+
+      context_window =
+        try do
+          MiosaProviders.Registry.context_window(model_name)
+        rescue
+          _ -> nil
+        end
+
+      body =
+        Jason.encode!(%{
+          status: "switched",
+          provider: prov_str,
+          model: model_name,
+          context_window: context_window
+        })
+
+      conn
+      |> put_resp_content_type("application/json")
+      |> send_resp(200, body)
+    else
+      false ->
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(400, Jason.encode!(%{error: "unknown_provider", details: "Provider not registered"}))
+
+      _ ->
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(400, Jason.encode!(%{error: "invalid_request", details: "Missing or invalid provider/model fields"}))
     end
   end
 
