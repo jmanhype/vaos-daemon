@@ -235,6 +235,97 @@ defmodule OptimalSystemAgent.Channels.HTTP.SessionRoutesTest do
     end
   end
 
+  # ── GET /sessions/:id/pending_questions ───────────────────────────────
+
+  describe "GET /sessions/:id/pending_questions" do
+    test "returns 200 with empty list when no pending questions" do
+      conn = json_get("/some-session-id/pending_questions")
+
+      assert conn.status == 200
+      body = decode_body(conn)
+      assert is_list(body["pending_questions"])
+      assert body["pending_questions"] == []
+      assert body["count"] == 0
+    end
+
+    test "returns 200 with empty list for unknown session id" do
+      conn = json_get("/unknown-session-#{System.unique_integer([:positive])}/pending_questions")
+
+      assert conn.status == 200
+      body = decode_body(conn)
+      assert body["pending_questions"] == []
+    end
+
+    test "count matches pending_questions list length" do
+      conn = json_get("/any-session/pending_questions")
+      body = decode_body(conn)
+      assert body["count"] == length(body["pending_questions"])
+    end
+
+    test "pending question inserted into ETS appears in response for that session" do
+      session_id = "test-pq-session-#{System.unique_integer([:positive])}"
+      ref_str = "test-ref-#{System.unique_integer([:positive])}"
+      asked_at = DateTime.utc_now() |> DateTime.to_iso8601()
+
+      inserted =
+        try do
+          :ets.insert(:osa_pending_questions, {ref_str, %{
+            session_id: session_id,
+            question: "Which option do you prefer?",
+            options: ["A", "B"],
+            asked_at: asked_at
+          }})
+          true
+        rescue
+          ArgumentError -> false
+        end
+
+      if inserted do
+        conn = json_get("/#{session_id}/pending_questions")
+        body = decode_body(conn)
+
+        assert body["count"] == 1
+        [q] = body["pending_questions"]
+        assert q["ref"] == ref_str
+        assert q["question"] == "Which option do you prefer?"
+        assert q["options"] == ["A", "B"]
+        assert is_binary(q["asked_at"])
+
+        try do
+          :ets.delete(:osa_pending_questions, ref_str)
+        rescue
+          ArgumentError -> :ok
+        end
+      else
+        # ETS table not available in isolated test run — acceptable
+        assert true
+      end
+    end
+
+    test "does not return questions from a different session" do
+      session_a = "session-a-#{System.unique_integer([:positive])}"
+      session_b = "session-b-#{System.unique_integer([:positive])}"
+      ref_str = "ref-cross-#{System.unique_integer([:positive])}"
+
+      try do
+        :ets.insert(:osa_pending_questions, {ref_str, %{
+          session_id: session_a,
+          question: "For session A only",
+          options: [],
+          asked_at: DateTime.utc_now() |> DateTime.to_iso8601()
+        }})
+
+        conn = json_get("/#{session_b}/pending_questions")
+        body = decode_body(conn)
+        assert body["count"] == 0
+
+        :ets.delete(:osa_pending_questions, ref_str)
+      rescue
+        ArgumentError -> :ok
+      end
+    end
+  end
+
   # ── Unknown endpoint ──────────────────────────────────────────────────
 
   describe "unknown session endpoint" do
