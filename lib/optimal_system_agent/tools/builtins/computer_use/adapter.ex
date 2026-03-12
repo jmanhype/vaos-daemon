@@ -16,7 +16,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputerUse.Adapter do
   @optional_callbacks [get_accessibility_tree: 1]
 
   @doc "Identifies which platform this adapter targets."
-  @callback platform() :: :macos | :linux_x11 | :linux_wayland | :windows
+  @callback platform() :: :macos | :linux_x11 | :linux_wayland | :windows | :remote_ssh | :docker
 
   @doc """
   Returns true when the adapter is usable on the current host.
@@ -99,33 +99,50 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputerUse.Adapter do
   @doc """
   Detect the current host platform and return a normalised atom.
 
-  Detection logic:
-  - `{:unix, :darwin}` → `:macos`
-  - `{:unix, :linux}` with `WAYLAND_DISPLAY` set or `XDG_SESSION_TYPE=wayland` → `:linux_wayland`
-  - `{:unix, :linux}` otherwise → `:linux_x11`
-  - `{:win32, _}` → `:windows`
+  Detection logic (checked in order):
+  1. If `config :optimal_system_agent, :computer_use_remote` has a `:host` set,
+     return `:remote_ssh` — remote mode takes priority over local OS detection.
+  2. `{:unix, :darwin}` → `:macos`
+  3. `{:unix, :linux}` with `WAYLAND_DISPLAY` set or `XDG_SESSION_TYPE=wayland` → `:linux_wayland`
+  4. `{:unix, :linux}` otherwise → `:linux_x11`
+  5. `{:win32, _}` → `:windows`
   """
-  @spec detect_platform() :: :macos | :linux_x11 | :linux_wayland | :windows
+  @spec detect_platform() :: :macos | :linux_x11 | :linux_wayland | :windows | :remote_ssh | :docker
   def detect_platform do
-    case :os.type() do
-      {:unix, :darwin} ->
-        :macos
+    docker_config = Application.get_env(:optimal_system_agent, :computer_use_docker, [])
+    docker_container = docker_config[:container]
 
-      {:unix, :linux} ->
-        wayland_display = System.get_env("WAYLAND_DISPLAY")
-        xdg_session = System.get_env("XDG_SESSION_TYPE")
+    remote_config = Application.get_env(:optimal_system_agent, :computer_use_remote, [])
+    remote_host = remote_config[:host]
 
-        if wayland_display not in [nil, ""] or xdg_session == "wayland" do
-          :linux_wayland
-        else
-          :linux_x11
+    cond do
+      docker_container not in [nil, ""] ->
+        :docker
+
+      remote_host not in [nil, ""] ->
+        :remote_ssh
+
+      true ->
+        case :os.type() do
+          {:unix, :darwin} ->
+            :macos
+
+          {:unix, :linux} ->
+            wayland_display = System.get_env("WAYLAND_DISPLAY")
+            xdg_session = System.get_env("XDG_SESSION_TYPE")
+
+            if wayland_display not in [nil, ""] or xdg_session == "wayland" do
+              :linux_wayland
+            else
+              :linux_x11
+            end
+
+          {:win32, _} ->
+            :windows
+
+          _ ->
+            :linux_x11
         end
-
-      {:win32, _} ->
-        :windows
-
-      _ ->
-        :linux_x11
     end
   end
 
@@ -135,7 +152,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputerUse.Adapter do
   Returns `{:ok, module}` when a mapping exists, or `{:error, reason}` when
   the platform is not yet supported.
   """
-  @spec adapter_for(:macos | :linux_x11 | :linux_wayland | :windows) ::
+  @spec adapter_for(:macos | :linux_x11 | :linux_wayland | :windows | :remote_ssh | :docker) ::
           {:ok, module()} | {:error, String.t()}
   def adapter_for(:macos),
     do: {:ok, OptimalSystemAgent.Tools.Builtins.ComputerUse.Adapters.MacOS}
@@ -145,6 +162,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputerUse.Adapter do
 
   def adapter_for(:linux_wayland),
     do: {:ok, OptimalSystemAgent.Tools.Builtins.ComputerUse.Adapters.LinuxWayland}
+
+  def adapter_for(:remote_ssh),
+    do: {:ok, OptimalSystemAgent.Tools.Builtins.ComputerUse.Adapters.RemoteSSH}
+
+  def adapter_for(:docker),
+    do: {:ok, OptimalSystemAgent.Tools.Builtins.ComputerUse.Adapters.Docker}
 
   def adapter_for(:windows),
     do: {:error, "Windows platform is not yet supported"}
