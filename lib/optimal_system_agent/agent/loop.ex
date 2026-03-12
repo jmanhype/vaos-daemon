@@ -417,7 +417,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
       {:respond, genre_response} ->
         Memory.append(state.session_id, %{role: "assistant", content: genre_response, channel: state.channel})
         state = %{state | status: :idle}
-        Bus.emit(:agent_response, %{session_id: state.session_id, response: genre_response})
+        Bus.emit(:agent_response, %{session_id: state.session_id, response: genre_response, agent: state.session_id})
         {:reply, {:ok, genre_response}, state}
 
       :execute_tools ->
@@ -428,7 +428,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
       state = %{state | plan_mode: true}
       context = Context.build(state)
 
-      Bus.emit(:llm_request, %{session_id: state.session_id, iteration: 0})
+      Bus.emit(:llm_request, %{session_id: state.session_id, iteration: 0, agent: state.session_id})
       start_time = System.monotonic_time(:millisecond)
 
       result = LLMClient.llm_chat(state, context.messages, tools: [], temperature: 0.3)
@@ -445,7 +445,8 @@ defmodule OptimalSystemAgent.Agent.Loop do
         session_id: state.session_id,
         provider: state.provider,
         duration_ms: duration_ms,
-        usage: usage
+        usage: usage,
+        agent: state.session_id
       })
 
       case result do
@@ -457,7 +458,8 @@ defmodule OptimalSystemAgent.Agent.Loop do
           Bus.emit(:agent_response, %{
             session_id: state.session_id,
             response: plan_text,
-            response_type: "plan"
+            response_type: "plan",
+            agent: state.session_id
           })
 
           {:reply, {:plan, plan_text}, state}
@@ -488,7 +490,8 @@ defmodule OptimalSystemAgent.Agent.Loop do
 
           Bus.emit(:agent_response, %{
             session_id: state.session_id,
-            response: response
+            response: response,
+            agent: state.session_id
           })
 
           {:reply, {:ok, response}, state}
@@ -515,7 +518,8 @@ defmodule OptimalSystemAgent.Agent.Loop do
 
       Bus.emit(:agent_response, %{
         session_id: state.session_id,
-        response: response
+        response: response,
+        agent: state.session_id
       })
 
       {:reply, {:ok, response}, state}
@@ -677,7 +681,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
       end
 
     # Emit timing event before LLM call
-    Bus.emit(:llm_request, %{session_id: state.session_id, iteration: state.iteration})
+    Bus.emit(:llm_request, %{session_id: state.session_id, iteration: state.iteration, agent: state.session_id})
     start_time = System.monotonic_time(:millisecond)
 
     # Call LLM with streaming — emits per-token SSE events for live TUI display.
@@ -715,7 +719,8 @@ defmodule OptimalSystemAgent.Agent.Loop do
       session_id: state.session_id,
       provider: state.provider,
       duration_ms: duration_ms,
-      usage: usage
+      usage: usage,
+      agent: state.session_id
     })
 
     case result do
