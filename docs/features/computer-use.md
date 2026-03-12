@@ -22,7 +22,8 @@ computer_use.ex                     Tool interface (MiosaTools.Behaviour)
     ├── linux_x11.ex                maim/scrot, xdotool
     ├── linux_wayland.ex            grim, ydotool
     ├── remote_ssh.ex               SSH forwarding to remote Linux VMs
-    └── docker.ex                   docker exec/cp to containers
+    ├── docker.ex                   docker exec/cp to containers
+    └── platform_vm.ex              Firecracker microVMs via Sprites.dev API
 ```
 
 ## How It Works
@@ -33,12 +34,13 @@ When the GenServer starts (lazily, on first tool call), `Adapter.detect_platform
 
 | Priority | Check | Platform |
 |----------|-------|----------|
-| 1 | `config :computer_use_docker` has `:container` | `:docker` |
-| 2 | `config :computer_use_remote` has `:host` | `:remote_ssh` |
-| 3 | `:os.type() == {:unix, :darwin}` | `:macos` |
-| 4 | `:os.type() == {:unix, :linux}` + `$WAYLAND_DISPLAY` or `$XDG_SESSION_TYPE=wayland` | `:linux_wayland` |
-| 5 | `:os.type() == {:unix, :linux}` (default) | `:linux_x11` |
-| 6 | `:os.type() == {:win32, _}` | `:windows` (not yet supported) |
+| 1 | `config :computer_use_vm` has `:sprite_id` | `:platform_vm` |
+| 2 | `config :computer_use_docker` has `:container` | `:docker` |
+| 3 | `config :computer_use_remote` has `:host` | `:remote_ssh` |
+| 4 | `:os.type() == {:unix, :darwin}` | `:macos` |
+| 5 | `:os.type() == {:unix, :linux}` + `$WAYLAND_DISPLAY` or `$XDG_SESSION_TYPE=wayland` | `:linux_wayland` |
+| 6 | `:os.type() == {:unix, :linux}` (default) | `:linux_x11` |
+| 7 | `:os.type() == {:win32, _}` | `:windows` (not yet supported) |
 
 `adapter_for/1` maps the platform atom to the concrete adapter module. The server verifies `adapter.available?()` before accepting commands.
 
@@ -221,6 +223,36 @@ Docker.test_connection()
 # {:ok, %{connected: true, container: "osa-desktop", system: "Linux ... + /usr/bin/xdotool"}}
 ```
 
+### Platform VM (`adapters/platform_vm.ex`)
+
+Forwards commands into Firecracker microVMs managed by the Sprites.dev sandbox backend (`Sandbox.Sprites`). The VMs run Linux with Xvfb + xdotool.
+
+| Capability | Implementation |
+|-----------|---------------|
+| Screenshots | `maim` inside VM, base64-encoded and decoded on host |
+| Input | `xdotool` via `Sprites.execute/2` |
+| Transfer | Base64 over API (no SCP/docker cp needed) |
+| VM management | Sprites.dev API (create, checkpoint, restore, destroy) |
+
+**Configuration:**
+
+```elixir
+config :optimal_system_agent, :computer_use_vm,
+  sprite_id: "abc123",    # Sprites.dev VM identifier (required)
+  display: ":1"           # DISPLAY inside VM (default: ":1")
+```
+
+**Requirements:**
+- `SPRITES_TOKEN` environment variable set
+- Sprites.dev VM provisioned with Xvfb + xdotool
+
+**Diagnostics:**
+
+```elixir
+PlatformVM.test_connection()
+# {:ok, %{connected: true, sprite_id: "abc123", system: "Linux ...", preview_url: "https://..."}}
+```
+
 ## Configuration
 
 ### Enable Computer Use
@@ -233,14 +265,14 @@ config :optimal_system_agent, :computer_use_enabled, true
 
 ### Platform Override
 
-For local use, the platform is auto-detected. For remote/container targets, set the appropriate config block — Docker takes priority over SSH, which takes priority over local detection.
+For local use, the platform is auto-detected. For remote/container/VM targets, set the appropriate config block. Detection priority: Platform VM → Docker → SSH → local OS.
 
 ## Security
 
 ### Input Sanitization
 
 - **AppleScript** (macOS): Backslashes and double quotes are escaped before interpolation into AppleScript string literals.
-- **Shell commands** (SSH, Docker): All user text is wrapped in POSIX single-quote escaping (`'...'\\''...'`), preventing command injection.
+- **Shell commands** (SSH, Docker, Platform VM): All user text is wrapped in POSIX single-quote escaping (`'...'\\''...'`), preventing command injection.
 - **Key combos**: Validated against `[a-zA-Z0-9+\-_ ]` — rejects semicolons, backticks, dollar signs, quotes.
 - **Text length**: Capped at 4096 bytes to prevent abuse.
 - **Coordinates**: Must be non-negative integers.

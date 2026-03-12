@@ -681,10 +681,19 @@ or interacting with applications that have no CLI/API.
 
 **Actions:** screenshot, click, double_click, type, key, scroll, move_mouse, drag, get_tree
 
-**Platform Support:**
-- macOS — screencapture, cliclick/Quartz, AXUIElement accessibility
-- Linux X11 — maim/scrot, xdotool, AT-SPI2 accessibility
-- Linux Wayland — grim, ydotool, AT-SPI2 accessibility
+**Platform Support (6 adapters, auto-detected at startup):**
+- **macOS** — screencapture for screenshots, Python/Quartz for mouse events, AppleScript for keyboard
+- **Linux X11** — maim/scrot for screenshots, xdotool for input
+- **Linux Wayland** — grim for screenshots, ydotool for input
+- **Docker containers** — docker exec with xdotool for input, docker cp for screenshots
+- **Remote SSH** — SSH forwarding to remote Linux hosts, SCP for screenshot transfer
+- **Platform VMs** — Firecracker microVMs via Sprites.dev API, xdotool inside VM
+
+**Auto-detection priority:** Platform VM config → Docker config → SSH config → local OS detect
+
+You don't need to know which backend is active. Call `computer_use` with an action and
+parameters — the GenServer auto-detects the platform at startup and dispatches to the right
+adapter. One tool, six backends.
 
 **Two Targeting Modes:**
 

@@ -16,7 +16,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputerUse.Adapter do
   @optional_callbacks [get_accessibility_tree: 1]
 
   @doc "Identifies which platform this adapter targets."
-  @callback platform() :: :macos | :linux_x11 | :linux_wayland | :windows | :remote_ssh | :docker
+  @callback platform() :: :macos | :linux_x11 | :linux_wayland | :windows | :remote_ssh | :docker | :platform_vm
 
   @doc """
   Returns true when the adapter is usable on the current host.
@@ -100,15 +100,22 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputerUse.Adapter do
   Detect the current host platform and return a normalised atom.
 
   Detection logic (checked in order):
-  1. If `config :optimal_system_agent, :computer_use_remote` has a `:host` set,
-     return `:remote_ssh` — remote mode takes priority over local OS detection.
-  2. `{:unix, :darwin}` → `:macos`
-  3. `{:unix, :linux}` with `WAYLAND_DISPLAY` set or `XDG_SESSION_TYPE=wayland` → `:linux_wayland`
-  4. `{:unix, :linux}` otherwise → `:linux_x11`
-  5. `{:win32, _}` → `:windows`
+  1. If `config :optimal_system_agent, :computer_use_vm` has a `:sprite_id` set,
+     return `:platform_vm` — Firecracker microVM takes highest priority.
+  2. If `config :optimal_system_agent, :computer_use_docker` has a `:container` set,
+     return `:docker`.
+  3. If `config :optimal_system_agent, :computer_use_remote` has a `:host` set,
+     return `:remote_ssh`.
+  4. `{:unix, :darwin}` → `:macos`
+  5. `{:unix, :linux}` with `WAYLAND_DISPLAY` set or `XDG_SESSION_TYPE=wayland` → `:linux_wayland`
+  6. `{:unix, :linux}` otherwise → `:linux_x11`
+  7. `{:win32, _}` → `:windows`
   """
-  @spec detect_platform() :: :macos | :linux_x11 | :linux_wayland | :windows | :remote_ssh | :docker
+  @spec detect_platform() :: :macos | :linux_x11 | :linux_wayland | :windows | :remote_ssh | :docker | :platform_vm
   def detect_platform do
+    vm_config = Application.get_env(:optimal_system_agent, :computer_use_vm, [])
+    vm_sprite = vm_config[:sprite_id]
+
     docker_config = Application.get_env(:optimal_system_agent, :computer_use_docker, [])
     docker_container = docker_config[:container]
 
@@ -116,6 +123,9 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputerUse.Adapter do
     remote_host = remote_config[:host]
 
     cond do
+      vm_sprite not in [nil, ""] ->
+        :platform_vm
+
       docker_container not in [nil, ""] ->
         :docker
 
@@ -152,7 +162,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputerUse.Adapter do
   Returns `{:ok, module}` when a mapping exists, or `{:error, reason}` when
   the platform is not yet supported.
   """
-  @spec adapter_for(:macos | :linux_x11 | :linux_wayland | :windows | :remote_ssh | :docker) ::
+  @spec adapter_for(:macos | :linux_x11 | :linux_wayland | :windows | :remote_ssh | :docker | :platform_vm) ::
           {:ok, module()} | {:error, String.t()}
   def adapter_for(:macos),
     do: {:ok, OptimalSystemAgent.Tools.Builtins.ComputerUse.Adapters.MacOS}
@@ -168,6 +178,9 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputerUse.Adapter do
 
   def adapter_for(:docker),
     do: {:ok, OptimalSystemAgent.Tools.Builtins.ComputerUse.Adapters.Docker}
+
+  def adapter_for(:platform_vm),
+    do: {:ok, OptimalSystemAgent.Tools.Builtins.ComputerUse.Adapters.PlatformVM}
 
   def adapter_for(:windows),
     do: {:error, "Windows platform is not yet supported"}
