@@ -1,6 +1,6 @@
 # OSA — the Optimal System Agent
 
-> One AI that maximizes signal, eliminates noise, and finds the optimal path — across code, work, and life. Elixir/OTP + Rust TUI. Runs locally. Open-source.
+> One AI that maximizes signal, eliminates noise, and finds the optimal path — across code, work, and life. Elixir/OTP + Rust TUI + Desktop Command Center. Runs locally. Open-source.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Elixir](https://img.shields.io/badge/Elixir-1.17+-purple.svg)](https://elixir-lang.org)
@@ -16,20 +16,22 @@ Every agent framework processes every message the same way. "Build me a REST API
 
 We built OSA to fix this. It's the AI layer of [MIOSA](https://miosa.ai) — an operating system for running your entire business. One agent handling everything: code, operations, communication, analysis, orchestration. The foundation is Signal Theory: every input is classified by intent, domain, and complexity *before* it touches the reasoning engine. The right model gets the right task. Multi-step problems get decomposed into parallel sub-agents. The agent remembers what worked and what didn't across sessions.
 
-~127,000 lines of Elixir/OTP + Rust. ~2,000 tests. Runs locally. Your data stays yours.
+~154,000 lines of Elixir/OTP + Rust + SvelteKit. ~2,000 tests. Runs locally. Your data stays yours.
 
 ```
 Codebase Breakdown
 ──────────────────────────────────────────
 Elixir/OTP (lib/)          77,000 lines   Core agent, orchestration, providers,
                                           channels, tools, swarm, sandbox
+Desktop (desktop/)         27,000 lines   Command Center — Tauri + SvelteKit,
+                                          chat, agents, terminal, settings
 Rust TUI (priv/rust/tui/)  20,000 lines   Terminal interface, SSE client,
                                           auth, rendering
 Tests (test/)              29,000 lines   ~2,000 tests across all modules
 Go utilities (priv/go/)       900 lines   Tokenizer, git helper, sysmon
 Config                        500 lines   Runtime, dev, test, prod
 ──────────────────────────────────────────
-Total                     ~127,000 lines
+Total                     ~154,000 lines
 ```
 
 ---
@@ -272,8 +274,9 @@ The compose file includes OSA + Ollama with healthchecks and automatic dependenc
 | `osa --dev` | Dev mode (profile isolation, port 19001) |
 | `osa setup` | Run the setup wizard (provider, API keys) |
 | `mix osa.chat` | Backend + built-in Elixir CLI (no TUI) |
-| `mix osa.serve` | Backend only (for custom clients) |
+| `mix osa.serve` | Backend only (for custom clients or desktop app) |
 | `osagent` | TUI binary only (connects to running backend) |
+| `cd desktop && npm run tauri:dev` | **Command Center** — desktop GUI (connects to running backend) |
 
 **First time?** Just run `osa`. It auto-detects first run and launches the setup wizard.
 
@@ -327,9 +330,41 @@ JWT authentication supported for production — set `OSA_SHARED_SECRET` and `OSA
 
 ---
 
-## Desktop App (Tauri + SvelteKit)
+## Command Center (Desktop UI)
 
-A native desktop GUI lives in `desktop/` — built with Tauri and SvelteKit. Includes a chat interface, agents panel, settings management, command palette, and SSE streaming for real-time agent output. Runs as a lightweight native window on macOS, Linux, and Windows.
+The Command Center is OSA's native desktop interface — a full visual control plane for everything the agent can do. Built with **Tauri 2 + SvelteKit 2 + Svelte 5**, it runs as a lightweight native app on macOS, Linux, and Windows.
+
+| Section | What It Does |
+|---------|-------------|
+| **Chat** | Full conversation interface with markdown rendering, code highlighting, SSE streaming |
+| **Agents** | Browse the roster, see agent tiers/roles, dispatch agents to tasks |
+| **Models** | View and switch LLM providers and models across all 3 tiers |
+| **Terminal** | Embedded xterm.js terminal — run shell commands without leaving the app |
+| **Tasks** | Task management and tracking |
+| **Memory** | Browse and manage agent memory, vault entries, knowledge |
+| **Activity** | Real-time event stream — see what the agent is doing as it happens |
+| **Connectors** | Configure chat channels, MCP servers, webhooks |
+| **Usage** | Token usage, budget tracking, cost breakdowns |
+| **Settings** | Provider keys, preferences, profiles |
+
+### Run the Command Center
+
+```bash
+# Prerequisites: Node.js 18+, Rust/Cargo, system dependencies for Tauri
+# See: https://v2.tauri.app/start/prerequisites/
+
+cd desktop
+npm install
+
+# Development (hot-reload)
+npm run tauri:dev
+
+# Production build
+npm run tauri:build
+# Binary output: desktop/src-tauri/target/release/osa-desktop
+```
+
+The Command Center connects to the OSA backend on port 8089. Start the backend first (`bin/osa` or `mix osa.serve`), then launch the desktop app.
 
 ---
 

@@ -2,6 +2,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputerUseTest do
   use ExUnit.Case, async: true
 
   alias OptimalSystemAgent.Tools.Builtins.ComputerUse
+  alias OptimalSystemAgent.Tools.Builtins.ComputerUse.Adapters.MacOS, as: MacOSAdapter
 
   # ---------------------------------------------------------------------------
   # Tool metadata
@@ -166,14 +167,14 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputerUseTest do
   # ---------------------------------------------------------------------------
 
   describe "click validation" do
-    test "click without coordinates returns error" do
+    test "click without coordinates or target returns error" do
       assert {:error, msg} = ComputerUse.execute(%{"action" => "click"})
-      assert msg =~ "Missing required parameter: x"
+      assert msg =~ "click requires either coordinates"
     end
 
     test "click with only x returns error" do
       assert {:error, msg} = ComputerUse.execute(%{"action" => "click", "x" => 100})
-      assert msg =~ "Missing required parameter: y"
+      assert msg =~ "click requires either coordinates"
     end
 
     test "click with negative coordinate returns error" do
@@ -331,22 +332,22 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputerUseTest do
 
   describe "AppleScript sanitization" do
     test "double quotes are escaped" do
-      sanitized = ComputerUse.MacOS.sanitize_for_applescript(~s(hello "world"))
+      sanitized = MacOSAdapter.sanitize_for_applescript(~s(hello "world"))
       assert sanitized == ~s(hello \\"world\\")
     end
 
     test "backslashes are escaped" do
-      sanitized = ComputerUse.MacOS.sanitize_for_applescript("path\\to\\file")
+      sanitized = MacOSAdapter.sanitize_for_applescript("path\\to\\file")
       assert sanitized == "path\\\\to\\\\file"
     end
 
     test "combined escaping works" do
-      sanitized = ComputerUse.MacOS.sanitize_for_applescript(~s(a\\b"c))
+      sanitized = MacOSAdapter.sanitize_for_applescript(~s(a\\b"c))
       assert sanitized == ~s(a\\\\b\\"c)
     end
 
     test "normal text passes through unchanged" do
-      assert ComputerUse.MacOS.sanitize_for_applescript("hello world") == "hello world"
+      assert MacOSAdapter.sanitize_for_applescript("hello world") == "hello world"
     end
   end
 
@@ -356,30 +357,30 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputerUseTest do
 
   describe "key combo parsing" do
     test "parses simple key" do
-      assert {[], "enter"} = ComputerUse.MacOS.parse_key_combo("enter")
+      assert {[], "enter"} = MacOSAdapter.parse_key_combo("enter")
     end
 
     test "parses modifier+key" do
-      {mods, key} = ComputerUse.MacOS.parse_key_combo("cmd+c")
+      {mods, key} = MacOSAdapter.parse_key_combo("cmd+c")
       assert mods == ["cmd"]
       assert key == "c"
     end
 
     test "parses multiple modifiers" do
-      {mods, key} = ComputerUse.MacOS.parse_key_combo("cmd+shift+v")
+      {mods, key} = MacOSAdapter.parse_key_combo("cmd+shift+v")
       assert "cmd" in mods
       assert "shift" in mods
       assert key == "v"
     end
 
     test "handles ctrl alias" do
-      {mods, key} = ComputerUse.MacOS.parse_key_combo("ctrl+a")
+      {mods, key} = MacOSAdapter.parse_key_combo("ctrl+a")
       assert "ctrl" in mods
       assert key == "a"
     end
 
     test "is case-insensitive" do
-      {mods, key} = ComputerUse.MacOS.parse_key_combo("CMD+SHIFT+Z")
+      {mods, key} = MacOSAdapter.parse_key_combo("CMD+SHIFT+Z")
       assert "cmd" in mods
       assert "shift" in mods
       assert key == "z"
