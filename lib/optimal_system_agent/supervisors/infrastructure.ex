@@ -47,6 +47,7 @@ defmodule OptimalSystemAgent.Supervisors.Infrastructure do
 
       # Tools + machines (goldrush-compiled :osa_tool_dispatcher)
       OptimalSystemAgent.Tools.Registry,
+      OptimalSystemAgent.Tools.Cache,
       OptimalSystemAgent.Machines,
 
       # Slash command registry (built-in + custom + agent-created)

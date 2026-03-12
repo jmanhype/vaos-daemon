@@ -385,6 +385,20 @@ defmodule OptimalSystemAgent.Tools.Registry do
     do_search(query, builtin_tools, skills)
   end
 
+  @doc "Return a single skill map by name, or nil if not found."
+  @spec get_skill(String.t()) :: map() | nil
+  def get_skill(name) do
+    :persistent_term.get({__MODULE__, :skills}, %{}) |> Map.get(name)
+  end
+
+  @doc "Return all loaded skills as a list."
+  @spec list_skills() :: [map()]
+  def list_skills do
+    :persistent_term.get({__MODULE__, :skills}, %{})
+    |> Map.values()
+    |> Enum.sort_by(& &1.name)
+  end
+
   @doc """
   Execute a tool by name with given arguments.
 
@@ -745,6 +759,7 @@ defmodule OptimalSystemAgent.Tools.Registry do
       "memory_recall" => OptimalSystemAgent.Tools.Builtins.MemoryRecall,
       "orchestrate" => OptimalSystemAgent.Tools.Builtins.Orchestrate,
       "create_skill" => OptimalSystemAgent.Tools.Builtins.CreateSkill,
+      "use_skill" => OptimalSystemAgent.Tools.Builtins.UseSkill,
       "budget_status" => OptimalSystemAgent.Tools.Builtins.BudgetStatus,
       "wallet_ops" => OptimalSystemAgent.Tools.Builtins.WalletOps,
       "file_edit" => OptimalSystemAgent.Tools.Builtins.FileEdit,

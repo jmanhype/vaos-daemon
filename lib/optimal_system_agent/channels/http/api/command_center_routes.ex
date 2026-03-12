@@ -37,6 +37,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
   alias OptimalSystemAgent.Agent.Scheduler
   alias OptimalSystemAgent.Agent.HealthTracker
   alias OptimalSystemAgent.Webhooks.Dispatcher
+  alias OptimalSystemAgent.Tools.Registry, as: ToolRegistry
 
   plug :match
   plug :dispatch
@@ -449,6 +450,30 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
     |> send_resp(200, body)
   end
 
+  # ── GET /skills — list all loaded skills ─────────────────────────────
+
+  get "/skills" do
+    skills = ToolRegistry.list_skills()
+
+    body =
+      Jason.encode!(%{
+        skills:
+          Enum.map(skills, fn s ->
+            %{
+              name: s.name,
+              description: s.description,
+              triggers: s.triggers,
+              path: s.path
+            }
+          end),
+        count: length(skills)
+      })
+
+    conn
+    |> put_resp_content_type("application/json")
+    |> send_resp(200, body)
+  end
+
   # ── POST /webhooks — register a webhook ───────────────────────────────
 
   post "/webhooks" do
@@ -493,6 +518,20 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
       {:error, :not_found} ->
         json_error(conn, 404, "not_found", "Webhook '#{id}' not found")
     end
+  end
+
+  # ── POST /skills/reload — hot-reload skills from disk ─────────────────
+
+  post "/skills/reload" do
+    ToolRegistry.reload_skills()
+
+    skills = ToolRegistry.list_skills()
+
+    body = Jason.encode!(%{status: "reloaded", count: length(skills)})
+
+    conn
+    |> put_resp_content_type("application/json")
+    |> send_resp(200, body)
   end
 
   match _ do

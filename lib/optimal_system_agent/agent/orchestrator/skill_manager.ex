@@ -46,6 +46,9 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.SkillManager do
 
       Logger.info("[Orchestrator] Created new skill file: #{skill_path}")
 
+      # Hot-reload so the new skill is immediately available in the current session.
+      Tools.reload_skills()
+
       Bus.emit(:system_event, %{
         event: :orchestrator_skill_created,
         name: name,

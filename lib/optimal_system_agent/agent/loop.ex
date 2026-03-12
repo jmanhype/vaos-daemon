@@ -538,7 +538,6 @@ defmodule OptimalSystemAgent.Agent.Loop do
 
   @impl true
   def handle_call({:swap_provider, provider, model}, _from, state) do
-    :ets.insert(:osa_session_provider_overrides, {state.session_id, provider, model})
     {:reply, :ok, %{state | provider: provider, model: model}}
   end
 

@@ -458,7 +458,8 @@ defmodule OptimalSystemAgent.Agent.Treasury do
     state = %{
       state
       | monthly_spent: 0.0,
-        monthly_reset_at: DateTime.add(DateTime.utc_now(), @monthly_reset_ms, :millisecond)
+        monthly_reset_at: DateTime.add(DateTime.utc_now(), @monthly_reset_ms, :millisecond),
+        monthly_alert_sent: MapSet.new()
     }
 
     schedule_monthly_reset()
