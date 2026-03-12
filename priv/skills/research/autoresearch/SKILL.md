@@ -20,68 +20,105 @@ You are running Karpathy's AutoResearcher pattern: a closed-loop ML experiment a
 ## Core Loop
 
 For each experiment:
-1. **Edit** — Modify `train.py` with one focused change (hyperparameter, architecture, optimizer tweak)
-2. **Run** — Execute training for exactly 5 minutes (wall clock) inside a Firecracker VM
-3. **Measure** — Read `val_bpb` (validation bits-per-byte) from training output
-4. **Keep or Revert** — If `val_bpb` improved → commit the change. If not → restore previous `train.py`.
+1. **Edit** — Modify `train.py` with one focused change
+2. **Run** — `bash /workspace/run_experiment.sh` (hard 5-min wall clock)
+3. **Measure** — Read `val_bpb.txt` (single float, written by train.py)
+4. **Keep or Revert** — lower val_bpb = better. Revert = `cp /workspace/train.py.prev /workspace/train.py`
 5. **Repeat**
 
 ## Setup Phase
 
-Before the experiment loop, use `compute_vm` to:
+### 1. Create VM and wait until running
 
-1. **Create a VM** from the `python-ml` template (size: medium — 2vCPU, 2GB RAM)
-2. **Upload the three fixed files** to `/workspace/`:
-   - `prepare.py` — data preparation (run once, never touch again)
-   - `train.py` — the file you will iteratively edit
-   - `program.md` — human instructions describing the research goal
-3. **Run prepare.py once**: `cd /workspace && python prepare.py`
-4. **Record the baseline** by running train.py once for 5 minutes and noting the starting `val_bpb`
+```
+compute_vm(operation: create, template_id: autoresearch, size: medium)
+→ note the vm_id
+```
+
+Then poll until status = `running` (VM takes 10–30s to boot):
+```
+compute_vm(operation: status, vm_id: <id>)
+# Repeat every 5s until you see "status=running"
+```
+
+### 2. Run prepare.py once
+
+```
+compute_vm(operation: exec, vm_id: <id>,
+           command: "cd /workspace && python prepare.py",
+           timeout: 120)
+```
+
+Data files already exist in the template — this downloads Shakespeare and tokenises it.
+
+### 3. Record baseline
+
+```
+compute_vm(operation: exec, vm_id: <id>,
+           command: "bash /workspace/run_experiment.sh",
+           timeout: 360)
+
+compute_vm(operation: read_file, vm_id: <id>, path: /workspace/val_bpb.txt)
+```
+
+Note this as `best_val_bpb` (your starting point). Save it with `memory_save`.
 
 ## Experiment Loop
 
 ```
 FOR experiment 1 to N:
-  1. Read current train.py content
-  2. Read program.md for guidance
-  3. Think: propose ONE specific, measurable change to train.py
-     - Examples: change learning rate, add dropout, change batch size,
-       modify optimizer, adjust warmup steps, tweak weight decay
-     - Each change must have a clear hypothesis: "I expect this to lower val_bpb because..."
-  4. Write the modified train.py to VM
-  5. Run: timeout 300 python train.py 2>&1
-     (300 seconds = 5 min wall clock — matches Karpathy's protocol)
-  6. Parse val_bpb from output (look for "val loss" or "val_bpb" in logs)
-  7. Compare to best_val_bpb so far:
-     - If improved (lower is better): update best_val_bpb, keep train.py
-     - If not improved: restore previous train.py from saved content
-  8. Log: experiment number, change made, val_bpb, kept/reverted
+
+  1. Read current train.py:
+     compute_vm(operation: read_file, vm_id: <id>, path: /workspace/train.py)
+
+  2. Read program.md for guidance:
+     compute_vm(operation: read_file, vm_id: <id>, path: /workspace/program.md)
+
+  3. Think: propose ONE change with a hypothesis
+     Examples:
+       - "increase learning_rate from 3e-4 to 1e-3 — hypothesis: LR too low for this model size"
+       - "increase n_embd from 128 to 256 — hypothesis: more capacity needed"
+       - "set dropout=0.0 — hypothesis: small model should not regularize this aggressively"
+
+  4. Write modified train.py:
+     compute_vm(operation: write_file, vm_id: <id>,
+                path: /workspace/train.py, content: <new_train_py>)
+
+  5. Run experiment (run_experiment.sh auto-backs up train.py → train.py.prev):
+     compute_vm(operation: exec, vm_id: <id>,
+                command: "bash /workspace/run_experiment.sh",
+                timeout: 360)
+
+  6. Read result:
+     compute_vm(operation: read_file, vm_id: <id>, path: /workspace/val_bpb.txt)
+     → single float, e.g. "1.342871"
+
+  7. Compare to best_val_bpb:
+     IMPROVED (lower) → keep train.py, update best_val_bpb
+     NOT IMPROVED     → revert:
+       compute_vm(operation: exec, vm_id: <id>,
+                  command: "cp /workspace/train.py.prev /workspace/train.py",
+                  timeout: 10)
+
+  8. Log experiment result (see Output Format below)
+
 END
 ```
-
-## Parsing val_bpb
-
-The training output will contain lines like:
-```
-step 100: train loss 3.4521, val loss 3.2891
-```
-
-`val_bpb = val_loss / ln(2)` — or the script may output it directly.
-Parse the **last** val loss/val_bpb line before the script exits.
 
 ## Saving State Between Experiments
 
 Use `memory_save` after each kept experiment to record:
-- Experiment number
-- Change made
-- val_bpb achieved
-- Full modified train.py content (or the diff)
+- Experiment number, change made, val_bpb achieved
+- Full modified train.py content (so you can resume if the session is interrupted)
 
-Use `memory_recall` at the start to restore best train.py if resuming.
+Use `memory_recall` at the start to check for a previous session's best train.py.
 
 ## Cleanup
 
-After all experiments (or if interrupted), `compute_vm(operation: destroy)` to release the VM.
+After all experiments (or if interrupted):
+```
+compute_vm(operation: destroy, vm_id: <id>)
+```
 
 ## Output Format
 
@@ -105,7 +142,8 @@ Final summary:
 ## Rules
 
 - Never run two changes at once — one hypothesis per experiment
-- Always restore train.py on regression, never accumulate bad changes
+- The revert command is always: `cp /workspace/train.py.prev /workspace/train.py`
+  (run_experiment.sh writes this backup automatically before each run)
 - Stop if val_bpb stops improving for 10 consecutive experiments
-- Log every experiment — even failed ones teach something
-- Never modify prepare.py or program.md — only train.py
+- Never modify prepare.py, program.md, or run_experiment.sh — only train.py
+- If exec returns an error, read `/workspace/out/last_run.log` to diagnose
