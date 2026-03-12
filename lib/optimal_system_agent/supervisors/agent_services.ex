@@ -33,7 +33,8 @@ defmodule OptimalSystemAgent.Supervisors.AgentServices do
       OptimalSystemAgent.Agent.ProactiveMode,
       OptimalSystemAgent.Agent.HealthTracker,
       OptimalSystemAgent.Agent.SkillEvolution,
-      OptimalSystemAgent.Webhooks.Dispatcher
+      OptimalSystemAgent.Webhooks.Dispatcher,
+      OptimalSystemAgent.CommandCenter.EventHistory
     ]
 
     Supervisor.init(children, strategy: :one_for_one)

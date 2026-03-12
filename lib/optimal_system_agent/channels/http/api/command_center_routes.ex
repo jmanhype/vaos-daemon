@@ -32,7 +32,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
   require Logger
 
   alias OptimalSystemAgent.CommandCenter
-  alias OptimalSystemAgent.EventStream
+  alias OptimalSystemAgent.CommandCenter.EventHistory
   alias OptimalSystemAgent.Sandbox.Provisioner
   alias OptimalSystemAgent.Agent.Scheduler
   alias OptimalSystemAgent.Agent.HealthTracker
@@ -197,12 +197,10 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
   end
 
   # ── GET /events — live SSE firehose ────────────────────────────────
-  # Streams all command_center events to admin/monitoring clients.
+  # Streams all OSA events to admin/monitoring clients.
+  # Subscribe to "osa:events" firehose via Bridge.PubSub.
 
   get "/events" do
-    # Subscribe BEFORE send_chunked to avoid race window
-    EventStream.subscribe()
-
     conn =
       conn
       |> put_resp_content_type("text/event-stream")
@@ -210,6 +208,8 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
       |> put_resp_header("connection", "keep-alive")
       |> put_resp_header("x-accel-buffering", "no")
       |> send_chunked(200)
+
+    Phoenix.PubSub.subscribe(OptimalSystemAgent.PubSub, "osa:events")
 
     case chunk(conn, "event: connected\ndata: {\"channel\": \"command_center\"}\n\n") do
       {:ok, conn} ->
@@ -235,8 +235,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
         _ -> 50
       end
 
-    events = EventStream.event_history()
-    events = Enum.take(events, -limit)
+    events = EventHistory.recent(limit)
     body = Jason.encode!(%{events: events, count: length(events), limit: limit})
 
     conn
@@ -538,7 +537,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
     json_error(conn, 404, "not_found", "Command Center endpoint not found")
   end
 
-  # ── Private ──────────────────────────────────────────────────────────
+  # ── Private ───────────────────────────────────────────────────────────────
 
   # SECURITY: strip system prompt from agent representations before
   # returning them over the API. Prompt leakage is FINDING-01 (Critical).
@@ -550,7 +549,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
 
   defp cc_sse_loop(conn) do
     receive do
-      {:command_center_event, event} ->
+      {:osa_event, event} ->
         event_type =
           case event do
             %{type: t} -> t |> to_string() |> String.replace(~r/[\r\n]/, "")
