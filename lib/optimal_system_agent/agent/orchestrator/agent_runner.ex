@@ -467,7 +467,7 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.AgentRunner do
         prompt =
           case Roster.load_definition(best_name) do
             {:ok, md_content} -> md_content
-            {:error, _} -> (agent && agent.prompt) || Roster.role_prompt(sub_task.role)
+            {:error, _} -> Roster.prompt(best_name) || Roster.role_prompt(sub_task.role)
           end
 
         tier = (agent && agent.tier) || :specialist
@@ -487,7 +487,7 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.AgentRunner do
         agent_expertise =
           case Roster.load_definition(best_name) do
             {:ok, md_content} -> md_content
-            {:error, _} -> (agent && agent.prompt) || ""
+            {:error, _} -> Roster.prompt(best_name) || ""
           end
 
         prompt = build_blended_prompt(sub_task, best_name, agent_expertise)

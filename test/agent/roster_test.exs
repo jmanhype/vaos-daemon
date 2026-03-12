@@ -23,7 +23,8 @@ defmodule OptimalSystemAgent.Agent.RosterTest do
         assert Map.has_key?(agent, :skills)
         assert Map.has_key?(agent, :triggers)
         assert Map.has_key?(agent, :territory)
-        assert Map.has_key?(agent, :prompt)
+        assert Map.has_key?(agent, :module) or Map.has_key?(agent, :prompt),
+               "agent #{agent.name} must have either :module or :prompt"
       end
     end
 
