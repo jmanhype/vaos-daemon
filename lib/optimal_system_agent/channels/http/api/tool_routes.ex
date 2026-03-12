@@ -127,6 +127,41 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.ToolRoutes do
     end
   end
 
+  # ── POST /match — dry-run skill matching for a message ──────────────
+  # Returns which skills would be triggered for a given message, without
+  # actually running any agent. Useful for debugging and UI previews.
+
+  post "/match" do
+    message = conn.body_params["message"]
+
+    cond do
+      not (is_binary(message) && message != "") ->
+        json_error(conn, 400, "missing_message", "'message' (non-empty string) is required")
+
+      true ->
+        matched = Tools.match_skill_triggers(message)
+
+        skills =
+          Enum.map(matched, fn {name, skill} ->
+            %{
+              name: name,
+              description: Map.get(skill, :description, ""),
+              triggers: Map.get(skill, :triggers, []),
+              has_instructions: Map.get(skill, :instructions, "") != ""
+            }
+          end)
+
+        body =
+          Jason.encode!(%{
+            message_preview: String.slice(message, 0, 120),
+            matched_count: length(skills),
+            skills: skills
+          })
+
+        conn |> put_resp_content_type("application/json") |> send_resp(200, body)
+    end
+  end
+
   match _ do
     json_error(conn, 404, "not_found", "Tool endpoint not found")
   end
