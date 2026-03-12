@@ -11,6 +11,9 @@ defmodule OptimalSystemAgent.Tools.Builtins.Github do
   @gh_timeout 30_000
 
   @impl true
+  def safety, do: :write_safe
+
+  @impl true
   def name, do: "github"
 
   @impl true

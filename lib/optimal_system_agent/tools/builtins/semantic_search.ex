@@ -2,6 +2,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.SemanticSearch do
   @behaviour MiosaTools.Behaviour
 
   @impl true
+  def available?, do: true
+
+  @impl true
+  def safety, do: :read_only
+
+  @impl true
   def name, do: "semantic_search"
 
   @impl true

@@ -13,6 +13,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.TaskWrite do
   @default_session "default"
 
   @impl true
+  def available?, do: true
+
+  @impl true
+  def safety, do: :write_safe
+
+  @impl true
   def name, do: "task_write"
 
   @impl true

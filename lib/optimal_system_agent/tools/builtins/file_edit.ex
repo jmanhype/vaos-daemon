@@ -10,6 +10,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.FileEdit do
     "/bin/", "/sbin/", "/var/", ".aws/", ".env"]
 
   @impl true
+  def available?, do: true
+
+  @impl true
+  def safety, do: :write_safe
+
+  @impl true
   def name, do: "file_edit"
 
   @impl true

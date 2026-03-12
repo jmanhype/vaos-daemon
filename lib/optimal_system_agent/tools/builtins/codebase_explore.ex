@@ -27,6 +27,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.CodebaseExplore do
   }
 
   @impl true
+  def available?, do: true
+
+  @impl true
+  def safety, do: :read_only
+
+  @impl true
   def name, do: "codebase_explore"
 
   @impl true

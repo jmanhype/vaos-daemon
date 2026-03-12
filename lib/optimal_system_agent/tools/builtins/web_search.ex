@@ -2,6 +2,9 @@ defmodule OptimalSystemAgent.Tools.Builtins.WebSearch do
   @behaviour MiosaTools.Behaviour
 
   @impl true
+  def safety, do: :read_only
+
+  @impl true
   def name, do: "web_search"
 
   @impl true

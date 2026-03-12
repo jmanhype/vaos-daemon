@@ -2,6 +2,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.MemorySave do
   @behaviour MiosaTools.Behaviour
 
   @impl true
+  def available?, do: true
+
+  @impl true
+  def safety, do: :write_safe
+
+  @impl true
   def name, do: "memory_save"
 
   @impl true

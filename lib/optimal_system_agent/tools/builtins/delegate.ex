@@ -22,6 +22,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.Delegate do
   @read_only_tools ~w(file_read file_grep file_glob dir_list web_search web_fetch memory_recall session_search)
 
   @impl true
+  def available?, do: true
+
+  @impl true
+  def safety, do: :read_only
+
+  @impl true
   def name, do: "delegate"
 
   @impl true

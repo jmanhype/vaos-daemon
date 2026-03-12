@@ -18,6 +18,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.CodeSymbols do
   @skip_dirs ~w(_build deps node_modules .git __pycache__ dist build target .elixir_ls ebin priv/static)
 
   @impl true
+  def available?, do: true
+
+  @impl true
+  def safety, do: :read_only
+
+  @impl true
   def name, do: "code_symbols"
 
   @impl true

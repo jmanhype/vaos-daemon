@@ -16,6 +16,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.SessionSearch do
   alias OptimalSystemAgent.Store.Repo
 
   @impl true
+  def available?, do: true
+
+  @impl true
+  def safety, do: :read_only
+
+  @impl true
   def name, do: "session_search"
 
   @impl true

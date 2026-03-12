@@ -21,6 +21,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.UseSkill do
   alias OptimalSystemAgent.Tools.Registry, as: Tools
 
   @impl true
+  def available?, do: true
+
+  @impl true
+  def safety, do: :write_safe
+
+  @impl true
   def name, do: "use_skill"
 
   @impl true

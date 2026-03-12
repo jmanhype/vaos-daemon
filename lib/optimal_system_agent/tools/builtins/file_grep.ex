@@ -9,6 +9,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.FileGrep do
   @max_output_bytes 8_000
 
   @impl true
+  def available?, do: true
+
+  @impl true
+  def safety, do: :read_only
+
+  @impl true
   def name, do: "file_grep"
 
   @impl true
