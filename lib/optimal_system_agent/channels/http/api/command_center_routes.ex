@@ -36,6 +36,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
   alias OptimalSystemAgent.Sandbox.Provisioner
   alias OptimalSystemAgent.Agent.Scheduler
   alias OptimalSystemAgent.Agent.HealthTracker
+  alias OptimalSystemAgent.Webhooks.Dispatcher
 
   plug :match
   plug :dispatch
@@ -434,6 +435,63 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
       end
     rescue
       e -> json_error(conn, 500, "scheduler_error", Exception.message(e))
+    end
+  end
+
+  # ── GET /webhooks — list registered webhooks ──────────────────────────
+
+  get "/webhooks" do
+    webhooks = Dispatcher.list()
+    body = Jason.encode!(%{webhooks: webhooks, count: length(webhooks)})
+
+    conn
+    |> put_resp_content_type("application/json")
+    |> send_resp(200, body)
+  end
+
+  # ── POST /webhooks — register a webhook ───────────────────────────────
+
+  post "/webhooks" do
+    with %{"url" => url} <- conn.body_params do
+      secret = conn.body_params["secret"]
+      filter = conn.body_params["filter"] || []
+
+      case Dispatcher.register(url, secret, filter) do
+        {:ok, id} ->
+          body =
+            Jason.encode!(%{
+              id: id,
+              url: url,
+              filter: filter,
+              has_secret: not is_nil(secret),
+              created_at: System.os_time(:second)
+            })
+
+          conn
+          |> put_resp_content_type("application/json")
+          |> send_resp(201, body)
+
+        {:error, :invalid_url} ->
+          json_error(conn, 422, "invalid_url", "URL must start with http:// or https://")
+      end
+    else
+      _ -> json_error(conn, 400, "invalid_request", "Missing required field: url")
+    end
+  end
+
+  # ── DELETE /webhooks/:id — unregister a webhook ────────────────────────
+
+  delete "/webhooks/:id" do
+    case Dispatcher.unregister(id) do
+      :ok ->
+        body = Jason.encode!(%{status: "removed", id: id})
+
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(200, body)
+
+      {:error, :not_found} ->
+        json_error(conn, 404, "not_found", "Webhook '#{id}' not found")
     end
   end
 
