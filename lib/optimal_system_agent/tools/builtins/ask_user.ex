@@ -12,6 +12,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.AskUser do
   @timeout_ms 300_000
 
   @impl true
+  def available?, do: true
+
+  @impl true
+  def safety, do: :read_only
+
+  @impl true
   def name, do: "ask_user"
 
   @impl true

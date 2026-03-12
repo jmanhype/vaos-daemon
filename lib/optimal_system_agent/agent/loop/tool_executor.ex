@@ -38,7 +38,7 @@ defmodule OptimalSystemAgent.Agent.Loop.ToolExecutor do
   def execute_tool_call(tool_call, state) do
     max_tool_output_bytes = Application.get_env(:optimal_system_agent, :max_tool_output_bytes, 10_240)
     arg_hint = tool_call_hint(tool_call.arguments)
-    Bus.emit(:tool_call, %{name: tool_call.name, phase: :start, args: arg_hint, session_id: state.session_id})
+    Bus.emit(:tool_call, %{name: tool_call.name, phase: :start, args: arg_hint, session_id: state.session_id, agent: state.session_id})
     start_time_tool = System.monotonic_time(:millisecond)
 
     # Run pre_tool_use hooks sync (security_check/spend_guard can block)
@@ -102,14 +102,16 @@ defmodule OptimalSystemAgent.Agent.Loop.ToolExecutor do
       phase: :end,
       duration_ms: tool_duration_ms,
       args: arg_hint,
-      session_id: state.session_id
+      session_id: state.session_id,
+      agent: state.session_id
     })
 
     Bus.emit(:tool_result, %{
       name: tool_call.name,
       result: String.slice(result_str, 0, 500),
       success: !match?({:error, _}, tool_result),
-      session_id: state.session_id
+      session_id: state.session_id,
+      agent: state.session_id
     })
 
     # Build tool message — images get structured content blocks.

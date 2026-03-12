@@ -427,33 +427,32 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.SessionRoutes do
     provider = body["provider"]
     model = body["model"]
 
-    unless is_binary(provider) && provider != "" do
+    if not (is_binary(provider) and provider != "") do
       conn
-      |> put_resp_content_type("application/json")
-      |> send_resp(400, Jason.encode!(%{error: "missing or empty provider"}))
+      |> send_resp(400, Jason.encode!(%{error: "provider is required"}))
       |> halt()
-    end
+    else
+      case Registry.lookup(OptimalSystemAgent.SessionRegistry, session_id) do
+        [{pid, _}] ->
+          case GenServer.call(pid, {:swap_provider, provider, model}) do
+            :ok ->
+              resp =
+                Jason.encode!(%{
+                  status: "ok",
+                  session_id: session_id,
+                  provider: provider,
+                  model: model
+                })
 
-    case Registry.lookup(OptimalSystemAgent.SessionRegistry, session_id) do
-      [{pid, _}] ->
-        case GenServer.call(pid, {:swap_provider, provider, model}) do
-          :ok ->
-            resp =
-              Jason.encode!(%{
-                status: "ok",
-                session_id: session_id,
-                provider: provider,
-                model: model
-              })
+              conn |> put_resp_content_type("application/json") |> send_resp(200, resp)
 
-            conn |> put_resp_content_type("application/json") |> send_resp(200, resp)
+            {:error, reason} ->
+              json_error(conn, 500, "swap_failed", inspect(reason))
+          end
 
-          {:error, reason} ->
-            json_error(conn, 500, "swap_failed", inspect(reason))
-        end
-
-      [] ->
-        json_error(conn, 404, "session_not_found", "Session #{session_id} not found")
+        [] ->
+          json_error(conn, 404, "session_not_found", "Session #{session_id} not found")
+      end
     end
   end
 

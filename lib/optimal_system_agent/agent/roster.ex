@@ -2,7 +2,7 @@ defmodule OptimalSystemAgent.Agent.Roster do
   @moduledoc """
   Master registry of all agent definitions.
 
-  Each agent has: name, tier, model preference, skills, triggers, prompt,
+  Each agent has: name, tier, model preference, skills, triggers, module,
   territory (what files/domains it owns), and escalation paths.
 
   The orchestrator queries the roster to select agents for sub-tasks.
@@ -17,6 +17,8 @@ defmodule OptimalSystemAgent.Agent.Roster do
   Based on: OSA Agent v3.3 agent ecosystem + agent-dispatch 9-role system
   """
 
+  require Logger
+
   @type tier :: :elite | :specialist | :utility
   @type agent_def :: %{
           name: String.t(),
@@ -27,7 +29,7 @@ defmodule OptimalSystemAgent.Agent.Roster do
           triggers: [String.t()],
           territory: [String.t()],
           escalate_to: String.t() | nil,
-          prompt: String.t()
+          module: module()
         }
 
   # ── Agent Definitions ──────────────────────────────────────────────
@@ -78,7 +80,11 @@ defmodule OptimalSystemAgent.Agent.Roster do
                triggers: mod.triggers(),
                territory: mod.territory(),
                escalate_to: mod.escalate_to(),
-               prompt: mod.system_prompt()
+               # SECURITY (FINDING-03): do NOT embed system_prompt() here.
+               # Storing it at compile time bakes all prompts into the BEAM
+               # binary, making them trivially recoverable via decompilation.
+               # Use Roster.prompt/1 at runtime instead.
+               module: mod
              }}
           end)
           |> Map.new()
@@ -425,14 +431,30 @@ defmodule OptimalSystemAgent.Agent.Roster do
     if agent_name, do: get(agent_name)
   end
 
-  @doc "Get the system prompt for an agent."
-  @spec prompt_for(String.t()) :: String.t() | nil
-  def prompt_for(name) do
+  @doc """
+  Get the system prompt for an agent at runtime.
+
+  Calls the agent module's `system_prompt/0` on demand — the prompt is never
+  stored in the compiled agent map, preventing BEAM decompilation from
+  exposing all system prompts (FINDING-03).
+
+  Returns `nil` when the agent name is unknown.
+  """
+  @spec prompt(String.t()) :: String.t() | nil
+  def prompt(name) do
     case get(name) do
       nil -> nil
-      agent -> agent.prompt
+      %{module: mod} -> mod.system_prompt()
+      # SDK/dynamic agents that pre-date this change may carry :prompt directly.
+      agent ->
+        Logger.warning("[Roster] agent #{inspect(Map.get(agent, :name))} has no :module key, falling back to :prompt")
+        Map.get(agent, :prompt)
     end
   end
+
+  @doc "Get the system prompt for an agent. Alias for `prompt/1`."
+  @spec prompt_for(String.t()) :: String.t() | nil
+  def prompt_for(name), do: prompt(name)
 
   @doc "Get all swarm presets."
   @spec swarm_presets() :: %{String.t() => map()}

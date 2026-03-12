@@ -8,6 +8,10 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.PlatformEventsRoutes do
     GET  /stream   → SSE stream (query params: os_id, type)
     GET  /history  → recent events (query params: limit, os_id, type)
     GET  /stats    → event statistics
+
+  NOTE: Not yet wired — no `forward` in api.ex routes to this module.
+  Scaffolded for future fleet/multi-OS event visibility.
+  See Platform.EventBus moduledoc for activation steps.
   """
   use Plug.Router
   import OptimalSystemAgent.Channels.HTTP.API.Shared

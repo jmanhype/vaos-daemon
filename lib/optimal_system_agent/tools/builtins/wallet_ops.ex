@@ -11,6 +11,9 @@ defmodule OptimalSystemAgent.Tools.Builtins.WalletOps do
   end
 
   @impl true
+  def safety, do: :write_safe
+
+  @impl true
   def name, do: "wallet_ops"
 
   @impl true

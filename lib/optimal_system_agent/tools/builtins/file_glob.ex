@@ -9,6 +9,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.FileGlob do
   @max_results 200
 
   @impl true
+  def available?, do: true
+
+  @impl true
+  def safety, do: :read_only
+
+  @impl true
   def name, do: "file_glob"
 
   @impl true

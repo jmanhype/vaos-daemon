@@ -7,6 +7,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.DirList do
     "/etc/master.passwd", ".netrc", ".npmrc", ".pypirc"]
 
   @impl true
+  def available?, do: true
+
+  @impl true
+  def safety, do: :read_only
+
+  @impl true
   def name, do: "dir_list"
 
   @impl true

@@ -18,6 +18,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.Orchestrate do
   require Logger
 
   @impl true
+  def available?, do: true
+
+  @impl true
+  def safety, do: :write_safe
+
+  @impl true
   def name, do: "orchestrate"
 
   @impl true

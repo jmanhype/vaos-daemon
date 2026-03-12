@@ -57,6 +57,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.CreateSkill do
   end
 
   @impl true
+  def available?, do: true
+
+  @impl true
+  def safety, do: :write_safe
+
+  @impl true
   def execute(%{"name" => name, "description" => desc, "instructions" => instructions} = params) do
     tools = params["tools"] || []
     force = params["force"] || false

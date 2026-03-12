@@ -32,8 +32,12 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
   require Logger
 
   alias OptimalSystemAgent.CommandCenter
+  alias OptimalSystemAgent.EventStream
   alias OptimalSystemAgent.Sandbox.Provisioner
   alias OptimalSystemAgent.Agent.Scheduler
+  alias OptimalSystemAgent.Agent.HealthTracker
+  alias OptimalSystemAgent.Webhooks.Dispatcher
+  alias OptimalSystemAgent.Tools.Registry, as: ToolRegistry
 
   plug :match
   plug :dispatch
@@ -62,6 +66,31 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
     conn
     |> put_resp_content_type("application/json")
     |> send_resp(200, body)
+  end
+
+  # ── GET /agents/health — all agents health summary ─────────────────
+
+  get "/agents/health" do
+    agents = HealthTracker.all()
+    body = Jason.encode!(%{agents: agents, count: length(agents)})
+
+    conn
+    |> put_resp_content_type("application/json")
+    |> send_resp(200, body)
+  end
+
+  # ── GET /agents/:name/health — single agent health ─────────────────
+
+  get "/agents/:name/health" do
+    case HealthTracker.get(name) do
+      {:ok, health} ->
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(200, Jason.encode!(health))
+
+      {:error, :not_found} ->
+        json_error(conn, 404, "not_found", "No health data for agent '#{name}'")
+    end
   end
 
   # ── GET /agents/:name — agent detail ───────────────────────────────
@@ -167,18 +196,52 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
     end
   end
 
-  # ── GET /events — SSE event stream ─────────────────────────────────
-  # TODO: re-implement via Events.Bus PubSub once Command Center SSE is scoped
+  # ── GET /events — live SSE firehose ────────────────────────────────
+  # Streams all command_center events to admin/monitoring clients.
 
   get "/events" do
-    json_error(conn, 501, "not_implemented", "SSE event stream not yet available")
+    # Subscribe BEFORE send_chunked to avoid race window
+    EventStream.subscribe()
+
+    conn =
+      conn
+      |> put_resp_content_type("text/event-stream")
+      |> put_resp_header("cache-control", "no-cache")
+      |> put_resp_header("connection", "keep-alive")
+      |> put_resp_header("x-accel-buffering", "no")
+      |> send_chunked(200)
+
+    case chunk(conn, "event: connected\ndata: {\"channel\": \"command_center\"}\n\n") do
+      {:ok, conn} ->
+        Logger.debug("[CommandCenter] SSE client connected")
+        cc_sse_loop(conn)
+
+      {:error, _} ->
+        conn
+    end
   end
 
   # ── GET /events/history — recent event history ─────────────────────
-  # TODO: re-implement via Events.Bus once history storage is scoped
+  # Returns the last N events from the in-memory ring-buffer.
+  # Query param: limit (default 50, max 100)
 
   get "/events/history" do
-    json_error(conn, 501, "not_implemented", "Event history not yet available")
+    limit =
+      conn.query_params
+      |> Map.get("limit", "50")
+      |> Integer.parse()
+      |> case do
+        {n, _} when n > 0 -> min(n, 100)
+        _ -> 50
+      end
+
+    events = EventStream.event_history()
+    events = Enum.take(events, -limit)
+    body = Jason.encode!(%{events: events, count: length(events), limit: limit})
+
+    conn
+    |> put_resp_content_type("application/json")
+    |> send_resp(200, body)
   end
 
   # ── GET /scheduler — overall scheduler status ──────────────────────
@@ -376,6 +439,101 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
     end
   end
 
+  # ── GET /webhooks — list registered webhooks ──────────────────────────
+
+  get "/webhooks" do
+    webhooks = Dispatcher.list()
+    body = Jason.encode!(%{webhooks: webhooks, count: length(webhooks)})
+
+    conn
+    |> put_resp_content_type("application/json")
+    |> send_resp(200, body)
+  end
+
+  # ── GET /skills — list all loaded skills ─────────────────────────────
+
+  get "/skills" do
+    skills = ToolRegistry.list_skills()
+
+    body =
+      Jason.encode!(%{
+        skills:
+          Enum.map(skills, fn s ->
+            %{
+              name: s.name,
+              description: s.description,
+              triggers: s.triggers,
+              path: s.path
+            }
+          end),
+        count: length(skills)
+      })
+
+    conn
+    |> put_resp_content_type("application/json")
+    |> send_resp(200, body)
+  end
+
+  # ── POST /webhooks — register a webhook ───────────────────────────────
+
+  post "/webhooks" do
+    with %{"url" => url} <- conn.body_params do
+      secret = conn.body_params["secret"]
+      filter = conn.body_params["filter"] || []
+
+      case Dispatcher.register(url, secret, filter) do
+        {:ok, id} ->
+          body =
+            Jason.encode!(%{
+              id: id,
+              url: url,
+              filter: filter,
+              has_secret: not is_nil(secret),
+              created_at: System.os_time(:second)
+            })
+
+          conn
+          |> put_resp_content_type("application/json")
+          |> send_resp(201, body)
+
+        {:error, :invalid_url} ->
+          json_error(conn, 422, "invalid_url", "URL must start with http:// or https://")
+      end
+    else
+      _ -> json_error(conn, 400, "invalid_request", "Missing required field: url")
+    end
+  end
+
+  # ── DELETE /webhooks/:id — unregister a webhook ────────────────────────
+
+  delete "/webhooks/:id" do
+    case Dispatcher.unregister(id) do
+      :ok ->
+        body = Jason.encode!(%{status: "removed", id: id})
+
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(200, body)
+
+      {:error, :not_found} ->
+        json_error(conn, 404, "not_found", "Webhook '#{id}' not found")
+    end
+  end
+
+  # ── POST /skills/reload — hot-reload skills from disk ─────────────────
+
+  post "/skills/reload" do
+    ToolRegistry.reload_skills()
+
+    skills = ToolRegistry.list_skills()
+
+    body = Jason.encode!(%{status: "reloaded", count: length(skills)})
+
+    conn
+    |> put_resp_content_type("application/json")
+    |> send_resp(200, body)
+  end
+
   match _ do
     json_error(conn, 404, "not_found", "Command Center endpoint not found")
   end
@@ -388,5 +546,37 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
     agent
     |> Map.drop([:prompt, "prompt"])
     |> Map.put(:prompt, "[REDACTED]")
+  end
+
+  defp cc_sse_loop(conn) do
+    receive do
+      {:command_center_event, event} ->
+        event_type =
+          case event do
+            %{type: t} -> t |> to_string() |> String.replace(~r/[\r\n]/, "")
+            _ -> "event"
+          end
+
+        case Jason.encode(event) do
+          {:ok, data} ->
+            case chunk(conn, "event: #{event_type}\ndata: #{data}\n\n") do
+              {:ok, conn} ->
+                cc_sse_loop(conn)
+
+              {:error, _} ->
+                Logger.debug("[CommandCenter] SSE client disconnected")
+                conn
+            end
+
+          {:error, _} ->
+            cc_sse_loop(conn)
+        end
+    after
+      30_000 ->
+        case chunk(conn, ": keepalive\n\n") do
+          {:ok, conn} -> cc_sse_loop(conn)
+          {:error, _} -> conn
+        end
+    end
   end
 end

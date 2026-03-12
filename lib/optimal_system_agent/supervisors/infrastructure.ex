@@ -36,6 +36,9 @@ defmodule OptimalSystemAgent.Supervisors.Infrastructure do
       # Persistent storage
       OptimalSystemAgent.Store.Repo,
 
+      # SSE event stream for Command Center — must start after PubSub
+      OptimalSystemAgent.EventStream,
+
       # Telemetry — subscribes to Events.Bus; must start after Bus + TaskSupervisor
       OptimalSystemAgent.Telemetry.Metrics,
 
@@ -47,6 +50,7 @@ defmodule OptimalSystemAgent.Supervisors.Infrastructure do
 
       # Tools + machines (goldrush-compiled :osa_tool_dispatcher)
       OptimalSystemAgent.Tools.Registry,
+      OptimalSystemAgent.Tools.Cache,
       OptimalSystemAgent.Machines,
 
       # Slash command registry (built-in + custom + agent-created)

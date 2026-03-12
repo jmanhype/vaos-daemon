@@ -16,20 +16,20 @@ Every agent framework processes every message the same way. "Build me a REST API
 
 We built OSA to fix this. It's the AI layer of [MIOSA](https://miosa.ai) — an operating system for running your entire business. One agent handling everything: code, operations, communication, analysis, orchestration. The foundation is Signal Theory: every input is classified by intent, domain, and complexity *before* it touches the reasoning engine. The right model gets the right task. Multi-step problems get decomposed into parallel sub-agents. The agent remembers what worked and what didn't across sessions.
 
-~112,000 lines of Elixir/OTP. ~2,000 tests. Runs locally. Your data stays yours.
+~127,000 lines of Elixir/OTP + Rust. ~2,000 tests. Runs locally. Your data stays yours.
 
 ```
 Codebase Breakdown
 ──────────────────────────────────────────
-Elixir/OTP (lib/)          69,000 lines   Core agent, orchestration, providers,
+Elixir/OTP (lib/)          77,000 lines   Core agent, orchestration, providers,
                                           channels, tools, swarm, sandbox
 Rust TUI (priv/rust/tui/)  20,000 lines   Terminal interface, SSE client,
                                           auth, rendering
-Tests (test/)              22,000 lines   ~2,000 tests across all modules
+Tests (test/)              29,000 lines   ~2,000 tests across all modules
 Go utilities (priv/go/)       900 lines   Tokenizer, git helper, sysmon
 Config                        500 lines   Runtime, dev, test, prod
 ──────────────────────────────────────────
-Total                     ~112,000 lines
+Total                     ~127,000 lines
 ```
 
 ---
@@ -137,7 +137,7 @@ Five modules that understand how people communicate:
 | **Communication Coach** | Scores outbound message quality before sending — clarity, tone, completeness |
 | **Conversation Tracker** | Tracks depth from casual chat to deep strategic discussion (4 levels) |
 | **Proactive Monitor** | Watches for silence, drift, and engagement drops — triggers alerts |
-| **Contact Detector** | Identifies who's talking in under 1 millisecond |
+| **Contact Detector** | Identifies who's talking from message metadata |
 
 ### 8. Context & Memory
 
@@ -327,6 +327,12 @@ JWT authentication supported for production — set `OSA_SHARED_SECRET` and `OSA
 
 ---
 
+## Desktop App (Tauri + SvelteKit)
+
+A native desktop GUI lives in `desktop/` — built with Tauri and SvelteKit. Includes a chat interface, agents panel, settings management, command palette, and SSE streaming for real-time agent output. Runs as a lightweight native window on macOS, Linux, and Windows.
+
+---
+
 ## Architecture
 
 ```
@@ -361,7 +367,7 @@ JWT authentication supported for production — set `OSA_SHARED_SECRET` and `OSA
 │ Loop  │ │rator   │ │ +PACT │ │  (5 mods)    │
 │       │ │         │ │       │ │              │
 │ Tier  │ │ Roster  │ │ Intel │ │ Profiler     │
-│ Route │ │ 52 defs │ │ Votes │ │ Coach        │
+│ Route │ │ 31+17   │ │ Votes │ │ Coach        │
 └───┬───┘ └───┬─────┘ └──┬────┘ │ Tracker      │
     │         │          │      │ Monitor      │
     │         │          │      │ Detector     │
@@ -372,7 +378,7 @@ JWT authentication supported for production — set `OSA_SHARED_SECRET` and `OSA
   │  Compactor (3-zone sliding window, importance-weighted) │
   │  Memory (3-store + inverted index + episodic JSONL)    │
   │  Vault (8-category structured memory + fact extraction)│
-  │  Cortex (knowledge synthesis)                          │
+  │  Cortex (context aggregation delegate)                  │
   │  Scheduler (cron + heartbeat)                          │
   │  Sandbox (Docker + Wasm + Sprites.dev)                 │
   └────────────────────────────────────────────────────────┘
@@ -380,7 +386,7 @@ JWT authentication supported for production — set `OSA_SHARED_SECRET` and `OSA
   ┌────▼────┐ ┌───▼─────┐ ┌──▼────┐ ┌───▼──────┐
   │18 LLM   │ │Skills   │ │Memory │ │  OS      │
   │Providers│ │Registry │ │(JSONL)│ │Templates │
-  │ 3 tiers │ │37 defs  │ │       │ │          │
+  │ 3 tiers │ │34 tools │ │       │ │          │
   └─────────┘ │91 cmds  │ └───────┘ └──────────┘
               └─────────┘
 ```
@@ -432,7 +438,7 @@ OptimalSystemAgent.Supervisor (rest_for_one)
 │   ├── Vault.Supervisor         Structured memory (FactStore + Observer)
 │   ├── Agent.Scheduler          Cron + heartbeat scheduling
 │   ├── Agent.Compactor          3-zone context compression
-│   ├── Agent.Cortex             Knowledge synthesis
+│   ├── Agent.Cortex             Context aggregation delegate
 │   └── Agent.ProactiveMode      Autonomous proactive actions
 │
 ├── Supervisors.Extensions (one_for_one)
@@ -543,7 +549,7 @@ OSA is grounded in four principles from communication and systems theory:
 1. **Shannon (Channel Capacity):** Every channel has finite capacity. Match compute to complexity — don't burn your best model on trivial tasks.
 2. **Ashby (Requisite Variety):** The system must match the variety of its inputs — 18 providers, 12 channels, unlimited skills, 5 reasoning strategies.
 3. **Beer (Viable System Model):** Five operational modes (Build, Assist, Analyze, Execute, Maintain) mirror the five subsystems every viable organization needs.
-4. **Wiener (Feedback Loops):** Every action produces feedback. The agent learns across sessions — memory, knowledge graph, pattern recognition, cortex synthesis.
+4. **Wiener (Feedback Loops):** Every action produces feedback. The agent learns across sessions — memory, knowledge graph, pattern recognition, context aggregation.
 
 **Research:** [Signal Theory: The Architecture of Optimal Intent Encoding in Communication Systems](https://zenodo.org/records/18774174) (Luna, 2026)
 
@@ -574,7 +580,7 @@ OSA is the intelligence layer of the MIOSA platform:
 | [Agent Loop](docs/backend/agent-loop/loop.md) | Core reasoning engine, strategies, context builder |
 | [Memory & Knowledge](docs/backend/memory/overview.md) | 5-layer memory, knowledge graph, SPARQL, OWL reasoning |
 | [Orchestration](docs/backend/orchestration/orchestrator.md) | Multi-agent decomposition, waves, swarms, PACT |
-| [Tools](docs/backend/tools/overview.md) | 32 built-in tools, middleware pipeline, custom tools |
+| [Tools](docs/backend/tools/overview.md) | 34 built-in tools, middleware pipeline, custom tools |
 | [LLM Providers](docs/backend/providers/overview.md) | 18 providers, circuit breaker, tier routing |
 | [HTTP API](docs/frontend/http-api.md) | Every endpoint, auth, SSE, error codes |
 | [CLI Reference](docs/frontend/cli-reference.md) | All slash commands organized by category |

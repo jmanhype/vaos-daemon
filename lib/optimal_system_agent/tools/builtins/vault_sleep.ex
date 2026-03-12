@@ -2,6 +2,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.VaultSleep do
   @behaviour MiosaTools.Behaviour
 
   @impl true
+  def available?, do: true
+
+  @impl true
+  def safety, do: :write_safe
+
+  @impl true
   def name, do: "vault_sleep"
 
   @impl true

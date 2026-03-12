@@ -7,6 +7,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.WebFetch do
   @timeout_ms 30_000
 
   @impl true
+  def available?, do: true
+
+  @impl true
+  def safety, do: :read_only
+
+  @impl true
   def name, do: "web_fetch"
 
   @impl true

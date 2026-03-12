@@ -4,6 +4,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.BudgetStatus do
   alias MiosaBudget.Budget
 
   @impl true
+  def available?, do: true
+
+  @impl true
+  def safety, do: :read_only
+
+  @impl true
   def name, do: "budget_status"
 
   @impl true

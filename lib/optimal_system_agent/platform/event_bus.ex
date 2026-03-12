@@ -7,6 +7,12 @@ defmodule OptimalSystemAgent.Platform.EventBus do
   - ETS ring buffer (last 500 events)
   - PubSub fan-out on "platform:events" topic
   - SSE streaming for real-time subscribers
+
+  NOTE: Not yet wired into the supervision tree or API router.
+  This module and its companion PlatformEventsRoutes are scaffolded for
+  future fleet/multi-OS support. To activate:
+  1. Add `OptimalSystemAgent.Platform.EventBus` to Infrastructure supervisor
+  2. Add `forward "/platform-events", to: API.PlatformEventsRoutes` in api.ex
   """
 
   use GenServer

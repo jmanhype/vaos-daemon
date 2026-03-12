@@ -11,6 +11,8 @@ defmodule OptimalSystemAgent.Agent.Replay do
   alias OptimalSystemAgent.Agent.{Loop, Memory}
   alias OptimalSystemAgent.SDK.Session
 
+  @max_replay_messages 100
+
   @doc """
   Replay the conversation stored under `source_session_id` into a new session.
 
@@ -60,7 +62,17 @@ defmodule OptimalSystemAgent.Agent.Replay do
   # ── Private ──────────────────────────────────────────────────────────
 
   defp dispatch_messages(session_id, messages) do
-    Enum.each(messages, fn m ->
+    total = length(messages)
+
+    if total > @max_replay_messages do
+      Logger.warning(
+        "Replay #{session_id}: truncating #{total} messages to #{@max_replay_messages}"
+      )
+    end
+
+    messages
+    |> Enum.take(@max_replay_messages)
+    |> Enum.each(fn m ->
       content = Map.get(m, "content") || Map.get(m, :content) || ""
 
       if content != "" do
