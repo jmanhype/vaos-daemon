@@ -532,7 +532,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
 
   def handle_call(:get_state, _from, state) do
     uptime = if state.started_at, do: DateTime.diff(DateTime.utc_now(), state.started_at), else: 0
-    snap = %{session_id: state.session_id, iteration: state.iteration, tokens_used: estimate_tokens_for_introspection(state), tools_called: state.last_meta[:tools_used] || [], status: state.status, started_at: state.started_at, uptime_seconds: uptime}
+    snap = %{session_id: state.session_id, iteration: state.iteration, tokens_used: estimate_tokens_for_introspection(state), tools_called: state.last_meta[:tools_used] || [], status: state.status, started_at: state.started_at, uptime_seconds: uptime, provider: state.provider, model: state.model}
     {:reply, {:ok, snap}, state}
   end
 
