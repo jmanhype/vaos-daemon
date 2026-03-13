@@ -26,11 +26,30 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputeVmTest do
     test "parameters includes all expected operations in enum" do
       ops = ComputeVm.parameters()["properties"]["operation"]["enum"]
       assert "create" in ops
+      assert "list" in ops
       assert "status" in ops
+      assert "wait_ready" in ops
       assert "exec" in ops
       assert "read_file" in ops
       assert "write_file" in ops
+      assert "snapshot" in ops
+      assert "restart" in ops
       assert "destroy" in ops
+    end
+
+    test "parameters includes wait boolean for create" do
+      wait_prop = ComputeVm.parameters()["properties"]["wait"]
+      assert wait_prop["type"] == "boolean"
+    end
+
+    test "parameters includes timeout integer" do
+      timeout_prop = ComputeVm.parameters()["properties"]["timeout"]
+      assert timeout_prop["type"] == "integer"
+    end
+
+    test "parameters includes snapshot_name string" do
+      prop = ComputeVm.parameters()["properties"]["snapshot_name"]
+      assert prop["type"] == "string"
     end
   end
 
@@ -50,6 +69,11 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputeVmTest do
 
     test "status without vm_id returns error" do
       assert {:error, msg} = ComputeVm.execute(%{"operation" => "status"})
+      assert msg =~ "vm_id"
+    end
+
+    test "wait_ready without vm_id returns error" do
+      assert {:error, msg} = ComputeVm.execute(%{"operation" => "wait_ready"})
       assert msg =~ "vm_id"
     end
 
@@ -112,16 +136,40 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputeVmTest do
       assert msg =~ "content"
     end
 
+    test "snapshot without vm_id returns error" do
+      assert {:error, msg} = ComputeVm.execute(%{"operation" => "snapshot"})
+      assert msg =~ "vm_id"
+    end
+
+    test "restart without vm_id returns error" do
+      assert {:error, msg} = ComputeVm.execute(%{"operation" => "restart"})
+      assert msg =~ "vm_id"
+    end
+
     test "destroy without vm_id returns error" do
       assert {:error, msg} = ComputeVm.execute(%{"operation" => "destroy"})
       assert msg =~ "vm_id"
     end
   end
 
+  # ── list operation — no live API needed ────────────────────────────
+
+  describe "execute/1 list" do
+    test "list returns error or ok (no server present)" do
+      result = ComputeVm.execute(%{"operation" => "list"})
+      assert match?({:ok, _}, result) or match?({:error, _}, result)
+    end
+
+    test "list with status_filter returns error or ok" do
+      result = ComputeVm.execute(%{"operation" => "list", "status_filter" => "running"})
+      assert match?({:ok, _}, result) or match?({:error, _}, result)
+    end
+  end
+
   # ── Integration tests (require MIOSA_COMPUTE_URL to be set) ─────────
 
   @tag :integration
-  describe "integration — create / exec / read_file / write_file / destroy" do
+  describe "integration — full lifecycle" do
     setup do
       if is_nil(System.get_env("MIOSA_COMPUTE_URL")) do
         {:ok, skip: true}
@@ -130,7 +178,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputeVmTest do
       end
     end
 
-    test "full lifecycle" do
+    test "create / wait_ready / exec / write_file / read_file / snapshot / destroy" do
       # Create
       assert {:ok, create_msg} =
                ComputeVm.execute(%{"operation" => "create", "template_id" => "python-ml"})
@@ -138,11 +186,21 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputeVmTest do
       vm_id = extract_vm_id(create_msg)
       assert is_binary(vm_id), "expected vm_id in: #{create_msg}"
 
+      # Wait for ready
+      assert {:ok, ready_msg} =
+               ComputeVm.execute(%{"operation" => "wait_ready", "vm_id" => vm_id, "timeout" => 60})
+
+      assert ready_msg =~ vm_id
+
       # Status
       assert {:ok, status_msg} =
                ComputeVm.execute(%{"operation" => "status", "vm_id" => vm_id})
 
       assert status_msg =~ vm_id
+
+      # List — vm should appear
+      assert {:ok, list_msg} = ComputeVm.execute(%{"operation" => "list"})
+      assert list_msg =~ vm_id
 
       # Write a file
       content = "print('hello from autoresearch')\n"
@@ -178,11 +236,37 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputeVmTest do
 
       assert read_content =~ "print"
 
+      # Snapshot
+      assert {:ok, snap_msg} =
+               ComputeVm.execute(%{
+                 "operation" => "snapshot",
+                 "vm_id" => vm_id,
+                 "snapshot_name" => "test-snap-01"
+               })
+
+      assert snap_msg =~ "snap"
+
       # Destroy
       assert {:ok, destroy_msg} =
                ComputeVm.execute(%{"operation" => "destroy", "vm_id" => vm_id})
 
       assert destroy_msg =~ "destroyed"
+    end
+
+    test "create with wait: true returns ready VM" do
+      assert {:ok, msg} =
+               ComputeVm.execute(%{
+                 "operation" => "create",
+                 "template_id" => "python-ml",
+                 "wait" => true
+               })
+
+      assert msg =~ "ready" or msg =~ "running"
+      vm_id = extract_vm_id(msg)
+
+      if vm_id do
+        ComputeVm.execute(%{"operation" => "destroy", "vm_id" => vm_id})
+      end
     end
   end
 

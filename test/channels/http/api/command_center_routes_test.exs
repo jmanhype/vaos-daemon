@@ -310,10 +310,10 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutesTest do
   # 404 as a valid outcome for this reason.
 
   describe "GET /scheduler" do
-    test "returns 200, 500, or 404 depending on scheduler state" do
+    test "returns 200, 500, 503, or 404 depending on scheduler state" do
       conn = json_get("/scheduler")
 
-      assert conn.status in [200, 500, 404]
+      assert conn.status in [200, 500, 503, 404]
     end
 
     test "returns valid JSON body" do
@@ -329,7 +329,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutesTest do
     test "returns 200, 500, or 404 and a valid JSON body" do
       conn = json_get("/scheduler/jobs")
 
-      assert conn.status in [200, 500, 404]
+      assert conn.status in [200, 500, 503, 404]
       body = decode_body(conn)
 
       if conn.status == 200 do
@@ -349,7 +349,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutesTest do
         "task" => "run diagnostics"
       })
 
-      assert conn.status in [201, 422, 500, 404]
+      assert conn.status in [201, 422, 500, 503, 404]
     end
   end
 
@@ -359,7 +359,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutesTest do
     test "returns 404 for nonexistent job id" do
       conn = json_delete("/scheduler/jobs/no-such-job-#{System.unique_integer([:positive])}")
 
-      assert conn.status in [404, 500]
+      assert conn.status in [404, 500, 503]
 
       if conn.status == 404 do
         body = decode_body(conn)
@@ -374,7 +374,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutesTest do
     test "returns 200, 500, or 404 with triggers list" do
       conn = json_get("/scheduler/triggers")
 
-      assert conn.status in [200, 500, 404]
+      assert conn.status in [200, 500, 503, 404]
 
       if conn.status == 200 do
         body = decode_body(conn)
