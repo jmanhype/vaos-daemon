@@ -185,15 +185,26 @@ defmodule OptimalSystemAgent.Providers.Ollama do
     if String.starts_with?(url, "https://") do
       Logger.info("[Ollama] Cloud URL detected — using curl fallback")
       model = Keyword.get(opts, :model) || Application.get_env(:optimal_system_agent, :ollama_model, default_model())
-      body = Jason.encode!(%{
+      tools = Keyword.get(opts, :tools, [])
+
+      body_map = %{
         model: model,
         messages: format_messages(messages),
         stream: false,
         options: %{temperature: Keyword.get(opts, :temperature, 0.7)}
-      })
+      }
+
+      # Include tools if model supports them
+      body_map = if tools != [] and model_supports_tools?(model) do
+        Map.put(body_map, :tools, format_tools(tools))
+      else
+        body_map
+      end
+
+      body = Jason.encode!(body_map)
       api_key = Application.get_env(:optimal_system_agent, :ollama_api_key, "")
       {output, exit_code} = System.cmd("curl", [
-        "-s", "--max-time", "120",
+        "-s", "--max-time", "300",
         "-H", "Content-Type: application/json",
         "-H", "Authorization: Bearer #{api_key}",
         "-d", body,
@@ -204,9 +215,11 @@ defmodule OptimalSystemAgent.Providers.Ollama do
           case Jason.decode(output) do
             {:ok, resp} ->
               content = get_in(resp, ["message", "content"]) || ""
-              Logger.info("[Ollama] Cloud response: #{byte_size(content)} bytes")
+              raw_tool_calls = get_in(resp, ["message", "tool_calls"]) || []
+              tool_calls = parse_tool_calls(%{"tool_calls" => raw_tool_calls}, model)
+              Logger.info("[Ollama] Cloud response: #{byte_size(content)} bytes, #{length(tool_calls)} tool calls")
               if content != "", do: callback.({:text_delta, content})
-              callback.({:done, %{content: content, tool_calls: []}})
+              callback.({:done, %{content: content, tool_calls: tool_calls}})
               :ok
             {:error, _} ->
               {:error, "Ollama Cloud returned non-JSON: #{String.slice(output, 0, 200)}"}
