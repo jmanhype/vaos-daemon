@@ -174,6 +174,24 @@ defmodule OptimalSystemAgent.Providers.Ollama do
   def chat_stream(messages, callback, opts \\ []) do
     url = Application.get_env(:optimal_system_agent, :ollama_url, "http://localhost:11434")
 
+    # Ollama Cloud (HTTPS) streaming hangs with Req's `into:` callback.
+    # Fall back to sync chat for cloud URLs until Req/Finch HTTPS streaming is fixed.
+    if String.starts_with?(url, "https://") do
+      Logger.info("[Ollama] Cloud URL detected — using sync fallback for streaming")
+      case chat(messages, opts) do
+        {:ok, result} ->
+          if result.content != "", do: callback.({:text_delta, result.content})
+          callback.({:done, result})
+          :ok
+        {:error, _} = err -> err
+      end
+    else
+      chat_stream_impl(messages, callback, opts, url)
+    end
+  end
+
+  defp chat_stream_impl(messages, callback, opts, url) do
+
     model =
       Keyword.get(opts, :model) ||
         Application.get_env(:optimal_system_agent, :ollama_model, default_model())
