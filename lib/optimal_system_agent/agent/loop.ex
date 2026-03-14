@@ -719,25 +719,8 @@ defmodule OptimalSystemAgent.Agent.Loop do
     llm_opts = [tools: tools_for_call, temperature: LLMClient.temperature(), max_tokens: max_response_tokens()]
     llm_opts = if thinking_opts, do: Keyword.put(llm_opts, :thinking, thinking_opts), else: llm_opts
 
-    # Use sync chat for Ollama Cloud (HTTPS streaming has Finch/Req compatibility issues).
-    # Falls back to streaming for local providers.
-    ollama_url = Application.get_env(:optimal_system_agent, :ollama_url, "http://localhost:11434")
-    result = if String.starts_with?(ollama_url, "https://") do
-      Logger.info("[loop] Using sync LLM call (Ollama Cloud)")
-      sync_result = LLMClient.llm_chat(state, context.messages, llm_opts)
-
-      # Emit the response as SSE event so the frontend sees it
-      case sync_result do
-        {:ok, %{content: content}} when content != "" ->
-          Bus.emit(:system_event, %{event: :streaming_token, session_id: state.session_id, text: content})
-          Bus.emit(:system_event, %{event: :done, session_id: state.session_id})
-        _ -> :ok
-      end
-
-      sync_result
-    else
-      LLMClient.llm_chat_stream(state, context.messages, llm_opts)
-    end
+    # LLM streaming call — idle-timeout detection is inside LLMClient.
+    result = LLMClient.llm_chat_stream(state, context.messages, llm_opts)
 
     # Emit timing + usage event after LLM call
     duration_ms = System.monotonic_time(:millisecond) - start_time

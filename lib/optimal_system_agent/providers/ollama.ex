@@ -147,10 +147,16 @@ defmodule OptimalSystemAgent.Providers.Ollama do
 
     # 600 s — thinking models (kimi-k2.5) need up to ~300 s before producing
     # any output; 120 s was too short and caused Cortex synthesis timeouts.
-    req_opts = [json: body, receive_timeout: 600_000] ++ auth_headers()
+    req_opts = [
+      json: body,
+      receive_timeout: 600_000,
+      pool_timeout: 60_000,
+      retry: false
+    ] ++ auth_headers()
 
     try do
-      case Req.post("#{url}/api/chat", req_opts) do
+      req = Req.new(req_opts) |> Req.merge(url: "#{url}/api/chat")
+      case Req.post(req) do
         {:ok, %{status: 200, body: %{"message" => %{"content" => content} = msg}}} ->
           tool_calls = parse_tool_calls(msg, model)
           {:ok, %{content: Text.strip_thinking_tokens(content || ""), tool_calls: tool_calls}}
@@ -174,16 +180,33 @@ defmodule OptimalSystemAgent.Providers.Ollama do
   def chat_stream(messages, callback, opts \\ []) do
     url = Application.get_env(:optimal_system_agent, :ollama_url, "http://localhost:11434")
 
-    # Ollama Cloud (HTTPS) streaming hangs with Req's `into:` callback.
-    # Fall back to sync chat for cloud URLs until Req/Finch HTTPS streaming is fixed.
+    # Ollama Cloud (HTTPS) — Req/Finch pool gets stuck after boot failures.
+    # Use raw :httpc for cloud URLs to bypass pool issues entirely.
     if String.starts_with?(url, "https://") do
-      Logger.info("[Ollama] Cloud URL detected — using sync fallback for streaming")
-      case chat(messages, opts) do
-        {:ok, result} ->
-          if result.content != "", do: callback.({:text_delta, result.content})
-          callback.({:done, result})
+      Logger.info("[Ollama] Cloud URL detected — using :httpc fallback")
+      model = Keyword.get(opts, :model) || Application.get_env(:optimal_system_agent, :ollama_model, default_model())
+      body = Jason.encode!(%{
+        model: model,
+        messages: format_messages(messages),
+        stream: false,
+        options: %{temperature: Keyword.get(opts, :temperature, 0.7)}
+      })
+      api_key = Application.get_env(:optimal_system_agent, :ollama_api_key, "")
+      headers = [
+        {~c"content-type", ~c"application/json"},
+        {~c"authorization", String.to_charlist("Bearer #{api_key}")}
+      ]
+      case :httpc.request(:post, {String.to_charlist("#{url}/api/chat"), headers, ~c"application/json", String.to_charlist(body)}, [timeout: 120_000, connect_timeout: 10_000], []) do
+        {:ok, {{_, 200, _}, _, resp_body}} ->
+          resp = Jason.decode!(List.to_string(resp_body))
+          content = get_in(resp, ["message", "content"]) || ""
+          if content != "", do: callback.({:text_delta, content})
+          callback.({:done, %{content: content, tool_calls: []}})
           :ok
-        {:error, _} = err -> err
+        {:ok, {{_, status, _}, _, resp_body}} ->
+          {:error, "Ollama Cloud returned #{status}: #{List.to_string(resp_body)}"}
+        {:error, reason} ->
+          {:error, "Ollama Cloud request failed: #{inspect(reason)}"}
       end
     else
       chat_stream_impl(messages, callback, opts, url)
