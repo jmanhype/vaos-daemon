@@ -2,6 +2,7 @@
   import { onDestroy } from 'svelte';
   import { fly } from 'svelte/transition';
   import { chatStore } from '$lib/stores/chat.svelte';
+  import { connectionStore } from '$lib/stores/connection.svelte';
   import { restartBackend } from '$lib/utils/backend';
   import MessageBubble from './MessageBubble.svelte';
   import ChatInput from './ChatInput.svelte';
@@ -230,8 +231,8 @@
     </div>
   {/if}
 
-  <!-- Connection status banner — subtle, not alarming -->
-  {#if chatStore.error}
+  <!-- Connection status banner — only show if connectionStore also says disconnected -->
+  {#if chatStore.error && !connectionStore.isConnected}
     <div class="connection-banner" role="status">
       <span class="connection-dot"></span>
       <span class="connection-text">Backend offline</span>
