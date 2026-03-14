@@ -43,13 +43,13 @@ export const PROVIDER_META: Record<ModelProvider, ProviderMeta> = {
   },
   ollama: {
     slug: "ollama",
-    label: "Ollama (Local)",
-    letter: "L",
+    label: "Ollama",
+    letter: "O",
     color: "#64748b",
   },
   "ollama-cloud": {
     slug: "ollama-cloud",
-    label: "Ollama (Cloud)",
+    label: "Ollama Cloud",
     letter: "C",
     color: "#8b5cf6",
   },
@@ -441,11 +441,14 @@ class ModelsStore {
     this.switching = name;
     this.switchError = null;
     try {
-      const updated = await modelsApi.activate(name);
+      // Find provider for this model
+      const model = this.models.find((m) => m.name === name);
+      const provider = model?.provider ?? "ollama";
+      const updated = await modelsApi.activate(name, provider);
       // Mark the activated model and clear others
       this.models = this.models.map((m) => ({
         ...m,
-        active: m.name === updated.name && m.provider === updated.provider,
+        active: m.name === (updated.model ?? updated.name) && m.provider === (updated.provider ?? provider),
       }));
     } catch (err) {
       this.switchError =

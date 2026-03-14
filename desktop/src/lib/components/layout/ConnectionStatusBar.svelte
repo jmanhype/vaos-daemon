@@ -4,10 +4,19 @@
   const status = $derived(connectionStore.status);
   const attempts = $derived(connectionStore.reconnectAttempts);
   const queueSize = $derived(connectionStore.offlineQueueSize);
+  const health = $derived(connectionStore.health);
 
   const label = $derived.by(() => {
     switch (status) {
-      case 'connected': return 'Connected';
+      case 'connected': {
+        if (health?.provider && health.model) {
+          return `${health.provider} — ${health.model}`;
+        }
+        if (health?.provider) {
+          return `Connected · ${health.provider}`;
+        }
+        return 'Connected';
+      }
       case 'reconnecting': return `Reconnecting (attempt ${attempts})...`;
       case 'disconnected': return queueSize > 0 ? `Offline (${queueSize} queued)` : 'Offline';
       case 'connecting': return 'Connecting...';

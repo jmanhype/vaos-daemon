@@ -69,6 +69,11 @@ class DashboardStore {
   }
 
   startAutoRefresh(intervalMs = 30_000): () => void {
+    // Clear any pre-existing interval before starting a new one (guards against
+    // double-mount in SPA navigation when the singleton is reused).
+    this.stopAutoRefresh();
+    // Reset loading so the skeleton renders on every re-visit.
+    this.loading = true;
     this.load();
     this.#interval = setInterval(() => this.load(), intervalMs);
     return () => this.stopAutoRefresh();

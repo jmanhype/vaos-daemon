@@ -10,14 +10,27 @@
   // Resolved session id — set once we confirm the session exists on the backend
   let sessionId = $state('');
 
+  // Session panel collapse state — persisted to localStorage
+  let sessionPanelOpen = $state(true);
+
+  function toggleSessionPanel(): void {
+    sessionPanelOpen = !sessionPanelOpen;
+    localStorage.setItem('osa-session-panel', String(sessionPanelOpen));
+  }
+
   onMount(async () => {
+    // Restore session panel state from localStorage
+    const panelPref = localStorage.getItem('osa-session-panel');
+    if (panelPref !== null) {
+      sessionPanelOpen = panelPref !== 'false';
+    }
+
     // Priority 1: URL param (e.g. after creating a new session)
     const urlParam = $page.url.searchParams.get('session');
     if (urlParam) {
       try {
         await chatStore.loadSession(urlParam);
         sessionId = urlParam;
-        // Normalise URL so we don't keep the param in history
         goto('/app/chat', { replaceState: true });
       } catch {
         sessionId = '';
@@ -83,15 +96,19 @@
 </svelte:head>
 
 <div class="chat-page" aria-label="Chat">
-  <!-- Session list sidebar: fixed 280px width -->
-  <SessionList
-    onNewSession={handleNewSession}
-    onSelectSession={handleSelectSession}
-  />
+  <!-- Session sidebar — only rendered when open -->
+  {#if sessionPanelOpen}
+    <div class="session-sidebar">
+      <SessionList
+        onNewSession={handleNewSession}
+        onSelectSession={handleSelectSession}
+      />
+    </div>
+  {/if}
 
   <!-- Chat panel: fills remaining space -->
-  <div class="chat-panel">
-    <Chat {sessionId} />
+  <div class="chat-panel" class:chat-panel--full={!sessionPanelOpen}>
+    <Chat {sessionId} onToggleHistory={toggleSessionPanel} historyOpen={sessionPanelOpen} />
   </div>
 </div>
 
@@ -103,11 +120,22 @@
     overflow: hidden;
   }
 
+  .session-sidebar {
+    flex-shrink: 0;
+    height: 100%;
+    width: 280px;
+    overflow: hidden;
+  }
+
   .chat-panel {
     flex: 1;
     min-width: 0;
     height: 100%;
     padding: 12px 12px 12px 0;
     box-sizing: border-box;
+  }
+
+  .chat-panel--full {
+    padding-left: 12px;
   }
 </style>

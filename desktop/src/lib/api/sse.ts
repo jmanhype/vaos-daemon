@@ -59,7 +59,9 @@ function parseSSEBlock(block: string): StreamEvent | null {
   try {
     const parsed = JSON.parse(data);
     // If the backend sends an event type field, use it; otherwise trust the JSON's `type`
-    if (eventType && !parsed.type) {
+    // The SSE `event:` line carries the unwrapped sub-type (e.g. "streaming_token")
+    // but the JSON data still has `type: "system_event"`. Override with the SSE event type.
+    if (eventType && (parsed.type === "system_event" || !parsed.type)) {
       parsed.type = eventType;
     }
     return parsed as StreamEvent;

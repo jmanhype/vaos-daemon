@@ -47,7 +47,7 @@
   }
 
   // Nav routes mapped to keyboard shortcuts ⌘1–⌘0
-  const NAV_ROUTES = ['/app', '/app/agents', '/app/models', '/app/terminal', '/app/connectors', '/app/settings', '/app/activity', '/app/usage', '/app/memory', '/app/tasks'];
+  const NAV_ROUTES = ['/app', '/app/chat', '/app/agents', '/app/models', '/app/terminal', '/app/settings', '/app/connectors', '/app/activity', '/app/usage', '/app/tasks'];
 
   // ── SSE Event Dispatcher ────────────────────────────────────────────────────
   //
@@ -289,17 +289,7 @@
   />
 {/if}
 
-<!-- YOLO mode toast -->
-{#if permissionStore.yolo}
-  <div
-    class="yolo-badge"
-    role="status"
-    aria-label="YOLO mode active — all tool calls auto-approved"
-    transition:fade={{ duration: 150 }}
-  >
-    YOLO
-  </div>
-{/if}
+<!-- YOLO mode is managed internally — no floating badge -->
 
 <style>
   .app-shell {
@@ -342,23 +332,4 @@
     pointer-events: auto;
   }
 
-  /* YOLO mode indicator — bottom-left corner */
-  .yolo-badge {
-    position: fixed;
-    bottom: 20px;
-    left: 20px;
-    z-index: 500;
-    background: rgba(251, 191, 36, 0.15);
-    border: 1px solid rgba(251, 191, 36, 0.4);
-    color: #fbbf24;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.12em;
-    padding: 4px 10px;
-    border-radius: 9999px;
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-    user-select: none;
-    pointer-events: none;
-  }
 </style>

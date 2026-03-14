@@ -494,6 +494,9 @@ defmodule OptimalSystemAgent.Agent.Loop do
             agent: state.session_id
           })
 
+          Phoenix.PubSub.broadcast(OptimalSystemAgent.PubSub, "osa:session:#{state.session_id}",
+            {:osa_event, %{type: :done, session_id: state.session_id}})
+
           {:reply, {:ok, response}, state}
       end
     else
@@ -528,6 +531,9 @@ defmodule OptimalSystemAgent.Agent.Loop do
         response: response,
         agent: state.session_id
       })
+
+      Phoenix.PubSub.broadcast(OptimalSystemAgent.PubSub, "osa:session:#{state.session_id}",
+        {:osa_event, %{type: :done, session_id: state.session_id}})
 
       {:reply, {:ok, response}, state}
     end

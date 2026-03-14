@@ -85,7 +85,7 @@
 </script>
 
 <aside class="session-list" aria-label="Chat sessions">
-  <!-- New Chat button -->
+  <!-- Header: New Chat + collapse toggle -->
   <div class="session-list__header">
     <button
       class="new-chat-btn"
@@ -243,6 +243,9 @@
   .session-list__header {
     padding: 14px 12px 10px;
     flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
 
   .new-chat-btn {
@@ -495,4 +498,5 @@
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
   }
+
 </style>

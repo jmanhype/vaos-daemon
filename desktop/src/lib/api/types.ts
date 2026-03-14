@@ -6,11 +6,12 @@
 export interface HealthResponse {
   status: "ok" | "degraded" | "error";
   version: string;
-  uptime_seconds: number;
   provider: string | null;
   model?: string | null;
   context_window?: number | null;
-  agents_active: number;
+  /** Optional fields — may not be present in all backend versions */
+  uptime_seconds?: number;
+  agents_active?: number;
 }
 
 // ── Onboarding ────────────────────────────────────────────────────────────────

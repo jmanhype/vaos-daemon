@@ -171,6 +171,7 @@ class ChatStore {
     // Try SSE streaming first; fall back to polling if stream endpoint fails
     const usedSessionId = sessionId;
     let sseSucceeded = false;
+    let messageSentViaSSE = false;
 
     try {
       // Attempt SSE stream
@@ -180,21 +181,23 @@ class ChatStore {
         model,
         onEvent: (event: StreamEvent) => {
           sseSucceeded = true;
+          messageSentViaSSE = true;
           this.#handleStreamEvent(event);
         },
         onConnect: () => {
+          messageSentViaSSE = true;
           this.error = null;
         },
         onDisconnect: () => {
           // If SSE closed but we never got a done event, fall through to polling
           if (this.isStreaming && !sseSucceeded) {
-            void this.#pollForResponse(usedSessionId);
+            void this.#pollForResponse(usedSessionId, messageSentViaSSE);
           }
         },
         onError: () => {
           // SSE failed — fall back to polling
-          if (this.isStreaming) {
-            void this.#pollForResponse(usedSessionId);
+          if (this.isStreaming && !sseSucceeded) {
+            void this.#pollForResponse(usedSessionId, messageSentViaSSE);
           }
         },
         onDone: () => {
@@ -203,26 +206,28 @@ class ChatStore {
       });
     } catch {
       // Sync error starting SSE — go straight to polling
-      void this.#pollForResponse(usedSessionId);
+      void this.#pollForResponse(usedSessionId, false);
     }
   }
 
   /**
    * Simple polling fallback: POST message then poll for assistant response.
    */
-  async #pollForResponse(sessionId: string): Promise<void> {
-    // First POST the message
-    try {
-      await fetch(`${BASE}/sessions/${sessionId}/message`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: this.pendingUserMessage?.content ?? "" }),
-      });
-    } catch (e) {
-      this.error = (e as Error).message;
-      this.isStreaming = false;
-      this.pendingUserMessage = null;
-      return;
+  async #pollForResponse(sessionId: string, alreadySent = false): Promise<void> {
+    // POST the message only if SSE didn't already send it
+    if (!alreadySent) {
+      try {
+        await fetch(`${BASE}/sessions/${sessionId}/message`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: this.pendingUserMessage?.content ?? "" }),
+        });
+      } catch (e) {
+        this.error = (e as Error).message;
+        this.isStreaming = false;
+        this.pendingUserMessage = null;
+        return;
+      }
     }
 
     // Poll up to 30 times (60s) for an assistant message
@@ -319,6 +324,12 @@ class ChatStore {
         this.error = event.message;
         this.isStreaming = false;
         this.#streamController = null;
+        // Commit any partial content, then clear pending state
+        if (this.pendingUserMessage) {
+          this.messages = [...this.messages, this.pendingUserMessage];
+          this.pendingUserMessage = null;
+        }
+        this.streaming = { textBuffer: "", thinkingBuffer: "", toolCalls: [] };
         break;
     }
   }

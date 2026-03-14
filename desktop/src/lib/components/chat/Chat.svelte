@@ -14,9 +14,13 @@
   interface Props {
     /** Session ID — passed from the route page after it resolves/creates one. */
     sessionId?: string;
+    /** Toggle session history panel */
+    onToggleHistory?: () => void;
+    /** Whether the history panel is currently visible */
+    historyOpen?: boolean;
   }
 
-  let { sessionId = '' }: Props = $props();
+  let { sessionId = '', onToggleHistory, historyOpen = true }: Props = $props();
 
   // ── File attachment state ──────────────────────────────────────────────────
   interface AttachedFile {
@@ -33,6 +37,35 @@
   let attachedFiles = $state<AttachedFile[]>([]);
   let isDragOver = $state(false);
   let dragCounter = $state(0);
+
+  // ── Model selector state ───────────────────────────────────────────────────
+  let showModelMenu = $state(false);
+
+  function toggleModelMenu() {
+    showModelMenu = !showModelMenu;
+  }
+
+  function closeModelMenu() {
+    showModelMenu = false;
+  }
+
+  async function selectModel(name: string) {
+    closeModelMenu();
+    await modelsStore.activateModel(name);
+  }
+
+  // Derive a short display label from the current model name.
+  // e.g. "claude-sonnet-4-6" → "claude-sonnet-4-6" (kept as-is, bar is small)
+  const currentModelLabel = $derived(
+    modelsStore.current?.name ?? 'No model'
+  );
+
+  // Fetch models on mount if the list is empty
+  $effect(() => {
+    if (modelsStore.models.length === 0 && !modelsStore.loading) {
+      modelsStore.fetchModels().catch(() => {});
+    }
+  });
 
   const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml'];
   const TEXT_TYPES = ['text/plain', 'text/markdown', 'text/csv', 'text/html', 'text/css', 'text/javascript', 'application/json', 'application/xml'];
@@ -365,6 +398,99 @@
       </button>
     </div>
   {/if}
+
+  <!-- Top toolbar: history toggle + model selector -->
+  <div class="chat-toolbar">
+    <!-- History toggle -->
+    {#if onToggleHistory}
+      <button
+        class="toolbar-btn"
+        class:toolbar-btn--active={historyOpen}
+        onclick={onToggleHistory}
+        aria-label={historyOpen ? 'Hide chat history' : 'Show chat history'}
+        title={historyOpen ? 'Hide history' : 'Show history'}
+      >
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+          <line x1="9" y1="3" x2="9" y2="21" />
+        </svg>
+      </button>
+    {/if}
+
+    <div class="toolbar-spacer"></div>
+
+    <!-- Model selector dropdown -->
+    <div class="model-selector">
+      {#if showModelMenu}
+        <div class="model-menu-backdrop" role="presentation" onmousedown={closeModelMenu}></div>
+      {/if}
+
+      <button
+        class="model-btn"
+        onclick={toggleModelMenu}
+        aria-haspopup="listbox"
+        aria-expanded={showModelMenu}
+        aria-label="Select model"
+      >
+        {#if modelsStore.current}
+          {@const providerColor = modelsStore.current.provider === 'anthropic' ? '#7c3aed'
+            : modelsStore.current.provider === 'openai' ? '#16a34a'
+            : modelsStore.current.provider === 'groq' ? '#f97316'
+            : modelsStore.current.provider === 'openrouter' ? '#0ea5e9'
+            : '#64748b'}
+          <span class="model-dot" style="background: {providerColor};"></span>
+        {:else}
+          <span class="model-dot model-dot--none"></span>
+        {/if}
+
+        <span class="model-name">{currentModelLabel}</span>
+
+        {#if modelsStore.switching}
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="model-spin" aria-hidden="true">
+            <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+          </svg>
+        {:else}
+          <svg class="model-chevron" class:model-chevron--open={showModelMenu} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
+        {/if}
+      </button>
+
+      {#if showModelMenu}
+        <div class="model-dropdown" role="listbox" aria-label="Available models">
+          {#if modelsStore.loading}
+            <div class="model-dropdown-empty">Loading models...</div>
+          {:else if modelsStore.models.length === 0}
+            <div class="model-dropdown-empty">No models available</div>
+          {:else}
+            {#each modelsStore.models as model (model.name + model.provider)}
+              {@const providerColor = model.provider === 'anthropic' ? '#7c3aed'
+                : model.provider === 'openai' ? '#16a34a'
+                : model.provider === 'groq' ? '#f97316'
+                : model.provider === 'openrouter' ? '#0ea5e9'
+                : '#64748b'}
+              <button
+                class="model-option"
+                class:model-option--active={model.active}
+                class:model-option--switching={modelsStore.switching === model.name}
+                role="option"
+                aria-selected={model.active}
+                onclick={() => selectModel(model.name)}
+              >
+                <span class="model-option-dot" style="background: {providerColor};"></span>
+                <span class="model-option-name">{model.name}</span>
+                {#if model.active}
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="model-option-check" aria-hidden="true">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                  </svg>
+                {/if}
+              </button>
+            {/each}
+          {/if}
+        </div>
+      {/if}
+    </div>
+  </div>
 
   <!-- Message list viewport -->
   <div
@@ -884,5 +1010,218 @@
     border-top: 1px solid rgba(255, 255, 255, 0.06);
     padding: 12px 16px 16px;
     flex-shrink: 0;
+  }
+
+  /* ── Top toolbar ───────────────────────────────────────────── */
+
+  .chat-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    flex-shrink: 0;
+  }
+
+  .toolbar-btn {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    color: rgba(255, 255, 255, 0.3);
+    cursor: pointer;
+    transition: color 150ms, background 150ms, border-color 150ms;
+    flex-shrink: 0;
+  }
+
+  .toolbar-btn:hover {
+    color: rgba(255, 255, 255, 0.7);
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.15);
+  }
+
+  .toolbar-btn--active {
+    color: rgba(59, 130, 246, 0.7);
+    border-color: rgba(59, 130, 246, 0.25);
+  }
+
+  .toolbar-btn--active:hover {
+    color: rgba(59, 130, 246, 0.9);
+    background: rgba(59, 130, 246, 0.08);
+    border-color: rgba(59, 130, 246, 0.35);
+  }
+
+  .toolbar-spacer {
+    flex: 1;
+  }
+
+  /* ── Model selector (compact dropdown) ───────────────────── */
+
+  .model-selector {
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  .model-menu-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 19;
+  }
+
+  .model-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    font-size: 0.7rem;
+    color: rgba(255, 255, 255, 0.45);
+    cursor: pointer;
+    background: none;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    text-align: left;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+    max-width: 220px;
+    height: 28px;
+  }
+
+  .model-btn:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: rgba(255, 255, 255, 0.65);
+    border-color: rgba(255, 255, 255, 0.15);
+  }
+
+  .model-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    opacity: 0.8;
+  }
+
+  .model-dot--none {
+    background: rgba(255, 255, 255, 0.2);
+  }
+
+  .model-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 0.68rem;
+    letter-spacing: 0.01em;
+  }
+
+  .model-chevron {
+    flex-shrink: 0;
+    transition: transform 0.15s ease;
+    opacity: 0.5;
+  }
+
+  .model-chevron--open {
+    transform: rotate(180deg);
+  }
+
+  .model-spin {
+    animation: model-spin 0.8s linear infinite;
+  }
+
+  @keyframes model-spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+  }
+
+  /* Dropdown */
+  .model-dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    width: 260px;
+    z-index: 20;
+    background: rgba(18, 18, 22, 0.96);
+    backdrop-filter: blur(20px) saturate(160%);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 10px;
+    max-height: 300px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+    padding: 4px;
+  }
+
+  .model-dropdown::-webkit-scrollbar {
+    width: 4px;
+  }
+
+  .model-dropdown::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 2px;
+  }
+
+  .model-dropdown-empty {
+    padding: 12px 16px;
+    font-size: 0.7rem;
+    color: rgba(255, 255, 255, 0.3);
+    font-style: italic;
+  }
+
+  .model-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 7px 10px;
+    background: transparent;
+    border: none;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 0.7rem;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    text-align: left;
+    cursor: pointer;
+    border-radius: 6px;
+    transition: background 0.1s, color 0.1s;
+  }
+
+  .model-option:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.8);
+  }
+
+  .model-option--active {
+    color: rgba(255, 255, 255, 0.9);
+    background: rgba(59, 130, 246, 0.08);
+  }
+
+  .model-option--switching {
+    opacity: 0.6;
+    pointer-events: none;
+  }
+
+  .model-option-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    opacity: 0.75;
+  }
+
+  .model-option-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  .model-option-check {
+    flex-shrink: 0;
+    color: rgba(59, 130, 246, 0.7);
   }
 </style>

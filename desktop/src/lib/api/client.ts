@@ -454,9 +454,10 @@ export const models = {
     }>("/models");
     return data.models ?? [];
   },
-  activate: (name: string) =>
-    request<Model>(`/models/${encodeURIComponent(name)}/activate`, {
+  activate: (name: string, provider = "ollama") =>
+    request<Model>(`/models/switch`, {
       method: "POST",
+      body: JSON.stringify({ model: name, provider }),
     }),
   download: (name: string) =>
     request<{ job_id: string }>(

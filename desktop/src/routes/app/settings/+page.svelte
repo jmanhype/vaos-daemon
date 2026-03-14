@@ -198,12 +198,21 @@
     doctorOutput  = '';
     try {
       const h = await health.get();
-      doctorOutput =
-        `Status:  ${h.status}\n` +
-        `Version: ${h.version}\n` +
-        `Provider: ${h.provider ?? 'none'}\n` +
-        `Agents active: ${h.agents_active}\n` +
-        `Uptime: ${Math.floor(h.uptime_seconds / 60)}m ${h.uptime_seconds % 60}s`;
+      const uptimeLine = h.uptime_seconds != null
+        ? `Uptime:   ${Math.floor(h.uptime_seconds / 60)}m ${h.uptime_seconds % 60}s`
+        : null;
+      const agentsLine = h.agents_active != null
+        ? `Agents active: ${h.agents_active}`
+        : null;
+      doctorOutput = [
+        `Status:   ${h.status}`,
+        `Version:  ${h.version}`,
+        `Provider: ${h.provider ?? 'none'}`,
+        `Model:    ${h.model ?? 'none'}`,
+        `Context:  ${h.context_window != null ? h.context_window.toLocaleString() + ' tokens' : '—'}`,
+        agentsLine,
+        uptimeLine,
+      ].filter(Boolean).join('\n');
     } catch (err) {
       doctorOutput = `Backend unreachable.\n${err instanceof Error ? err.message : String(err)}`;
     } finally {
@@ -863,7 +872,7 @@
             <div class="settings-item">
               <span class="item-label">Agent status</span>
               <span class="field-readonly">
-                {#if healthData}
+                {#if healthData?.agents_active != null}
                   {healthData.agents_active} active
                 {:else}
                   —

@@ -50,7 +50,7 @@ defmodule OptimalSystemAgent.Agent.Loop.LLMClient do
         Bus.emit(:system_event, %{
           event: :streaming_token,
           session_id: session_id,
-          text: text
+          delta: text
         })
 
       {:done, result} ->
@@ -63,7 +63,7 @@ defmodule OptimalSystemAgent.Agent.Loop.LLMClient do
         Bus.emit(:system_event, %{
           event: :thinking_delta,
           session_id: session_id,
-          text: text
+          delta: text
         })
 
       _other ->

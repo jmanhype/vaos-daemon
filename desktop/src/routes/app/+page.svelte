@@ -22,19 +22,14 @@
 </svelte:head>
 
 <section class="dash" aria-label="Dashboard">
-  {#if dashboardStore.loading}
-    <div class="dash-loading">
-      <SystemHealthBar health={dashboardStore.systemHealth} uptimeSeconds={0} />
-      <KpiGrid kpis={dashboardStore.kpis} loading={true} />
-    </div>
-  {:else}
-    <SystemHealthBar
-      health={dashboardStore.systemHealth}
-      uptimeSeconds={dashboardStore.kpis.uptime_seconds}
-    />
+  <SystemHealthBar
+    health={dashboardStore.systemHealth}
+    uptimeSeconds={dashboardStore.kpis.uptime_seconds}
+  />
 
-    <KpiGrid kpis={dashboardStore.kpis} />
+  <KpiGrid kpis={dashboardStore.kpis} loading={dashboardStore.loading} />
 
+  {#if !dashboardStore.loading}
     <div class="dash-panels">
       <div class="dash-feed">
         <RecentActivityFeed activities={dashboardStore.recentActivity} />
@@ -46,10 +41,10 @@
         />
       </div>
     </div>
+  {/if}
 
-    {#if dashboardStore.error}
-      <p class="dash-error" role="alert">{dashboardStore.error}</p>
-    {/if}
+  {#if dashboardStore.error}
+    <p class="dash-error" role="alert">{dashboardStore.error}</p>
   {/if}
 </section>
 
@@ -62,12 +57,6 @@
     height: 100%;
     box-sizing: border-box;
     overflow-y: auto;
-  }
-
-  .dash-loading {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
   }
 
   .dash-panels {
