@@ -227,6 +227,48 @@ export interface OrchestrateResponse {
   stream_id: string;
 }
 
+// ── Dashboard ─────────────────────────────────────────────────────────────────
+
+export interface DashboardKpis {
+  active_sessions: number;
+  agents_online: number;
+  agents_total: number;
+  signals_today: number;
+  tasks_completed: number;
+  tasks_pending: number;
+  tokens_used_today: number;
+  uptime_seconds: number;
+}
+
+export interface DashboardAgent {
+  name: string;
+  status: "idle" | "running" | "paused";
+  current_task?: string;
+  last_active?: string;
+}
+
+export interface DashboardActivity {
+  type: string;
+  message: string;
+  timestamp: string;
+  agent?: string;
+  level: "info" | "warning" | "error";
+}
+
+export interface DashboardSystemHealth {
+  backend: "ok" | "degraded" | "error";
+  provider: string | null;
+  provider_status: "connected" | "disconnected";
+  memory_mb: number;
+}
+
+export interface DashboardData {
+  kpis: DashboardKpis;
+  active_agents: DashboardAgent[];
+  recent_activity: DashboardActivity[];
+  system_health: DashboardSystemHealth;
+}
+
 // ── API Error ─────────────────────────────────────────────────────────────────
 
 export interface ApiErrorBody {
