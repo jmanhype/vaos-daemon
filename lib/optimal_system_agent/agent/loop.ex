@@ -498,7 +498,14 @@ defmodule OptimalSystemAgent.Agent.Loop do
       end
     else
       # Normal execution path — message goes straight to LLM
-      {response, state} = run_loop(state)
+      Logger.info("[loop] Entering run_loop for session #{state.session_id}")
+      {response, state} = try do
+        run_loop(state)
+      rescue
+        e ->
+          Logger.error("[loop] CRASH in run_loop: #{Exception.message(e)}\n#{Exception.format_stacktrace(__STACKTRACE__)}")
+          {"Sorry, an internal error occurred.", state}
+      end
 
       response = maybe_scrub_prompt_leak(response)
 
@@ -626,8 +633,10 @@ defmodule OptimalSystemAgent.Agent.Loop do
   end
 
   defp do_run_loop(state) do
+    Logger.info("[loop] do_run_loop entered for #{state.session_id}, iteration=#{state.iteration}")
     # Build context (system prompt + conversation history), using cached system message (Phase 4)
     context = cached_context(state)
+    Logger.info("[loop] context built, #{length(context.messages)} messages")
 
     # ── Strategy guidance ────────────────────────────────────────────
     # Consult the active strategy before calling the LLM. The strategy can:
@@ -687,6 +696,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
       end
 
     # Emit timing event before LLM call
+    Logger.info("[loop] About to call LLM for #{state.session_id}")
     Bus.emit(:llm_request, %{session_id: state.session_id, iteration: state.iteration, agent: state.session_id})
     start_time = System.monotonic_time(:millisecond)
 

@@ -431,7 +431,12 @@ defmodule OptimalSystemAgent.Providers.Registry do
   defp try_stream_provider(module, messages, callback, opts) when is_atom(module) do
     if function_exported?(module, :chat_stream, 3) do
       try do
-        module.chat_stream(messages, callback, opts)
+        case module.chat_stream(messages, callback, opts) do
+          :ok -> :ok
+          {:error, reason} ->
+            Logger.warning("Provider #{module} chat_stream failed: #{inspect(reason)} — falling back to sync")
+            fallback_sync_stream(module, messages, callback, opts)
+        end
       rescue
         e ->
           Logger.error("Provider #{module} chat_stream raised: #{Exception.message(e)}")

@@ -183,7 +183,6 @@ defmodule OptimalSystemAgent.Providers.Ollama do
         model: model,
         messages: format_messages(messages),
         stream: true,
-        keep_alive: "30m",
         options: %{temperature: Keyword.get(opts, :temperature, 0.7)}
       }
       |> maybe_add_tools(model, opts)
@@ -210,9 +209,11 @@ defmodule OptimalSystemAgent.Providers.Ollama do
         end
       ] ++ auth_headers()
 
+    Logger.info("[Ollama] Starting chat_stream to #{url}/api/chat model=#{model}")
     try do
       case Req.post("#{url}/api/chat", req_opts) do
         {:ok, _resp} ->
+          Logger.info("[Ollama] chat_stream completed successfully")
           acc = Process.get(stream_key)
           Process.delete(stream_key)
           finalize_stream(acc, callback)
