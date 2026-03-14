@@ -184,6 +184,8 @@ defmodule OptimalSystemAgent.Providers.Ollama do
     # Use raw :httpc for cloud URLs to bypass pool issues entirely.
     if String.starts_with?(url, "https://") do
       Logger.info("[Ollama] Cloud URL detected — using :httpc fallback")
+      :inets.start()
+      :ssl.start()
       model = Keyword.get(opts, :model) || Application.get_env(:optimal_system_agent, :ollama_model, default_model())
       body = Jason.encode!(%{
         model: model,
