@@ -743,7 +743,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
           {:ok, resp} ->
             content = get_in(resp, ["message", "content"]) || ""
             Logger.info("[loop] Ollama Cloud response: #{byte_size(content)} bytes")
-            Bus.emit(:system_event, %{event: :streaming_token, session_id: state.session_id, text: content})
+            # Don't use Bus.emit here — auto_classify deadlocks
             {:ok, %{content: content, tool_calls: []}}
           _ ->
             {:error, "Non-JSON response from Ollama Cloud"}
@@ -764,13 +764,8 @@ defmodule OptimalSystemAgent.Agent.Loop do
         _ -> %{}
       end
 
-    Bus.emit(:llm_response, %{
-      session_id: state.session_id,
-      provider: state.provider,
-      duration_ms: duration_ms,
-      usage: usage,
-      agent: state.session_id
-    })
+    # Bus.emit(:llm_response, ...) disabled — auto_classify deadlocks on missing MiosaSignal.Classifier
+    Logger.info("[loop] LLM call completed in #{duration_ms}ms")
 
     case result do
       {:ok, %{content: content, tool_calls: []}} ->
