@@ -37,9 +37,6 @@ import type {
   SkillCategoryCount,
   SkillDetail,
   SkillSearchResult,
-  ConfigDiff,
-  ConfigRevision,
-  QueuedRequest,
 } from "./types";
 
 // ── Configuration ─────────────────────────────────────────────────────────────
@@ -173,10 +170,6 @@ async function withRetry<T>(fn: () => Promise<T>, config = DEFAULT_RETRY): Promi
       if (error instanceof ApiError && error.status < 500) throw error;
       const delay = Math.min(config.backoffMs * 2 ** attempt, config.maxBackoff);
       await new Promise((r) => setTimeout(r, delay));
-    try { return await fn(); } catch (error) {
-      lastError = error as Error;
-      if (error instanceof ApiError && error.status < 500) throw error;
-      await new Promise((r) => setTimeout(r, Math.min(config.backoffMs * 2 ** attempt, config.maxBackoff)));
     }
   }
   throw lastError;
@@ -262,23 +255,6 @@ function queueForOffline(method: string, path: string, body?: unknown): void {
     timestamp: Date.now(),
   });
 }
-const responseCache = new Map<string, { data: unknown; timestamp: number }>();
-const CACHE_TTL: Record<string, number> = { "/settings": 60000, "/agents": 30000, "/models": 60000, "/providers": 60000, "/sessions": 15000 };
-function getCacheTTL(path: string): number { for (const [p, t] of Object.entries(CACHE_TTL)) { if (path.startsWith(p)) return t; } return 0; }
-function getCached<T>(path: string): T | null { const e = responseCache.get(path); if (!e) return null; if (Date.now() - e.timestamp > getCacheTTL(path)) { responseCache.delete(path); return null; } return e.data as T; }
-function setCache(path: string, data: unknown): void { if (getCacheTTL(path) > 0) responseCache.set(path, { data, timestamp: Date.now() }); }
-export function clearCache(): void { responseCache.clear(); }
-
-const offlineQueue: QueuedRequest[] = [];
-export function getOfflineQueue(): readonly QueuedRequest[] { return offlineQueue; }
-export function getOfflineQueueSize(): number { return offlineQueue.length; }
-export async function flushOfflineQueue(): Promise<{ succeeded: number; failed: number }> {
-  let succeeded = 0, failed = 0;
-  while (offlineQueue.length > 0) { const req = offlineQueue[0]; try { await request(req.path, { method: req.method, body: req.body ? JSON.stringify(req.body) : undefined }); offlineQueue.shift(); succeeded++; } catch { failed++; break; } }
-  return { succeeded, failed };
-}
-function queueForOffline(method: string, path: string, body?: unknown): void { offlineQueue.push({ id: crypto.randomUUID(), method, path, body, timestamp: Date.now() }); }
-
 // ── Token Refresh ─────────────────────────────────────────────────────────────
 
 async function refreshToken(): Promise<string | null> {
@@ -353,13 +329,6 @@ async function doFetch<T>(
     throw new ApiError(response.status, message, body);
   }
 
-async function doFetch<T>(path: string, options: RequestInit, retried = false): Promise<T> {
-  const url = `${BASE_URL}${API_PREFIX}${path}`;
-  const headers: Record<string, string> = { "Content-Type": "application/json", Accept: "application/json", ...(options.headers as Record<string, string> | undefined) };
-  if (_token) headers["Authorization"] = `Bearer ${_token}`;
-  const response = await fetch(url, { ...options, headers });
-  if (response.status === 401 && !retried) { const t = await refreshToken(); if (t) return doFetch<T>(path, options, true); }
-  if (!response.ok) { let body: unknown; try { body = await response.json(); } catch { body = await response.text(); } const m = typeof body === "object" && body !== null && "error" in body ? String((body as Record<string, unknown>).error) : `HTTP ${response.status}: ${path}`; throw new ApiError(response.status, m, body); }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
@@ -394,10 +363,6 @@ async function request<T>(
     }
     throw error;
   }
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const method = (options.method ?? "GET").toUpperCase();
-  if (method === "GET") { const cached = getCached<T>(path); if (cached !== null) return cached; try { const data = await withRetry(() => doFetch<T>(path, options)); setCache(path, data); return data; } catch (error) { const stale = getCached<T>(path); if (stale !== null) return stale; throw error; } }
-  try { return await withRetry(() => doFetch<T>(path, options)); } catch (error) { if (!(error instanceof ApiError)) queueForOffline(method, path); throw error; }
 }
 
 // ── Health ────────────────────────────────────────────────────────────────────
@@ -620,52 +585,6 @@ export const skills = {
 
 // ── Scheduler ─────────────────────────────────────────────────────────────────
 
-// ── Skills Marketplace ────────────────────────────────────────────────────────
-
-export const skills = {
-  list: async (): Promise<Skill[]> => {
-    const data = await request<{ skills: Skill[]; count: number }>(
-      "/skills/marketplace",
-    );
-    return data.skills ?? [];
-  },
-  get: (id: string) =>
-    request<SkillDetail>(`/skills/marketplace/${encodeURIComponent(id)}`),
-  toggle: (id: string) =>
-    request<{ id: string; enabled: boolean }>(
-      `/skills/marketplace/${encodeURIComponent(id)}/toggle`,
-      { method: "PUT" },
-    ),
-  search: async (query: string): Promise<SkillSearchResult[]> => {
-    const data = await request<{
-      results: SkillSearchResult[];
-      count: number;
-    }>("/skills/marketplace/search", {
-      method: "POST",
-      body: JSON.stringify({ query }),
-    });
-    return data.results ?? [];
-  },
-  categories: async (): Promise<SkillCategoryCount[]> => {
-    const data = await request<{ categories: SkillCategoryCount[] }>(
-      "/skills/marketplace/categories",
-    );
-    return data.categories ?? [];
-  },
-  bulkEnable: (ids: string[]) =>
-    request<{ enabled: string[]; count: number }>(
-      "/skills/marketplace/bulk-enable",
-      { method: "POST", body: JSON.stringify({ ids }) },
-    ),
-  bulkDisable: (ids: string[]) =>
-    request<{ disabled: string[]; count: number }>(
-      "/skills/marketplace/bulk-disable",
-      { method: "POST", body: JSON.stringify({ ids }) },
-    ),
-};
-
-// ── Scheduler ─────────────────────────────────────────────────────────────────
-
 export const scheduler = {
   list: <T>() => request<T>("/scheduler/jobs"),
   get: <T>(id: string) => request<T>(`/scheduler/jobs/${id}`),
@@ -829,115 +748,3 @@ export const configRevisions = {
     ),
 };
 
-// ── Projects ──────────────────────────────────────────────────────────────────
-
-import type {
-  Project,
-  Goal,
-  GoalTreeNode,
-  ProjectTask,
-  CreateProjectPayload,
-  CreateGoalPayload,
-} from "./types";
-
-export const projects = {
-  list: async (): Promise<Project[]> => {
-    const data = await request<{ projects: Project[] }>("/projects");
-    return data.projects ?? [];
-  },
-  get: async (id: number): Promise<Project> => {
-    const data = await request<{ project: Project }>(`/projects/${id}`);
-    return data.project;
-  },
-  create: async (body: CreateProjectPayload): Promise<Project> => {
-    const data = await request<{ project: Project }>("/projects", {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
-    return data.project;
-  },
-  update: async (id: number, body: Partial<CreateProjectPayload>): Promise<Project> => {
-    const data = await request<{ project: Project }>(`/projects/${id}`, {
-      method: "PATCH",
-      body: JSON.stringify(body),
-    });
-    return data.project;
-  },
-  archive: (id: number) =>
-    request<void>(`/projects/${id}`, { method: "DELETE" }),
-  goals: async (id: number): Promise<GoalTreeNode[]> => {
-    const data = await request<{ goals: GoalTreeNode[] }>(`/projects/${id}/goals`);
-    return data.goals ?? [];
-  },
-  createGoal: async (projectId: number, body: CreateGoalPayload): Promise<Goal> => {
-    const data = await request<{ goal: Goal }>(`/projects/${projectId}/goals`, {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
-    return data.goal;
-  },
-  updateGoal: async (projectId: number, goalId: number, body: Partial<CreateGoalPayload>): Promise<Goal> => {
-    const data = await request<{ goal: Goal }>(`/projects/${projectId}/goals/${goalId}`, {
-      method: "PATCH",
-      body: JSON.stringify(body),
-    });
-    return data.goal;
-  },
-  deleteGoal: (projectId: number, goalId: number) =>
-    request<void>(`/projects/${projectId}/goals/${goalId}`, { method: "DELETE" }),
-  tasks: async (id: number): Promise<ProjectTask[]> => {
-    const data = await request<{ tasks: ProjectTask[] }>(`/projects/${id}/tasks`);
-    return data.tasks ?? [];
-  },
-  linkTask: (projectId: number, taskId: string, goalId?: number) =>
-    request<void>(`/projects/${projectId}/tasks/${taskId}`, {
-      method: "PUT",
-      body: JSON.stringify({ goal_id: goalId }),
-    }),
-  unlinkTask: (projectId: number, taskId: string) =>
-    request<void>(`/projects/${projectId}/tasks/${taskId}`, { method: "DELETE" }),
-};
-
-// ── Costs ────────────────────────────────────────────────────────────────────
-
-export const costs = {
-  summary: () => request<CostSummary>("/costs"),
-  byAgent: () => request<{ agents: CostByAgent[] }>("/costs/by-agent"),
-  byModel: () => request<{ models: CostByModel[] }>("/costs/by-model"),
-  events: (page = 1, perPage = 20, agentName?: string) => {
-    const params = new URLSearchParams({
-      page: String(page),
-      per_page: String(perPage),
-    });
-    if (agentName) params.set("agent_name", agentName);
-    return request<{ events: CostEvent[]; page: number; per_page: number }>(
-      `/costs/events?${params}`,
-    );
-  },
-};
-
-// ── Budgets ──────────────────────────────────────────────────────────────────
-
-export const budgets = {
-  list: () => request<{ budgets: AgentBudget[] }>("/budgets"),
-  update: (agentName: string, dailyCents: number, monthlyCents: number) =>
-    request<{ status: string }>(`/budgets/${encodeURIComponent(agentName)}`, {
-      method: "PUT",
-      body: JSON.stringify({
-        budget_daily_cents: dailyCents,
-        budget_monthly_cents: monthlyCents,
-      }),
-    }),
-  reset: (agentName: string) =>
-    request<{ status: string }>(
-      `/budgets/${encodeURIComponent(agentName)}/reset`,
-      { method: "POST" },
-    ),
-};
-
-export const configRevisions = {
-  list: (entityType: string, entityId: string) => request<{ revisions: ConfigRevision[]; count: number }>(`/config/revisions/${entityType}/${entityId}`),
-  get: (entityType: string, entityId: string, n: number) => request<ConfigRevision>(`/config/revisions/${entityType}/${entityId}/${n}`),
-  rollback: (entityType: string, entityId: string, n: number) => request<ConfigRevision>(`/config/revisions/${entityType}/${entityId}/rollback`, { method: "POST", body: JSON.stringify({ revision_number: n }) }),
-  diff: (entityType: string, entityId: string, from: number, to: number) => request<{ diff: ConfigDiff; from: number; to: number }>(`/config/revisions/${entityType}/${entityId}/diff?from=${from}&to=${to}`),
-};
