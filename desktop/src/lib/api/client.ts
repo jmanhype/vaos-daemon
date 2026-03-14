@@ -4,8 +4,6 @@
 import { load as loadStore } from "@tauri-apps/plugin-store";
 import type {
   Agent,
-  ConfigDiff,
-  ConfigRevision,
   CreateSessionRequest,
   CreateSessionResponse,
   HealthResponse,
@@ -15,26 +13,10 @@ import type {
   OrchestrateRequest,
   OrchestrateResponse,
   Provider,
-  QueuedRequest,
   SendMessageRequest,
   SendMessageResponse,
   Session,
   Settings,
-  Project,
-  Goal,
-  GoalTreeNode,
-  ProjectTask,
-  CreateProjectPayload,
-  CreateGoalPayload,
-  AgentBudget,
-  CostByAgent,
-  CostByModel,
-  CostEvent,
-  CostSummary,
-  Skill,
-  SkillCategoryCount,
-  SkillDetail,
-  SkillSearchResult,
 } from "./types";
 
 // ── Configuration ─────────────────────────────────────────────────────────────
@@ -144,125 +126,6 @@ export class ApiError extends Error {
   }
 }
 
-// ── Retry with Backoff ──────────────────────────────────────────────────────
-
-interface RetryConfig {
-  maxRetries: number;
-  backoffMs: number;
-  maxBackoff: number;
-}
-
-const DEFAULT_RETRY: RetryConfig = {
-  maxRetries: 3,
-  backoffMs: 1000,
-  maxBackoff: 30000,
-};
-
-async function withRetry<T>(
-  fn: () => Promise<T>,
-  config = DEFAULT_RETRY,
-): Promise<T> {
-  let lastError: Error = new Error("No attempts made");
-  for (let attempt = 0; attempt < config.maxRetries; attempt++) {
-    try {
-      return await fn();
-    } catch (error) {
-      lastError = error as Error;
-      if (error instanceof ApiError && error.status < 500) throw error;
-      const delay = Math.min(
-        config.backoffMs * 2 ** attempt,
-        config.maxBackoff,
-      );
-      await new Promise((r) => setTimeout(r, delay));
-    }
-  }
-  throw lastError;
-}
-
-// ── Response Cache ──────────────────────────────────────────────────────────
-
-const responseCache = new Map<string, { data: unknown; timestamp: number }>();
-
-const CACHE_TTL: Record<string, number> = {
-  "/settings": 60_000,
-  "/agents": 30_000,
-  "/models": 60_000,
-  "/providers": 60_000,
-  "/sessions": 15_000,
-};
-
-function getCacheTTL(path: string): number {
-  for (const [prefix, ttl] of Object.entries(CACHE_TTL)) {
-    if (path.startsWith(prefix)) return ttl;
-  }
-  return 0;
-}
-
-function getCached<T>(path: string): T | null {
-  const entry = responseCache.get(path);
-  if (!entry) return null;
-  if (Date.now() - entry.timestamp > getCacheTTL(path)) {
-    responseCache.delete(path);
-    return null;
-  }
-  return entry.data as T;
-}
-
-function setCache(path: string, data: unknown): void {
-  if (getCacheTTL(path) > 0) {
-    responseCache.set(path, { data, timestamp: Date.now() });
-  }
-}
-
-export function clearCache(): void {
-  responseCache.clear();
-}
-
-// ── Offline Queue ───────────────────────────────────────────────────────────
-
-const offlineQueue: QueuedRequest[] = [];
-
-export function getOfflineQueue(): readonly QueuedRequest[] {
-  return offlineQueue;
-}
-
-export function getOfflineQueueSize(): number {
-  return offlineQueue.length;
-}
-
-export async function flushOfflineQueue(): Promise<{
-  succeeded: number;
-  failed: number;
-}> {
-  let succeeded = 0;
-  let failed = 0;
-  while (offlineQueue.length > 0) {
-    const req = offlineQueue[0];
-    try {
-      await request(req.path, {
-        method: req.method,
-        body: req.body ? JSON.stringify(req.body) : undefined,
-      });
-      offlineQueue.shift();
-      succeeded++;
-    } catch {
-      failed++;
-      break;
-    }
-  }
-  return { succeeded, failed };
-}
-
-function queueForOffline(method: string, path: string, body?: unknown): void {
-  offlineQueue.push({
-    id: crypto.randomUUID(),
-    method,
-    path,
-    body,
-    timestamp: Date.now(),
-  });
-}
-
 // ── Token Refresh ─────────────────────────────────────────────────────────────
 
 async function refreshToken(): Promise<string | null> {
@@ -297,9 +160,9 @@ async function refreshToken(): Promise<string | null> {
 
 // ── Core Request ──────────────────────────────────────────────────────────────
 
-async function doFetch<T>(
+async function request<T>(
   path: string,
-  options: RequestInit,
+  options: RequestInit = {},
   retried = false,
 ): Promise<T> {
   const url = `${BASE_URL}${API_PREFIX}${path}`;
@@ -314,11 +177,18 @@ async function doFetch<T>(
     headers["Authorization"] = `Bearer ${_token}`;
   }
 
-  const response = await fetch(url, { ...options, headers });
+  const response = await fetch(url, {
+    ...options,
+    headers,
+  });
 
+  // Auto-refresh on 401 — one retry only
   if (response.status === 401 && !retried) {
     const newToken = await refreshToken();
-    if (newToken) return doFetch<T>(path, options, true);
+    if (newToken) {
+      return request<T>(path, options, true);
+    }
+    // Refresh failed — surface the 401
   }
 
   if (!response.ok) {
@@ -335,43 +205,10 @@ async function doFetch<T>(
     throw new ApiError(response.status, message, body);
   }
 
+  // 204 No Content
   if (response.status === 204) return undefined as T;
+
   return response.json() as Promise<T>;
-}
-
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const method = (options.method ?? "GET").toUpperCase();
-
-  if (method === "GET") {
-    const cached = getCached<T>(path);
-    if (cached !== null) return cached;
-    try {
-      const data = await withRetry(() => doFetch<T>(path, options));
-      setCache(path, data);
-      return data;
-    } catch (error) {
-      const stale = getCached<T>(path);
-      if (stale !== null) return stale;
-      throw error;
-    }
-  }
-
-  try {
-    return await withRetry(() => doFetch<T>(path, options));
-  } catch (error) {
-    if (!(error instanceof ApiError)) {
-      try {
-        const body =
-          options.body !== undefined
-            ? (JSON.parse(options.body as string) as unknown)
-            : undefined;
-        queueForOffline(method, path, body);
-      } catch {
-        queueForOffline(method, path);
-      }
-    }
-    throw error;
-  }
 }
 
 // ── Health ────────────────────────────────────────────────────────────────────
@@ -584,16 +421,20 @@ export const scheduler = {
     request<void>(`/scheduler/jobs/${id}`, { method: "DELETE" }),
   toggle: <T>(id: string) =>
     request<T>(`/scheduler/jobs/${id}/toggle`, { method: "POST" }),
-  runNow: <T>(id: string) =>
-    request<T>(`/scheduler/jobs/${id}/run`, { method: "POST" }),
-  runs: <T>(id: string, page = 1, limit = 20) =>
-    request<T>(`/scheduler/jobs/${id}/runs?page=${page}&limit=${limit}`),
-  run: <T>(taskId: string, runId: string) =>
-    request<T>(`/scheduler/jobs/${taskId}/runs/${runId}`),
-  presets: <T>() => request<T>("/scheduler/presets"),
+  runNow: (id: string) =>
+    request<void>(`/scheduler/jobs/${id}/run`, { method: "POST" }),
 };
 
 // ── Projects ──────────────────────────────────────────────────────────────────
+
+import type {
+  Project,
+  Goal,
+  GoalTreeNode,
+  ProjectTask,
+  CreateProjectPayload,
+  CreateGoalPayload,
+} from "./types";
 
 export const projects = {
   list: async (): Promise<Project[]> => {
@@ -611,10 +452,7 @@ export const projects = {
     });
     return data.project;
   },
-  update: async (
-    id: number,
-    body: Partial<CreateProjectPayload>,
-  ): Promise<Project> => {
+  update: async (id: number, body: Partial<CreateProjectPayload>): Promise<Project> => {
     const data = await request<{ project: Project }>(`/projects/${id}`, {
       method: "PATCH",
       body: JSON.stringify(body),
@@ -624,43 +462,27 @@ export const projects = {
   archive: (id: number) =>
     request<void>(`/projects/${id}`, { method: "DELETE" }),
   goals: async (id: number): Promise<GoalTreeNode[]> => {
-    const data = await request<{ goals: GoalTreeNode[] }>(
-      `/projects/${id}/goals`,
-    );
+    const data = await request<{ goals: GoalTreeNode[] }>(`/projects/${id}/goals`);
     return data.goals ?? [];
   },
-  createGoal: async (
-    projectId: number,
-    body: CreateGoalPayload,
-  ): Promise<Goal> => {
+  createGoal: async (projectId: number, body: CreateGoalPayload): Promise<Goal> => {
     const data = await request<{ goal: Goal }>(`/projects/${projectId}/goals`, {
       method: "POST",
       body: JSON.stringify(body),
     });
     return data.goal;
   },
-  updateGoal: async (
-    projectId: number,
-    goalId: number,
-    body: Partial<CreateGoalPayload>,
-  ): Promise<Goal> => {
-    const data = await request<{ goal: Goal }>(
-      `/projects/${projectId}/goals/${goalId}`,
-      {
-        method: "PATCH",
-        body: JSON.stringify(body),
-      },
-    );
+  updateGoal: async (projectId: number, goalId: number, body: Partial<CreateGoalPayload>): Promise<Goal> => {
+    const data = await request<{ goal: Goal }>(`/projects/${projectId}/goals/${goalId}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
     return data.goal;
   },
   deleteGoal: (projectId: number, goalId: number) =>
-    request<void>(`/projects/${projectId}/goals/${goalId}`, {
-      method: "DELETE",
-    }),
+    request<void>(`/projects/${projectId}/goals/${goalId}`, { method: "DELETE" }),
   tasks: async (id: number): Promise<ProjectTask[]> => {
-    const data = await request<{ tasks: ProjectTask[] }>(
-      `/projects/${id}/tasks`,
-    );
+    const data = await request<{ tasks: ProjectTask[] }>(`/projects/${id}/tasks`);
     return data.tasks ?? [];
   },
   linkTask: (projectId: number, taskId: string, goalId?: number) =>
@@ -669,69 +491,5 @@ export const projects = {
       body: JSON.stringify({ goal_id: goalId }),
     }),
   unlinkTask: (projectId: number, taskId: string) =>
-    request<void>(`/projects/${projectId}/tasks/${taskId}`, {
-      method: "DELETE",
-    }),
-};
-
-// ── Costs ────────────────────────────────────────────────────────────────────
-
-export const costs = {
-  summary: () => request<CostSummary>("/costs"),
-  byAgent: () => request<{ agents: CostByAgent[] }>("/costs/by-agent"),
-  byModel: () => request<{ models: CostByModel[] }>("/costs/by-model"),
-  events: (page = 1, perPage = 20, agentName?: string) => {
-    const params = new URLSearchParams({
-      page: String(page),
-      per_page: String(perPage),
-    });
-    if (agentName) params.set("agent_name", agentName);
-    return request<{ events: CostEvent[]; page: number; per_page: number }>(
-      `/costs/events?${params}`,
-    );
-  },
-};
-
-// ── Budgets ──────────────────────────────────────────────────────────────────
-
-export const budgets = {
-  list: () => request<{ budgets: AgentBudget[] }>("/budgets"),
-  update: (agentName: string, dailyCents: number, monthlyCents: number) =>
-    request<{ status: string }>(`/budgets/${encodeURIComponent(agentName)}`, {
-      method: "PUT",
-      body: JSON.stringify({
-        budget_daily_cents: dailyCents,
-        budget_monthly_cents: monthlyCents,
-      }),
-    }),
-  reset: (agentName: string) =>
-    request<{ status: string }>(
-      `/budgets/${encodeURIComponent(agentName)}/reset`,
-      { method: "POST" },
-    ),
-};
-
-// ── Config Revisions ─────────────────────────────────────────────────────────
-
-export const configRevisions = {
-  list: (entityType: string, entityId: string) =>
-    request<{ revisions: ConfigRevision[]; count: number }>(
-      `/config/revisions/${entityType}/${entityId}`,
-    ),
-  get: (entityType: string, entityId: string, revisionNumber: number) =>
-    request<ConfigRevision>(
-      `/config/revisions/${entityType}/${entityId}/${revisionNumber}`,
-    ),
-  rollback: (entityType: string, entityId: string, revisionNumber: number) =>
-    request<ConfigRevision>(
-      `/config/revisions/${entityType}/${entityId}/rollback`,
-      {
-        method: "POST",
-        body: JSON.stringify({ revision_number: revisionNumber }),
-      },
-    ),
-  diff: (entityType: string, entityId: string, from: number, to: number) =>
-    request<{ diff: ConfigDiff; from: number; to: number }>(
-      `/config/revisions/${entityType}/${entityId}/diff?from=${from}&to=${to}`,
-    ),
+    request<void>(`/projects/${projectId}/tasks/${taskId}`, { method: "DELETE" }),
 };
