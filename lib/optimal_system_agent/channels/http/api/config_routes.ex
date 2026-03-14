@@ -1,7 +1,7 @@
 defmodule OptimalSystemAgent.Channels.HTTP.API.ConfigRoutes do
   use Plug.Router
   import Plug.Conn
-  import OptimalSystemAgent.Channels.HTTP.API.Shared
+  import OptimalSystemAgent.Channels.HTTP.API.Shared, except: [parse_int: 1]
 
   alias OptimalSystemAgent.Governance.ConfigRevisions
 
