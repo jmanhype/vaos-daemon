@@ -242,7 +242,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
     conn
     |> Plug.Conn.put_resp_header("access-control-allow-origin", origin)
     |> Plug.Conn.put_resp_header("access-control-allow-methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-    |> Plug.Conn.put_resp_header("access-control-allow-headers", "authorization, content-type")
+    |> Plug.Conn.put_resp_header("access-control-allow-headers", "authorization, content-type, accept, cache-control, x-accel-buffering")
     |> Plug.Conn.put_resp_header("access-control-max-age", "86400")
     |> Plug.Conn.send_resp(204, "")
     |> Plug.Conn.halt()
@@ -254,7 +254,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
     conn
     |> Plug.Conn.put_resp_header("access-control-allow-origin", origin)
     |> Plug.Conn.put_resp_header("access-control-allow-methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-    |> Plug.Conn.put_resp_header("access-control-allow-headers", "authorization, content-type")
+    |> Plug.Conn.put_resp_header("access-control-allow-headers", "authorization, content-type, accept, cache-control, x-accel-buffering")
   end
 
   # ── Content-Type validation for write methods ─────────────────────
