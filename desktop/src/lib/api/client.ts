@@ -363,6 +363,52 @@ export const settings = {
 
 // ── Scheduler ─────────────────────────────────────────────────────────────────
 
+// ── Skills Marketplace ────────────────────────────────────────────────────────
+
+export const skills = {
+  list: async (): Promise<Skill[]> => {
+    const data = await request<{ skills: Skill[]; count: number }>(
+      "/skills/marketplace",
+    );
+    return data.skills ?? [];
+  },
+  get: (id: string) =>
+    request<SkillDetail>(`/skills/marketplace/${encodeURIComponent(id)}`),
+  toggle: (id: string) =>
+    request<{ id: string; enabled: boolean }>(
+      `/skills/marketplace/${encodeURIComponent(id)}/toggle`,
+      { method: "PUT" },
+    ),
+  search: async (query: string): Promise<SkillSearchResult[]> => {
+    const data = await request<{
+      results: SkillSearchResult[];
+      count: number;
+    }>("/skills/marketplace/search", {
+      method: "POST",
+      body: JSON.stringify({ query }),
+    });
+    return data.results ?? [];
+  },
+  categories: async (): Promise<SkillCategoryCount[]> => {
+    const data = await request<{ categories: SkillCategoryCount[] }>(
+      "/skills/marketplace/categories",
+    );
+    return data.categories ?? [];
+  },
+  bulkEnable: (ids: string[]) =>
+    request<{ enabled: string[]; count: number }>(
+      "/skills/marketplace/bulk-enable",
+      { method: "POST", body: JSON.stringify({ ids }) },
+    ),
+  bulkDisable: (ids: string[]) =>
+    request<{ disabled: string[]; count: number }>(
+      "/skills/marketplace/bulk-disable",
+      { method: "POST", body: JSON.stringify({ ids }) },
+    ),
+};
+
+// ── Scheduler ─────────────────────────────────────────────────────────────────
+
 export const scheduler = {
   list: <T>() => request<T>("/scheduler/jobs"),
   get: <T>(id: string) => request<T>(`/scheduler/jobs/${id}`),
@@ -377,4 +423,73 @@ export const scheduler = {
     request<T>(`/scheduler/jobs/${id}/toggle`, { method: "POST" }),
   runNow: (id: string) =>
     request<void>(`/scheduler/jobs/${id}/run`, { method: "POST" }),
+};
+
+// ── Projects ──────────────────────────────────────────────────────────────────
+
+import type {
+  Project,
+  Goal,
+  GoalTreeNode,
+  ProjectTask,
+  CreateProjectPayload,
+  CreateGoalPayload,
+} from "./types";
+
+export const projects = {
+  list: async (): Promise<Project[]> => {
+    const data = await request<{ projects: Project[] }>("/projects");
+    return data.projects ?? [];
+  },
+  get: async (id: number): Promise<Project> => {
+    const data = await request<{ project: Project }>(`/projects/${id}`);
+    return data.project;
+  },
+  create: async (body: CreateProjectPayload): Promise<Project> => {
+    const data = await request<{ project: Project }>("/projects", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    return data.project;
+  },
+  update: async (id: number, body: Partial<CreateProjectPayload>): Promise<Project> => {
+    const data = await request<{ project: Project }>(`/projects/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+    return data.project;
+  },
+  archive: (id: number) =>
+    request<void>(`/projects/${id}`, { method: "DELETE" }),
+  goals: async (id: number): Promise<GoalTreeNode[]> => {
+    const data = await request<{ goals: GoalTreeNode[] }>(`/projects/${id}/goals`);
+    return data.goals ?? [];
+  },
+  createGoal: async (projectId: number, body: CreateGoalPayload): Promise<Goal> => {
+    const data = await request<{ goal: Goal }>(`/projects/${projectId}/goals`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    return data.goal;
+  },
+  updateGoal: async (projectId: number, goalId: number, body: Partial<CreateGoalPayload>): Promise<Goal> => {
+    const data = await request<{ goal: Goal }>(`/projects/${projectId}/goals/${goalId}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+    return data.goal;
+  },
+  deleteGoal: (projectId: number, goalId: number) =>
+    request<void>(`/projects/${projectId}/goals/${goalId}`, { method: "DELETE" }),
+  tasks: async (id: number): Promise<ProjectTask[]> => {
+    const data = await request<{ tasks: ProjectTask[] }>(`/projects/${id}/tasks`);
+    return data.tasks ?? [];
+  },
+  linkTask: (projectId: number, taskId: string, goalId?: number) =>
+    request<void>(`/projects/${projectId}/tasks/${taskId}`, {
+      method: "PUT",
+      body: JSON.stringify({ goal_id: goalId }),
+    }),
+  unlinkTask: (projectId: number, taskId: string) =>
+    request<void>(`/projects/${projectId}/tasks/${taskId}`, { method: "DELETE" }),
 };
