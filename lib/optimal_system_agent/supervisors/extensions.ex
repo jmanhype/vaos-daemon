@@ -46,7 +46,9 @@ defmodule OptimalSystemAgent.Supervisors.Extensions do
   end
 
   defp cost_tracker_children do
-    [OptimalSystemAgent.Agent.CostTracker]
+    # Disabled: CostTracker crashes on SQLite3 (schema-less select not supported).
+    # TODO: Fix CostTracker to use Ecto schema for agent_budgets queries.
+    []
   end
 
   # Communication intelligence (Signal Theory unique) — always started when present.
