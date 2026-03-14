@@ -268,6 +268,27 @@ export interface SkillSearchResult {
   score: number;
 }
 
+// ── Scheduled Runs ──────────────────────────────────────────────────────
+
+export type ScheduledRunStatus = "pending" | "running" | "succeeded" | "failed" | "timed_out" | "cancelled";
+export type RunTriggerType = "schedule" | "manual" | "event" | "assignment";
+
+export interface ScheduledRun {
+  id: string;
+  scheduled_task_id: string;
+  agent_name: string;
+  status: ScheduledRunStatus;
+  trigger_type: RunTriggerType;
+  started_at: string;
+  completed_at?: string;
+  duration_ms?: number;
+  stdout?: string;
+  token_usage?: { input: number; output: number; cost_cents: number };
+  error_message?: string;
+}
+
+export interface CronPreset { id: string; cron: string; label: string; }
+
 // ── API Error ─────────────────────────────────────────────────────────────────
 
 export interface ApiErrorBody {

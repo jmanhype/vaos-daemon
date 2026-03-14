@@ -423,6 +423,11 @@ export const scheduler = {
     request<void>(`/scheduler/jobs/${id}`, { method: "DELETE" }),
   toggle: <T>(id: string) =>
     request<T>(`/scheduler/jobs/${id}/toggle`, { method: "POST" }),
-  runNow: (id: string) =>
-    request<void>(`/scheduler/jobs/${id}/run`, { method: "POST" }),
+  runNow: <T>(id: string) =>
+    request<T>(`/scheduler/jobs/${id}/run`, { method: "POST" }),
+  runs: <T>(id: string, page = 1, limit = 20) =>
+    request<T>(`/scheduler/jobs/${id}/runs?page=${page}&limit=${limit}`),
+  run: <T>(taskId: string, runId: string) =>
+    request<T>(`/scheduler/jobs/${taskId}/runs/${runId}`),
+  presets: <T>() => request<T>("/scheduler/presets"),
 };
