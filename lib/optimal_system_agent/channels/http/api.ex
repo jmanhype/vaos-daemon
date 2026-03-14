@@ -30,6 +30,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
     /oscp        → ProtocolRoutes    POST /
     /tasks       → ProtocolRoutes    GET /history
     /command-center → CommandCenterRoutes  GET /|/agents|/tiers|/patterns|/metrics|/events, POST /sandboxes
+    /workspace   → WorkspaceRoutes    GET / (cwd, git status, git log, directory listing)
     /classify    → inline            POST / (signal classification)
     /knowledge   → KnowledgeRoutes   GET /triples|/count|/context/:id, POST /assert|/retract|/sparql|/reason
   """
@@ -102,6 +103,9 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
   # ── TUI input / output ───────────────────────────────────────────────
   forward "/tui", to: API.TuiRoutes
 
+  # Agent tool synthesis: POST/GET/DELETE /agent/tools/synthesize (must be before /agent/skill and /agent catch-all)
+  forward "/agent/tools/synthesize", to: API.ToolSynthesisRoutes
+
   # Agent skill self-creation: POST/GET /agent/skill (must be before /agent catch-all)
   forward "/agent/skill", to: API.SkillBootstrapRoutes
 
@@ -131,6 +135,9 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
   forward "/events", to: API.ProtocolRoutes
   forward "/oscp", to: API.ProtocolRoutes
   forward "/tasks", to: API.ProtocolRoutes
+
+  # ── Workspace introspection ───────────────────────────────────────────
+  forward "/workspace", to: API.WorkspaceRoutes
 
   # ── Knowledge graph ──────────────────────────────────────────────────
   forward "/knowledge", to: API.KnowledgeRoutes

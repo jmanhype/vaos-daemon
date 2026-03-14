@@ -27,8 +27,6 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.DebateRoutes do
 
   alias OptimalSystemAgent.Agent.Debate
 
-  @max_timeout_ms 120_000
-
   plug :match
 
   plug Plug.Parsers,
@@ -41,7 +39,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.DebateRoutes do
   post "/" do
     with %{"message" => message} when is_binary(message) and message != "" <- conn.body_params do
       providers = conn.body_params["providers"]
-      timeout = min(conn.body_params["timeout"] || 30_000, @max_timeout_ms)
+      timeout = conn.body_params["timeout"]
       synthesizer = conn.body_params["synthesizer_provider"]
       user_id = conn.assigns[:user_id] || "anonymous"
 

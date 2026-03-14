@@ -91,11 +91,20 @@ defmodule OptimalSystemAgent.Bridge.PubSub do
   end
 
   # Events the TUI should display: LLM responses, tool results, agent responses,
-  # and thinking/scratchpad output. Excludes internal bookkeeping events.
+  # thinking/scratchpad output, skill activation, and sub-agent lifecycle events.
   @tui_event_types ~w(llm_chunk llm_response agent_response tool_result tool_error
                       thinking_chunk agent_message signal_classified)a
 
+  # system_event subtypes that are agent-visible and should reach the TUI.
+  @tui_system_events ~w(skills_triggered sub_agent_started sub_agent_completed
+                        orchestrator_agent_started orchestrator_agent_completed
+                        orchestrator_started orchestrator_finished
+                        skill_evolved skill_bootstrap_created
+                        doom_loop_detected agent_cancelled budget_alert)a
+
   defp tui_event?(event) do
-    Map.get(event, :type) in @tui_event_types
+    Map.get(event, :type) in @tui_event_types or
+      (Map.get(event, :type) == :system_event and
+         Map.get(event, :event) in @tui_system_events)
   end
 end

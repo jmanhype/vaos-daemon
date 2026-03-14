@@ -32,7 +32,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
   require Logger
 
   alias OptimalSystemAgent.CommandCenter
-  alias OptimalSystemAgent.EventStream
+  alias OptimalSystemAgent.CommandCenter.EventHistory
   alias OptimalSystemAgent.Sandbox.Provisioner
   alias OptimalSystemAgent.Agent.Scheduler
   alias OptimalSystemAgent.Agent.HealthTracker
@@ -71,7 +71,16 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
   # ── GET /agents/health — all agents health summary ─────────────────
 
   get "/agents/health" do
-    agents = HealthTracker.all()
+    agents =
+      try do
+        HealthTracker.all()
+      rescue
+        _ -> []
+      catch
+        :exit, _ -> []
+        :error, _ -> []
+      end
+
     body = Jason.encode!(%{agents: agents, count: length(agents)})
 
     conn
@@ -82,7 +91,17 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
   # ── GET /agents/:name/health — single agent health ─────────────────
 
   get "/agents/:name/health" do
-    case HealthTracker.get(name) do
+    result =
+      try do
+        HealthTracker.get(name)
+      rescue
+        _ -> {:error, :not_found}
+      catch
+        :exit, _ -> {:error, :not_found}
+        :error, _ -> {:error, :not_found}
+      end
+
+    case result do
       {:ok, health} ->
         conn
         |> put_resp_content_type("application/json")
@@ -197,12 +216,10 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
   end
 
   # ── GET /events — live SSE firehose ────────────────────────────────
-  # Streams all command_center events to admin/monitoring clients.
+  # Streams all OSA events to admin/monitoring clients.
+  # Subscribe to "osa:events" firehose via Bridge.PubSub.
 
   get "/events" do
-    # Subscribe BEFORE send_chunked to avoid race window
-    EventStream.subscribe()
-
     conn =
       conn
       |> put_resp_content_type("text/event-stream")
@@ -211,10 +228,24 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
       |> put_resp_header("x-accel-buffering", "no")
       |> send_chunked(200)
 
+    subscribed =
+      try do
+        Phoenix.PubSub.subscribe(OptimalSystemAgent.PubSub, "osa:events")
+        true
+      rescue
+        _ -> false
+      catch
+        :exit, _ -> false
+      end
+
     case chunk(conn, "event: connected\ndata: {\"channel\": \"command_center\"}\n\n") do
       {:ok, conn} ->
-        Logger.debug("[CommandCenter] SSE client connected")
-        cc_sse_loop(conn)
+        if subscribed do
+          Logger.debug("[CommandCenter] SSE client connected")
+          cc_sse_loop(conn)
+        else
+          conn
+        end
 
       {:error, _} ->
         conn
@@ -235,8 +266,16 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
         _ -> 50
       end
 
-    events = EventStream.event_history()
-    events = Enum.take(events, -limit)
+    events =
+      try do
+        EventHistory.recent(limit)
+      rescue
+        _ -> []
+      catch
+        :exit, _ -> []
+        :error, _ -> []
+      end
+
     body = Jason.encode!(%{events: events, count: length(events), limit: limit})
 
     conn
@@ -255,6 +294,8 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
       |> send_resp(200, body)
     rescue
       e -> json_error(conn, 500, "scheduler_error", Exception.message(e))
+    catch
+      :exit, _ -> json_error(conn, 503, "scheduler_unavailable", "Scheduler service is not running")
     end
   end
 
@@ -270,6 +311,8 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
       |> send_resp(200, body)
     rescue
       e -> json_error(conn, 500, "scheduler_error", Exception.message(e))
+    catch
+      :exit, _ -> json_error(conn, 503, "scheduler_unavailable", "Scheduler service is not running")
     end
   end
 
@@ -288,6 +331,8 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
       end
     rescue
       e -> json_error(conn, 500, "scheduler_error", Exception.message(e))
+    catch
+      :exit, _ -> json_error(conn, 503, "scheduler_unavailable", "Scheduler service is not running")
     end
   end
 
@@ -311,6 +356,8 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
       end
     rescue
       e -> json_error(conn, 500, "scheduler_error", Exception.message(e))
+    catch
+      :exit, _ -> json_error(conn, 503, "scheduler_unavailable", "Scheduler service is not running")
     end
   end
 
@@ -334,6 +381,8 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
       end
     rescue
       e -> json_error(conn, 500, "scheduler_error", Exception.message(e))
+    catch
+      :exit, _ -> json_error(conn, 503, "scheduler_unavailable", "Scheduler service is not running")
     end
   end
 
@@ -357,6 +406,8 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
       end
     rescue
       e -> json_error(conn, 500, "scheduler_error", Exception.message(e))
+    catch
+      :exit, _ -> json_error(conn, 503, "scheduler_unavailable", "Scheduler service is not running")
     end
   end
 
@@ -372,6 +423,8 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
       |> send_resp(200, body)
     rescue
       e -> json_error(conn, 500, "scheduler_error", Exception.message(e))
+    catch
+      :exit, _ -> json_error(conn, 503, "scheduler_unavailable", "Scheduler service is not running")
     end
   end
 
@@ -390,6 +443,8 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
       end
     rescue
       e -> json_error(conn, 500, "scheduler_error", Exception.message(e))
+    catch
+      :exit, _ -> json_error(conn, 503, "scheduler_unavailable", "Scheduler service is not running")
     end
   end
 
@@ -413,6 +468,8 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
       end
     rescue
       e -> json_error(conn, 500, "scheduler_error", Exception.message(e))
+    catch
+      :exit, _ -> json_error(conn, 503, "scheduler_unavailable", "Scheduler service is not running")
     end
   end
 
@@ -436,13 +493,23 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
       end
     rescue
       e -> json_error(conn, 500, "scheduler_error", Exception.message(e))
+    catch
+      :exit, _ -> json_error(conn, 503, "scheduler_unavailable", "Scheduler service is not running")
     end
   end
 
   # ── GET /webhooks — list registered webhooks ──────────────────────────
 
   get "/webhooks" do
-    webhooks = Dispatcher.list()
+    webhooks =
+      try do
+        Dispatcher.list()
+      rescue
+        _ -> []
+      catch
+        :exit, _ -> []
+      end
+
     body = Jason.encode!(%{webhooks: webhooks, count: length(webhooks)})
 
     conn
@@ -481,7 +548,16 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
       secret = conn.body_params["secret"]
       filter = conn.body_params["filter"] || []
 
-      case Dispatcher.register(url, secret, filter) do
+      result =
+        try do
+          Dispatcher.register(url, secret, filter)
+        rescue
+          _ -> {:error, :unavailable}
+        catch
+          :exit, _ -> {:error, :unavailable}
+        end
+
+      case result do
         {:ok, id} ->
           body =
             Jason.encode!(%{
@@ -498,6 +574,9 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
 
         {:error, :invalid_url} ->
           json_error(conn, 422, "invalid_url", "URL must start with http:// or https://")
+
+        {:error, :unavailable} ->
+          json_error(conn, 503, "dispatcher_unavailable", "Webhook dispatcher is not running")
       end
     else
       _ -> json_error(conn, 400, "invalid_request", "Missing required field: url")
@@ -507,7 +586,16 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
   # ── DELETE /webhooks/:id — unregister a webhook ────────────────────────
 
   delete "/webhooks/:id" do
-    case Dispatcher.unregister(id) do
+    result =
+      try do
+        Dispatcher.unregister(id)
+      rescue
+        _ -> {:error, :unavailable}
+      catch
+        :exit, _ -> {:error, :unavailable}
+      end
+
+    case result do
       :ok ->
         body = Jason.encode!(%{status: "removed", id: id})
 
@@ -517,6 +605,9 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
 
       {:error, :not_found} ->
         json_error(conn, 404, "not_found", "Webhook '#{id}' not found")
+
+      {:error, :unavailable} ->
+        json_error(conn, 503, "dispatcher_unavailable", "Webhook dispatcher is not running")
     end
   end
 
@@ -538,7 +629,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
     json_error(conn, 404, "not_found", "Command Center endpoint not found")
   end
 
-  # ── Private ──────────────────────────────────────────────────────────
+  # ── Private ───────────────────────────────────────────────────────────────
 
   # SECURITY: strip system prompt from agent representations before
   # returning them over the API. Prompt leakage is FINDING-01 (Critical).
@@ -550,7 +641,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes do
 
   defp cc_sse_loop(conn) do
     receive do
-      {:command_center_event, event} ->
+      {:osa_event, event} ->
         event_type =
           case event do
             %{type: t} -> t |> to_string() |> String.replace(~r/[\r\n]/, "")

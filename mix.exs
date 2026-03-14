@@ -64,11 +64,11 @@ defmodule OptimalSystemAgent.MixProject do
       # Platform database — PostgreSQL for multi-tenant data
       {:postgrex, "~> 0.19"},
 
-      # Password hashing
-      {:bcrypt_elixir, "~> 3.0"},
+      # Password hashing (only needed for platform multi-tenant auth in prod)
+      {:bcrypt_elixir, "~> 3.0", only: :prod, optional: true},
 
-      # AMQP — RabbitMQ publisher for Go worker events
-      {:amqp, "~> 4.1"},
+      # AMQP — RabbitMQ publisher for Go worker events (optional)
+      {:amqp, "~> 4.1", optional: true},
 
       # Telemetry
       {:telemetry, "~> 1.2"},

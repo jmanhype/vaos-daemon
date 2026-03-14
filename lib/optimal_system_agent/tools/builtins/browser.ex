@@ -71,7 +71,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Browser do
   end
 
   @impl true
-  def safety, do: :read_only
+  def safety(), do: :read_only
 
   @impl true
   def execute(%{"action" => action} = params) when action in @valid_actions do

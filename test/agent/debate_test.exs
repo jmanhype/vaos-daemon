@@ -95,27 +95,27 @@ defmodule OptimalSystemAgent.Agent.DebateTest do
   describe "option handling" do
     test "accepts :providers option without crashing" do
       result = Debate.run("test", providers: ["mock"], timeout: 2_000)
-      assert match?({:ok, _} | {:error, _}, result)
+      assert match?({:ok, _}, result) or match?({:error, _}, result)
     end
 
     test "accepts :timeout option without crashing" do
       result = Debate.run("test", providers: ["mock"], timeout: 1_000)
-      assert match?({:ok, _} | {:error, _}, result)
+      assert match?({:ok, _}, result) or match?({:error, _}, result)
     end
 
     test "accepts :synthesizer_provider option without crashing" do
       result = Debate.run("test", providers: ["mock"], synthesizer_provider: "mock", timeout: 2_000)
-      assert match?({:ok, _} | {:error, _}, result)
+      assert match?({:ok, _}, result) or match?({:error, _}, result)
     end
 
     test "accepts :user_id option without crashing" do
       result = Debate.run("test", providers: ["mock"], user_id: "user-42", timeout: 2_000)
-      assert match?({:ok, _} | {:error, _}, result)
+      assert match?({:ok, _}, result) or match?({:error, _}, result)
     end
 
     test "accepts :model option without crashing" do
       result = Debate.run("test", providers: ["mock"], model: "claude-3-haiku-20240307", timeout: 2_000)
-      assert match?({:ok, _} | {:error, _}, result)
+      assert match?({:ok, _}, result) or match?({:error, _}, result)
     end
   end
 
@@ -128,13 +128,13 @@ defmodule OptimalSystemAgent.Agent.DebateTest do
       result = Debate.run("ping", providers: ["nonexistent_bogus_provider_xyz"], timeout: 100)
 
       # Either error (no providers available / all failed) or ok — not a crash
-      assert match?({:ok, _} | {:error, _}, result)
+      assert match?({:ok, _}, result) or match?({:error, _}, result)
     end
 
     test "does not raise even when all providers time out" do
       # Tiny timeout guarantees all tasks will expire
       result = Debate.run("hello", providers: ["ollama"], timeout: 1)
-      assert match?({:ok, _} | {:error, _}, result)
+      assert match?({:ok, _}, result) or match?({:error, _}, result)
     end
   end
 

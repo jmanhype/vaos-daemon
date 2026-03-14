@@ -29,6 +29,8 @@ defmodule MiosaTools.Behaviour do
   @callback safety() :: :read_only | :write_safe | :write_destructive | :terminal
   @callback available?() :: boolean()
 
+  @optional_callbacks safety: 0, available?: 0
+
   defmacro __using__(_opts) do
     quote do
       @behaviour MiosaTools.Behaviour
@@ -72,6 +74,8 @@ defmodule MiosaProviders.Registry do
   defdelegate context_window(model), to: OptimalSystemAgent.Providers.Registry
   defdelegate provider_configured?(provider), to: OptimalSystemAgent.Providers.Registry
   defdelegate register_provider(name, module), to: OptimalSystemAgent.Providers.Registry
+  defdelegate provider_info(provider), to: OptimalSystemAgent.Providers.Registry
+  defdelegate provider_configured?(provider), to: OptimalSystemAgent.Providers.Registry
 end
 
 defmodule MiosaProviders.Ollama do
@@ -86,6 +90,11 @@ defmodule MiosaProviders.Ollama do
   defdelegate chat_stream(messages, callback, opts \\ []),
     to: OptimalSystemAgent.Providers.Ollama
   defdelegate pick_best_model(models), to: OptimalSystemAgent.Providers.Ollama
+  defdelegate name(), to: OptimalSystemAgent.Providers.Ollama
+  defdelegate default_model(), to: OptimalSystemAgent.Providers.Ollama
+  defdelegate available_models(), to: OptimalSystemAgent.Providers.Ollama
+  defdelegate split_ndjson(data), to: OptimalSystemAgent.Providers.Ollama
+  defdelegate process_ndjson_line(line, callback, acc), to: OptimalSystemAgent.Providers.Ollama
 end
 
 # ---------------------------------------------------------------------------
@@ -753,4 +762,248 @@ defmodule MiosaSignal do
 
   def measure_sn_ratio(%__MODULE__{weight: w}), do: w
   def measure_sn_ratio(_), do: 0.5
+end
+
+# ---------------------------------------------------------------------------
+# MiosaTools.Instruction
+# ---------------------------------------------------------------------------
+
+defmodule MiosaTools.Instruction do
+  @moduledoc "Normalised tool instruction struct."
+
+  defstruct tool: "", params: %{}, context: %{}
+
+  @type t :: %__MODULE__{tool: String.t(), params: map(), context: map()}
+
+  @spec normalize(term()) :: {:ok, t()} | {:error, String.t()}
+  def normalize(input)
+
+  def normalize(name) when is_binary(name) do
+    trimmed = String.trim(name)
+    if trimmed == "" do
+      {:error, "tool name cannot be empty"}
+    else
+      {:ok, %__MODULE__{tool: trimmed}}
+    end
+  end
+
+  def normalize({tool, params}) when is_binary(tool) and is_map(params) do
+    case normalize(tool) do
+      {:ok, inst} -> {:ok, %{inst | params: params}}
+      err -> err
+    end
+  end
+
+  def normalize({_tool, params}) when not is_map(params),
+    do: {:error, "params must be a map"}
+
+  def normalize({tool, params, context}) when is_binary(tool) and is_map(params) and is_map(context) do
+    case normalize(tool) do
+      {:ok, inst} -> {:ok, %{inst | params: params, context: context}}
+      err -> err
+    end
+  end
+
+  def normalize({_tool, _params, context}) when not is_map(context),
+    do: {:error, "context must be a map"}
+
+  def normalize(%__MODULE__{} = inst), do: {:ok, inst}
+
+  def normalize(_), do: {:error, "unsupported instruction format"}
+
+  @spec normalize!(term()) :: t()
+  def normalize!(input) do
+    case normalize(input) do
+      {:ok, inst} -> inst
+      {:error, msg} -> raise ArgumentError, msg
+    end
+  end
+
+  @spec merge_params(t(), map()) :: t()
+  def merge_params(%__MODULE__{} = inst, extra) when is_map(extra) do
+    %{inst | params: Map.merge(inst.params, extra)}
+  end
+end
+
+# ---------------------------------------------------------------------------
+# MiosaTools.Middleware
+# ---------------------------------------------------------------------------
+
+defmodule MiosaTools.Middleware do
+  @moduledoc "Middleware behaviour and executor for tool instructions."
+
+  alias MiosaTools.Instruction
+
+  @callback call(Instruction.t(), next :: (Instruction.t() -> any()), opts :: keyword()) :: any()
+
+  @spec execute(Instruction.t(), [module()], (Instruction.t() -> any())) :: any()
+  def execute(%Instruction{} = inst, [], executor), do: executor.(inst)
+
+  def execute(%Instruction{} = inst, [mw | rest], executor) do
+    mw.call(inst, fn updated -> execute(updated, rest, executor) end, [])
+  end
+
+  defmodule Validation do
+    @moduledoc "Validates that required params are present before executing."
+    @behaviour MiosaTools.Middleware
+
+    @impl true
+    def call(instruction, next, opts) do
+      required = Keyword.get(opts, :required, [])
+      missing = Enum.reject(required, &Map.has_key?(instruction.params, &1))
+      if missing == [] do
+        next.(instruction)
+      else
+        {:error, "missing required params: #{Enum.join(missing, ", ")}"}
+      end
+    end
+  end
+
+  defmodule Timing do
+    @moduledoc "Records execution time in microseconds."
+    @behaviour MiosaTools.Middleware
+
+    @impl true
+    def call(instruction, next, _opts) do
+      start = System.monotonic_time(:microsecond)
+      result = next.(instruction)
+      elapsed = System.monotonic_time(:microsecond) - start
+      case result do
+        {:ok, val} -> {:ok, val, elapsed}
+        other -> other
+      end
+    end
+  end
+
+  defmodule Logging do
+    @moduledoc "Logs instruction dispatch."
+    @behaviour MiosaTools.Middleware
+    require Logger
+
+    @impl true
+    def call(instruction, next, _opts) do
+      Logger.debug("[MiosaTools] executing #{instruction.tool}")
+      result = next.(instruction)
+      Logger.debug("[MiosaTools] #{instruction.tool} → #{inspect(result)}")
+      result
+    end
+  end
+end
+
+# ---------------------------------------------------------------------------
+# MiosaTools.Pipeline
+# ---------------------------------------------------------------------------
+
+defmodule MiosaTools.Pipeline do
+  @moduledoc "Combinators for sequencing and composing tool instructions."
+
+  alias MiosaTools.Instruction
+
+  @spec pipe([term()], keyword()) :: {:ok, map()} | {:error, String.t()}
+  def pipe(instructions, opts \\ []) do
+    executor = Keyword.get(opts, :executor, fn _tool, params -> {:ok, params} end)
+
+    Enum.reduce_while(instructions, {:ok, %{}}, fn raw, {:ok, acc} ->
+      case Instruction.normalize(raw) do
+        {:ok, inst} ->
+          merged = Map.merge(acc, inst.params)
+          case executor.(inst.tool, merged) do
+            {:ok, result} -> {:cont, {:ok, result}}
+            {:error, _} = err -> {:halt, err}
+          end
+        {:error, _} = err -> {:halt, err}
+      end
+    end)
+  end
+
+  @spec parallel([term()], keyword()) :: {:ok, [map()]} | {:error, String.t()}
+  def parallel(instructions, opts \\ []) do
+    executor = Keyword.get(opts, :executor, fn _tool, params -> {:ok, params} end)
+
+    tasks =
+      Enum.map(instructions, fn raw ->
+        Task.async(fn ->
+          case Instruction.normalize(raw) do
+            {:ok, inst} -> executor.(inst.tool, inst.params)
+            err -> err
+          end
+        end)
+      end)
+
+    results = Task.await_many(tasks, 30_000)
+
+    errors = Enum.filter(results, &match?({:error, _}, &1))
+    if errors == [] do
+      {:ok, Enum.map(results, fn {:ok, v} -> v end)}
+    else
+      {:error, Enum.map(errors, fn {:error, e} -> e end)}
+    end
+  end
+
+  @spec fallback([term()], keyword()) :: {:ok, map()} | {:error, String.t()}
+  def fallback(instructions, opts \\ []) do
+    executor = Keyword.get(opts, :executor, fn _tool, params -> {:ok, params} end)
+
+    Enum.reduce_while(instructions, {:error, "no instructions"}, fn raw, _acc ->
+      case Instruction.normalize(raw) do
+        {:ok, inst} ->
+          case executor.(inst.tool, inst.params) do
+            {:ok, _} = ok -> {:halt, ok}
+            {:error, _} = err -> {:cont, err}
+          end
+        {:error, _} = err -> {:cont, err}
+      end
+    end)
+  end
+
+  @spec retry(term(), keyword()) :: {:ok, map()} | {:error, String.t()}
+  def retry(instruction, opts \\ []) do
+    executor = Keyword.get(opts, :executor, fn _tool, params -> {:ok, params} end)
+    attempts = Keyword.get(opts, :attempts, 3)
+
+    case Instruction.normalize(instruction) do
+      {:error, _} = err -> err
+      {:ok, inst} ->
+        Enum.reduce_while(1..attempts, {:error, "not attempted"}, fn _i, _acc ->
+          case executor.(inst.tool, inst.params) do
+            {:ok, _} = ok -> {:halt, ok}
+            {:error, _} = err -> {:cont, err}
+          end
+        end)
+    end
+  end
+end
+
+defmodule MiosaProviders.OpenAICompat do
+  @moduledoc "Shim — delegates to OptimalSystemAgent.Providers.OpenAICompat."
+
+  defdelegate parse_tool_calls(msg), to: OptimalSystemAgent.Providers.OpenAICompat
+  defdelegate parse_tool_calls(msg, model), to: OptimalSystemAgent.Providers.OpenAICompat
+  defdelegate parse_tool_calls_from_content(content), to: OptimalSystemAgent.Providers.OpenAICompat
+  defdelegate format_messages(messages), to: OptimalSystemAgent.Providers.OpenAICompat
+  defdelegate normalize_tool_name(name), to: OptimalSystemAgent.Providers.OpenAICompat
+  defdelegate chat(messages, opts \\ []), to: OptimalSystemAgent.Providers.OpenAICompat
+  defdelegate chat_stream(messages, callback, opts \\ []), to: OptimalSystemAgent.Providers.OpenAICompat
+  defdelegate format_tools(tools), to: OptimalSystemAgent.Providers.OpenAICompat
+end
+
+defmodule MiosaProviders.Anthropic do
+  @moduledoc "Shim — delegates to OptimalSystemAgent.Providers.Anthropic."
+
+  defdelegate chat(messages, opts \\ []), to: OptimalSystemAgent.Providers.Anthropic
+  defdelegate chat_stream(messages, callback, opts \\ []), to: OptimalSystemAgent.Providers.Anthropic
+  defdelegate format_messages(messages), to: OptimalSystemAgent.Providers.Anthropic
+  def format_messages_with_thinking(messages),
+    do: OptimalSystemAgent.Providers.Anthropic.format_messages(messages)
+  defdelegate extract_thinking(response), to: OptimalSystemAgent.Providers.Anthropic
+  defdelegate extract_usage(response), to: OptimalSystemAgent.Providers.Anthropic
+  defdelegate maybe_add_thinking(body, thinking), to: OptimalSystemAgent.Providers.Anthropic
+  defdelegate build_headers(api_key, thinking), to: OptimalSystemAgent.Providers.Anthropic
+  defdelegate available_models(), to: OptimalSystemAgent.Providers.Anthropic
+  defdelegate default_model(), to: OptimalSystemAgent.Providers.Anthropic
+end
+
+defmodule MiosaProviders.Behaviour do
+  @moduledoc "Shim — re-exports OptimalSystemAgent.Providers.Behaviour."
+  defdelegate __using__(opts), to: OptimalSystemAgent.Providers.Behaviour
 end

@@ -546,6 +546,12 @@ defmodule OptimalSystemAgent.Agent.Loop do
   end
 
   @impl true
+  def handle_call({:swap_provider, provider, model}, _from, state) do
+    :ets.insert(:osa_session_provider_overrides, {state.session_id, provider, model})
+    {:reply, :ok, %{state | provider: provider, model: model}}
+  end
+
+  @impl true
   def handle_call(:toggle_plan_mode, _from, state) do
     new_val = not state.plan_mode_enabled
     {:reply, {:ok, new_val}, %{state | plan_mode_enabled: new_val}}

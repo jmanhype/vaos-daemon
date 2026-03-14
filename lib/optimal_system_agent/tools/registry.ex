@@ -112,27 +112,36 @@ defmodule OptimalSystemAgent.Tools.Registry do
 
   Returns `:ok` when arguments conform to the schema, or
   `{:error, message}` with a structured description of all validation failures.
+
+  When the `ex_json_schema` dependency is not compiled (optional dep),
+  validation is skipped and `:ok` is returned (fail-open).
   """
   @spec validate_arguments(module(), map()) :: :ok | {:error, String.t()}
   def validate_arguments(mod, arguments) do
-    schema = mod.parameters()
+    # Use apply/3 to avoid compile-time "undefined function" warnings when
+    # ex_json_schema is not fetched. Code.ensure_loaded? guards the runtime call.
+    unless Code.ensure_loaded?(ExJsonSchema.Schema) do
+      :ok
+    else
+      schema = mod.parameters()
 
-    try do
-      resolved = ExJsonSchema.Schema.resolve(schema)
+      try do
+        resolved = apply(ExJsonSchema.Schema, :resolve, [schema])
 
-      case ExJsonSchema.Validator.validate(resolved, arguments) do
-        :ok ->
+        case apply(ExJsonSchema.Validator, :validate, [resolved, arguments]) do
+          :ok ->
+            :ok
+
+          {:error, errors} ->
+            message = format_validation_errors(mod.name(), errors)
+            {:error, message}
+        end
+      rescue
+        e ->
+          Logger.warning("[Tools.Registry] Schema validation error for #{mod.name()}: #{inspect(e)}")
+          # Fail open: if the schema itself is malformed, let the tool handle its own args
           :ok
-
-        {:error, errors} ->
-          message = format_validation_errors(mod.name(), errors)
-          {:error, message}
       end
-    rescue
-      e ->
-        Logger.warning("[Tools.Registry] Schema validation error for #{mod.name()}: #{inspect(e)}")
-        # Fail open: if the schema itself is malformed, let the tool handle its own args
-        :ok
     end
   end
 
@@ -333,6 +342,23 @@ defmodule OptimalSystemAgent.Tools.Registry do
   def active_skills_context(message) when is_binary(message) do
     base = active_skills_context()
     matched = match_skill_triggers(message)
+
+    # Emit a bus event so TUI and command center can show which skills are active.
+    if matched != [] do
+      skill_names = Enum.map(matched, fn {name, _} -> name end)
+
+      try do
+        OptimalSystemAgent.Events.Bus.emit(:system_event, %{
+          event: :skills_triggered,
+          skills: skill_names,
+          message_preview: String.slice(message, 0, 120)
+        })
+      rescue
+        _ -> :ok
+      catch
+        :exit, _ -> :ok
+      end
+    end
 
     injected =
       Enum.flat_map(matched, fn {_name, skill} ->
@@ -789,7 +815,8 @@ defmodule OptimalSystemAgent.Tools.Registry do
       "vault_wake" => OptimalSystemAgent.Tools.Builtins.VaultWake,
       "vault_sleep" => OptimalSystemAgent.Tools.Builtins.VaultSleep,
       "vault_checkpoint" => OptimalSystemAgent.Tools.Builtins.VaultCheckpoint,
-      "vault_inject" => OptimalSystemAgent.Tools.Builtins.VaultInject
+      "vault_inject" => OptimalSystemAgent.Tools.Builtins.VaultInject,
+      "compute_vm" => OptimalSystemAgent.Tools.Builtins.ComputeVm
     }
   end
 
