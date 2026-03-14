@@ -383,6 +383,36 @@ export interface CostByAgent {
   count: number;
 }
 
+// ── Config Revisions ────────────────────────────────────────────────────────
+
+export interface ConfigRevision {
+  id: number;
+  entity_type: string;
+  entity_id: string;
+  revision_number: number;
+  previous_config: Record<string, unknown> | null;
+  new_config: Record<string, unknown>;
+  changed_fields: string[];
+  changed_by: string;
+  change_reason: string | null;
+  metadata: Record<string, unknown>;
+  inserted_at: string;
+}
+
+export interface ConfigDiff {
+  [field: string]: { from: unknown; to: unknown };
+}
+
+// ── Resilience ──────────────────────────────────────────────────────────────
+
+export interface QueuedRequest {
+  id: string;
+  method: string;
+  path: string;
+  body?: unknown;
+  timestamp: number;
+}
+
 // ── API Error ─────────────────────────────────────────────────────────────────
 
 export interface ApiErrorBody {

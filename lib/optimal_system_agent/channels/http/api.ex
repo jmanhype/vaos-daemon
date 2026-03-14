@@ -131,6 +131,15 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
   # ── Command Center ───────────────────────────────────────────────────
   forward "/command-center", to: API.CommandCenterRoutes
 
+  # ── Agent Hierarchy ──────────────────────────────────────────────────
+  forward "/agents/hierarchy", to: API.HierarchyRoutes
+
+  # ── Task Kanban ────────────────────────────────────────────────────
+  forward "/tasks/kanban", to: API.TaskKanbanRoutes
+
+  # ── Approvals ──────────────────────────────────────────────────────
+  forward "/approvals", to: API.ApprovalRoutes
+
   # ── Protocol ─────────────────────────────────────────────────────────
   forward "/events", to: API.ProtocolRoutes
   forward "/oscp", to: API.ProtocolRoutes
@@ -138,6 +147,10 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
 
   # ── Workspace introspection ───────────────────────────────────────────
   forward "/workspace", to: API.WorkspaceRoutes
+
+  # ── Costs & Budgets ─────────────────────────────────────────────────
+  forward "/costs", to: API.CostRoutes
+  forward "/budgets", to: API.CostRoutes
 
   # ── Knowledge graph ──────────────────────────────────────────────────
   forward "/knowledge", to: API.KnowledgeRoutes

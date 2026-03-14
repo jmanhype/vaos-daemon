@@ -144,6 +144,125 @@ export class ApiError extends Error {
   }
 }
 
+// ── Retry with Backoff ──────────────────────────────────────────────────────
+
+interface RetryConfig {
+  maxRetries: number;
+  backoffMs: number;
+  maxBackoff: number;
+}
+
+const DEFAULT_RETRY: RetryConfig = {
+  maxRetries: 3,
+  backoffMs: 1000,
+  maxBackoff: 30000,
+};
+
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  config = DEFAULT_RETRY,
+): Promise<T> {
+  let lastError: Error = new Error("No attempts made");
+  for (let attempt = 0; attempt < config.maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error as Error;
+      if (error instanceof ApiError && error.status < 500) throw error;
+      const delay = Math.min(
+        config.backoffMs * 2 ** attempt,
+        config.maxBackoff,
+      );
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw lastError;
+}
+
+// ── Response Cache ──────────────────────────────────────────────────────────
+
+const responseCache = new Map<string, { data: unknown; timestamp: number }>();
+
+const CACHE_TTL: Record<string, number> = {
+  "/settings": 60_000,
+  "/agents": 30_000,
+  "/models": 60_000,
+  "/providers": 60_000,
+  "/sessions": 15_000,
+};
+
+function getCacheTTL(path: string): number {
+  for (const [prefix, ttl] of Object.entries(CACHE_TTL)) {
+    if (path.startsWith(prefix)) return ttl;
+  }
+  return 0;
+}
+
+function getCached<T>(path: string): T | null {
+  const entry = responseCache.get(path);
+  if (!entry) return null;
+  if (Date.now() - entry.timestamp > getCacheTTL(path)) {
+    responseCache.delete(path);
+    return null;
+  }
+  return entry.data as T;
+}
+
+function setCache(path: string, data: unknown): void {
+  if (getCacheTTL(path) > 0) {
+    responseCache.set(path, { data, timestamp: Date.now() });
+  }
+}
+
+export function clearCache(): void {
+  responseCache.clear();
+}
+
+// ── Offline Queue ───────────────────────────────────────────────────────────
+
+const offlineQueue: QueuedRequest[] = [];
+
+export function getOfflineQueue(): readonly QueuedRequest[] {
+  return offlineQueue;
+}
+
+export function getOfflineQueueSize(): number {
+  return offlineQueue.length;
+}
+
+export async function flushOfflineQueue(): Promise<{
+  succeeded: number;
+  failed: number;
+}> {
+  let succeeded = 0;
+  let failed = 0;
+  while (offlineQueue.length > 0) {
+    const req = offlineQueue[0];
+    try {
+      await request(req.path, {
+        method: req.method,
+        body: req.body ? JSON.stringify(req.body) : undefined,
+      });
+      offlineQueue.shift();
+      succeeded++;
+    } catch {
+      failed++;
+      break;
+    }
+  }
+  return { succeeded, failed };
+}
+
+function queueForOffline(method: string, path: string, body?: unknown): void {
+  offlineQueue.push({
+    id: crypto.randomUUID(),
+    method,
+    path,
+    body,
+    timestamp: Date.now(),
+  });
+}
+
 // ── Token Refresh ─────────────────────────────────────────────────────────────
 
 async function refreshToken(): Promise<string | null> {
@@ -178,9 +297,9 @@ async function refreshToken(): Promise<string | null> {
 
 // ── Core Request ──────────────────────────────────────────────────────────────
 
-async function request<T>(
+async function doFetch<T>(
   path: string,
-  options: RequestInit = {},
+  options: RequestInit,
   retried = false,
 ): Promise<T> {
   const url = `${BASE_URL}${API_PREFIX}${path}`;
@@ -195,18 +314,11 @@ async function request<T>(
     headers["Authorization"] = `Bearer ${_token}`;
   }
 
-  const response = await fetch(url, {
-    ...options,
-    headers,
-  });
+  const response = await fetch(url, { ...options, headers });
 
-  // Auto-refresh on 401 — one retry only
   if (response.status === 401 && !retried) {
     const newToken = await refreshToken();
-    if (newToken) {
-      return request<T>(path, options, true);
-    }
-    // Refresh failed — surface the 401
+    if (newToken) return doFetch<T>(path, options, true);
   }
 
   if (!response.ok) {
@@ -223,10 +335,43 @@ async function request<T>(
     throw new ApiError(response.status, message, body);
   }
 
-  // 204 No Content
   if (response.status === 204) return undefined as T;
-
   return response.json() as Promise<T>;
+}
+
+async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const method = (options.method ?? "GET").toUpperCase();
+
+  if (method === "GET") {
+    const cached = getCached<T>(path);
+    if (cached !== null) return cached;
+    try {
+      const data = await withRetry(() => doFetch<T>(path, options));
+      setCache(path, data);
+      return data;
+    } catch (error) {
+      const stale = getCached<T>(path);
+      if (stale !== null) return stale;
+      throw error;
+    }
+  }
+
+  try {
+    return await withRetry(() => doFetch<T>(path, options));
+  } catch (error) {
+    if (!(error instanceof ApiError)) {
+      try {
+        const body =
+          options.body !== undefined
+            ? (JSON.parse(options.body as string) as unknown)
+            : undefined;
+        queueForOffline(method, path, body);
+      } catch {
+        queueForOffline(method, path);
+      }
+    }
+    throw error;
+  }
 }
 
 // ── Health ────────────────────────────────────────────────────────────────────
@@ -558,5 +703,30 @@ export const budgets = {
     request<{ status: string }>(
       `/budgets/${encodeURIComponent(agentName)}/reset`,
       { method: "POST" },
+    ),
+};
+
+// ── Config Revisions ─────────────────────────────────────────────────────────
+
+export const configRevisions = {
+  list: (entityType: string, entityId: string) =>
+    request<{ revisions: ConfigRevision[]; count: number }>(
+      `/config/revisions/${entityType}/${entityId}`,
+    ),
+  get: (entityType: string, entityId: string, revisionNumber: number) =>
+    request<ConfigRevision>(
+      `/config/revisions/${entityType}/${entityId}/${revisionNumber}`,
+    ),
+  rollback: (entityType: string, entityId: string, revisionNumber: number) =>
+    request<ConfigRevision>(
+      `/config/revisions/${entityType}/${entityId}/rollback`,
+      {
+        method: "POST",
+        body: JSON.stringify({ revision_number: revisionNumber }),
+      },
+    ),
+  diff: (entityType: string, entityId: string, from: number, to: number) =>
+    request<{ diff: ConfigDiff; from: number; to: number }>(
+      `/config/revisions/${entityType}/${entityId}/diff?from=${from}&to=${to}`,
     ),
 };

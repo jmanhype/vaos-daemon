@@ -3,6 +3,7 @@
   import { browser } from '$app/environment';
   import { fly, fade } from 'svelte/transition';
   import { isTauri, isMacOS } from '$lib/utils/platform';
+  import { approvalsStore } from '$lib/stores/approvals.svelte';
 
   interface NavItem {
     id: string;
@@ -94,6 +95,13 @@
       href: '/app/tasks',
       shortcut: '⌘0',
       icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z',
+    },
+    {
+      id: 'approvals',
+      label: 'Approvals',
+      href: '/app/approvals',
+      shortcut: '',
+      icon: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z',
     },
   ];
 
@@ -211,7 +219,13 @@
           <span class="nav-label" transition:fade={{ duration: 150 }}>
             {item.label}
           </span>
-          <span class="nav-shortcut" aria-hidden="true">{item.shortcut}</span>
+          {#if item.id === 'approvals' && approvalsStore.pendingCount > 0}
+            <span class="nav-badge" aria-label="{approvalsStore.pendingCount} pending approvals">
+              {approvalsStore.pendingCount}
+            </span>
+          {:else if item.shortcut}
+            <span class="nav-shortcut" aria-hidden="true">{item.shortcut}</span>
+          {/if}
         {/if}
       </a>
     {/each}
@@ -410,6 +424,24 @@
     margin-left: auto;
     opacity: 0.7;
     flex-shrink: 0;
+  }
+
+  .nav-badge {
+    min-width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: rgba(239, 68, 68, 0.2);
+    color: rgba(239, 68, 68, 0.9);
+    font-size: 10px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    margin-left: auto;
+    flex-shrink: 0;
+    border: 1px solid rgba(239, 68, 68, 0.15);
   }
 
   /* User section */
