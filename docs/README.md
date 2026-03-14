@@ -1,199 +1,187 @@
-# OptimalSystemAgent
+# OSA Documentation
 
-A production AI agent framework built in pure Elixir/OTP. OSA runs autonomous agents that reason, use tools, remember context across sessions, orchestrate sub-agents, and connect to any LLM provider — all under OTP supervision with crash recovery, backpressure, and zero external runtime dependencies.
+> **OSA v0.2.6** — Optimal System Agent
+> Elixir/OTP + Rust TUI + Tauri/SvelteKit. Signal Theory-based AI agent orchestration.
+> 154,000 lines · 287 modules · 18 LLM providers · 12 chat channels · Apache 2.0
 
+---
+
+## Quick Start
+
+```bash
+# Install and run
+brew install miosa-osa/tap/osa
+osa serve
+
+# Or from source
+git clone https://github.com/miosa-osa/osa.git
+cd osa && mix setup && mix osa.serve
 ```
-287 modules · 32 subsystems · 25 agent roles · 32 tools · 18 LLM providers · 10 channels
-```
+
+See [Getting Started](getting-started/) for installation, configuration, and first run.
 
 ---
 
-## Quick Links
+## Documentation Map
 
-- [Installation](getting-started/installation.md) — Prerequisites and first run
-- [Configuration](getting-started/configuration.md) — Config keys, env vars, feature flags
-- [Quickstart](getting-started/quickstart.md) — Hello-world agent in 5 minutes
-- [System Overview](architecture/overview.md) — Full ecosystem map and supervision tree
-- [HTTP API](frontend/http-api.md) — REST endpoint reference
-- [CLI Commands](frontend/cli-reference.md) — All slash commands
+### [Learning](learning/) — New to the Tech Stack?
+
+If you've never used Elixir, don't know what the BEAM VM is, or want to understand
+why OSA is built the way it is — start here.
+
+| Guide | What You'll Learn |
+|---|---|
+| [BEAM & OTP](learning/beam-and-otp.md) | What makes Elixir/OTP special — processes, supervisors, fault tolerance |
+| [Supervision Trees](learning/supervision-trees.md) | How OSA's process hierarchy works and why it matters |
+| [ETS & persistent_term](learning/ets-and-persistent-term.md) | In-memory storage — why it's fast and when OSA uses it |
+| [goldrush Events](learning/goldrush-events.md) | Compiled event routing — how events dispatch at BEAM instruction speed |
+| [Signal Theory](learning/signal-theory-explained.md) | The 5-tuple classification that makes OSA different from every other agent |
+| [ReAct Pattern](learning/react-pattern.md) | How AI agents reason: think → act → observe → repeat |
+| [Desktop Stack](learning/tauri-sveltekit.md) | Tauri + SvelteKit — how the desktop app is built |
+| [LLM Providers](learning/llm-providers.md) | How OSA talks to 18 different AI model providers |
 
 ---
 
-## Architecture
+### [Foundation Core](foundation-core/) — Architecture & Principles
 
-How the system is designed and why.
+The architectural foundation: why OSA exists, how it's designed, and the rules
+that govern module interaction.
 
-| | |
+| Section | What It Covers |
 |---|---|
-| [System Overview](architecture/overview.md) | Ecosystem map, supervision tree, module organization |
-| [Data Flow](architecture/data-flow.md) | Message lifecycle: channel → agent loop → tool execution → response |
-| [Signal Theory](architecture/signal-theory.md) | The governing framework — S=(M,G,T,F,W), S/N maximization |
-| [SDK](architecture/sdk.md) | Public contracts for tools, agents, channels, hooks |
-| [ADRs](architecture/adr/) | Architectural decision records |
+| [Overview](foundation-core/overview/) | Purpose, principles, boundaries, dependency rules, glossary |
+| [Architecture](foundation-core/architecture/) | System design, component model, execution flow, data flow |
+| [Core Components](foundation-core/core-components/) | Runtime, configuration, events, error handling, logging, observability |
+| [Interfaces](foundation-core/interfaces/) | API surface, service contracts, event contracts, integration points |
+| [Security](foundation-core/security/) | Security model, threat model, access control, data protection |
+| [Data](foundation-core/data/) | Data model, storage architecture, migration strategy |
+| [Reliability](foundation-core/reliability/) | Fault tolerance, graceful degradation, recovery procedures |
+| [Governance](foundation-core/governance/) | Versioning, deprecation, ADRs |
+| [Diagrams](foundation-core/diagrams/) | Supervision tree, module dependencies, workflow diagrams |
 
 ---
 
-## Backend
+### [Backend](backend/) — Deep Subsystem Documentation
 
-### Agent Loop
+Every subsystem documented in depth — module names, function signatures, config
+keys, code examples.
 
-The core reasoning engine. Each turn: build context → call LLM → parse response → execute tools → check halt conditions → repeat.
-
-| | |
-|---|---|
-| [Core Loop](backend/agent-loop/loop.md) | Bounded ReAct engine — turn lifecycle, guardrails, halt conditions |
-| [Context Builder](backend/agent-loop/context.md) | Two-tier token-budgeted prompt assembly with 11 dynamic blocks |
-| [Strategies](backend/agent-loop/strategies.md) | CoT, Reflection, MCTS, Tree of Thoughts — selection logic and step types |
-| [Compactor](backend/agent-loop/compactor.md) | Context window compression at the 90% threshold |
-| [Scratchpad](backend/agent-loop/scratchpad.md) | Provider-agnostic extended thinking (Anthropic native or `<think>` injection) |
-| [AutoFixer](backend/agent-loop/auto-fixer.md) | Iterative test/lint fix loop with retry budget |
-
-### Memory & Knowledge
-
-Five layers of memory — from per-turn working memory to a persistent knowledge graph with SPARQL and OWL reasoning.
-
-| | |
-|---|---|
-| [Overview](backend/memory/overview.md) | 5-layer architecture and how the layers interact |
-| [Memory Store](backend/memory/memory-store.md) | JSONL + SQLite dual-write, query strategies |
-| [Episodic](backend/memory/episodic.md) | Temporal event tracking — patterns, solutions, decisions |
-| [Learning](backend/memory/learning.md) | Pattern/solution capture, confidence scoring, KnowledgeBridge sync |
-| [Knowledge Graph](backend/memory/knowledge-graph.md) | `miosa_knowledge` — SPARQL, OWL 2 RL reasoning, ETS/Mnesia backends |
-| [Cortex](backend/memory/cortex.md) | Bulletin generation, active topics, cross-session synthesis |
-| [Taxonomy](backend/memory/taxonomy.md) | Classification scheme and context injection rules |
-
-### Orchestration
-
-Multi-agent coordination — decompose goals into tasks, assign to specialized agents, execute in waves.
-
-| | |
-|---|---|
-| [Orchestrator](backend/orchestration/orchestrator.md) | Goal dispatch, complexity scoring, wave execution |
-| [Agent Roster](backend/orchestration/agents.md) | 25 roles across Haiku/Sonnet/Opus tiers |
-| [Swarm Mode](backend/orchestration/swarm.md) | Parallel, pipeline, and fan-out/fan-in patterns |
-| [Fleet](backend/orchestration/fleet.md) | Remote agent management across instances |
-| [Delegation](backend/orchestration/delegation.md) | Sub-agent dispatch — mailbox, negotiation, state machine |
-
-### Tools
-
-32 built-in tools with Goldrush-compiled dispatch, middleware pipeline, and schema validation.
-
-| | |
-|---|---|
-| [Overview](backend/tools/overview.md) | Registry, dispatch, middleware pipeline |
-| [File Tools](backend/tools/file-tools.md) | `file_read`, `file_write`, `file_edit`, `file_glob`, `file_grep`, `dir_list` |
-| [Execution Tools](backend/tools/execution-tools.md) | `shell_execute`, `code_sandbox`, `browser`, `computer_use` |
-| [Intelligence Tools](backend/tools/intelligence-tools.md) | `semantic_search`, `memory_recall`, `memory_save`, `knowledge` |
-| [Integration Tools](backend/tools/integration-tools.md) | `web_fetch`, `web_search`, `github`, `git` |
-| [Custom Tools](backend/tools/custom-tools.md) | Building tools with `MiosaTools.Behaviour`, schema, middleware |
-
-### Channels
-
-Input/output adapters — how users and systems talk to OSA.
-
-| | |
-|---|---|
-| [Overview](backend/channels/overview.md) | Channel behaviour contract, lifecycle, registration |
-| [CLI](backend/channels/cli.md) | Terminal REPL — streaming output, task display |
-| [HTTP](backend/channels/http.md) | REST API — routing, session binding, SSE streaming |
-| [Messaging](backend/channels/messaging.md) | Discord, Slack, Telegram, WhatsApp, Signal, Matrix, Email, DingTalk, Feishu, QQ |
-
-### Events
-
-Internal event bus — every mutation, tool call, and state change emits a structured event.
-
-| | |
-|---|---|
-| [Event Bus](backend/events/bus.md) | Goldrush-compiled dispatch, classifier, DLQ, failure modes |
-| [Protocol](backend/events/protocol.md) | OSCP envelope format, CloudEvents codec |
-| [Telemetry](backend/events/telemetry.md) | ETS metrics counters, hook telemetry, emission points |
-
-### Platform
-
-Multi-tenant infrastructure for running OSA as a hosted service.
-
-| | |
-|---|---|
-| [Authentication](backend/platform/auth.md) | JWT validation, grants, platform auth routes |
-| [Tenants](backend/platform/tenants.md) | Multi-tenancy — schema, isolation model |
-| [AMQP](backend/platform/amqp.md) | RabbitMQ integration for cross-instance messaging |
-| [Instances](backend/platform/instances.md) | Multi-instance coordination, OS instance registry |
-
-### Infrastructure
-
-Low-level services that everything else depends on.
-
-| | |
-|---|---|
-| [Sandbox](backend/infrastructure/sandbox.md) | Code execution isolation — policy, limits, escape prevention |
-| [MCP](backend/infrastructure/mcp.md) | Model Context Protocol — server discovery, tool bridging |
-| [Sidecar](backend/infrastructure/sidecar.md) | External service lifecycle management |
-| [Scheduler](backend/infrastructure/scheduler.md) | Cron jobs, heartbeat, proactive trigger timing |
-| [Security](backend/infrastructure/security.md) | Shell policy, command allowlist/blocklist |
-| [Intelligence](backend/infrastructure/intelligence.md) | Proactive monitoring, signal-driven autonomous work |
-
-### LLM Providers
-
-18 providers with circuit breaker, rate limiting, and health checking via `miosa_llm`.
-
-| | |
-|---|---|
-| [Overview](backend/providers/overview.md) | Provider architecture, `miosa_llm` infrastructure |
-| [Configuration](backend/providers/configuration.md) | API keys, base URLs, model aliases, defaults |
-
-Per-provider guides: [Anthropic](backend/providers/anthropic.md) · [OpenAI](backend/providers/openai.md) · [Google](backend/providers/google.md) · [Groq](backend/providers/groq.md) · [Ollama](backend/providers/ollama.md) · [DeepSeek](backend/providers/deepseek.md) · [OpenRouter](backend/providers/openrouter.md) · [Mistral](backend/providers/mistral.md) · [Cohere](backend/providers/cohere.md) · [Perplexity](backend/providers/perplexity.md) · [Fireworks](backend/providers/fireworks.md) · [Together](backend/providers/together.md) · [Replicate](backend/providers/replicate.md) · [Chinese](backend/providers/chinese.md)
+| Section | Docs | What It Covers |
+|---|---|---|
+| [Agent Loop](backend/agent-loop/) | 6 | Core reasoning engine — ReAct loop, context builder, strategies, compactor, scratchpad, auto-fixer |
+| [LLM Providers](backend/providers/) | 16 | 18 providers — Anthropic, OpenAI, Groq, Ollama, Google, DeepSeek, and 12 more. Config, models, fallback chains |
+| [Tools](backend/tools/) | 6 | 32 built-in tools — file ops, shell, git, web, memory, intelligence. Registry, middleware, custom tools |
+| [Channels](backend/channels/) | 12 | 12 chat channels — CLI, HTTP, Telegram, Discord, Slack, WhatsApp, Signal, Matrix, Email, QQ, DingTalk, Feishu |
+| [Memory](backend/memory/) | 7 | 5-layer memory — store, episodic, learning, knowledge graph, cortex, taxonomy |
+| [Orchestration](backend/orchestration/) | 5 | Multi-agent coordination — orchestrator, agent roster, swarm mode, fleet, delegation |
+| [Events](backend/events/) | 3 | goldrush event bus, OSCP protocol, telemetry metrics |
+| [Infrastructure](backend/infrastructure/) | 6 | Sandbox, MCP, sidecar, scheduler, security, intelligence |
+| [Platform](backend/platform/) | 4 | Multi-tenant — auth, tenants, AMQP, instances |
+| [Signal Theory](backend/signal-theory.md) | 1 | 5-tuple classification — mode, genre, type, weight, format |
 
 ---
 
-## Frontend
+### [Desktop](desktop/) — Command Center
 
-| | |
+The Tauri 2 + SvelteKit 5 desktop application.
+
+| Doc | What It Covers |
 |---|---|
-| [HTTP API Reference](frontend/http-api.md) | All REST endpoints — auth, sessions, agents, fleet, orchestration, data, knowledge |
-| [CLI Reference](frontend/cli-reference.md) | All slash commands organized by category |
+| [Overview](desktop/README.md) | What the Command Center is, key features, how to run it |
+| [Architecture](desktop/architecture.md) | Tauri shell, SvelteKit frontend, Elixir sidecar, IPC commands |
+| [Stores](desktop/stores.md) | Svelte state management — chat, sessions, auth, permissions |
+| [API Client](desktop/api-client.md) | HTTP client, SSE streaming, event types, reconnection |
+| [Components](desktop/components.md) | Chat UI, terminal, onboarding, settings |
+| [Development](desktop/development.md) | Dev setup, hot reload, building, debugging |
 
 ---
 
-## Features
+### [Features](features/) — Feature Documentation
 
-| | |
+| Doc | What It Covers |
 |---|---|
-| [Recipes](features/recipes.md) | Reusable workflow templates — define, store, execute |
-| [Skills](features/skills.md) | Dynamic skill system — built-in + SKILL.md custom skills |
 | [Hooks](features/hooks.md) | 13 lifecycle events, 10 active hooks, custom hook authoring |
-| [Voice](features/voice.md) | Voice I/O — STT, TTS, audio level meter, cross-platform |
+| [Recipes](features/recipes.md) | Reusable workflow templates |
+| [Skills](features/skills.md) | Dynamic skill system — built-in + SKILL.md custom skills |
+| [Voice](features/voice.md) | Voice I/O — STT, TTS, audio levels |
 | [Proactive Mode](features/proactive-mode.md) | Autonomous work triggered by signals and schedules |
-| [Tasks](features/tasks.md) | Task tracking, queue management, workflow engine |
+| [Tasks](features/tasks.md) | Task tracking, queue management |
+| [Computer Use](features/computer-use.md) | Screen interaction capabilities |
+| [Orchestration](features/orchestration.md) | Multi-agent feature overview |
 
 ---
 
-## Operations
+### [Reference](reference/) — API & CLI Reference
 
-| | |
+| Doc | What It Covers |
+|---|---|
+| [HTTP API](reference/http-api.md) | All REST endpoints — auth, sessions, chat, orchestration, data, knowledge |
+| [CLI Commands](reference/cli-reference.md) | All slash commands by category |
+| [SDK](reference/sdk.md) | Public contracts for tools, agents, channels, hooks |
+| [Knowledge Explorer](reference/knowledge-explorer.md) | Knowledge graph query interface |
+
+---
+
+### [Getting Started](getting-started/) — Installation & Setup
+
+| Doc | What It Covers |
+|---|---|
+| [Installation](getting-started/README.md) | Prerequisites, install methods (Homebrew, source, Docker) |
+| [Configuration](getting-started/configuration.md) | Config keys, env vars, feature flags |
+| [Troubleshooting](getting-started/troubleshooting.md) | Common issues and solutions |
+
+---
+
+### [Operations](operations/) — Running OSA in Production
+
+| Doc | What It Covers |
 |---|---|
 | [Deployment](operations/deployment.md) | Docker, systemd, Nginx, production checklist |
-| [Debugging](operations/debugging.md) | Log queries, ETS inspection, common failure patterns |
+| [Debugging](operations/debugging.md) | Log queries, ETS inspection, failure patterns |
 | [Changelog](operations/changelog.md) | Release history |
 
 ---
 
-## Research
+### [How-To Guides](foundation-core/how-to/) — Extending & Debugging OSA
 
-Internal research and competitive analysis — not user-facing documentation.
-
-| | |
+| Section | What It Covers |
 |---|---|
-| [Competitors](research/competitors/) | 14 competitors analyzed — positioning, feature gaps |
-| [Flows](research/flows/) | Message flow analysis across competitor architectures |
-| [Prompt Engineering](research/prompt-engineering/) | System prompt research and strategy |
-| [Roadmap](research/roadmap/) | 5-phase plan through Q3 2026 |
-| [Agent Dispatch](research/agent-dispatch/) | Multi-agent dispatch framework research |
+| [Getting Started](foundation-core/how-to/getting-started.md) | First steps after installation |
+| [Building on Core](foundation-core/how-to/building-on-core/) | Creating modules, extending services, custom middleware |
+| [Debugging](foundation-core/how-to/debugging/) | Debugging guide, common issues, provider troubleshooting |
+| [Integration](foundation-core/how-to/integration/) | Provider setup, channel setup, desktop integration |
+| [Testing](foundation-core/how-to/testing/) | Test strategy, test patterns |
 
 ---
 
-## Archive
+### [Development](foundation-core/development/) — Contributing to OSA
 
-All original documentation preserved in [`archive/`](archive/) with its original directory structure. Nothing was deleted — files were reorganized into the structure above.
+| Doc | What It Covers |
+|---|---|
+| [Dev Setup](foundation-core/development/development-setup.md) | Environment setup, dependencies, IDE config |
+| [Coding Standards](foundation-core/development/coding-standards.md) | Style guide, naming, documentation requirements |
+| [Contribution Guide](foundation-core/development/contribution-guide.md) | Fork, branch, PR process |
+| [Build System](foundation-core/development/build-system.md) | Mix, releases, Docker builds |
+| [CI/CD](foundation-core/development/ci-cd.md) | GitHub Actions, testing pipeline |
+
+---
+
+### [Known Issues](known-issues/)
+
+18 open issues organized by severity with individual tracking files, root cause
+analysis, code references, and suggested fixes. See the [issue index](known-issues/README.md).
+
+---
+
+### [Archive](archive/)
+
+Historical documentation preserved for reference:
+
+- `architecture-legacy/` — Original architecture docs
+- `research-legacy/` — Competitor analysis, prompt engineering, roadmap
+- `agent-dispatch/` — Multi-agent dispatch framework research
+- `competitors/` — 14 competitor analyses
+- `flows/` — Message flow analysis across architectures
 
 ---
 
@@ -201,21 +189,45 @@ All original documentation preserved in [`archive/`](archive/) with its original
 
 ```
 docs/
-├── getting-started/          Install, config, quickstart
-├── architecture/             System design, Signal Theory, ADRs
-├── backend/
-│   ├── agent-loop/           Core reasoning engine (6 docs)
-│   ├── memory/               5-layer memory system (7 docs)
-│   ├── orchestration/        Multi-agent coordination (5 docs)
-│   ├── tools/                32 built-in tools (6 docs)
-│   ├── channels/             I/O adapters (4 docs)
-│   ├── events/               Event bus and telemetry (3 docs)
-│   ├── platform/             Multi-tenant infrastructure (4 docs)
-│   ├── infrastructure/       Low-level services (6 docs)
-│   └── providers/            18 LLM providers (16 docs)
-├── frontend/                 HTTP API + CLI reference
-├── features/                 Recipes, skills, hooks, voice, tasks
-├── operations/               Deploy, debug, changelog
-├── research/                 Competitors, flows, roadmap
-└── archive/                  Original docs (preserved)
+├── README.md                  ← You are here
+├── KNOWN_ISSUES.md            Bug catalog (18 open, 4 fixed)
+│
+├── learning/                  Education — BEAM, OTP, goldrush, Signal Theory (9 docs)
+├── getting-started/           Install, config, troubleshooting (3 docs)
+│
+├── foundation-core/           Architecture & principles
+│   ├── overview/              Purpose, principles, boundaries, glossary (5 docs)
+│   ├── architecture/          System design, components, flows (7 docs)
+│   ├── core-components/       Runtime, config, events, errors, logging (14 docs)
+│   ├── interfaces/            APIs, contracts, integration points (4 docs)
+│   ├── security/              Security model, threats, access control (4 docs)
+│   ├── data/                  Data model, storage, migrations (3 docs)
+│   ├── how-to/                Guides for extending, debugging, testing (11 docs)
+│   ├── development/           Dev setup, standards, contributing (5 docs)
+│   ├── operations/            Deploy, config reference, monitoring (5 docs)
+│   ├── reliability/           Fault tolerance, degradation, recovery (3 docs)
+│   ├── governance/            Versioning, deprecation, ADRs (5 docs)
+│   ├── ownership/             Maintainers, module ownership (2 docs)
+│   └── diagrams/              Visual architecture diagrams (5 docs)
+│
+├── backend/                   Deep subsystem docs
+│   ├── agent-loop/            Core reasoning engine (6 docs)
+│   ├── providers/             18 LLM providers (16 docs)
+│   ├── tools/                 32 built-in tools (6 docs)
+│   ├── channels/              12 chat channels (12 docs)
+│   ├── memory/                5-layer memory system (7 docs)
+│   ├── orchestration/         Multi-agent coordination (5 docs)
+│   ├── events/                Event bus, protocol, telemetry (3 docs)
+│   ├── infrastructure/        Sandbox, MCP, scheduler (6 docs)
+│   ├── platform/              Multi-tenant infrastructure (4 docs)
+│   └── signal-theory.md       5-tuple classification
+│
+├── desktop/                   Tauri Command Center (6 docs)
+├── features/                  Hooks, recipes, skills, voice (8 docs)
+├── reference/                 HTTP API, CLI, SDK (4 docs)
+├── operations/                Deployment, debugging, changelog (3 docs)
+│
+└── archive/                   Historical docs (preserved)
 ```
+
+**Total: ~170+ documents across 12 sections**
