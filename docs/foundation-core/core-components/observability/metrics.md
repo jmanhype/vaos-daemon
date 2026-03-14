@@ -1,13 +1,8 @@
 # Metrics
 
-## Telemetry.Metrics GenServer
+## Overview
 
-`OptimalSystemAgent.Telemetry.Metrics` is a GenServer under
-`Supervisors.Infrastructure` that collects runtime metrics by subscribing to
-`Events.Bus` and exposing a query API.
-
-All metric state lives in ETS `:osa_telemetry` (`:set`, `:public`, named table).
-This allows concurrent reads from any process without going through the GenServer.
+`OptimalSystemAgent.Telemetry.Metrics` is a GenServer under `Supervisors.Infrastructure` that collects runtime metrics by subscribing to `Events.Bus` and exposing a query API. All metric state lives in ETS `:osa_telemetry` (`:set`, `:public`, named table), allowing concurrent reads from any process without going through the GenServer. Metrics are flushed to `~/.osa/metrics.json` every 5 minutes.
 Writes go through `GenServer.cast/2` to serialize updates.
 
 ```elixir
