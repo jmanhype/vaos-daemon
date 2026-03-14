@@ -227,46 +227,160 @@ export interface OrchestrateResponse {
   stream_id: string;
 }
 
-// ── Dashboard ─────────────────────────────────────────────────────────────────
+// ── Skills Marketplace ───────────────────────────────────────────────────────
 
-export interface DashboardKpis {
-  active_sessions: number;
-  agents_online: number;
-  agents_total: number;
-  signals_today: number;
-  tasks_completed: number;
-  tasks_pending: number;
-  tokens_used_today: number;
-  uptime_seconds: number;
-}
+export type SkillSource = "builtin" | "user" | "evolved";
+export type SkillCategory =
+  | "core"
+  | "automation"
+  | "reasoning"
+  | "workflow"
+  | "security"
+  | "agent"
+  | "utility";
 
-export interface DashboardAgent {
+export interface Skill {
+  id: string;
   name: string;
-  status: "idle" | "running" | "paused";
-  current_task?: string;
-  last_active?: string;
+  description: string;
+  category: SkillCategory;
+  source: SkillSource;
+  enabled: boolean;
+  triggers: string[];
+  path: string;
+  priority: number;
 }
 
-export interface DashboardActivity {
-  type: string;
-  message: string;
-  timestamp: string;
-  agent?: string;
-  level: "info" | "warning" | "error";
+export interface SkillDetail extends Skill {
+  instructions: string;
+  metadata: Record<string, unknown>;
 }
 
-export interface DashboardSystemHealth {
-  backend: "ok" | "degraded" | "error";
-  provider: string | null;
-  provider_status: "connected" | "disconnected";
-  memory_mb: number;
+export interface SkillCategoryCount {
+  name: string;
+  count: number;
 }
 
-export interface DashboardData {
-  kpis: DashboardKpis;
-  active_agents: DashboardAgent[];
-  recent_activity: DashboardActivity[];
-  system_health: DashboardSystemHealth;
+export interface SkillSearchResult {
+  id: string;
+  name: string;
+  description: string;
+  score: number;
+}
+
+// ── Projects ─────────────────────────────────────────────────────────────────
+
+export type ProjectStatus = "active" | "completed" | "archived";
+export type GoalStatus = "active" | "in_progress" | "completed" | "blocked";
+export type GoalPriority = "low" | "medium" | "high";
+
+export interface Project {
+  id: number;
+  name: string;
+  description: string | null;
+  goal: string | null;
+  workspace_path: string | null;
+  status: ProjectStatus;
+  slug: string;
+  metadata: Record<string, unknown>;
+  inserted_at: string;
+  updated_at: string;
+  /** Server-computed aggregates — present on list/get responses */
+  goal_count?: number;
+  task_count?: number;
+  completed_goal_count?: number;
+}
+
+export interface Goal {
+  id: number;
+  title: string;
+  description: string | null;
+  parent_id: number | null;
+  project_id: number;
+  status: GoalStatus;
+  priority: GoalPriority;
+  metadata: Record<string, unknown>;
+  inserted_at: string;
+  updated_at: string;
+}
+
+export interface GoalTreeNode extends Goal {
+  children: GoalTreeNode[];
+  task_count?: number;
+}
+
+export interface ProjectTask {
+  id: number;
+  project_id: number;
+  task_id: string;
+  goal_id: number | null;
+  goal: Goal | null;
+  inserted_at: string;
+}
+
+export interface CreateProjectPayload {
+  name: string;
+  description?: string;
+  goal?: string;
+  workspace_path?: string;
+}
+
+export interface CreateGoalPayload {
+  title: string;
+  description?: string;
+  parent_id?: number;
+  priority?: GoalPriority;
+}
+
+// ── Budget & Cost Tracking ───────────────────────────────────────────────────
+
+export interface CostEvent {
+  id: number;
+  agent_name: string;
+  session_id: string | null;
+  task_id: string | null;
+  provider: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  cost_cents: number;
+  inserted_at: string;
+}
+
+export interface AgentBudget {
+  agent_name: string;
+  budget_daily_cents: number;
+  budget_monthly_cents: number;
+  spent_daily_cents: number;
+  spent_monthly_cents: number;
+  status: "active" | "paused_budget" | "paused_manual";
+  last_reset_daily: string | null;
+  last_reset_monthly: string | null;
+}
+
+export interface CostSummary {
+  daily_spent_cents: number;
+  monthly_spent_cents: number;
+  daily_limit_cents: number;
+  monthly_limit_cents: number;
+  daily_events: number;
+  monthly_events: number;
+}
+
+export interface CostByModel {
+  model: string;
+  cost_cents: number;
+  count: number;
+  input_tokens: number;
+  output_tokens: number;
+}
+
+export interface CostByAgent {
+  agent_name: string;
+  cost_cents: number;
+  count: number;
 }
 
 // ── API Error ─────────────────────────────────────────────────────────────────
