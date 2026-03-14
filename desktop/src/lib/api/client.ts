@@ -17,6 +17,10 @@ import type {
   SendMessageResponse,
   Session,
   Settings,
+  Skill,
+  SkillCategoryCount,
+  SkillDetail,
+  SkillSearchResult,
 } from "./types";
 
 // ── Configuration ─────────────────────────────────────────────────────────────
@@ -361,6 +365,50 @@ export const settings = {
     }),
 };
 
+// ── Skills Marketplace ────────────────────────────────────────────────────────
+
+export const skills = {
+  list: async (): Promise<Skill[]> => {
+    const data = await request<{ skills: Skill[]; count: number }>(
+      "/skills/marketplace",
+    );
+    return data.skills ?? [];
+  },
+  get: (id: string) =>
+    request<SkillDetail>(`/skills/marketplace/${encodeURIComponent(id)}`),
+  toggle: (id: string) =>
+    request<{ id: string; enabled: boolean }>(
+      `/skills/marketplace/${encodeURIComponent(id)}/toggle`,
+      { method: "PUT" },
+    ),
+  search: async (query: string): Promise<SkillSearchResult[]> => {
+    const data = await request<{
+      results: SkillSearchResult[];
+      count: number;
+    }>("/skills/marketplace/search", {
+      method: "POST",
+      body: JSON.stringify({ query }),
+    });
+    return data.results ?? [];
+  },
+  categories: async (): Promise<SkillCategoryCount[]> => {
+    const data = await request<{ categories: SkillCategoryCount[] }>(
+      "/skills/marketplace/categories",
+    );
+    return data.categories ?? [];
+  },
+  bulkEnable: (ids: string[]) =>
+    request<{ enabled: string[]; count: number }>(
+      "/skills/marketplace/bulk-enable",
+      { method: "POST", body: JSON.stringify({ ids }) },
+    ),
+  bulkDisable: (ids: string[]) =>
+    request<{ disabled: string[]; count: number }>(
+      "/skills/marketplace/bulk-disable",
+      { method: "POST", body: JSON.stringify({ ids }) },
+    ),
+};
+
 // ── Scheduler ─────────────────────────────────────────────────────────────────
 
 export const scheduler = {
@@ -375,8 +423,13 @@ export const scheduler = {
     request<void>(`/scheduler/jobs/${id}`, { method: "DELETE" }),
   toggle: <T>(id: string) =>
     request<T>(`/scheduler/jobs/${id}/toggle`, { method: "POST" }),
-  runNow: (id: string) =>
-    request<void>(`/scheduler/jobs/${id}/run`, { method: "POST" }),
+  runNow: <T>(id: string) =>
+    request<T>(`/scheduler/jobs/${id}/run`, { method: "POST" }),
+  runs: <T>(id: string, page = 1, limit = 20) =>
+    request<T>(`/scheduler/jobs/${id}/runs?page=${page}&limit=${limit}`),
+  run: <T>(taskId: string, runId: string) =>
+    request<T>(`/scheduler/jobs/${taskId}/runs/${runId}`),
+  presets: <T>() => request<T>("/scheduler/presets"),
 };
 
 // ── Costs ────────────────────────────────────────────────────────────────────

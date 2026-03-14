@@ -115,6 +115,9 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
   # Agent introspection
   forward "/agent", to: API.AgentStateRoutes
 
+  # ── Skills marketplace ──────────────────────────────────────────────
+  forward "/skills/marketplace", to: API.SkillsMarketplaceRoutes
+
   # ── Tools, skills, commands ──────────────────────────────────────────
   forward "/tools", to: API.ToolRoutes
   forward "/skills", to: API.ToolRoutes
