@@ -57,6 +57,13 @@ defmodule OptimalSystemAgent.Events.Bus do
     * `:signal_sn` - signal-to-noise ratio (0.0-1.0)
   """
   def emit(event_type, payload \\ %{}, opts \\ []) when event_type in @event_types do
+    # Run entire emit body in a spawned process to never block the caller.
+    # The old goldrush + auto_classify pipeline can deadlock or timeout.
+    spawn(fn -> do_emit(event_type, payload, opts) end)
+    {:ok, nil}
+  end
+
+  defp do_emit(event_type, payload, opts) do
     source = Keyword.get(opts, :source, "bus")
     typed_event = Event.new(event_type, source, payload, opts)
 
