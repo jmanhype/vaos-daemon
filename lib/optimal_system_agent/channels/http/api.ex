@@ -120,6 +120,9 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
   forward "/skills", to: API.ToolRoutes
   forward "/commands", to: API.ToolRoutes
 
+  # ── Scheduled Tasks (heartbeat execution + cron presets) ─────────────
+  forward "/scheduled-tasks", to: API.SchedulerRoutes
+
   # ── Data ─────────────────────────────────────────────────────────────
   forward "/memory", to: API.DataRoutes
   forward "/models", to: API.DataRoutes
