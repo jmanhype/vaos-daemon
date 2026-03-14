@@ -5,25 +5,23 @@ defmodule OptimalSystemAgent.Governance.ConfigRevisions do
 
   def track_change(entity_type, entity_id, old_config, new_config, changed_by, reason \\ nil) do
     changed_fields = diff_keys(old_config || %{}, new_config)
-    revision_number = next_revision(entity_type, entity_id)
 
     %ConfigRevision{}
     |> ConfigRevision.changeset(%{
       entity_type: entity_type, entity_id: entity_id,
-      revision_number: revision_number, previous_config: old_config,
-      new_config: new_config, changed_fields: changed_fields,
-      changed_by: changed_by, change_reason: reason, metadata: %{}
+      revision_number: next_revision(entity_type, entity_id),
+      previous_config: old_config, new_config: new_config,
+      changed_fields: changed_fields, changed_by: changed_by,
+      change_reason: reason, metadata: %{}
     })
     |> Repo.insert()
   end
 
   def list_revisions(entity_type, entity_id, opts \\ []) do
-    limit = Keyword.get(opts, :limit, 50)
-
     ConfigRevision
     |> where([r], r.entity_type == ^entity_type and r.entity_id == ^entity_id)
     |> order_by([r], desc: r.revision_number)
-    |> limit(^limit)
+    |> limit(^Keyword.get(opts, :limit, 50))
     |> Repo.all()
   end
 
@@ -32,15 +30,15 @@ defmodule OptimalSystemAgent.Governance.ConfigRevisions do
            entity_type: entity_type, entity_id: entity_id,
            revision_number: revision_number) do
       nil -> {:error, :not_found}
-      revision -> {:ok, revision}
+      rev -> {:ok, rev}
     end
   end
 
-  def rollback(entity_type, entity_id, target_revision_number) do
-    with {:ok, target} <- get_revision(entity_type, entity_id, target_revision_number) do
+  def rollback(entity_type, entity_id, target_number) do
+    with {:ok, target} <- get_revision(entity_type, entity_id, target_number) do
       current = current_config(entity_type, entity_id)
-      track_change(entity_type, entity_id, current, target.new_config, "system",
-        "Rollback to revision #{target_revision_number}")
+      track_change(entity_type, entity_id, current, target.new_config,
+        "system", "Rollback to revision #{target_number}")
     end
   end
 
@@ -55,17 +53,16 @@ defmodule OptimalSystemAgent.Governance.ConfigRevisions do
   end
 
   defp next_revision(entity_type, entity_id) do
-    max = ConfigRevision
+    (ConfigRevision
     |> where([r], r.entity_type == ^entity_type and r.entity_id == ^entity_id)
     |> select([r], max(r.revision_number))
-    |> Repo.one()
-    (max || 0) + 1
+    |> Repo.one() || 0) + 1
   end
 
   defp diff_keys(old, new) do
     (Map.keys(old) ++ Map.keys(new))
     |> Enum.uniq()
-    |> Enum.filter(fn k -> Map.get(old, k) != Map.get(new, k) end)
+    |> Enum.filter(&(Map.get(old, &1) != Map.get(new, &1)))
   end
 
   defp current_config(entity_type, entity_id) do

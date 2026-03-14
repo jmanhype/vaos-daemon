@@ -797,7 +797,7 @@
           {/if}
         </section>
 
-      <!-- ── History ────────────────────────────────────────────────────────── -->
+      <!-- ── History -->
       {:else if activeTab === 'history'}
         <section class="section">
           <h2 class="section-title">Config History</h2>

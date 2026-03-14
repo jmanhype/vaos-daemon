@@ -166,6 +166,9 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
   forward "/costs", to: API.CostRoutes
   forward "/budgets", to: API.CostRoutes
 
+  # ── Config revisions
+  forward "/config", to: API.ConfigRoutes
+
   # ── Knowledge graph ──────────────────────────────────────────────────
   forward "/knowledge", to: API.KnowledgeRoutes
 
