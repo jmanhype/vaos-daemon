@@ -378,3 +378,40 @@ export const scheduler = {
   runNow: (id: string) =>
     request<void>(`/scheduler/jobs/${id}/run`, { method: "POST" }),
 };
+
+// ── Costs ────────────────────────────────────────────────────────────────────
+
+export const costs = {
+  summary: () => request<CostSummary>("/costs"),
+  byAgent: () => request<{ agents: CostByAgent[] }>("/costs/by-agent"),
+  byModel: () => request<{ models: CostByModel[] }>("/costs/by-model"),
+  events: (page = 1, perPage = 20, agentName?: string) => {
+    const params = new URLSearchParams({
+      page: String(page),
+      per_page: String(perPage),
+    });
+    if (agentName) params.set("agent_name", agentName);
+    return request<{ events: CostEvent[]; page: number; per_page: number }>(
+      `/costs/events?${params}`,
+    );
+  },
+};
+
+// ── Budgets ──────────────────────────────────────────────────────────────────
+
+export const budgets = {
+  list: () => request<{ budgets: AgentBudget[] }>("/budgets"),
+  update: (agentName: string, dailyCents: number, monthlyCents: number) =>
+    request<{ status: string }>(`/budgets/${encodeURIComponent(agentName)}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        budget_daily_cents: dailyCents,
+        budget_monthly_cents: monthlyCents,
+      }),
+    }),
+  reset: (agentName: string) =>
+    request<{ status: string }>(
+      `/budgets/${encodeURIComponent(agentName)}/reset`,
+      { method: "POST" },
+    ),
+};
