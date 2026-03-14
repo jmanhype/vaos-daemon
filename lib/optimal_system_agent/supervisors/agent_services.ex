@@ -38,7 +38,8 @@ defmodule OptimalSystemAgent.Supervisors.AgentServices do
       OptimalSystemAgent.Agent.Compactor,
       OptimalSystemAgent.Agent.Cortex,
       OptimalSystemAgent.Agent.ProactiveMode,
-      OptimalSystemAgent.Webhooks.Dispatcher
+      OptimalSystemAgent.Webhooks.Dispatcher,
+      OptimalSystemAgent.Signal.Persistence
     ]
 
     Supervisor.init(children, strategy: :one_for_one)

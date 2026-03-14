@@ -139,8 +139,15 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
   # ── Workspace introspection ───────────────────────────────────────────
   forward "/workspace", to: API.WorkspaceRoutes
 
+  # ── Costs & Budgets ─────────────────────────────────────────────────
+  forward "/costs", to: API.CostRoutes
+  forward "/budgets", to: API.CostRoutes
+
   # ── Knowledge graph ──────────────────────────────────────────────────
   forward "/knowledge", to: API.KnowledgeRoutes
+
+  # ── Signals ──────────────────────────────────────────────────────────
+  forward "/signals", to: API.SignalRoutes
 
   # ── Platform (multi-tenant auth + CRUD) ─────────────────────────────
   forward "/platform/auth", to: API.PlatformAuthRoutes
