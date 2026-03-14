@@ -183,9 +183,7 @@ defmodule OptimalSystemAgent.Providers.Ollama do
     # Ollama Cloud (HTTPS) — Req/Finch pool gets stuck after boot failures.
     # Use raw :httpc for cloud URLs to bypass pool issues entirely.
     if String.starts_with?(url, "https://") do
-      Logger.info("[Ollama] Cloud URL detected — using :httpc fallback")
-      :inets.start()
-      :ssl.start()
+      Logger.info("[Ollama] Cloud URL detected — using curl fallback")
       model = Keyword.get(opts, :model) || Application.get_env(:optimal_system_agent, :ollama_model, default_model())
       body = Jason.encode!(%{
         model: model,
@@ -194,21 +192,27 @@ defmodule OptimalSystemAgent.Providers.Ollama do
         options: %{temperature: Keyword.get(opts, :temperature, 0.7)}
       })
       api_key = Application.get_env(:optimal_system_agent, :ollama_api_key, "")
-      headers = [
-        {~c"content-type", ~c"application/json"},
-        {~c"authorization", String.to_charlist("Bearer #{api_key}")}
-      ]
-      case :httpc.request(:post, {String.to_charlist("#{url}/api/chat"), headers, ~c"application/json", String.to_charlist(body)}, [timeout: 120_000, connect_timeout: 10_000], []) do
-        {:ok, {{_, 200, _}, _, resp_body}} ->
-          resp = Jason.decode!(List.to_string(resp_body))
-          content = get_in(resp, ["message", "content"]) || ""
-          if content != "", do: callback.({:text_delta, content})
-          callback.({:done, %{content: content, tool_calls: []}})
-          :ok
-        {:ok, {{_, status, _}, _, resp_body}} ->
-          {:error, "Ollama Cloud returned #{status}: #{List.to_string(resp_body)}"}
-        {:error, reason} ->
-          {:error, "Ollama Cloud request failed: #{inspect(reason)}"}
+      {output, exit_code} = System.cmd("curl", [
+        "-s", "--max-time", "120",
+        "-H", "Content-Type: application/json",
+        "-H", "Authorization: Bearer #{api_key}",
+        "-d", body,
+        "#{url}/api/chat"
+      ], stderr_to_stdout: true)
+      case exit_code do
+        0 ->
+          case Jason.decode(output) do
+            {:ok, resp} ->
+              content = get_in(resp, ["message", "content"]) || ""
+              Logger.info("[Ollama] Cloud response: #{byte_size(content)} bytes")
+              if content != "", do: callback.({:text_delta, content})
+              callback.({:done, %{content: content, tool_calls: []}})
+              :ok
+            {:error, _} ->
+              {:error, "Ollama Cloud returned non-JSON: #{String.slice(output, 0, 200)}"}
+          end
+        _ ->
+          {:error, "Ollama Cloud curl failed (exit #{exit_code}): #{String.slice(output, 0, 200)}"}
       end
     else
       chat_stream_impl(messages, callback, opts, url)
