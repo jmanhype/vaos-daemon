@@ -33,7 +33,6 @@
   }
 
   function runDotColor(status: ScheduledRunStatus): string {
-<<<<<<< HEAD
     switch (status) {
       case 'succeeded': return 'var(--accent-success)';
       case 'failed':    return 'var(--accent-error)';
@@ -199,7 +198,6 @@
       <span class="stask-meta-label">Runs</span>
       <span class="stask-meta-value stask-meta-value--mono">{task.failure_count > 0 ? `${task.failure_count} fail` : '—'}</span>
     </div>
-=======
     switch (status) { case 'succeeded': return 'var(--accent-success)'; case 'failed': return 'var(--accent-error)'; case 'running': return 'var(--accent-warning)'; default: return 'rgba(255,255,255,0.2)'; }
   }
 
@@ -239,12 +237,10 @@
     <div class="sc-meta-item"><span class="sc-meta-lbl">Last run</span><span class="sc-meta-val">{formatRelative(task.last_run)}</span></div>
     <div class="sc-meta-item"><span class="sc-meta-lbl">Next run</span><span class="sc-meta-val">{formatRelative(task.next_run)}</span></div>
     <div class="sc-meta-item"><span class="sc-meta-lbl">Runs</span><span class="sc-meta-val sc-meta-val--mono">{task.failure_count > 0 ? `${task.failure_count} fail` : '—'}</span></div>
->>>>>>> ws11/projects-goals
   </div>
 </article>
 
 <style>
-<<<<<<< HEAD
   .stask-card {
     background: var(--bg-surface);
     border: 1px solid var(--border-default);
@@ -522,7 +518,6 @@
     color: var(--text-secondary);
     font-weight: 500;
   }
-=======
   .sc { background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; transition: border-color 0.2s, box-shadow 0.2s; }
   .sc--active { border-color: rgba(34,197,94,0.18); box-shadow: 0 0 0 1px rgba(34,197,94,0.05); }
   .sc--failed { border-color: rgba(239,68,68,0.2); box-shadow: 0 0 0 1px rgba(239,68,68,0.05); }
@@ -561,5 +556,4 @@
   .sc-meta-val { font-size: 0.75rem; font-weight: 500; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
   .sc-meta-val--mono { font-family: var(--font-mono); font-size: 0.6875rem; }
   .sc-sched { font-family: var(--font-mono); font-size: 0.6875rem; color: var(--text-secondary); font-weight: 500; }
->>>>>>> ws11/projects-goals
 </style>

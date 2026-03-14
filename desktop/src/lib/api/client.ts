@@ -33,16 +33,13 @@ import type {
   SendMessageResponse,
   Session,
   Settings,
-<<<<<<< HEAD
   Skill,
   SkillCategoryCount,
   SkillDetail,
   SkillSearchResult,
-=======
   ConfigDiff,
   ConfigRevision,
   QueuedRequest,
->>>>>>> ws7-8/config-resilience
 } from "./types";
 
 // ── Configuration ─────────────────────────────────────────────────────────────
@@ -152,7 +149,6 @@ export class ApiError extends Error {
   }
 }
 
-<<<<<<< HEAD
 
 // ── Retry with Backoff ──────────────────────────────────────────────────────
 
@@ -162,17 +158,14 @@ interface RetryConfig {
   maxBackoff: number;
 }
 
-=======
 // ── Retry with Backoff ──────────────────────────────────────────────────────
 
 interface RetryConfig { maxRetries: number; backoffMs: number; maxBackoff: number; }
->>>>>>> ws7-8/config-resilience
 const DEFAULT_RETRY: RetryConfig = { maxRetries: 3, backoffMs: 1000, maxBackoff: 30000 };
 
 async function withRetry<T>(fn: () => Promise<T>, config = DEFAULT_RETRY): Promise<T> {
   let lastError: Error = new Error("No attempts made");
   for (let attempt = 0; attempt < config.maxRetries; attempt++) {
-<<<<<<< HEAD
     try {
       return await fn();
     } catch (error) {
@@ -180,18 +173,15 @@ async function withRetry<T>(fn: () => Promise<T>, config = DEFAULT_RETRY): Promi
       if (error instanceof ApiError && error.status < 500) throw error;
       const delay = Math.min(config.backoffMs * 2 ** attempt, config.maxBackoff);
       await new Promise((r) => setTimeout(r, delay));
-=======
     try { return await fn(); } catch (error) {
       lastError = error as Error;
       if (error instanceof ApiError && error.status < 500) throw error;
       await new Promise((r) => setTimeout(r, Math.min(config.backoffMs * 2 ** attempt, config.maxBackoff)));
->>>>>>> ws7-8/config-resilience
     }
   }
   throw lastError;
 }
 
-<<<<<<< HEAD
 // ── Response Cache ──────────────────────────────────────────────────────────
 
 const responseCache = new Map<string, { data: unknown; timestamp: number }>();
@@ -272,7 +262,6 @@ function queueForOffline(method: string, path: string, body?: unknown): void {
     timestamp: Date.now(),
   });
 }
-=======
 const responseCache = new Map<string, { data: unknown; timestamp: number }>();
 const CACHE_TTL: Record<string, number> = { "/settings": 60000, "/agents": 30000, "/models": 60000, "/providers": 60000, "/sessions": 15000 };
 function getCacheTTL(path: string): number { for (const [p, t] of Object.entries(CACHE_TTL)) { if (path.startsWith(p)) return t; } return 0; }
@@ -289,7 +278,6 @@ export async function flushOfflineQueue(): Promise<{ succeeded: number; failed: 
   return { succeeded, failed };
 }
 function queueForOffline(method: string, path: string, body?: unknown): void { offlineQueue.push({ id: crypto.randomUUID(), method, path, body, timestamp: Date.now() }); }
->>>>>>> ws7-8/config-resilience
 
 // ── Token Refresh ─────────────────────────────────────────────────────────────
 
@@ -325,7 +313,6 @@ async function refreshToken(): Promise<string | null> {
 
 // ── Core Request ──────────────────────────────────────────────────────────────
 
-<<<<<<< HEAD
 async function doFetch<T>(
   path: string,
   options: RequestInit,
@@ -366,7 +353,6 @@ async function doFetch<T>(
     throw new ApiError(response.status, message, body);
   }
 
-=======
 async function doFetch<T>(path: string, options: RequestInit, retried = false): Promise<T> {
   const url = `${BASE_URL}${API_PREFIX}${path}`;
   const headers: Record<string, string> = { "Content-Type": "application/json", Accept: "application/json", ...(options.headers as Record<string, string> | undefined) };
@@ -374,12 +360,10 @@ async function doFetch<T>(path: string, options: RequestInit, retried = false): 
   const response = await fetch(url, { ...options, headers });
   if (response.status === 401 && !retried) { const t = await refreshToken(); if (t) return doFetch<T>(path, options, true); }
   if (!response.ok) { let body: unknown; try { body = await response.json(); } catch { body = await response.text(); } const m = typeof body === "object" && body !== null && "error" in body ? String((body as Record<string, unknown>).error) : `HTTP ${response.status}: ${path}`; throw new ApiError(response.status, m, body); }
->>>>>>> ws7-8/config-resilience
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
 
-<<<<<<< HEAD
 async function request<T>(
   path: string,
   options: RequestInit = {},
@@ -410,12 +394,10 @@ async function request<T>(
     }
     throw error;
   }
-=======
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const method = (options.method ?? "GET").toUpperCase();
   if (method === "GET") { const cached = getCached<T>(path); if (cached !== null) return cached; try { const data = await withRetry(() => doFetch<T>(path, options)); setCache(path, data); return data; } catch (error) { const stale = getCached<T>(path); if (stale !== null) return stale; throw error; } }
   try { return await withRetry(() => doFetch<T>(path, options)); } catch (error) { if (!(error instanceof ApiError)) queueForOffline(method, path); throw error; }
->>>>>>> ws7-8/config-resilience
 }
 
 // ── Health ────────────────────────────────────────────────────────────────────

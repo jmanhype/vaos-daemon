@@ -246,8 +246,6 @@ export interface OrchestrateResponse {
   stream_id: string;
 }
 
-<<<<<<< HEAD
-<<<<<<< HEAD
 // ── Scheduled Runs ───────────────────────────────────────────────────────
 
 export type ScheduledRunStatus =
@@ -342,10 +340,6 @@ export interface SignalPatterns {
   escalation_count: number;
 }
 
-=======
->>>>>>> ws11/projects-goals
-=======
->>>>>>> ws7-8/config-resilience
 // ── Skills Marketplace ───────────────────────────────────────────────────────
 
 export type SkillSource = "builtin" | "user" | "evolved";
@@ -387,8 +381,6 @@ export interface SkillSearchResult {
   score: number;
 }
 
-<<<<<<< HEAD
-<<<<<<< HEAD
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 
 export interface DashboardKpis {
@@ -432,9 +424,6 @@ export interface DashboardData {
 }
 
 // ── Budget & Cost Tracking ────────────────────────────────────────────────────
-=======
-=======
->>>>>>> ws7-8/config-resilience
 // ── Projects ─────────────────────────────────────────────────────────────────
 
 export type ProjectStatus = "active" | "completed" | "archived";
@@ -500,10 +489,6 @@ export interface CreateGoalPayload {
 }
 
 // ── Budget & Cost Tracking ───────────────────────────────────────────────────
-<<<<<<< HEAD
->>>>>>> ws11/projects-goals
-=======
->>>>>>> ws7-8/config-resilience
 
 export interface CostEvent {
   id: number;
@@ -553,12 +538,9 @@ export interface CostByAgent {
   cost_cents: number;
   count: number;
 }
-<<<<<<< HEAD
-<<<<<<< HEAD
 // ── Scheduled Runs ──────────────────────────────────────────────────────
 
 export type ScheduledRunStatus = "pending" | "running" | "succeeded" | "failed" | "timed_out" | "cancelled";
-=======
 
 // ── Scheduled Runs ───────────────────────────────────────────────────────────
 
@@ -570,7 +552,6 @@ export type ScheduledRunStatus =
   | "timed_out"
   | "cancelled";
 
->>>>>>> ws7-8/config-resilience
 export type RunTriggerType = "schedule" | "manual" | "event" | "assignment";
 
 export interface ScheduledRun {
@@ -587,9 +568,7 @@ export interface ScheduledRun {
   error_message?: string;
 }
 
-<<<<<<< HEAD
 export interface CronPreset { id: string; cron: string; label: string; }
-=======
 
 // ── Config Revisions ────────────────────────────────────────────────────────
 
@@ -620,14 +599,11 @@ export interface QueuedRequest {
   body?: unknown;
   timestamp: number;
 }
->>>>>>> ws11/projects-goals
-=======
 export interface CronPreset {
   id: string;
   cron: string;
   label: string;
 }
->>>>>>> ws7-8/config-resilience
 
 // ── API Error ─────────────────────────────────────────────────────────────────
 
@@ -637,22 +613,16 @@ export interface ApiErrorBody {
   details?: unknown;
 }
 
-<<<<<<< HEAD
 // ── Config Revisions ────────────────────────────────────────────────────────
-=======
 // ── Config Revisions ──────────────────────────────────────────────────────────
->>>>>>> ws7-8/config-resilience
 
 export interface ConfigRevision {
   id: number;
   entity_type: string;
   entity_id: string;
   revision_number: number;
-<<<<<<< HEAD
   previous_config: Record<string, unknown> | null;
-=======
   previous_config: Record<string, unknown>;
->>>>>>> ws7-8/config-resilience
   new_config: Record<string, unknown>;
   changed_fields: string[];
   changed_by: string;
@@ -662,19 +632,16 @@ export interface ConfigRevision {
 }
 
 export interface ConfigDiff {
-<<<<<<< HEAD
   [field: string]: { from: unknown; to: unknown };
 }
 
 // ── Resilience ──────────────────────────────────────────────────────────────
-=======
   added: Record<string, unknown>;
   removed: Record<string, unknown>;
   changed: Record<string, { from: unknown; to: unknown }>;
 }
 
 // ── Offline Queue ─────────────────────────────────────────────────────────────
->>>>>>> ws7-8/config-resilience
 
 export interface QueuedRequest {
   id: string;
@@ -683,7 +650,6 @@ export interface QueuedRequest {
   body?: unknown;
   timestamp: number;
 }
-<<<<<<< HEAD
 
 // ── Projects ─────────────────────────────────────────────────────────────────
 
@@ -782,5 +748,3 @@ export interface Approval {
   inserted_at: string;
   updated_at: string;
 }
-=======
->>>>>>> ws7-8/config-resilience
