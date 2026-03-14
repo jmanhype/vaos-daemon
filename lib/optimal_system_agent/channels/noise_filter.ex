@@ -9,18 +9,18 @@ defmodule OptimalSystemAgent.Channels.NoiseFilter do
   ## Tier 2 — Signal weight check
   If a signal weight is provided (0.0–1.0), the weight is compared against configurable
   thresholds (defaults shown):
-    - 0.00–0.15 → definitely noise (single chars, pure emoji) — filter with ack
-    - 0.15–0.35 → likely noise (confirmations, filler) — filter with ack
-    - 0.35–0.65 → uncertain — ask for clarification (Tier 2 LLM classification)
-    - 0.65–1.00 → signal — process normally
+    - 0.00–0.10 → definitely noise (single chars, pure emoji) — filter with ack
+    - 0.10–0.20 → likely noise (confirmations, filler) — filter with ack
+    - 0.20–0.60 → uncertain — ask for clarification (Tier 2 LLM classification)
+    - 0.60–1.00 → signal — process normally
 
   Thresholds are configurable via application environment:
 
       config :optimal_system_agent,
         noise_filter_thresholds: %{
-          definitely_noise: 0.15,
-          likely_noise: 0.35,
-          uncertain: 0.65
+          definitely_noise: 0.10,
+          likely_noise: 0.20,
+          uncertain: 0.60
         }
 
   Filters an estimated 40–60% of low-value messages that would otherwise
@@ -95,7 +95,7 @@ defmodule OptimalSystemAgent.Channels.NoiseFilter do
   """
   @spec weight_thresholds() :: %{definitely_noise: float(), likely_noise: float(), uncertain: float()}
   def weight_thresholds do
-    defaults = %{definitely_noise: 0.15, likely_noise: 0.35, uncertain: 0.65}
+    defaults = %{definitely_noise: 0.10, likely_noise: 0.20, uncertain: 0.60}
 
     Application.get_env(:optimal_system_agent, :noise_filter_thresholds, defaults)
     |> then(fn cfg ->

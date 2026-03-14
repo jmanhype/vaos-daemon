@@ -662,14 +662,14 @@ defmodule OptimalSystemAgent.Agent.Loop do
             # Strategy says we're done — but we still let the LLM produce a final
             # response by adding a summarization hint rather than short-circuiting.
             hint = Map.get(info, :summary, "Summarize your findings and respond.")
-            guidance = %{role: "system", content: "[Strategy/#{state.strategy.name()}] #{hint}"}
+            guidance = %{role: "system", content: hint}
             {%{context | messages: context.messages ++ [guidance]},
              %{state | strategy_state: new_ss}}
 
           {{:think, thought}, new_ss} ->
             guidance = %{
               role: "system",
-              content: "[Strategy/#{state.strategy.name()}] #{thought}"
+              content: thought
             }
             {%{context | messages: context.messages ++ [guidance]},
              %{state | strategy_state: new_ss}}
@@ -681,7 +681,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
           {{:observe, observation}, new_ss} ->
             guidance = %{
               role: "system",
-              content: "[Strategy/#{state.strategy.name()}] #{observation}"
+              content: observation
             }
             {%{context | messages: context.messages ++ [guidance]},
              %{state | strategy_state: new_ss}}
@@ -689,7 +689,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
           {{:respond, text}, new_ss} ->
             guidance = %{
               role: "system",
-              content: "[Strategy/#{state.strategy.name()}] #{text}"
+              content: text
             }
             {%{context | messages: context.messages ++ [guidance]},
              %{state | strategy_state: new_ss}}
