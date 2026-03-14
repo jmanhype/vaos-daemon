@@ -34,10 +34,8 @@ defmodule OptimalSystemAgent.Channels.NoiseFilter do
     ~r/^[kynKYN]$/,
     # Confirmations (case-insensitive, whole string)
     ~r/^(ok|okay|sure|yep|yeah|nope|got it|gotcha|alright|roger|copy that|ten four|affirmative|yes|no|nah|yup|aye|noted|i see|i know|understood)$/i,
-    # Greetings that carry no task content
-    ~r/^(hi|hey|hello|sup|yo|hiya|howdy|heya|hey there|hi there)$/i,
-    # Thank-yous and reactions
-    ~r/^(thanks|thank you|thx|ty|cheers|np|no problem|no worries|cool|awesome|nice|great|perfect|sounds good|makes sense|got it)$/i,
+    # Thank-yous and reactions (greetings removed — users expect a chat response)
+    ~r/^(np|no problem|no worries|sounds good|makes sense|got it)$/i,
     # Filler / reaction words
     ~r/^(lol|lmao|lmfao|haha|hehe|heh|hmm|meh|wow|omg|wtf|smh|rofl|brb|afk|gg|irl|imo|imho|fwiw|tl;?dr)$/i,
     # Short words with trailing punctuation (ok!, yep., k!, etc.)
