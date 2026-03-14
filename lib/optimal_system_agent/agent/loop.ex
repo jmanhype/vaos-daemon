@@ -725,51 +725,9 @@ defmodule OptimalSystemAgent.Agent.Loop do
     llm_opts = [tools: tools_for_call, temperature: LLMClient.temperature(), max_tokens: max_response_tokens()]
     llm_opts = if thinking_opts, do: Keyword.put(llm_opts, :thinking, thinking_opts), else: llm_opts
 
-    # LLM call — use curl directly for Ollama Cloud, LLMClient for local
-    ollama_url = Application.get_env(:optimal_system_agent, :ollama_url, "http://localhost:11434")
-    result = if String.starts_with?(ollama_url, "https://") do
-      Logger.info("[loop] Direct curl call to Ollama Cloud")
-      model = Application.get_env(:optimal_system_agent, :ollama_model, "nemotron-3-super:cloud")
-      api_key = Application.get_env(:optimal_system_agent, :ollama_api_key, "")
-      body = Jason.encode!(%{
-        model: model,
-        messages: Enum.map(context.messages, fn m -> %{role: m.role || m[:role], content: m.content || m[:content]} end),
-        stream: false,
-        options: %{temperature: Keyword.get(llm_opts, :temperature, 0.7)}
-      })
-      {output, exit_code} = System.cmd("curl", [
-        "-s", "--max-time", "120",
-        "-H", "Content-Type: application/json",
-        "-H", "Authorization: Bearer #{api_key}",
-        "-d", body,
-        "#{ollama_url}/api/chat"
-      ], stderr_to_stdout: true)
-      if exit_code == 0 do
-        case Jason.decode(output) do
-          {:ok, resp} ->
-            content = get_in(resp, ["message", "content"]) || ""
-            Logger.info("[loop] Ollama Cloud response: #{byte_size(content)} bytes")
-            # Publish directly to PubSub so SSE clients get the response immediately
-            Phoenix.PubSub.broadcast(
-              OptimalSystemAgent.PubSub,
-              "osa:session:#{state.session_id}",
-              {:osa_event, %{type: :streaming_token, delta: content, session_id: state.session_id}}
-            )
-            Phoenix.PubSub.broadcast(
-              OptimalSystemAgent.PubSub,
-              "osa:session:#{state.session_id}",
-              {:osa_event, %{type: :done, session_id: state.session_id}}
-            )
-            {:ok, %{content: content, tool_calls: []}}
-          _ ->
-            {:error, "Non-JSON response from Ollama Cloud"}
-        end
-      else
-        {:error, "curl failed (#{exit_code}): #{String.slice(output, 0, 200)}"}
-      end
-    else
-      LLMClient.llm_chat_stream(state, context.messages, llm_opts)
-    end
+    # LLM call — always go through LLMClient which handles all providers
+    # (including Ollama Cloud curl fallback with proper tool support)
+    result = LLMClient.llm_chat_stream(state, context.messages, llm_opts)
 
     # Emit timing + usage event after LLM call
     duration_ms = System.monotonic_time(:millisecond) - start_time
