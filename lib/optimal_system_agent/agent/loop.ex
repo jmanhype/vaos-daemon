@@ -747,7 +747,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
             Phoenix.PubSub.broadcast(
               OptimalSystemAgent.PubSub,
               "osa:session:#{state.session_id}",
-              {:osa_event, %{type: :system_event, event: :streaming_token, session_id: state.session_id, text: content}}
+              {:osa_event, %{type: :streaming_token, delta: content, session_id: state.session_id}}
             )
             Phoenix.PubSub.broadcast(
               OptimalSystemAgent.PubSub,
