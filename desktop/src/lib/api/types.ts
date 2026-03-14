@@ -390,3 +390,35 @@ export interface ApiErrorBody {
   code?: string;
   details?: unknown;
 }
+
+// ── Config Revisions ──────────────────────────────────────────────────────────
+
+export interface ConfigRevision {
+  id: number;
+  entity_type: string;
+  entity_id: string;
+  revision_number: number;
+  previous_config: Record<string, unknown>;
+  new_config: Record<string, unknown>;
+  changed_fields: string[];
+  changed_by: string;
+  change_reason: string | null;
+  metadata: Record<string, unknown>;
+  inserted_at: string;
+}
+
+export interface ConfigDiff {
+  added: Record<string, unknown>;
+  removed: Record<string, unknown>;
+  changed: Record<string, { from: unknown; to: unknown }>;
+}
+
+// ── Offline Queue ─────────────────────────────────────────────────────────────
+
+export interface QueuedRequest {
+  id: string;
+  method: string;
+  path: string;
+  body?: unknown;
+  timestamp: number;
+}
