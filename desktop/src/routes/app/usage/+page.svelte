@@ -39,14 +39,6 @@
   let budgetLoading = $derived(usageStore.budgetLoading);
   let pausedAgents = $derived(usageStore.pausedAgents());
 
-  // Budget derived
-  let summary = $derived(usageStore.summary);
-  let agentBudgets = $derived(usageStore.agentBudgets);
-  let costByModel = $derived(usageStore.costByModel);
-  let costByAgent = $derived(usageStore.costByAgent);
-  let budgetLoading = $derived(usageStore.budgetLoading);
-  let pausedAgents = $derived(usageStore.pausedAgents());
-
   // ── Helpers ────────────────────────────────────────────────────────────────
 
   function formatResponseTime(ms: number): string {
