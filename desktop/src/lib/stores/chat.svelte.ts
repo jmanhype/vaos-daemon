@@ -154,7 +154,7 @@ class ChatStore {
 
   // ── Message Operations ──────────────────────────────────────────────────────
 
-  async sendMessage(content: string, model?: string): Promise<void> {
+  async sendMessage(content: string, _model?: string): Promise<void> {
     if (this.isStreaming) return;
     if (!content.trim()) return;
 
@@ -163,85 +163,58 @@ class ChatStore {
     // Ensure we have an active session
     let sessionId = this.currentSession?.id;
     if (!sessionId) {
-      const session = await this.createSession(undefined, model);
+      const session = await this.createSession();
       this.currentSession = session;
       sessionId = session.id;
     }
 
-    // Optimistic user message — displayed immediately
-    const optimisticId = `optimistic-${Date.now()}`;
+    // Show user message immediately
     this.pendingUserMessage = {
-      id: optimisticId,
+      id: `msg-${Date.now()}`,
       role: "user",
       content,
       timestamp: new Date().toISOString(),
     };
 
-    // Reset streaming state
-    this.streaming = { textBuffer: "", thinkingBuffer: "", toolCalls: [] };
     this.isStreaming = true;
 
     try {
-      // Open the SSE stream (which POSTs the message and streams the response)
-      // Note: we do NOT call messagesApi.send() separately — the stream endpoint
-      // handles both receiving the message and streaming the response.
-      this.#streamController = streamMessage({
-        sessionId,
-        content,
-        model,
-        onEvent: (event: StreamEvent) => this.#handleStreamEvent(event),
-        onConnect: () => {
-          this.error = null;
-        },
-        onDisconnect: () => {
-          // Stream closed; isStreaming is set to false in onDone / onError
-        },
-        onError: (err: Error) => {
-          this.error = err.message;
-          this.isStreaming = false;
-          this.#streamController = null;
-        },
-        onDone: () => {
-          this.#finalizeStream();
-        },
+      // POST the message to the session
+      const BASE = "http://127.0.0.1:9089/api/v1";
+      await fetch(`${BASE}/sessions/${sessionId}/message`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: content }),
       });
 
-      // Polling fallback: if SSE doesn't deliver the response within 8s,
-      // poll the messages API to get the response directly.
-      // This handles cases where SSE streaming fails silently.
-      setTimeout(async () => {
-        if (this.isStreaming && this.streaming.textBuffer.length === 0 && sessionId) {
-          console.log("[chat] SSE timeout — polling for response");
-          try {
-            const msgs = await messagesApi.list(sessionId);
-            const assistantMsg = msgs.filter(m => m.role === "assistant").pop();
-            if (assistantMsg) {
-              this.streaming.textBuffer = assistantMsg.content;
-              this.#finalizeStream();
-            }
-          } catch {
-            // Poll failed — will retry
+      // Poll for the assistant response (simple, reliable, no SSE)
+      const maxPolls = 30; // 30 x 2s = 60s max wait
+      for (let i = 0; i < maxPolls; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const BASE = "http://127.0.0.1:9089/api/v1";
+        const res = await fetch(`${BASE}/sessions/${sessionId}/messages`);
+        const data = await res.json();
+        const msgs = data.messages || [];
+        const lastMsg = msgs[msgs.length - 1];
+        if (lastMsg && lastMsg.role === "assistant") {
+          // Got the response — finalize
+          if (this.pendingUserMessage) {
+            this.messages = [...this.messages, this.pendingUserMessage];
+            this.pendingUserMessage = null;
           }
-
-          // Retry once more after another 8s
-          setTimeout(async () => {
-            if (this.isStreaming && this.streaming.textBuffer.length === 0 && sessionId) {
-              console.log("[chat] SSE timeout — second poll");
-              try {
-                const msgs = await messagesApi.list(sessionId);
-                const assistantMsg = msgs.filter(m => m.role === "assistant").pop();
-                if (assistantMsg) {
-                  this.streaming.textBuffer = assistantMsg.content;
-                  this.#finalizeStream();
-                }
-              } catch {
-                this.isStreaming = false;
-                this.error = "No response received";
-              }
-            }
-          }, 8000);
+          this.messages = [...this.messages, lastMsg];
+          this.isStreaming = false;
+          return;
         }
-      }, 8000);
+      }
+
+      // Timeout
+      if (this.pendingUserMessage) {
+        this.messages = [...this.messages, this.pendingUserMessage];
+        this.pendingUserMessage = null;
+      }
+      this.isStreaming = false;
+      this.error = "Response timed out";
     } catch (e) {
       this.error = (e as Error).message;
       this.isStreaming = false;
