@@ -227,6 +227,47 @@ export interface OrchestrateResponse {
   stream_id: string;
 }
 
+// ── Skills Marketplace ───────────────────────────────────────────────────────
+
+export type SkillSource = "builtin" | "user" | "evolved";
+export type SkillCategory =
+  | "core"
+  | "automation"
+  | "reasoning"
+  | "workflow"
+  | "security"
+  | "agent"
+  | "utility";
+
+export interface Skill {
+  id: string;
+  name: string;
+  description: string;
+  category: SkillCategory;
+  source: SkillSource;
+  enabled: boolean;
+  triggers: string[];
+  path: string;
+  priority: number;
+}
+
+export interface SkillDetail extends Skill {
+  instructions: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface SkillCategoryCount {
+  name: string;
+  count: number;
+}
+
+export interface SkillSearchResult {
+  id: string;
+  name: string;
+  description: string;
+  score: number;
+}
+
 // ── API Error ─────────────────────────────────────────────────────────────────
 
 export interface ApiErrorBody {

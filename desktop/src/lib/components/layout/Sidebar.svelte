@@ -61,6 +61,13 @@
       icon: 'M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m9.86-2.556a4.5 4.5 0 00-6.364-6.364L4.5 8.25l4.5 4.5 4.19-4.062z',
     },
     {
+      id: 'skills',
+      label: 'Skills',
+      href: '/app/skills',
+      shortcut: '',
+      icon: 'M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z',
+    },
+    {
       id: 'settings',
       label: 'Settings',
       href: '/app/settings',
