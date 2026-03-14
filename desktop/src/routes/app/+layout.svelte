@@ -4,6 +4,7 @@
   import { onMount } from 'svelte';
   import { fade } from 'svelte/transition';
   import Sidebar from '$lib/components/layout/Sidebar.svelte';
+  import ConnectionStatusBar from '$lib/components/layout/ConnectionStatusBar.svelte';
   // TitleBar removed — using native decorations
   import PermissionOverlay from '$lib/components/permissions/PermissionOverlay.svelte';
   import SurveyDialog from '$lib/components/survey/SurveyDialog.svelte';
@@ -261,6 +262,8 @@
         <TaskCard tasks={taskStore.tasks} onAsk={handleTaskAsk} />
       </div>
     {/if}
+
+    <ConnectionStatusBar />
   </main>
 </div>
 
