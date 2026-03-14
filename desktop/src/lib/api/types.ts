@@ -168,6 +168,25 @@ export interface Agent {
   error?: string;
 }
 
+// ── Agent Hierarchy ──────────────────────────────────────────────────────────
+
+export type OrgRole = "ceo" | "director" | "lead" | "engineer" | "specialist";
+
+export interface HierarchyNode {
+  agent_name: string;
+  reports_to: string | null;
+  org_role: OrgRole;
+  title: string | null;
+  org_order: number;
+  children: HierarchyNode[];
+}
+
+export interface HierarchyUpdateRequest {
+  reports_to?: string | null;
+  org_role?: OrgRole;
+  title?: string | null;
+}
+
 // ── Models ────────────────────────────────────────────────────────────────────
 
 export type ModelProvider =
@@ -227,10 +246,328 @@ export interface OrchestrateResponse {
   stream_id: string;
 }
 
+// ── Scheduled Runs ───────────────────────────────────────────────────────
+
+export type ScheduledRunStatus =
+  | "pending"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "timed_out"
+  | "cancelled";
+
+export type RunTriggerType = "schedule" | "manual" | "event" | "assignment";
+
+export interface ScheduledRun {
+  id: string;
+  scheduled_task_id: string;
+  agent_name: string;
+  status: ScheduledRunStatus;
+  trigger_type: RunTriggerType;
+  started_at: string;
+  completed_at?: string;
+  duration_ms?: number;
+  stdout?: string;
+  token_usage?: { input: number; output: number; cost_cents: number };
+  error_message?: string;
+}
+
+export interface CronPreset {
+  id: string;
+  cron: string;
+  label: string;
+}
+
+// ── Signals ──────────────────────────────────────────────────────────────────
+
+export type SignalMode =
+  | "BUILD"
+  | "EXECUTE"
+  | "ANALYZE"
+  | "MAINTAIN"
+  | "ASSIST";
+export type SignalGenre = "DIRECT" | "INFORM" | "COMMIT" | "DECIDE" | "EXPRESS";
+export type SignalType =
+  | "question"
+  | "request"
+  | "issue"
+  | "scheduling"
+  | "summary"
+  | "report"
+  | "general";
+export type SignalFormat = "command" | "message" | "notification" | "document";
+export type SignalTier = "haiku" | "sonnet" | "opus";
+
+export interface Signal {
+  id: string;
+  session_id: string;
+  channel: string;
+  mode: SignalMode;
+  genre: SignalGenre;
+  type: SignalType;
+  format: SignalFormat;
+  weight: number;
+  tier: SignalTier;
+  input_preview: string;
+  agent_name: string;
+  confidence: "low" | "high";
+  metadata: Record<string, unknown>;
+  inserted_at: string;
+}
+
+export interface SignalStats {
+  by_mode: Record<string, number>;
+  by_channel: Record<string, number>;
+  by_type: Record<string, number>;
+  weight_distribution: { haiku: number; sonnet: number; opus: number };
+  total: number;
+  avg_weight: number;
+}
+
+export interface SignalFilters {
+  mode?: string;
+  type?: string;
+  channel?: string;
+  weight_min?: number;
+  weight_max?: number;
+}
+
+export interface SignalPatterns {
+  peak_hours: number[];
+  avg_weight: number;
+  top_agents: { name: string; count: number }[];
+  daily_counts: { date: string; count: number }[];
+  escalation_count: number;
+}
+
+// ── Skills Marketplace ───────────────────────────────────────────────────────
+
+export type SkillSource = "builtin" | "user" | "evolved";
+export type SkillCategory =
+  | "core"
+  | "automation"
+  | "reasoning"
+  | "workflow"
+  | "security"
+  | "agent"
+  | "utility";
+
+export interface Skill {
+  id: string;
+  name: string;
+  description: string;
+  category: SkillCategory;
+  source: SkillSource;
+  enabled: boolean;
+  triggers: string[];
+  path: string;
+  priority: number;
+}
+
+export interface SkillDetail extends Skill {
+  instructions: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface SkillCategoryCount {
+  name: string;
+  count: number;
+}
+
+export interface SkillSearchResult {
+  id: string;
+  name: string;
+  description: string;
+  score: number;
+}
+
+// ── Dashboard ─────────────────────────────────────────────────────────────────
+
+export interface DashboardKpis {
+  active_sessions: number;
+  agents_online: number;
+  agents_total: number;
+  signals_today: number;
+  tasks_completed: number;
+  tasks_pending: number;
+  tokens_used_today: number;
+  uptime_seconds: number;
+}
+
+export interface DashboardAgent {
+  name: string;
+  status: "idle" | "running" | "paused";
+  current_task?: string;
+  last_active?: string;
+}
+
+export interface DashboardActivity {
+  type: string;
+  message: string;
+  timestamp: string;
+  agent?: string;
+  level: "info" | "warning" | "error";
+}
+
+export interface DashboardSystemHealth {
+  backend: "ok" | "degraded" | "error";
+  provider: string | null;
+  provider_status: "connected" | "disconnected";
+  memory_mb: number;
+}
+
+export interface DashboardData {
+  kpis: DashboardKpis;
+  active_agents: DashboardAgent[];
+  recent_activity: DashboardActivity[];
+  system_health: DashboardSystemHealth;
+}
+
+// ── Budget & Cost Tracking ────────────────────────────────────────────────────
+
+export interface CostEvent {
+  id: number;
+  agent_name: string;
+  session_id: string | null;
+  task_id: string | null;
+  provider: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  cost_cents: number;
+  inserted_at: string;
+}
+
+export interface AgentBudget {
+  agent_name: string;
+  budget_daily_cents: number;
+  budget_monthly_cents: number;
+  spent_daily_cents: number;
+  spent_monthly_cents: number;
+  status: "active" | "paused_budget" | "paused_manual";
+  last_reset_daily: string | null;
+  last_reset_monthly: string | null;
+}
+
+export interface CostSummary {
+  daily_spent_cents: number;
+  monthly_spent_cents: number;
+  daily_limit_cents: number;
+  monthly_limit_cents: number;
+  daily_events: number;
+  monthly_events: number;
+}
+
+export interface CostByModel {
+  model: string;
+  cost_cents: number;
+  count: number;
+  input_tokens: number;
+  output_tokens: number;
+}
+
+export interface CostByAgent {
+  agent_name: string;
+  cost_cents: number;
+  count: number;
+}
+
 // ── API Error ─────────────────────────────────────────────────────────────────
 
 export interface ApiErrorBody {
   error: string;
   code?: string;
   details?: unknown;
+}
+
+// ── Config Revisions ────────────────────────────────────────────────────────
+
+export interface ConfigRevision {
+  id: number;
+  entity_type: string;
+  entity_id: string;
+  revision_number: number;
+  previous_config: Record<string, unknown> | null;
+  new_config: Record<string, unknown>;
+  changed_fields: string[];
+  changed_by: string;
+  change_reason: string | null;
+  metadata: Record<string, unknown>;
+  inserted_at: string;
+}
+
+export interface ConfigDiff {
+  [field: string]: { from: unknown; to: unknown };
+}
+
+// ── Resilience ──────────────────────────────────────────────────────────────
+
+export interface QueuedRequest {
+  id: string;
+  method: string;
+  path: string;
+  body?: unknown;
+  timestamp: number;
+}
+
+// ── Projects ─────────────────────────────────────────────────────────────────
+
+export type ProjectStatus = "active" | "completed" | "archived";
+export type GoalStatus = "active" | "in_progress" | "completed" | "blocked";
+export type GoalPriority = "low" | "medium" | "high";
+
+export interface Project {
+  id: number;
+  name: string;
+  description: string | null;
+  goal: string | null;
+  workspace_path: string | null;
+  status: ProjectStatus;
+  slug: string;
+  metadata: Record<string, unknown>;
+  inserted_at: string;
+  updated_at: string;
+}
+
+export interface Goal {
+  id: number;
+  title: string;
+  description: string | null;
+  parent_id: number | null;
+  project_id: number;
+  status: GoalStatus;
+  priority: GoalPriority;
+  metadata: Record<string, unknown>;
+  inserted_at: string;
+  updated_at: string;
+}
+
+export interface GoalTreeNode {
+  goal: Goal;
+  children: GoalTreeNode[];
+}
+
+export interface ProjectTask {
+  id: number;
+  project_id: number;
+  task_id: string;
+  goal_id: number | null;
+  goal: Goal | null;
+  inserted_at: string;
+}
+
+export interface CreateProjectPayload {
+  name: string;
+  description?: string;
+  goal?: string;
+  workspace_path?: string;
+}
+
+export interface CreateGoalPayload {
+  title: string;
+  description?: string;
+  parent_id?: number;
+  priority?: GoalPriority;
 }

@@ -56,6 +56,11 @@
   --accent-error:   #ef4444;
   --accent-glow:    rgba(59, 130, 246, 0.15);
 
+  /* Signal tier colors */
+  --tier-haiku:  #22c55e;
+  --tier-sonnet: #f59e0b;
+  --tier-opus:   #ef4444;
+
   /* Glass tokens */
   --glass-bg:     rgba(28, 28, 30, 0.8);
   --glass-border: rgba(255, 255, 255, 0.1);
