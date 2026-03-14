@@ -4,9 +4,10 @@ config :optimal_system_agent,
   # Default LLM provider: :ollama (local) or :anthropic (cloud) or :openai
   default_provider: :ollama,
 
-  # Ollama settings (local LLM — no API key needed)
-  ollama_url: "http://localhost:11434",
-  ollama_model: "qwen2.5:7b",
+  # Ollama Cloud settings
+  ollama_url: "https://ollama.com",
+  ollama_model: "nemotron-3-super:cloud",
+  ollama_api_key: System.get_env("OLLAMA_API_KEY"),
 
   # Anthropic settings (set ANTHROPIC_API_KEY env var)
   anthropic_model: "claude-sonnet-4-6",

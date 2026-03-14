@@ -138,7 +138,7 @@
       const detail = (e as CustomEvent).detail;
       if (detail?.message) {
         chatStore.sendMessage(detail.message);
-        goto('/app'); // Navigate to chat
+        goto('/app/chat'); // Navigate to chat
       }
     }
     window.addEventListener('osa:send-message', handleOSASend);
@@ -200,7 +200,7 @@
       // ⌘, — settings
       if (e.key === ',') {
         e.preventDefault();
-        goto('/settings');
+        goto('/app/settings');
         return;
       }
 

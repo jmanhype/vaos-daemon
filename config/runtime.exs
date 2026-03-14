@@ -242,10 +242,16 @@ config :optimal_system_agent,
         ollama_host = String.to_charlist(ollama_uri.host || "localhost")
         ollama_port = ollama_uri.port || 11434
 
+        # If OLLAMA_API_KEY is set, assume Ollama Cloud is reachable (skip TCP check).
+        # Otherwise, TCP-check local Ollama.
         ollama_reachable =
-          case :gen_tcp.connect(ollama_host, ollama_port, [], 1_000) do
-            {:ok, sock} -> :gen_tcp.close(sock); true
-            {:error, _} -> false
+          if System.get_env("OLLAMA_API_KEY") do
+            true
+          else
+            case :gen_tcp.connect(ollama_host, ollama_port, [], 1_000) do
+              {:ok, sock} -> :gen_tcp.close(sock); true
+              {:error, _} -> false
+            end
           end
 
         chain = if ollama_reachable do

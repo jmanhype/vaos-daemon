@@ -8,13 +8,22 @@ import { streamMessage, type StreamController } from "$api/sse";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
+/**
+ * A tool call entry while streaming — extends ToolCallRef with live result/error
+ * fields that are filled in as tool_result events arrive.
+ */
+export interface StreamingToolCall extends ToolCallRef {
+  result?: string;
+  isError?: boolean;
+}
+
 export interface StreamingMessage {
   /** Incremental text buffer during streaming */
   textBuffer: string;
   /** Incremental thinking buffer during streaming */
   thinkingBuffer: string;
-  /** Tool calls accumulated during this stream */
-  toolCalls: ToolCallRef[];
+  /** Tool calls accumulated during this stream (with live result state) */
+  toolCalls: StreamingToolCall[];
 }
 
 // ── Chat Store Class ──────────────────────────────────────────────────────────
@@ -247,9 +256,11 @@ class ChatStore {
         break;
 
       case "tool_result": {
-        // Attach result to the matching tool call
+        // Attach result and error flag to the matching tool call
         this.streaming.toolCalls = this.streaming.toolCalls.map((tc) =>
-          tc.id === event.tool_use_id ? { ...tc, result: event.result } : tc,
+          tc.id === event.tool_use_id
+            ? { ...tc, result: event.result, isError: event.is_error }
+            : tc,
         );
         break;
       }

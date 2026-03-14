@@ -4,24 +4,35 @@
   import { chatStore } from '$lib/stores/chat.svelte';
   import { onMount } from 'svelte';
 
+  // Only set if we confirmed the session exists on the backend.
   let sessionId = $state('');
 
   onMount(async () => {
     const stored = sessionStorage.getItem('osa-session-id');
-    if (stored) {
-      sessionId = stored;
-    } else {
-      const id = crypto.randomUUID();
-      sessionStorage.setItem('osa-session-id', id);
-      sessionId = id;
-    }
 
-    if (sessionId && chatStore.currentSession?.id !== sessionId) {
+    if (stored && chatStore.currentSession?.id !== stored) {
       try {
-        await chatStore.loadSession(sessionId);
+        await chatStore.loadSession(stored);
+        // Session confirmed on backend — safe to pass to Chat.
+        sessionId = stored;
       } catch {
-        // First visit — backend has no session yet; chat starts empty.
+        // Session not on backend (first visit or cleared). Remove stale key
+        // so we don't keep retrying. chatStore.sendMessage will create a new
+        // session on the first message and we'll persist that id below.
+        sessionStorage.removeItem('osa-session-id');
+        sessionId = '';
       }
+    } else if (chatStore.currentSession) {
+      // Already loaded (e.g. navigating back within app session).
+      sessionId = chatStore.currentSession.id;
+    }
+  });
+
+  // When chatStore creates a brand-new session (first message), persist it.
+  $effect(() => {
+    const id = chatStore.currentSession?.id;
+    if (id && id !== sessionStorage.getItem('osa-session-id')) {
+      sessionStorage.setItem('osa-session-id', id);
     }
   });
 </script>

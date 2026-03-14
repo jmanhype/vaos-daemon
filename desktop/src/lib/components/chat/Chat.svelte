@@ -6,6 +6,7 @@
   import MessageBubble from './MessageBubble.svelte';
   import ChatInput from './ChatInput.svelte';
   import type { ToolCallRef } from '$lib/api/types';
+  import type { StreamingToolCall } from '$lib/stores/chat.svelte';
 
   interface Props {
     /** Session ID — passed from the route page after it resolves/creates one. */
@@ -137,11 +138,11 @@
 
   // Build the live streaming tool call states for display
   const streamingToolStates = $derived(
-    chatStore.streaming.toolCalls.map((tc) => ({
-      tool: tc as unknown as ToolCallRef,
-      result: (tc as { result?: string }).result,
-      isError: false,
-      isRunning: !('result' in tc && tc.result !== undefined),
+    chatStore.streaming.toolCalls.map((tc: StreamingToolCall) => ({
+      tool: tc as ToolCallRef,
+      result: tc.result,
+      isError: tc.isError ?? false,
+      isRunning: tc.result === undefined,
       isExpanded: false,
     }))
   );
