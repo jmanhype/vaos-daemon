@@ -431,6 +431,7 @@ defmodule OptimalSystemAgent.Providers.Registry do
   defp try_stream_provider(module, messages, callback, opts) when is_atom(module) do
     if function_exported?(module, :chat_stream, 3) do
       try do
+        Logger.info("[Registry] Calling #{module}.chat_stream/3")
         case module.chat_stream(messages, callback, opts) do
           :ok -> :ok
           {:error, reason} ->
