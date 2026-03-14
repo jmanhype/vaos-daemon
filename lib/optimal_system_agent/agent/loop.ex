@@ -697,7 +697,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
 
     # Emit timing event before LLM call
     Logger.info("[loop] About to call LLM for #{state.session_id}")
-    # Bus.emit(:llm_request, ...) disabled — auto_classify delegates to missing MiosaSignal.Classifier, causing deadlock
+    Bus.emit(:llm_request, %{session_id: state.session_id, iteration: state.iteration, agent: state.session_id})
     start_time = System.monotonic_time(:millisecond)
 
     # Call LLM with streaming — emits per-token SSE events for live TUI display.
@@ -743,7 +743,7 @@ defmodule OptimalSystemAgent.Agent.Loop do
           {:ok, resp} ->
             content = get_in(resp, ["message", "content"]) || ""
             Logger.info("[loop] Ollama Cloud response: #{byte_size(content)} bytes")
-            # Don't use Bus.emit here — auto_classify deadlocks
+            Bus.emit(:system_event, %{event: :streaming_token, session_id: state.session_id, text: content})
             {:ok, %{content: content, tool_calls: []}}
           _ ->
             {:error, "Non-JSON response from Ollama Cloud"}
@@ -764,7 +764,13 @@ defmodule OptimalSystemAgent.Agent.Loop do
         _ -> %{}
       end
 
-    # Bus.emit(:llm_response, ...) disabled — auto_classify deadlocks on missing MiosaSignal.Classifier
+    Bus.emit(:llm_response, %{
+      session_id: state.session_id,
+      provider: state.provider,
+      duration_ms: duration_ms,
+      usage: usage,
+      agent: state.session_id
+    })
     Logger.info("[loop] LLM call completed in #{duration_ms}ms")
 
     case result do

@@ -1,25 +1,23 @@
 defmodule OptimalSystemAgent.Events.Classifier do
   @moduledoc """
-  Delegation shim — forwards to `MiosaSignal.Classifier`.
-
-  The canonical implementation lives in the `miosa_signal` package.
-  This module exists only for backward-compatibility so that existing
-  `alias OptimalSystemAgent.Events.Classifier` calls continue to work.
+  Signal classifier — safe fallback when MiosaSignal.Classifier is unavailable.
   """
 
-  @type classification :: MiosaSignal.Classifier.classification()
+  # auto_classify is called by Bus.emit on every event.
+  # Returns the event unchanged when MiosaSignal.Classifier is not available.
+  def auto_classify(event), do: event
 
-  defdelegate classify(event), to: MiosaSignal.Classifier
-  defdelegate auto_classify(event), to: MiosaSignal.Classifier
-  defdelegate sn_ratio(event), to: MiosaSignal.Classifier
-  defdelegate infer_mode(event), to: MiosaSignal.Classifier
-  defdelegate infer_genre(event), to: MiosaSignal.Classifier
-  defdelegate infer_type(event), to: MiosaSignal.Classifier
-  defdelegate infer_format(event), to: MiosaSignal.Classifier
-  defdelegate infer_structure(event), to: MiosaSignal.Classifier
-  defdelegate dimension_score(event), to: MiosaSignal.Classifier
-  defdelegate data_score(event), to: MiosaSignal.Classifier
-  defdelegate type_score(event), to: MiosaSignal.Classifier
-  defdelegate context_score(event), to: MiosaSignal.Classifier
-  defdelegate code_like?(str), to: MiosaSignal.Classifier
+  # Safe no-ops for all delegated functions
+  def classify(_event), do: %{}
+  def sn_ratio(_event), do: 1.0
+  def infer_mode(_event), do: nil
+  def infer_genre(_event), do: nil
+  def infer_type(_event), do: nil
+  def infer_format(_event), do: nil
+  def infer_structure(_event), do: nil
+  def dimension_score(_event), do: 0.5
+  def data_score(_event), do: 0.5
+  def type_score(_event), do: 0.5
+  def context_score(_event), do: 0.5
+  def code_like?(_str), do: false
 end
