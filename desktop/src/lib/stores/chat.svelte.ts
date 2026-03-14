@@ -188,23 +188,31 @@ class ChatStore {
       });
 
       // Poll for the assistant response (simple, reliable, no SSE)
+      const initialCount = this.messages.length;
       const maxPolls = 30; // 30 x 2s = 60s max wait
       for (let i = 0; i < maxPolls; i++) {
         await new Promise((r) => setTimeout(r, 2000));
-        const BASE = "http://127.0.0.1:9089/api/v1";
-        const res = await fetch(`${BASE}/sessions/${sessionId}/messages`);
-        const data = await res.json();
-        const msgs = data.messages || [];
-        const lastMsg = msgs[msgs.length - 1];
-        if (lastMsg && lastMsg.role === "assistant") {
-          // Got the response — finalize
-          if (this.pendingUserMessage) {
-            this.messages = [...this.messages, this.pendingUserMessage];
-            this.pendingUserMessage = null;
+        if (!this.isStreaming) return; // cancelled
+        try {
+          const res = await fetch(`${BASE}/sessions/${sessionId}/messages`);
+          const data = await res.json();
+          const msgs = data.messages || [];
+          // Check if there's a new assistant message (more messages than we started with)
+          if (msgs.length > 1) {
+            const assistantMsgs = msgs.filter((m: { role: string }) => m.role === "assistant");
+            if (assistantMsgs.length > 0) {
+              // Replace all messages with server state
+              if (this.pendingUserMessage) {
+                this.pendingUserMessage = null;
+              }
+              this.messages = msgs;
+              this.isStreaming = false;
+              this.streaming = { textBuffer: "", thinkingBuffer: "", toolCalls: [] };
+              return;
+            }
           }
-          this.messages = [...this.messages, lastMsg];
-          this.isStreaming = false;
-          return;
+        } catch {
+          // Network error — keep polling
         }
       }
 
