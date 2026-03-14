@@ -146,6 +146,18 @@
     }))
   );
 
+  // Reset scroll position to bottom whenever the active session changes
+  $effect(() => {
+    const _sessionId = chatStore.currentSession?.id;
+    void _sessionId;
+    isAtBottom = true;
+    if (viewportEl) {
+      requestAnimationFrame(() => {
+        if (viewportEl) viewportEl.scrollTop = viewportEl.scrollHeight;
+      });
+    }
+  });
+
   // Auto-scroll effect — fires whenever messages or streaming buffer change
   $effect(() => {
     // Track reactive dependencies
