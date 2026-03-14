@@ -231,11 +231,11 @@ class PaletteStore {
   ): void {
     const navCommands: PaletteCommand[] = [
       {
-        id: "nav-chat",
-        name: "Chat",
-        description: "Go to the chat interface",
+        id: "nav-dashboard",
+        name: "Dashboard",
+        description: "Go to the dashboard",
         shortcut: "⌘1",
-        icon: "chat",
+        icon: "dashboard",
         category: "navigation",
         action: () => goto("/app"),
       },

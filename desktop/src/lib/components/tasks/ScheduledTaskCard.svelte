@@ -1,9 +1,6 @@
 <script lang="ts">
-  // src/lib/components/tasks/ScheduledTaskCard.svelte
-  // A card representing a single scheduled (cron) task.
-  // Distinct from TaskCard.svelte, which tracks live orchestrator progress tasks.
-
   import type { ScheduledTask } from '$lib/stores/scheduledTasks.svelte';
+  import type { ScheduledRunStatus } from '$lib/api/types';
 
   interface Props {
     task: ScheduledTask;
@@ -11,11 +8,10 @@
     onResume?: (id: string) => void;
     onDelete?: (id: string) => void;
     onEdit?: (id: string) => void;
+    onRunNow?: (id: string) => void;
   }
 
-  let { task, onPause, onResume, onDelete, onEdit }: Props = $props();
-
-  // ── Relative time ─────────────────────────────────────────────────────────────
+  let { task, onPause, onResume, onDelete, onEdit, onRunNow }: Props = $props();
 
   function formatRelative(iso: string | null): string {
     if (!iso) return 'Never';
@@ -32,8 +28,6 @@
     return future ? `in ${d}d` : `${d}d ago`;
   }
 
-  // ── Status helpers ────────────────────────────────────────────────────────────
-
   function statusLabel(status: ScheduledTask['status']): string {
     switch (status) {
       case 'active':    return 'Active';
@@ -42,9 +36,20 @@
     }
   }
 
+  function runDotColor(status: ScheduledRunStatus): string {
+    switch (status) {
+      case 'succeeded': return 'var(--accent-success)';
+      case 'failed':    return 'var(--accent-error)';
+      case 'running':   return 'var(--accent-warning)';
+      case 'timed_out': return 'rgba(239, 68, 68, 0.6)';
+      default:          return 'rgba(255, 255, 255, 0.2)';
+    }
+  }
+
   const isActive  = $derived(task.status === 'active');
   const isPaused  = $derived(task.status === 'paused');
   const isFailed  = $derived(task.status === 'failed');
+  const recentRuns = $derived((task.recent_runs ?? []).slice(0, 5));
 </script>
 
 <article
@@ -54,10 +59,8 @@
   class:stask-card--failed={isFailed}
   aria-label="Scheduled task: {task.name}"
 >
-  <!-- ── Header ── -->
   <div class="stask-header">
     <div class="stask-header-left">
-      <!-- Status dot -->
       <span
         class="stask-dot"
         class:stask-dot--active={isActive}
@@ -66,7 +69,6 @@
         aria-hidden="true"
       ></span>
 
-      <!-- Identity -->
       <div class="stask-identity">
         <h3 class="stask-name">{task.name}</h3>
         <span
@@ -80,8 +82,34 @@
       </div>
     </div>
 
-    <!-- Action buttons -->
+    <!-- Run history dots -->
+    {#if recentRuns.length > 0}
+      <div class="stask-run-dots" aria-label="Recent run history">
+        {#each recentRuns as run}
+          <span
+            class="stask-run-dot"
+            style="background: {runDotColor(run.status)}"
+            title="{run.status} — {formatRelative(run.started_at)}"
+          ></span>
+        {/each}
+      </div>
+    {/if}
+
+    <!-- Action buttons (visible on hover) -->
     <div class="stask-actions" role="group" aria-label="Task actions for {task.name}">
+      {#if onRunNow}
+        <button
+          class="stask-btn stask-btn--run"
+          onclick={() => onRunNow?.(task.id)}
+          aria-label="Run {task.name} now"
+          title="Run Now"
+        >
+          <svg width="11" height="11" viewBox="0 0 11 11" fill="currentColor" aria-hidden="true">
+            <polygon points="2,1 10,5.5 2,10"/>
+          </svg>
+        </button>
+      {/if}
+
       {#if isActive}
         <button
           class="stask-btn stask-btn--pause"
@@ -144,14 +172,12 @@
     </div>
   </div>
 
-  <!-- ── Description ── -->
   {#if task.description}
     <p class="stask-description truncate" title={task.description}>
       {task.description}
     </p>
   {/if}
 
-  <!-- ── Error banner (failed only) ── -->
   {#if isFailed && task.last_error}
     <div class="stask-error" role="alert">
       <span class="stask-error-label">Last error</span>
@@ -159,7 +185,6 @@
     </div>
   {/if}
 
-  <!-- ── Metadata row ── -->
   <div class="stask-meta" aria-label="Task schedule details">
     <div class="stask-meta-item">
       <span class="stask-meta-label">Schedule</span>
@@ -181,8 +206,6 @@
 </article>
 
 <style>
-  /* ── Card shell ── */
-
   .stask-card {
     background: var(--bg-surface);
     border: 1px solid var(--border-default);
@@ -210,8 +233,6 @@
     opacity: 0.72;
   }
 
-  /* ── Header row ── */
-
   .stask-header {
     display: flex;
     align-items: flex-start;
@@ -226,8 +247,6 @@
     min-width: 0;
     flex: 1;
   }
-
-  /* ── Status dot ── */
 
   .stask-dot {
     display: block;
@@ -257,8 +276,6 @@
     0%, 100% { box-shadow: 0 0 4px rgba(34, 197, 94, 0.4); }
     50%       { box-shadow: 0 0 10px rgba(34, 197, 94, 0.7); }
   }
-
-  /* ── Identity ── */
 
   .stask-identity {
     display: flex;
@@ -310,6 +327,27 @@
     border-color: rgba(239, 68, 68, 0.18);
   }
 
+  /* ── Run history dots ── */
+
+  .stask-run-dots {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+    padding: 4px 0;
+  }
+
+  .stask-run-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    transition: transform 0.15s;
+  }
+
+  .stask-run-dot:hover {
+    transform: scale(1.4);
+  }
+
   /* ── Action buttons ── */
 
   .stask-actions {
@@ -317,6 +355,12 @@
     align-items: center;
     gap: 3px;
     flex-shrink: 0;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+
+  .stask-card:hover .stask-actions {
+    opacity: 1;
   }
 
   .stask-btn {
@@ -339,6 +383,12 @@
     border-color: rgba(255, 255, 255, 0.14);
   }
 
+  .stask-btn--run:hover {
+    background: rgba(59, 130, 246, 0.1);
+    color: rgba(59, 130, 246, 0.8);
+    border-color: rgba(59, 130, 246, 0.2);
+  }
+
   .stask-btn--resume:hover {
     background: rgba(34, 197, 94, 0.1);
     color: rgba(34, 197, 94, 0.8);
@@ -351,16 +401,12 @@
     border-color: rgba(239, 68, 68, 0.2);
   }
 
-  /* ── Description ── */
-
   .stask-description {
     font-size: 0.8125rem;
     color: var(--text-tertiary);
     line-height: 1.4;
     padding: 0 2px;
   }
-
-  /* ── Error banner ── */
 
   .stask-error {
     display: flex;
@@ -388,8 +434,6 @@
     color: rgba(239, 68, 68, 0.7);
     min-width: 0;
   }
-
-  /* ── Metadata row ── */
 
   .stask-meta {
     display: flex;

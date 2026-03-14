@@ -1,12 +1,9 @@
 <script lang="ts">
-  // src/lib/components/tasks/ScheduledTaskForm.svelte
-  // Inline form for creating or editing a scheduled (cron) task.
-  // Distinct from the SSE-driven task tracking in TaskCard.svelte.
-
   import type { ScheduledTask, CreateScheduledTaskPayload } from '$lib/stores/scheduledTasks.svelte';
+  import { scheduledTasksStore } from '$lib/stores/scheduledTasks.svelte';
+  import type { CronPreset } from '$lib/api/types';
 
   interface Props {
-    /** When provided the form is in edit mode; omit for create mode. */
     task?: ScheduledTask | null;
     onSubmit: (payload: CreateScheduledTaskPayload) => void;
     onCancel: () => void;
@@ -14,57 +11,81 @@
 
   let { task = null, onSubmit, onCancel }: Props = $props();
 
-  // ── Cron presets ──────────────────────────────────────────────────────────────
+  // ── Cron description ────────────────────────────────────────────────────────
 
-  const PRESETS = [
-    { label: 'Every minute',   value: '* * * * *'     },
-    { label: 'Every 5 minutes', value: '*/5 * * * *'  },
-    { label: 'Every hour',     value: '0 * * * *'     },
-    { label: 'Every 6 hours',  value: '0 */6 * * *'   },
-    { label: 'Daily at 9 AM',  value: '0 9 * * *'     },
-    { label: 'Weekly Monday',  value: '0 9 * * 1'     },
-    { label: 'Monthly 1st',    value: '0 9 1 * *'     },
-  ] as const;
+  const CRON_DESCRIPTIONS: Record<string, string> = {
+    '* * * * *':     'Every minute',
+    '*/5 * * * *':   'Every 5 minutes',
+    '*/15 * * * *':  'Every 15 minutes',
+    '*/30 * * * *':  'Every 30 minutes',
+    '0 * * * *':     'Every hour',
+    '0 9 * * *':     'Daily at 9:00 AM',
+    '0 9 * * 1':     'Weekly on Monday at 9:00 AM',
+    '0 9 1 * *':     'Monthly on the 1st at 9:00 AM',
+  };
 
-  // ── Form state ────────────────────────────────────────────────────────────────
+  function describeCron(expr: string): string {
+    return CRON_DESCRIPTIONS[expr.trim()] ?? '';
+  }
 
-  let name        = $state(task?.name ?? '');
-  let description = $state(task?.description ?? '');
-  let schedule    = $state(task?.schedule ?? '');
-  let taskContent = $state('');
+  // ── Presets ─────────────────────────────────────────────────────────────────
 
-  // ── Validation ────────────────────────────────────────────────────────────────
+  const DEFAULT_PRESETS: CronPreset[] = [
+    { id: '1m',      cron: '* * * * *',     label: 'Every minute' },
+    { id: '5m',      cron: '*/5 * * * *',   label: 'Every 5 min' },
+    { id: '15m',     cron: '*/15 * * * *',  label: 'Every 15 min' },
+    { id: '30m',     cron: '*/30 * * * *',  label: 'Every 30 min' },
+    { id: '1h',      cron: '0 * * * *',     label: 'Hourly' },
+    { id: 'daily',   cron: '0 9 * * *',     label: 'Daily 9 AM' },
+    { id: 'weekly',  cron: '0 9 * * 1',     label: 'Weekly Mon' },
+    { id: 'monthly', cron: '0 9 1 * *',     label: 'Monthly 1st' },
+  ];
+
+  const presets = $derived(
+    scheduledTasksStore.presets.length > 0
+      ? scheduledTasksStore.presets
+      : DEFAULT_PRESETS
+  );
+
+  // ── Form state ──────────────────────────────────────────────────────────────
+
+  let name           = $state(task?.name ?? '');
+  let description    = $state(task?.description ?? '');
+  let schedule       = $state(task?.schedule ?? '');
+  let taskContent    = $state('');
+  let timeoutMinutes = $state(5);
+  let useCustomCron  = $state(false);
+
+  const cronDescription = $derived(describeCron(schedule));
+  const selectedPresetId = $derived(
+    presets.find((p) => p.cron === schedule.trim())?.id ?? null
+  );
+
+  // ── Validation ──────────────────────────────────────────────────────────────
 
   function isValidCron(expr: string): boolean {
-    const trimmed = expr.trim();
-    const parts = trimmed.split(/\s+/);
-    return parts.length === 5;
+    return expr.trim().split(/\s+/).length === 5;
   }
 
   let errors = $state<{ name?: string; schedule?: string; task?: string }>({});
 
   function validate(): boolean {
     const next: typeof errors = {};
-    if (!name.trim()) {
-      next.name = 'Name is required.';
-    }
+    if (!name.trim()) next.name = 'Name is required.';
     if (!schedule.trim()) {
       next.schedule = 'Schedule is required.';
     } else if (!isValidCron(schedule)) {
-      next.schedule = 'Must be a valid cron expression (5 space-separated parts).';
+      next.schedule = 'Must be a valid cron expression (5 parts).';
     }
-    if (!taskContent.trim()) {
-      next.task = 'Command is required.';
-    }
+    if (!taskContent.trim()) next.task = 'Command is required.';
     errors = next;
     return Object.keys(next).length === 0;
   }
 
-  function handlePreset(value: string) {
-    schedule = value;
-    if (errors.schedule) {
-      errors = { ...errors, schedule: undefined };
-    }
+  function selectPreset(cron: string) {
+    schedule = cron;
+    useCustomCron = false;
+    if (errors.schedule) errors = { ...errors, schedule: undefined };
   }
 
   function handleSubmit(e: Event) {
@@ -75,6 +96,7 @@
       description: description.trim() || undefined,
       schedule: schedule.trim(),
       task: taskContent.trim(),
+      timeout_minutes: timeoutMinutes,
     });
   }
 
@@ -139,10 +161,37 @@
 
     <!-- Schedule -->
     <div class="stask-field" class:stask-field--error={!!errors.schedule}>
-      <label class="stask-label" for="stask-schedule">
+      <label class="stask-label">
         Schedule <span class="stask-required" aria-hidden="true">*</span>
       </label>
-      <div class="stask-schedule-row">
+
+      <!-- Preset grid -->
+      <div class="stask-preset-grid" role="radiogroup" aria-label="Schedule presets">
+        {#each presets as preset}
+          <button
+            type="button"
+            class="stask-preset"
+            class:stask-preset--selected={selectedPresetId === preset.id && !useCustomCron}
+            role="radio"
+            aria-checked={selectedPresetId === preset.id && !useCustomCron}
+            onclick={() => selectPreset(preset.cron)}
+          >
+            {preset.label}
+          </button>
+        {/each}
+      </div>
+
+      <!-- Custom toggle -->
+      <button
+        type="button"
+        class="stask-custom-toggle"
+        class:stask-custom-toggle--active={useCustomCron}
+        onclick={() => { useCustomCron = !useCustomCron; }}
+      >
+        Custom expression
+      </button>
+
+      {#if useCustomCron}
         <input
           id="stask-schedule"
           class="stask-input stask-input--mono"
@@ -155,30 +204,35 @@
           aria-describedby={errors.schedule ? 'stask-schedule-err' : 'stask-schedule-hint'}
           oninput={() => { if (errors.schedule) errors = { ...errors, schedule: undefined }; }}
         />
-        <div class="stask-presets" role="group" aria-label="Cron presets">
-          <select
-            class="stask-select"
-            onchange={(e) => {
-              const el = e.currentTarget as HTMLSelectElement;
-              if (el.value) handlePreset(el.value);
-              el.value = '';
-            }}
-            aria-label="Select a preset schedule"
-          >
-            <option value="">Preset</option>
-            {#each PRESETS as preset}
-              <option value={preset.value}>{preset.label}</option>
-            {/each}
-          </select>
-        </div>
-      </div>
+      {/if}
+
+      <!-- Human-readable preview -->
+      {#if schedule && cronDescription}
+        <span class="stask-cron-preview">{cronDescription}</span>
+      {:else if schedule && !cronDescription}
+        <span class="stask-cron-preview stask-cron-preview--custom">{schedule}</span>
+      {/if}
+
       {#if errors.schedule}
         <span id="stask-schedule-err" class="stask-error-msg" role="alert">{errors.schedule}</span>
-      {:else}
+      {:else if useCustomCron}
         <span id="stask-schedule-hint" class="stask-hint">
           5 parts: minute hour day-of-month month day-of-week
         </span>
       {/if}
+    </div>
+
+    <!-- Timeout -->
+    <div class="stask-field">
+      <label class="stask-label" for="stask-timeout">Timeout (minutes)</label>
+      <input
+        id="stask-timeout"
+        class="stask-input stask-input--narrow"
+        type="number"
+        bind:value={timeoutMinutes}
+        min={1}
+        max={30}
+      />
     </div>
 
     <!-- Command -->
@@ -215,8 +269,6 @@
 </form>
 
 <style>
-  /* ── Form shell ── */
-
   .stask-form {
     background: rgba(255, 255, 255, 0.04);
     backdrop-filter: blur(24px);
@@ -227,8 +279,6 @@
     display: flex;
     flex-direction: column;
   }
-
-  /* ── Form header ── */
 
   .stask-form-header {
     display: flex;
@@ -262,16 +312,12 @@
     color: var(--text-secondary);
   }
 
-  /* ── Form body ── */
-
   .stask-form-body {
     display: flex;
     flex-direction: column;
     gap: 14px;
     padding: 16px;
   }
-
-  /* ── Field ── */
 
   .stask-field {
     display: flex;
@@ -290,8 +336,6 @@
     color: var(--accent-error);
     margin-left: 2px;
   }
-
-  /* ── Inputs ── */
 
   .stask-input {
     background: rgba(255, 255, 255, 0.05);
@@ -320,6 +364,10 @@
     letter-spacing: 0.02em;
   }
 
+  .stask-input--narrow {
+    max-width: 100px;
+  }
+
   .stask-field--error .stask-input,
   .stask-field--error .stask-textarea {
     border-color: rgba(239, 68, 68, 0.4);
@@ -330,8 +378,6 @@
     border-color: rgba(239, 68, 68, 0.6);
     box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.06);
   }
-
-  /* ── Textarea ── */
 
   .stask-textarea {
     background: rgba(255, 255, 255, 0.05);
@@ -359,42 +405,80 @@
     box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.04);
   }
 
-  /* ── Schedule row ── */
+  /* ── Preset grid ── */
 
-  .stask-schedule-row {
-    display: flex;
-    gap: 8px;
-    align-items: center;
+  .stask-preset-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
   }
 
-  .stask-schedule-row .stask-input {
-    flex: 1;
-  }
-
-  .stask-presets {
-    flex-shrink: 0;
-  }
-
-  .stask-select {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.09);
+  .stask-preset {
+    padding: 6px 8px;
     border-radius: var(--radius-sm);
-    padding: 7px 10px;
-    font-size: 0.75rem;
-    font-family: var(--font-sans);
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: var(--text-tertiary);
+    font-size: 0.6875rem;
+    font-weight: 500;
+    transition: all 0.15s;
+    text-align: center;
+    white-space: nowrap;
+  }
+
+  .stask-preset:hover {
+    background: rgba(255, 255, 255, 0.08);
     color: var(--text-secondary);
-    outline: none;
-    cursor: pointer;
-    transition: border-color 0.15s;
-    appearance: none;
-    -webkit-appearance: none;
+    border-color: rgba(255, 255, 255, 0.14);
   }
 
-  .stask-select:focus {
-    border-color: var(--border-focus);
+  .stask-preset--selected {
+    background: rgba(34, 197, 94, 0.1);
+    border-color: rgba(34, 197, 94, 0.3);
+    color: rgba(34, 197, 94, 0.9);
   }
 
-  /* ── Hint and error messages ── */
+  .stask-preset--selected:hover {
+    background: rgba(34, 197, 94, 0.15);
+    color: rgba(34, 197, 94, 1);
+  }
+
+  /* ── Custom toggle ── */
+
+  .stask-custom-toggle {
+    align-self: flex-start;
+    padding: 4px 10px;
+    border-radius: var(--radius-sm);
+    background: none;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    color: var(--text-muted);
+    font-size: 0.6875rem;
+    transition: all 0.15s;
+  }
+
+  .stask-custom-toggle:hover {
+    color: var(--text-secondary);
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+
+  .stask-custom-toggle--active {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-secondary);
+    border-color: rgba(255, 255, 255, 0.14);
+  }
+
+  /* ── Cron preview ── */
+
+  .stask-cron-preview {
+    font-size: 0.7rem;
+    color: rgba(34, 197, 94, 0.7);
+    font-weight: 500;
+  }
+
+  .stask-cron-preview--custom {
+    font-family: var(--font-mono);
+    color: var(--text-muted);
+  }
 
   .stask-hint {
     font-size: 0.7rem;
@@ -405,8 +489,6 @@
     font-size: 0.7rem;
     color: rgba(239, 68, 68, 0.85);
   }
-
-  /* ── Footer buttons ── */
 
   .stask-form-footer {
     display: flex;
@@ -453,5 +535,11 @@
   .stask-btn-submit:focus-visible {
     outline: 2px solid var(--accent-primary);
     outline-offset: 2px;
+  }
+
+  @media (max-width: 480px) {
+    .stask-preset-grid {
+      grid-template-columns: repeat(2, 1fr);
+    }
   }
 </style>

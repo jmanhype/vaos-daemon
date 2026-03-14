@@ -2,7 +2,19 @@
 // Usage & Analytics store — Svelte 5 class with $state fields.
 // Fetches system analytics from GET /api/v1/analytics, falls back to mock data.
 
-import { BASE_URL, API_PREFIX, getToken } from "$lib/api/client";
+import {
+  BASE_URL,
+  API_PREFIX,
+  getToken,
+  costs,
+  budgets,
+} from "$lib/api/client";
+import type {
+  AgentBudget,
+  CostByAgent,
+  CostByModel,
+  CostSummary,
+} from "$lib/api/types";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -166,6 +178,35 @@ class UsageStore {
   error = $state<string | null>(null);
   period = $state<AnalyticsPeriod>("30d");
 
+  // Budget state
+  summary = $state<CostSummary | null>(null);
+  agentBudgets = $state<AgentBudget[]>([]);
+  costByModel = $state<CostByModel[]>([]);
+  costByAgent = $state<CostByAgent[]>([]);
+  budgetLoading = $state(false);
+
+  // Derived
+  dailyPct = $derived((): number => {
+    if (!this.summary || this.summary.daily_limit_cents === 0) return 0;
+    return (
+      (this.summary.daily_spent_cents / this.summary.daily_limit_cents) * 100
+    );
+  });
+
+  monthlyPct = $derived((): number => {
+    if (!this.summary || this.summary.monthly_limit_cents === 0) return 0;
+    return (
+      (this.summary.monthly_spent_cents / this.summary.monthly_limit_cents) *
+      100
+    );
+  });
+
+  pausedAgents = $derived((): string[] => {
+    return this.agentBudgets
+      .filter((a) => a.status === "paused_budget")
+      .map((a) => a.agent_name);
+  });
+
   // ── Derived ──────────────────────────────────────────────────────────────────
 
   /**
@@ -257,6 +298,51 @@ class UsageStore {
    */
   setPeriod(p: AnalyticsPeriod): void {
     this.period = p;
+  }
+
+  async fetchBudgets(): Promise<void> {
+    this.budgetLoading = true;
+    try {
+      const [summaryRes, budgetsRes, byModelRes, byAgentRes] =
+        await Promise.all([
+          costs.summary(),
+          budgets.list(),
+          costs.byModel(),
+          costs.byAgent(),
+        ]);
+      this.summary = summaryRes;
+      this.agentBudgets = budgetsRes.budgets ?? [];
+      this.costByModel = byModelRes.models ?? [];
+      this.costByAgent = byAgentRes.agents ?? [];
+    } catch {
+      // Fallback: leave existing state or set defaults
+      if (!this.summary) {
+        this.summary = {
+          daily_spent_cents: 0,
+          monthly_spent_cents: 0,
+          daily_limit_cents: 25000,
+          monthly_limit_cents: 250000,
+          daily_events: 0,
+          monthly_events: 0,
+        };
+      }
+    } finally {
+      this.budgetLoading = false;
+    }
+  }
+
+  async updateBudget(
+    agentName: string,
+    dailyCents: number,
+    monthlyCents: number,
+  ): Promise<void> {
+    await budgets.update(agentName, dailyCents, monthlyCents);
+    await this.fetchBudgets();
+  }
+
+  async resetBudget(agentName: string): Promise<void> {
+    await budgets.reset(agentName);
+    await this.fetchBudgets();
   }
 }
 

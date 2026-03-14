@@ -33,6 +33,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
     /workspace   → WorkspaceRoutes    GET / (cwd, git status, git log, directory listing)
     /classify    → inline            POST / (signal classification)
     /knowledge   → KnowledgeRoutes   GET /triples|/count|/context/:id, POST /assert|/retract|/sparql|/reason
+    /config      → ConfigRoutes      GET /revisions/:type/:id, GET /revisions/:type/:id/:n, POST /revisions/:type/:id/rollback, GET /revisions/:type/:id/diff
   """
   use Plug.Router
   import OptimalSystemAgent.Channels.HTTP.API.Shared
@@ -115,10 +116,16 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
   # Agent introspection
   forward "/agent", to: API.AgentStateRoutes
 
+  # ── Skills marketplace ──────────────────────────────────────────────
+  forward "/skills/marketplace", to: API.SkillsMarketplaceRoutes
+
   # ── Tools, skills, commands ──────────────────────────────────────────
   forward "/tools", to: API.ToolRoutes
   forward "/skills", to: API.ToolRoutes
   forward "/commands", to: API.ToolRoutes
+
+  # ── Scheduled Tasks (heartbeat execution + cron presets) ─────────────
+  forward "/scheduled-tasks", to: API.SchedulerRoutes
 
   # ── Data ─────────────────────────────────────────────────────────────
   forward "/memory", to: API.DataRoutes
@@ -128,19 +135,45 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
   forward "/webhooks", to: API.DataRoutes
   forward "/machines", to: API.DataRoutes
 
+  # ── Dashboard ────────────────────────────────────────────────────────
+  forward "/dashboard", to: API.DashboardRoutes
+
   # ── Command Center ───────────────────────────────────────────────────
   forward "/command-center", to: API.CommandCenterRoutes
+
+  # ── Agent Hierarchy ──────────────────────────────────────────────────
+  forward "/agents/hierarchy", to: API.HierarchyRoutes
+
+  # ── Task Kanban ────────────────────────────────────────────────────
+  forward "/tasks/kanban", to: API.TaskKanbanRoutes
+
+  # ── Approvals ──────────────────────────────────────────────────────
+  forward "/approvals", to: API.ApprovalRoutes
 
   # ── Protocol ─────────────────────────────────────────────────────────
   forward "/events", to: API.ProtocolRoutes
   forward "/oscp", to: API.ProtocolRoutes
   forward "/tasks", to: API.ProtocolRoutes
 
+  # ── Projects + Goals ─────────────────────────────────────────────────
+  forward "/projects", to: API.ProjectRoutes
+  forward "/goals", to: API.GoalRoutes
+
   # ── Workspace introspection ───────────────────────────────────────────
   forward "/workspace", to: API.WorkspaceRoutes
 
+  # ── Costs & Budgets ─────────────────────────────────────────────────
+  forward "/costs", to: API.CostRoutes
+  forward "/budgets", to: API.CostRoutes
+
   # ── Knowledge graph ──────────────────────────────────────────────────
   forward "/knowledge", to: API.KnowledgeRoutes
+
+  # ── Signals ──────────────────────────────────────────────────────────
+  forward "/signals", to: API.SignalRoutes
+
+  # ── Config revisions ─────────────────────────────────────────────────
+  forward "/config", to: API.ConfigRoutes
 
   # ── Platform (multi-tenant auth + CRUD) ─────────────────────────────
   forward "/platform/auth", to: API.PlatformAuthRoutes

@@ -1,48 +1,101 @@
 <script lang="ts">
-  import Chat from '$lib/components/chat/Chat.svelte';
-  import { chatStore } from '$lib/stores/chat.svelte';
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
+  import { dashboardStore } from '$lib/stores/dashboard.svelte';
+  import SystemHealthBar from '$lib/components/dashboard/SystemHealthBar.svelte';
+  import KpiGrid from '$lib/components/dashboard/KpiGrid.svelte';
+  import RecentActivityFeed from '$lib/components/dashboard/RecentActivityFeed.svelte';
+  import ActiveAgentsPanel from '$lib/components/dashboard/ActiveAgentsPanel.svelte';
 
-  // Resolve or generate a persistent session ID for this browser session.
-  // In Tauri we could call invoke('get_session_id') from the Rust side for
-  // a device-persistent ID; sessionStorage provides tab persistence in the SPA.
-  let sessionId = $state('');
+  let cleanup: (() => void) | undefined;
 
-  onMount(async () => {
-    // Check URL for a specific session ID (e.g. /app?session=abc)
-    const urlParams = new URLSearchParams(window.location.search);
-    const urlSession = urlParams.get('session');
+  onMount(() => {
+    cleanup = dashboardStore.startAutoRefresh(30_000);
+  });
 
-    if (urlSession) {
-      // URL-specified session — load it from backend
-      sessionId = urlSession;
-      try {
-        await chatStore.loadSession(sessionId);
-      } catch {
-        // Session not found or backend error — start fresh
-        chatStore.error = null;
-      }
-    } else {
-      // No session specified — start empty, a session will be created on first message
-      sessionId = '';
-    }
+  onDestroy(() => {
+    cleanup?.();
   });
 </script>
 
 <svelte:head>
-  <title>Chat — OSA</title>
+  <title>Dashboard — OSA</title>
 </svelte:head>
 
-<section class="chat-page" aria-label="Chat">
-  <Chat {sessionId} />
+<section class="dash" aria-label="Dashboard">
+  {#if dashboardStore.loading}
+    <div class="dash-loading">
+      <SystemHealthBar health={dashboardStore.systemHealth} uptimeSeconds={0} />
+      <KpiGrid kpis={dashboardStore.kpis} loading={true} />
+    </div>
+  {:else}
+    <SystemHealthBar
+      health={dashboardStore.systemHealth}
+      uptimeSeconds={dashboardStore.kpis.uptime_seconds}
+    />
+
+    <KpiGrid kpis={dashboardStore.kpis} />
+
+    <div class="dash-panels">
+      <div class="dash-feed">
+        <RecentActivityFeed activities={dashboardStore.recentActivity} />
+      </div>
+      <div class="dash-agents">
+        <ActiveAgentsPanel
+          agents={dashboardStore.activeAgents}
+          agentsTotal={dashboardStore.kpis.agents_total}
+        />
+      </div>
+    </div>
+
+    {#if dashboardStore.error}
+      <p class="dash-error" role="alert">{dashboardStore.error}</p>
+    {/if}
+  {/if}
 </section>
 
 <style>
-  .chat-page {
+  .dash {
     display: flex;
     flex-direction: column;
+    gap: 16px;
+    padding: 16px;
     height: 100%;
-    padding: 12px;
     box-sizing: border-box;
+    overflow-y: auto;
+  }
+
+  .dash-loading {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .dash-panels {
+    display: grid;
+    grid-template-columns: 3fr 2fr;
+    gap: 12px;
+    min-height: 0;
+  }
+
+  .dash-feed {
+    min-width: 0;
+  }
+
+  .dash-agents {
+    min-width: 0;
+  }
+
+  .dash-error {
+    font-size: 12px;
+    color: var(--accent-error);
+    text-align: center;
+    margin: 0;
+    padding: 8px;
+  }
+
+  @media (max-width: 768px) {
+    .dash-panels {
+      grid-template-columns: 1fr;
+    }
   }
 </style>

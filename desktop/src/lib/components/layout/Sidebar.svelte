@@ -3,6 +3,7 @@
   import { browser } from '$app/environment';
   import { fly, fade } from 'svelte/transition';
   import { isTauri, isMacOS } from '$lib/utils/platform';
+  import { approvalsStore } from '$lib/stores/approvals.svelte';
 
   interface NavItem {
     id: string;
@@ -26,11 +27,11 @@
 
   const NAV_ITEMS: NavItem[] = [
     {
-      id: 'chat',
-      label: 'Chat',
+      id: 'dashboard',
+      label: 'Dashboard',
       href: '/app',
       shortcut: '⌘1',
-      icon: 'M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z',
+      icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1m-2 0h2',
     },
     {
       id: 'agents',
@@ -59,6 +60,13 @@
       href: '/app/connectors',
       shortcut: '⌘5',
       icon: 'M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m9.86-2.556a4.5 4.5 0 00-6.364-6.364L4.5 8.25l4.5 4.5 4.19-4.062z',
+    },
+    {
+      id: 'skills',
+      label: 'Skills',
+      href: '/app/skills',
+      shortcut: '',
+      icon: 'M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z',
     },
     {
       id: 'settings',
@@ -94,6 +102,13 @@
       href: '/app/tasks',
       shortcut: '⌘0',
       icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z',
+    },
+    {
+      id: 'approvals',
+      label: 'Approvals',
+      href: '/app/approvals',
+      shortcut: '',
+      icon: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z',
     },
   ];
 
@@ -211,7 +226,13 @@
           <span class="nav-label" transition:fade={{ duration: 150 }}>
             {item.label}
           </span>
-          <span class="nav-shortcut" aria-hidden="true">{item.shortcut}</span>
+          {#if item.id === 'approvals' && approvalsStore.pendingCount > 0}
+            <span class="nav-badge" aria-label="{approvalsStore.pendingCount} pending approvals">
+              {approvalsStore.pendingCount}
+            </span>
+          {:else if item.shortcut}
+            <span class="nav-shortcut" aria-hidden="true">{item.shortcut}</span>
+          {/if}
         {/if}
       </a>
     {/each}
@@ -410,6 +431,24 @@
     margin-left: auto;
     opacity: 0.7;
     flex-shrink: 0;
+  }
+
+  .nav-badge {
+    min-width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: rgba(239, 68, 68, 0.2);
+    color: rgba(239, 68, 68, 0.9);
+    font-size: 10px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    margin-left: auto;
+    flex-shrink: 0;
+    border: 1px solid rgba(239, 68, 68, 0.15);
   }
 
   /* User section */

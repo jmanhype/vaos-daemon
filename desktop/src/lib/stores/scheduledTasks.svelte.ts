@@ -3,6 +3,13 @@
 // Manages cron jobs via the Elixir scheduler endpoints, with mock fallback.
 
 import { scheduler as schedulerApi } from "$lib/api/client";
+import { connectSSE } from "$lib/api/sse";
+import type {
+  ScheduledRun,
+  ScheduledRunStatus,
+  CronPreset,
+} from "$lib/api/types";
+import type { StreamController } from "$lib/api/sse";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -26,6 +33,8 @@ export interface ScheduledTask {
   last_error: string | null;
   created_at: string;
   updated_at: string;
+  /** Last 5 run statuses for the card dots */
+  recent_runs?: ScheduledRun[];
 }
 
 export interface CreateScheduledTaskPayload {
@@ -34,6 +43,8 @@ export interface CreateScheduledTaskPayload {
   description?: string;
   /** The task content / prompt to execute */
   task: string;
+  agent_name?: string;
+  timeout_minutes?: number;
 }
 
 // ── API response shapes from the Elixir backend ───────────────────────────────
@@ -50,6 +61,7 @@ interface BackendJob {
   last_error?: string | null;
   inserted_at: string;
   updated_at: string;
+  recent_runs?: ScheduledRun[];
 }
 
 interface JobsListResponse {
@@ -58,6 +70,19 @@ interface JobsListResponse {
 
 interface JobResponse {
   job: BackendJob;
+}
+
+interface RunsResponse {
+  runs: ScheduledRun[];
+  total: number;
+}
+
+interface RunResponse {
+  run: ScheduledRun;
+}
+
+interface PresetsResponse {
+  presets: CronPreset[];
 }
 
 // ── Backend → ScheduledTask mapping ──────────────────────────────────────────
@@ -84,6 +109,7 @@ function mapJob(job: BackendJob): ScheduledTask {
     last_error: job.last_error ?? null,
     created_at: job.inserted_at,
     updated_at: job.updated_at,
+    recent_runs: job.recent_runs,
   };
 }
 
@@ -103,6 +129,38 @@ const MOCK_TASKS: ScheduledTask[] = [
     last_error: null,
     created_at: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
     updated_at: new Date(Date.now() - 23 * 60 * 60 * 1000).toISOString(),
+    recent_runs: [
+      {
+        id: "r1",
+        scheduled_task_id: "mock-1",
+        agent_name: "digest",
+        status: "succeeded",
+        trigger_type: "schedule",
+        started_at: new Date(Date.now() - 23 * 3600000).toISOString(),
+        completed_at: new Date(Date.now() - 23 * 3600000 + 45000).toISOString(),
+        duration_ms: 45000,
+      },
+      {
+        id: "r2",
+        scheduled_task_id: "mock-1",
+        agent_name: "digest",
+        status: "succeeded",
+        trigger_type: "schedule",
+        started_at: new Date(Date.now() - 47 * 3600000).toISOString(),
+        completed_at: new Date(Date.now() - 47 * 3600000 + 38000).toISOString(),
+        duration_ms: 38000,
+      },
+      {
+        id: "r3",
+        scheduled_task_id: "mock-1",
+        agent_name: "digest",
+        status: "succeeded",
+        trigger_type: "schedule",
+        started_at: new Date(Date.now() - 71 * 3600000).toISOString(),
+        completed_at: new Date(Date.now() - 71 * 3600000 + 52000).toISOString(),
+        duration_ms: 52000,
+      },
+    ],
   },
   {
     id: "mock-2",
@@ -117,6 +175,17 @@ const MOCK_TASKS: ScheduledTask[] = [
     last_error: null,
     created_at: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString(),
     updated_at: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+    recent_runs: [
+      {
+        id: "r4",
+        scheduled_task_id: "mock-2",
+        agent_name: "reporter",
+        status: "succeeded",
+        trigger_type: "schedule",
+        started_at: new Date(Date.now() - 168 * 3600000).toISOString(),
+        duration_ms: 120000,
+      },
+    ],
   },
   {
     id: "mock-3",
@@ -145,6 +214,102 @@ const MOCK_TASKS: ScheduledTask[] = [
     last_error: "Permission denied: /var/log/osa/archive",
     created_at: new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString(),
     updated_at: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(),
+    recent_runs: [
+      {
+        id: "r5",
+        scheduled_task_id: "mock-4",
+        agent_name: "cleaner",
+        status: "failed",
+        trigger_type: "schedule",
+        started_at: new Date(Date.now() - 48 * 3600000).toISOString(),
+        duration_ms: 5000,
+        error_message: "Permission denied: /var/log/osa/archive",
+      },
+      {
+        id: "r6",
+        scheduled_task_id: "mock-4",
+        agent_name: "cleaner",
+        status: "failed",
+        trigger_type: "schedule",
+        started_at: new Date(Date.now() - 72 * 3600000).toISOString(),
+        duration_ms: 4800,
+        error_message: "Permission denied",
+      },
+      {
+        id: "r7",
+        scheduled_task_id: "mock-4",
+        agent_name: "cleaner",
+        status: "succeeded",
+        trigger_type: "schedule",
+        started_at: new Date(Date.now() - 96 * 3600000).toISOString(),
+        duration_ms: 32000,
+      },
+    ],
+  },
+];
+
+const MOCK_PRESETS: CronPreset[] = [
+  { id: "1m", cron: "* * * * *", label: "Every minute" },
+  { id: "5m", cron: "*/5 * * * *", label: "Every 5 minutes" },
+  { id: "15m", cron: "*/15 * * * *", label: "Every 15 minutes" },
+  { id: "30m", cron: "*/30 * * * *", label: "Every 30 minutes" },
+  { id: "1h", cron: "0 * * * *", label: "Every hour" },
+  { id: "daily", cron: "0 9 * * *", label: "Daily at 9 AM" },
+  { id: "weekly", cron: "0 9 * * 1", label: "Weekly on Monday" },
+  { id: "monthly", cron: "0 9 1 * *", label: "Monthly on the 1st" },
+];
+
+const MOCK_RUNS: ScheduledRun[] = [
+  {
+    id: "r1",
+    scheduled_task_id: "mock-1",
+    agent_name: "digest",
+    status: "succeeded",
+    trigger_type: "schedule",
+    started_at: new Date(Date.now() - 23 * 3600000).toISOString(),
+    completed_at: new Date(Date.now() - 23 * 3600000 + 45000).toISOString(),
+    duration_ms: 45000,
+    token_usage: { input: 1200, output: 850, cost_cents: 3 },
+  },
+  {
+    id: "r5",
+    scheduled_task_id: "mock-4",
+    agent_name: "cleaner",
+    status: "failed",
+    trigger_type: "schedule",
+    started_at: new Date(Date.now() - 48 * 3600000).toISOString(),
+    duration_ms: 5000,
+    error_message: "Permission denied: /var/log/osa/archive",
+  },
+  {
+    id: "r4",
+    scheduled_task_id: "mock-2",
+    agent_name: "reporter",
+    status: "succeeded",
+    trigger_type: "schedule",
+    started_at: new Date(Date.now() - 168 * 3600000).toISOString(),
+    duration_ms: 120000,
+    token_usage: { input: 3200, output: 2100, cost_cents: 8 },
+  },
+  {
+    id: "r6",
+    scheduled_task_id: "mock-4",
+    agent_name: "cleaner",
+    status: "failed",
+    trigger_type: "schedule",
+    started_at: new Date(Date.now() - 72 * 3600000).toISOString(),
+    duration_ms: 4800,
+    error_message: "Permission denied",
+  },
+  {
+    id: "r7",
+    scheduled_task_id: "mock-4",
+    agent_name: "cleaner",
+    status: "succeeded",
+    trigger_type: "schedule",
+    started_at: new Date(Date.now() - 96 * 3600000).toISOString(),
+    duration_ms: 32000,
+    token_usage: { input: 800, output: 400, cost_cents: 2 },
   },
 ];
 
@@ -157,6 +322,17 @@ class ScheduledTasksStore {
   filterStatus = $state<string>("all");
   showForm = $state(false);
   editingId = $state<string | null>(null);
+
+  presets = $state<CronPreset[]>([]);
+  runs = $state<ScheduledRun[]>([]);
+  runsTotal = $state(0);
+  runsPage = $state(1);
+  runsLoading = $state(false);
+  runsFilter = $state<ScheduledRunStatus | "all">("all");
+  activeRun = $state<ScheduledRun | null>(null);
+  activeRunOutput = $state("");
+  activeRunStreaming = $state(false);
+  private _streamController: StreamController | null = null;
 
   // ── Derived ──────────────────────────────────────────────────────────────────
 
@@ -178,7 +354,6 @@ class ScheduledTasksStore {
     this.tasks.filter((t) => t.status === "failed").length,
   );
 
-  /** The task with the soonest next_run that is not paused */
   nextUpcoming = $derived(
     this.tasks
       .filter((t) => t.next_run !== null && t.status !== "paused")
@@ -187,6 +362,12 @@ class ScheduledTasksStore {
         const tb = new Date(b.next_run!).getTime();
         return ta - tb;
       })[0] ?? null,
+  );
+
+  filteredRuns = $derived(
+    this.runsFilter === "all"
+      ? this.runs
+      : this.runs.filter((r) => r.status === this.runsFilter),
   );
 
   // ── Actions ──────────────────────────────────────────────────────────────────
@@ -198,10 +379,18 @@ class ScheduledTasksStore {
       const data = await schedulerApi.list<JobsListResponse>();
       this.tasks = (data.jobs ?? []).map(mapJob);
     } catch {
-      // Backend unreachable — use mock data so the UI is usable during dev
       this.tasks = [...MOCK_TASKS];
     } finally {
       this.loading = false;
+    }
+  }
+
+  async fetchPresets(): Promise<void> {
+    try {
+      const data = await schedulerApi.presets<PresetsResponse>();
+      this.presets = data.presets ?? [];
+    } catch {
+      this.presets = [...MOCK_PRESETS];
     }
   }
 
@@ -210,7 +399,6 @@ class ScheduledTasksStore {
       const data = await schedulerApi.create<JobResponse>(payload);
       this.tasks = [...this.tasks, mapJob(data.job)];
     } catch {
-      // Fall back to a local-only optimistic insert with a temporary id
       const optimistic: ScheduledTask = {
         id: `local-${crypto.randomUUID()}`,
         name: payload.name,
@@ -229,18 +417,16 @@ class ScheduledTasksStore {
   }
 
   async pauseTask(id: string): Promise<void> {
-    // Optimistic update
     this._setStatus(id, "paused");
     try {
       const data = await schedulerApi.toggle<JobResponse>(id);
       this._replaceTask(mapJob(data.job));
     } catch {
-      // Keep the optimistic state — the local mutation is the fallback
+      // Keep the optimistic state
     }
   }
 
   async resumeTask(id: string): Promise<void> {
-    // Optimistic update
     this._setStatus(id, "active");
     try {
       const data = await schedulerApi.toggle<JobResponse>(id);
@@ -251,25 +437,97 @@ class ScheduledTasksStore {
   }
 
   async deleteTask(id: string): Promise<void> {
-    // Optimistic removal
     const previous = this.tasks;
     this.tasks = this.tasks.filter((t) => t.id !== id);
     try {
       await schedulerApi.delete(id);
     } catch {
-      // Rollback on failure
       this.tasks = previous;
     }
   }
 
-  async runNow(id: string): Promise<void> {
+  async triggerNow(id: string): Promise<ScheduledRun | null> {
     try {
-      await schedulerApi.runNow(id);
-      // Refresh the task to pick up the updated last_run timestamp
+      const data = await schedulerApi.runNow<RunResponse>(id);
       await this._refreshTask(id);
+      return data.run;
     } catch {
-      // Non-fatal — surface via the global error only if needed by the caller
+      return null;
     }
+  }
+
+  async fetchRuns(taskId?: string, page = 1): Promise<void> {
+    this.runsLoading = true;
+    this.runsPage = page;
+    try {
+      const id = taskId ?? "all";
+      const data = await schedulerApi.runs<RunsResponse>(id, page);
+      this.runs = data.runs ?? [];
+      this.runsTotal = data.total ?? 0;
+    } catch {
+      this.runs = [...MOCK_RUNS];
+      this.runsTotal = MOCK_RUNS.length;
+    } finally {
+      this.runsLoading = false;
+    }
+  }
+
+  async fetchRun(taskId: string, runId: string): Promise<void> {
+    try {
+      const data = await schedulerApi.run<RunResponse>(taskId, runId);
+      this.activeRun = data.run;
+      this.activeRunOutput = data.run.stdout ?? "";
+    } catch {
+      const mock = MOCK_RUNS.find((r) => r.id === runId);
+      if (mock) {
+        this.activeRun = mock;
+        this.activeRunOutput =
+          mock.stdout ?? "Mock run output: task completed successfully.\n";
+      }
+    }
+  }
+
+  streamRun(taskId: string, runId: string): void {
+    this.stopStream();
+    this.activeRunOutput = "";
+    this.activeRunStreaming = true;
+
+    this._streamController = connectSSE(
+      `/scheduler/jobs/${taskId}/runs/${runId}/stream`,
+      {
+        onEvent: (event) => {
+          if (event.type === "streaming_token") {
+            this.activeRunOutput += event.delta;
+          }
+          if (event.type === "done") {
+            this.activeRunStreaming = false;
+            this._refreshTask(taskId);
+          }
+        },
+        onError: () => {
+          this.activeRunStreaming = false;
+        },
+        onDone: () => {
+          this.activeRunStreaming = false;
+        },
+      },
+    );
+  }
+
+  stopStream(): void {
+    this._streamController?.abort();
+    this._streamController = null;
+    this.activeRunStreaming = false;
+  }
+
+  closeRunDetail(): void {
+    this.stopStream();
+    this.activeRun = null;
+    this.activeRunOutput = "";
+  }
+
+  setRunsFilter(filter: ScheduledRunStatus | "all"): void {
+    this.runsFilter = filter;
   }
 
   // ── UI state helpers ─────────────────────────────────────────────────────────
@@ -298,7 +556,6 @@ class ScheduledTasksStore {
       return {
         ...t,
         status,
-        // Clear next_run when pausing so derived nextUpcoming excludes it
         next_run: status === "paused" ? null : t.next_run,
         updated_at: new Date().toISOString(),
       };

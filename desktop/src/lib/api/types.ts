@@ -234,3 +234,131 @@ export interface ApiErrorBody {
   code?: string;
   details?: unknown;
 }
+<<<<<<< Updated upstream
+=======
+
+// ── Config Revisions ────────────────────────────────────────────────────────
+
+export interface ConfigRevision {
+  id: number;
+  entity_type: string;
+  entity_id: string;
+  revision_number: number;
+  previous_config: Record<string, unknown> | null;
+  new_config: Record<string, unknown>;
+  changed_fields: string[];
+  changed_by: string;
+  change_reason: string | null;
+  metadata: Record<string, unknown>;
+  inserted_at: string;
+}
+
+export interface ConfigDiff {
+  [field: string]: { from: unknown; to: unknown };
+}
+
+// ── Resilience ──────────────────────────────────────────────────────────────
+
+export interface QueuedRequest {
+  id: string;
+  method: string;
+  path: string;
+  body?: unknown;
+  timestamp: number;
+}
+
+// ── Projects ─────────────────────────────────────────────────────────────────
+
+export type ProjectStatus = "active" | "completed" | "archived";
+export type GoalStatus = "active" | "in_progress" | "completed" | "blocked";
+export type GoalPriority = "low" | "medium" | "high";
+
+export interface Project {
+  id: number;
+  name: string;
+  description: string | null;
+  goal: string | null;
+  workspace_path: string | null;
+  status: ProjectStatus;
+  slug: string;
+  metadata: Record<string, unknown>;
+  inserted_at: string;
+  updated_at: string;
+  /** Server-computed aggregates — present on list/get responses */
+  goal_count?: number;
+  task_count?: number;
+  completed_goal_count?: number;
+}
+
+export interface Goal {
+  id: number;
+  title: string;
+  description: string | null;
+  parent_id: number | null;
+  project_id: number;
+  status: GoalStatus;
+  priority: GoalPriority;
+  metadata: Record<string, unknown>;
+  inserted_at: string;
+  updated_at: string;
+}
+
+export interface GoalTreeNode extends Goal {
+  children: GoalTreeNode[];
+  task_count?: number;
+}
+
+export interface ProjectTask {
+  id: number;
+  project_id: number;
+  task_id: string;
+  goal_id: number | null;
+  goal: Goal | null;
+  inserted_at: string;
+}
+
+export interface CreateProjectPayload {
+  name: string;
+  description?: string;
+  goal?: string;
+  workspace_path?: string;
+}
+
+export interface CreateGoalPayload {
+  title: string;
+  description?: string;
+  parent_id?: number;
+  priority?: GoalPriority;
+}
+
+// ── Approvals ────────────────────────────────────────────────────────────────
+
+export type ApprovalType =
+  | "agent_create"
+  | "budget_change"
+  | "task_reassign"
+  | "strategy_change"
+  | "agent_terminate";
+export type ApprovalStatus =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "revision_requested";
+
+export interface Approval {
+  id: number;
+  type: ApprovalType;
+  status: ApprovalStatus;
+  title: string;
+  description: string | null;
+  requested_by: string;
+  resolved_by: string | null;
+  resolved_at: string | null;
+  decision_notes: string | null;
+  context: Record<string, unknown>;
+  related_entity_type: string | null;
+  related_entity_id: string | null;
+  inserted_at: string;
+  updated_at: string;
+}
+>>>>>>> Stashed changes

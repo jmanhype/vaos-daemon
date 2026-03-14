@@ -22,6 +22,7 @@ defmodule OptimalSystemAgent.Supervisors.Extensions do
   def init(_init_arg) do
     children =
       treasury_children() ++
+      cost_tracker_children() ++
       intelligence_children() ++
       swarm_children() ++
       fleet_children() ++
@@ -42,6 +43,10 @@ defmodule OptimalSystemAgent.Supervisors.Extensions do
     else
       []
     end
+  end
+
+  defp cost_tracker_children do
+    [OptimalSystemAgent.Agent.CostTracker]
   end
 
   # Communication intelligence (Signal Theory unique) — always started when present.
