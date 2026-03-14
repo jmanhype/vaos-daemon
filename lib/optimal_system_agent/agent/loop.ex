@@ -743,7 +743,17 @@ defmodule OptimalSystemAgent.Agent.Loop do
           {:ok, resp} ->
             content = get_in(resp, ["message", "content"]) || ""
             Logger.info("[loop] Ollama Cloud response: #{byte_size(content)} bytes")
-            Bus.emit(:system_event, %{event: :streaming_token, session_id: state.session_id, text: content})
+            # Publish directly to PubSub so SSE clients get the response immediately
+            Phoenix.PubSub.broadcast(
+              OptimalSystemAgent.PubSub,
+              "osa:session:#{state.session_id}",
+              {:osa_event, %{type: :system_event, event: :streaming_token, session_id: state.session_id, text: content}}
+            )
+            Phoenix.PubSub.broadcast(
+              OptimalSystemAgent.PubSub,
+              "osa:session:#{state.session_id}",
+              {:osa_event, %{type: :done, session_id: state.session_id}}
+            )
             {:ok, %{content: content, tool_calls: []}}
           _ ->
             {:error, "Non-JSON response from Ollama Cloud"}
