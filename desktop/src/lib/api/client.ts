@@ -4,6 +4,8 @@
 import { load as loadStore } from "@tauri-apps/plugin-store";
 import type {
   Agent,
+  ConfigDiff,
+  ConfigRevision,
   CreateSessionRequest,
   CreateSessionResponse,
   HealthResponse,
@@ -13,10 +15,26 @@ import type {
   OrchestrateRequest,
   OrchestrateResponse,
   Provider,
+  QueuedRequest,
   SendMessageRequest,
   SendMessageResponse,
   Session,
   Settings,
+  Project,
+  Goal,
+  GoalTreeNode,
+  ProjectTask,
+  CreateProjectPayload,
+  CreateGoalPayload,
+  AgentBudget,
+  CostByAgent,
+  CostByModel,
+  CostEvent,
+  CostSummary,
+  Skill,
+  SkillCategoryCount,
+  SkillDetail,
+  SkillSearchResult,
 } from "./types";
 
 // ── Configuration ─────────────────────────────────────────────────────────────
@@ -427,15 +445,6 @@ export const scheduler = {
 
 // ── Projects ──────────────────────────────────────────────────────────────────
 
-import type {
-  Project,
-  Goal,
-  GoalTreeNode,
-  ProjectTask,
-  CreateProjectPayload,
-  CreateGoalPayload,
-} from "./types";
-
 export const projects = {
   list: async (): Promise<Project[]> => {
     const data = await request<{ projects: Project[] }>("/projects");
@@ -452,7 +461,10 @@ export const projects = {
     });
     return data.project;
   },
-  update: async (id: number, body: Partial<CreateProjectPayload>): Promise<Project> => {
+  update: async (
+    id: number,
+    body: Partial<CreateProjectPayload>,
+  ): Promise<Project> => {
     const data = await request<{ project: Project }>(`/projects/${id}`, {
       method: "PATCH",
       body: JSON.stringify(body),
@@ -462,27 +474,43 @@ export const projects = {
   archive: (id: number) =>
     request<void>(`/projects/${id}`, { method: "DELETE" }),
   goals: async (id: number): Promise<GoalTreeNode[]> => {
-    const data = await request<{ goals: GoalTreeNode[] }>(`/projects/${id}/goals`);
+    const data = await request<{ goals: GoalTreeNode[] }>(
+      `/projects/${id}/goals`,
+    );
     return data.goals ?? [];
   },
-  createGoal: async (projectId: number, body: CreateGoalPayload): Promise<Goal> => {
+  createGoal: async (
+    projectId: number,
+    body: CreateGoalPayload,
+  ): Promise<Goal> => {
     const data = await request<{ goal: Goal }>(`/projects/${projectId}/goals`, {
       method: "POST",
       body: JSON.stringify(body),
     });
     return data.goal;
   },
-  updateGoal: async (projectId: number, goalId: number, body: Partial<CreateGoalPayload>): Promise<Goal> => {
-    const data = await request<{ goal: Goal }>(`/projects/${projectId}/goals/${goalId}`, {
-      method: "PATCH",
-      body: JSON.stringify(body),
-    });
+  updateGoal: async (
+    projectId: number,
+    goalId: number,
+    body: Partial<CreateGoalPayload>,
+  ): Promise<Goal> => {
+    const data = await request<{ goal: Goal }>(
+      `/projects/${projectId}/goals/${goalId}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      },
+    );
     return data.goal;
   },
   deleteGoal: (projectId: number, goalId: number) =>
-    request<void>(`/projects/${projectId}/goals/${goalId}`, { method: "DELETE" }),
+    request<void>(`/projects/${projectId}/goals/${goalId}`, {
+      method: "DELETE",
+    }),
   tasks: async (id: number): Promise<ProjectTask[]> => {
-    const data = await request<{ tasks: ProjectTask[] }>(`/projects/${id}/tasks`);
+    const data = await request<{ tasks: ProjectTask[] }>(
+      `/projects/${id}/tasks`,
+    );
     return data.tasks ?? [];
   },
   linkTask: (projectId: number, taskId: string, goalId?: number) =>
@@ -491,5 +519,44 @@ export const projects = {
       body: JSON.stringify({ goal_id: goalId }),
     }),
   unlinkTask: (projectId: number, taskId: string) =>
-    request<void>(`/projects/${projectId}/tasks/${taskId}`, { method: "DELETE" }),
+    request<void>(`/projects/${projectId}/tasks/${taskId}`, {
+      method: "DELETE",
+    }),
+};
+
+// ── Costs ────────────────────────────────────────────────────────────────────
+
+export const costs = {
+  summary: () => request<CostSummary>("/costs"),
+  byAgent: () => request<{ agents: CostByAgent[] }>("/costs/by-agent"),
+  byModel: () => request<{ models: CostByModel[] }>("/costs/by-model"),
+  events: (page = 1, perPage = 20, agentName?: string) => {
+    const params = new URLSearchParams({
+      page: String(page),
+      per_page: String(perPage),
+    });
+    if (agentName) params.set("agent_name", agentName);
+    return request<{ events: CostEvent[]; page: number; per_page: number }>(
+      `/costs/events?${params}`,
+    );
+  },
+};
+
+// ── Budgets ──────────────────────────────────────────────────────────────────
+
+export const budgets = {
+  list: () => request<{ budgets: AgentBudget[] }>("/budgets"),
+  update: (agentName: string, dailyCents: number, monthlyCents: number) =>
+    request<{ status: string }>(`/budgets/${encodeURIComponent(agentName)}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        budget_daily_cents: dailyCents,
+        budget_monthly_cents: monthlyCents,
+      }),
+    }),
+  reset: (agentName: string) =>
+    request<{ status: string }>(
+      `/budgets/${encodeURIComponent(agentName)}/reset`,
+      { method: "POST" },
+    ),
 };
