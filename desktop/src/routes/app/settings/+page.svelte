@@ -11,7 +11,7 @@
   import { PROVIDERS } from '$lib/onboarding/types';
   import { restartBackend as restartBackendUtil } from '$lib/utils/backend';
   import ConfigHistory from '$lib/components/settings/ConfigHistory.svelte';
-  import type { Provider, Settings, HealthResponse } from '$lib/api/types';
+  import type { Settings, HealthResponse } from '$lib/api/types';
 
   // ── Tab definitions ──────────────────────────────────────────────────────────
 
@@ -45,8 +45,9 @@
   let theme         = $state<'dark'>('dark');
 
   // Provider
-  let connectedProviders = $state<Provider[]>([]);
   let selectedProvider   = $state('');
+  let liveHealth = $state<{ provider: string; model: string } | null>(null);
+  let liveHealthOffline = $state(false);
   let apiKey             = $state('');
   let showApiKey         = $state(false);
   let testingConnection  = $state(false);
@@ -76,7 +77,6 @@
   onMount(async () => {
     await Promise.allSettled([
       loadSettings(),
-      loadProviders(),
       loadAppVersion(),
       loadBackendHealth(),
     ]);
@@ -93,14 +93,6 @@
     }
   }
 
-  async function loadProviders() {
-    try {
-      connectedProviders = await providers.list();
-    } catch {
-      connectedProviders = [];
-    }
-  }
-
   async function loadAppVersion() {
     try {
       appVersion = await getVersion();
@@ -113,10 +105,33 @@
     try {
       healthData     = await health.get();
       backendVersion = healthData?.version ?? '—';
-      contextWindow  = null; // no field in HealthResponse
+      contextWindow  = healthData?.context_window ?? null;
+      if (healthData?.status === 'ok' && healthData.provider) {
+        liveHealth = { provider: healthData.provider, model: healthData.model ?? '' };
+        liveHealthOffline = false;
+      } else {
+        liveHealth = null;
+        liveHealthOffline = false;
+      }
     } catch {
       backendVersion = 'offline';
+      liveHealth = null;
+      liveHealthOffline = true;
     }
+  }
+
+  function providerMatchesHealth(metaId: string): boolean {
+    if (!liveHealth) return false;
+    const hp = liveHealth.provider.toLowerCase();
+    if (metaId === 'ollama' && hp === 'ollama') return true;
+    if (metaId === 'ollama-cloud' && (hp === 'ollama-cloud' || hp === 'ollama_cloud')) return true;
+    return hp === metaId;
+  }
+
+  function liveHealthDisplayName(): string {
+    if (!liveHealth) return '';
+    const meta = PROVIDERS.find(p => providerMatchesHealth(p.id));
+    return meta ? meta.name : liveHealth.provider;
   }
 
   // ── General actions ──────────────────────────────────────────────────────────
@@ -141,7 +156,7 @@
       await providers.connect(selectedProvider, apiKey.trim());
       connectionStatus  = 'ok';
       connectionMessage = 'Connection successful.';
-      await loadProviders();
+      await loadBackendHealth();
     } catch (err) {
       connectionStatus  = 'error';
       connectionMessage = err instanceof Error ? err.message : 'Connection failed.';
@@ -385,11 +400,19 @@
                 <span class="item-label">Connected providers</span>
               </div>
               <div class="provider-badges">
-                {#each connectedProviders.filter(p => p.connected) as p (p.slug)}
-                  <span class="badge badge--active">{p.name}</span>
+                {#if liveHealthOffline}
+                  <span class="live-health-pill live-health-pill--offline">
+                    <span class="live-dot live-dot--red" aria-hidden="true"></span>
+                    Offline
+                  </span>
+                {:else if liveHealth}
+                  <span class="live-health-pill live-health-pill--online">
+                    <span class="live-dot live-dot--green" aria-hidden="true"></span>
+                    {liveHealthDisplayName()}{liveHealth.model ? ` — ${liveHealth.model}` : ''}
+                  </span>
                 {:else}
                   <span class="badge badge--muted">None</span>
-                {/each}
+                {/if}
               </div>
             </div>
           </div>
@@ -400,7 +423,7 @@
           </div>
           <div class="provider-grid">
             {#each PROVIDERS as meta (meta.id)}
-              {@const isConnected = connectedProviders.some(p => p.slug === meta.id && p.connected)}
+              {@const isConnected = providerMatchesHealth(meta.id)}
               <label
                 class="provider-card"
                 class:provider-card--selected={selectedProvider === meta.id}
@@ -412,6 +435,11 @@
                   bind:group={selectedProvider}
                   class="sr-only"
                   aria-label="Select {meta.name}"
+                  onchange={() => {
+                    if (meta.id === 'ollama-cloud' && !apiKey) {
+                      apiKey = 'https://ollama.com';
+                    }
+                  }}
                 />
                 <div class="pcard-inner">
                   <div class="pcard-top">
@@ -1428,16 +1456,51 @@
     font-weight: 500;
   }
 
-  .badge--active {
-    background: rgba(34, 197, 94, 0.12);
-    border: 1px solid rgba(34, 197, 94, 0.25);
-    color: rgba(34, 197, 94, 0.9);
-  }
-
   .badge--muted {
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.07);
     color: var(--text-tertiary);
+  }
+
+  /* ── Live health pill ─────────────────────────────────────────────── */
+
+  .live-health-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    border-radius: var(--radius-full);
+    font-size: 12px;
+    font-weight: 500;
+  }
+
+  .live-health-pill--online {
+    background: rgba(34, 197, 94, 0.1);
+    border: 1px solid rgba(34, 197, 94, 0.22);
+    color: rgba(34, 197, 94, 0.95);
+  }
+
+  .live-health-pill--offline {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.22);
+    color: rgba(239, 68, 68, 0.9);
+  }
+
+  .live-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .live-dot--green {
+    background: rgba(34, 197, 94, 0.9);
+    box-shadow: 0 0 4px rgba(34, 197, 94, 0.5);
+  }
+
+  .live-dot--red {
+    background: rgba(239, 68, 68, 0.9);
+    box-shadow: 0 0 4px rgba(239, 68, 68, 0.4);
   }
 
   /* ── Status indicators ────────────────────────────────────────────────────── */

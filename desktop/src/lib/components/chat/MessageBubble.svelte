@@ -167,13 +167,13 @@
     gap: 8px;
   }
 
-  /* User bubble: right-aligned, white glass */
+  /* User bubble: right-aligned, blue accent */
   .bubble--user {
-    background: rgba(255, 255, 255, 0.07);
-    border-color: rgba(255, 255, 255, 0.12);
+    background: rgba(59, 130, 246, 0.25);
+    border-color: rgba(96, 165, 250, 0.3);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
-    color: rgba(255, 255, 255, 0.92);
+    color: rgba(255, 255, 255, 0.95);
   }
 
   /* Assistant bubble: left-aligned, darker glass */

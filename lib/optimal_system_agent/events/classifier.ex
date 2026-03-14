@@ -1,13 +1,6 @@
 defmodule OptimalSystemAgent.Events.Classifier do
-  @moduledoc """
-  Signal classifier — safe fallback when MiosaSignal.Classifier is unavailable.
-  """
-
-  # auto_classify is called by Bus.emit on every event.
-  # Returns the event unchanged when MiosaSignal.Classifier is not available.
+  @moduledoc "Signal classifier — safe fallback when MiosaSignal.Classifier is unavailable."
   def auto_classify(event), do: event
-
-  # Safe no-ops for all delegated functions
   def classify(_event), do: %{}
   def sn_ratio(_event), do: 1.0
   def infer_mode(_event), do: nil

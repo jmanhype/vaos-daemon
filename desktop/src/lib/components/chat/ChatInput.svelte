@@ -1,9 +1,14 @@
+<script module lang="ts">
+  export type SlashCommandName = 'clear' | 'help' | 'model' | 'sessions' | 'memory';
+</script>
+
 <script lang="ts">
   import { voiceStore } from '$lib/stores/voice.svelte';
 
   interface Props {
     disabled?: boolean;
     onSend: (text: string) => void;
+    onCommand?: (cmd: SlashCommandName) => void;
     placeholder?: string;
     isListening?: boolean;
     onFilesAttach?: (files: FileList | File[]) => void;
@@ -12,6 +17,7 @@
   let {
     disabled = false,
     onSend,
+    onCommand,
     placeholder = 'Message OSA… (Enter to send, Shift+Enter for newline)',
     isListening = $bindable(false),
     onFilesAttach,
@@ -90,15 +96,12 @@
   }
 
   // ── Slash command autocomplete ─────────────────────────────────────────────
-  const SLASH_COMMANDS = [
-    { name: 'help', desc: 'Show available commands' },
-    { name: 'clear', desc: 'Clear chat messages' },
-    { name: 'model', desc: 'Switch active model' },
-    { name: 'new', desc: 'Start a new session' },
-    { name: 'agents', desc: 'List available agents' },
-    { name: 'settings', desc: 'Open settings' },
-    { name: 'history', desc: 'View chat history' },
-    { name: 'reset', desc: 'Reset current session' },
+  const SLASH_COMMANDS: { name: SlashCommandName; desc: string }[] = [
+    { name: 'clear',    desc: 'Clear chat — create a new session' },
+    { name: 'help',     desc: 'Show available commands' },
+    { name: 'model',    desc: 'Show current model info' },
+    { name: 'sessions', desc: 'List recent sessions' },
+    { name: 'memory',   desc: 'Save current context to memory' },
   ];
 
   let showSlashMenu = $state(false);
@@ -124,10 +127,14 @@
     }
   }
 
-  function selectSlashCommand(cmd: typeof SLASH_COMMANDS[number]) {
-    text = `/${cmd.name} `;
+  function selectSlashCommand(cmd: { name: SlashCommandName; desc: string }) {
+    // Clear the typed slash text and close the menu
+    text = '';
     showSlashMenu = false;
+    if (textareaEl) textareaEl.style.height = 'auto';
     textareaEl?.focus();
+    // Delegate execution to the parent — don't send as a chat message
+    onCommand?.(cmd.name);
   }
 
   function handleSlashKeydown(e: KeyboardEvent) {

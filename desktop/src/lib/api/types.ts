@@ -8,6 +8,8 @@ export interface HealthResponse {
   version: string;
   uptime_seconds: number;
   provider: string | null;
+  model?: string | null;
+  context_window?: number | null;
   agents_active: number;
 }
 

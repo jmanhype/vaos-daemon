@@ -2,12 +2,14 @@
   import { onDestroy } from 'svelte';
   import { fly } from 'svelte/transition';
   import { chatStore } from '$lib/stores/chat.svelte';
-  import { connectionStore } from '$lib/stores/connection.svelte';
+  import { sessionsStore } from '$lib/stores/sessions.svelte';
+  import { modelsStore } from '$lib/stores/models.svelte';
   import { restartBackend } from '$lib/utils/backend';
   import MessageBubble from './MessageBubble.svelte';
   import ChatInput from './ChatInput.svelte';
+  import type { SlashCommandName } from './ChatInput.svelte';
   import type { ToolCallRef } from '$lib/api/types';
-  import type { StreamingToolCall } from '$lib/stores/chat.svelte';
+  import type { Message } from '$lib/api/types';
 
   interface Props {
     /** Session ID — passed from the route page after it resolves/creates one. */
@@ -139,11 +141,11 @@
 
   // Build the live streaming tool call states for display
   const streamingToolStates = $derived(
-    chatStore.streaming.toolCalls.map((tc: StreamingToolCall) => ({
-      tool: tc as ToolCallRef,
-      result: tc.result,
-      isError: tc.isError ?? false,
-      isRunning: tc.result === undefined,
+    chatStore.streaming.toolCalls.map((tc) => ({
+      tool: tc as unknown as ToolCallRef,
+      result: (tc as { result?: string }).result,
+      isError: false,
+      isRunning: !('result' in tc && tc.result !== undefined),
       isExpanded: false,
     }))
   );
@@ -201,6 +203,111 @@
   let isVoiceListening = $state(false);
   const orbActive = $derived(chatStore.isStreaming || isVoiceListening);
 
+  // ── Slash command execution ────────────────────────────────────────────────
+
+  /** Inject a system message into the local message list (no network call). */
+  function injectSystemMessage(content: string): void {
+    const msg: Message = {
+      id: `system-${Date.now()}`,
+      role: 'system',
+      content,
+      timestamp: new Date().toISOString(),
+    };
+    chatStore.messages = [...chatStore.messages, msg];
+    isAtBottom = true;
+  }
+
+  async function handleCommand(cmd: SlashCommandName): Promise<void> {
+    switch (cmd) {
+      case 'clear': {
+        // Cancel any active stream, then start a fresh session
+        if (chatStore.isStreaming) chatStore.cancelGeneration();
+        const newSession = await chatStore.createSession();
+        chatStore.currentSession = newSession;
+        chatStore.messages = [];
+        chatStore.pendingUserMessage = null;
+        break;
+      }
+
+      case 'help': {
+        injectSystemMessage(
+          '**Available slash commands**\n\n' +
+          '`/clear` — Clear chat and start a new session\n' +
+          '`/help` — Show this help message\n' +
+          '`/model` — Show current model info\n' +
+          '`/sessions` — List recent sessions\n' +
+          '`/memory` — Save current context to memory'
+        );
+        break;
+      }
+
+      case 'model': {
+        try {
+          const res = await fetch('http://127.0.0.1:9089/health');
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json() as Record<string, unknown>;
+          const active = modelsStore.current;
+          const modelName = (data.model as string | undefined) ?? active?.name ?? 'unknown';
+          const provider = (data.provider as string | undefined) ?? active?.provider ?? 'unknown';
+          const contextWindow = active?.context_window
+            ? `${(active.context_window / 1000).toFixed(0)}K context`
+            : '';
+          const status = (data.status as string | undefined) ?? 'ok';
+          injectSystemMessage(
+            '**Current model**\n\n' +
+            `Model: \`${modelName}\`\n` +
+            `Provider: ${provider}\n` +
+            (contextWindow ? `Context: ${contextWindow}\n` : '') +
+            `Backend status: ${status}`
+          );
+        } catch {
+          const active = modelsStore.current;
+          if (active) {
+            injectSystemMessage(
+              '**Current model** (backend unreachable)\n\n' +
+              `Model: \`${active.name}\`\n` +
+              `Provider: ${active.provider}`
+            );
+          } else {
+            injectSystemMessage('Could not reach backend to fetch model info. Is OSA running on port 9089?');
+          }
+        }
+        break;
+      }
+
+      case 'sessions': {
+        await chatStore.listSessions();
+        const sessions = chatStore.sessions;
+        if (sessions.length === 0) {
+          injectSystemMessage('No sessions found.');
+        } else {
+          const lines = sessions
+            .slice(0, 10)
+            .map((s, i) => {
+              const label = s.title ?? `Session ${i + 1}`;
+              const date = s.created_at ? new Date(s.created_at).toLocaleDateString() : 'unknown';
+              const msgs = s.message_count ?? 0;
+              const active = s.id === chatStore.currentSession?.id ? ' (current)' : '';
+              return `${i + 1}. **${label}**${active} — ${msgs} messages — ${date}`;
+            })
+            .join('\n');
+          injectSystemMessage(`**Recent sessions** (${sessions.length} total)\n\n${lines}`);
+        }
+        // Also open the sessions panel so the user can click through
+        sessionsStore.open();
+        break;
+      }
+
+      case 'memory': {
+        injectSystemMessage(
+          'Memory save is not yet connected to a backend endpoint. ' +
+          'Use `/mem-save` in a Claude Code session to persist patterns manually.'
+        );
+        break;
+      }
+    }
+  }
+
   onDestroy(() => {
     if (chatStore.isStreaming) {
       chatStore.cancelGeneration();
@@ -231,8 +338,8 @@
     </div>
   {/if}
 
-  <!-- Connection status banner — only show if connectionStore also says disconnected -->
-  {#if chatStore.error && !connectionStore.isConnected}
+  <!-- Connection status banner — subtle, not alarming -->
+  {#if chatStore.error}
     <div class="connection-banner" role="status">
       <span class="connection-dot"></span>
       <span class="connection-text">Backend offline</span>
@@ -257,37 +364,14 @@
     aria-relevant="additions"
     role="log"
   >
-    <div class="message-list">
-      <!-- Empty state -->
-      {#if chatStore.messages.length === 0 && !chatStore.isStreaming && !chatStore.pendingUserMessage}
-        <div class="empty-state" transition:fly={{ y: 16, duration: 300 }}>
-          <div class="orb-container orb-container--large">
-            {#if orbActive}
-              <video
-                class="orb-active"
-                src="/OSLoopingActiveMode.mp4"
-                autoplay
-                loop
-                muted
-                playsinline
-                aria-hidden="true"
-              ></video>
-            {:else}
-              <video
-                class="orb-idle"
-                src="/MergedAnimationOS.mp4"
-                autoplay
-                loop
-                muted
-                playsinline
-                aria-hidden="true"
-              ></video>
-            {/if}
-          </div>
-          <p class="empty-label">Start a conversation</p>
-        </div>
-      {/if}
+    <!-- Empty state — absolutely centred, does not participate in scroll layout -->
+    {#if chatStore.messages.length === 0 && !chatStore.isStreaming && !chatStore.pendingUserMessage}
+      <div class="empty-state" transition:fly={{ y: 16, duration: 300 }}>
+        <p class="empty-label">Start a conversation</p>
+      </div>
+    {/if}
 
+    <div class="message-list">
       <!-- Persisted messages -->
       {#each chatStore.messages as message (message.id)}
         <div
@@ -423,6 +507,7 @@
     <ChatInput
       disabled={chatStore.isStreaming}
       onSend={handleSend}
+      onCommand={handleCommand}
       bind:isListening={isVoiceListening}
       onFilesAttach={processFiles}
     />
@@ -494,6 +579,7 @@
 
   /* Scrollable message area */
   .message-viewport {
+    position: relative;
     flex: 1;
     overflow-y: auto;
     overflow-x: hidden;
