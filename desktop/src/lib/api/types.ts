@@ -549,6 +549,10 @@ export interface Project {
   metadata: Record<string, unknown>;
   inserted_at: string;
   updated_at: string;
+  /** Server-computed aggregates — present on list/get responses */
+  goal_count?: number;
+  task_count?: number;
+  completed_goal_count?: number;
 }
 
 export interface Goal {
@@ -567,6 +571,9 @@ export interface Goal {
 export interface GoalTreeNode {
   goal: Goal;
   children: GoalTreeNode[];
+export interface GoalTreeNode extends Goal {
+  children: GoalTreeNode[];
+  task_count?: number;
 }
 
 export interface ProjectTask {
@@ -590,4 +597,35 @@ export interface CreateGoalPayload {
   description?: string;
   parent_id?: number;
   priority?: GoalPriority;
+}
+
+// ── Approvals ────────────────────────────────────────────────────────────────
+
+export type ApprovalType =
+  | "agent_create"
+  | "budget_change"
+  | "task_reassign"
+  | "strategy_change"
+  | "agent_terminate";
+export type ApprovalStatus =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "revision_requested";
+
+export interface Approval {
+  id: number;
+  type: ApprovalType;
+  status: ApprovalStatus;
+  title: string;
+  description: string | null;
+  requested_by: string;
+  resolved_by: string | null;
+  resolved_at: string | null;
+  decision_notes: string | null;
+  context: Record<string, unknown>;
+  related_entity_type: string | null;
+  related_entity_id: string | null;
+  inserted_at: string;
+  updated_at: string;
 }

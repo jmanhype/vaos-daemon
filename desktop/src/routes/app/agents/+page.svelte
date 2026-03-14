@@ -2,19 +2,20 @@
   import { onMount, onDestroy } from 'svelte';
   import { slide } from 'svelte/transition';
   import { agentsStore } from '$lib/stores/agents.svelte';
-  import { agents as agentsApi } from '$lib/api/client';
+  import { agents as agentsApi, hierarchy as hierarchyApi } from '$lib/api/client';
   import { restartBackend } from '$lib/utils/backend';
-  import type { Agent, AgentStatus } from '$lib/api/types';
+  import type { Agent, AgentStatus, HierarchyNode } from '$lib/api/types';
   import AgentTree from '$lib/components/agents/AgentTree.svelte';
+  import OrgChart from '$lib/components/agents/OrgChart.svelte';
 
-  // ── View mode (grid | tree) ──────────────────────────────────────────────────
+  // ── View mode (grid | tree | org) ─────────────────────────────────────────────
 
-  type ViewMode = 'grid' | 'tree';
+  type ViewMode = 'grid' | 'tree' | 'org';
 
   function loadViewMode(): ViewMode {
     try {
       const stored = localStorage.getItem('osa:agents:view');
-      if (stored === 'tree' || stored === 'grid') return stored;
+      if (stored === 'tree' || stored === 'grid' || stored === 'org') return stored;
     } catch { /* ignore */ }
     return 'grid';
   }
@@ -26,6 +27,30 @@
     try {
       localStorage.setItem('osa:agents:view', mode);
     } catch { /* ignore */ }
+    if (mode === 'org') fetchHierarchy();
+  }
+
+  // ── Hierarchy state ────────────────────────────────────────────────────────────
+
+  let hierarchyTree = $state<HierarchyNode[]>([]);
+  let hierarchyLoading = $state(false);
+
+  async function fetchHierarchy() {
+    hierarchyLoading = true;
+    try {
+      hierarchyTree = await hierarchyApi.getTree();
+    } catch { hierarchyTree = []; }
+    finally { hierarchyLoading = false; }
+  }
+
+  async function handleMove(agentName: string, newReportsTo: string | null) {
+    await hierarchyApi.update(agentName, { reports_to: newReportsTo });
+    await fetchHierarchy();
+  }
+
+  async function seedHierarchy() {
+    await hierarchyApi.seed();
+    await fetchHierarchy();
   }
 
   // ── Polling ──────────────────────────────────────────────────────────────────
@@ -34,6 +59,7 @@
 
   onMount(() => {
     agentsStore.fetchAgents();
+    if (viewMode === 'org') fetchHierarchy();
     pollTimer = setInterval(() => {
       agentsStore.fetchAgents();
     }, 5000);
@@ -191,6 +217,25 @@
         </svg>
         <span class="view-btn-label">Tree</span>
       </button>
+      <button
+        class="view-btn"
+        class:view-btn--active={viewMode === 'org'}
+        onclick={() => setViewMode('org')}
+        aria-pressed={viewMode === 'org'}
+        aria-label="Org chart view"
+        title="Org chart view"
+      >
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
+          <rect x="4.5" y="1" width="5" height="3" rx="1" fill="currentColor" stroke="none"/>
+          <rect x="0.5" y="9" width="4" height="3" rx="1" fill="currentColor" stroke="none" opacity="0.6"/>
+          <rect x="9.5" y="9" width="4" height="3" rx="1" fill="currentColor" stroke="none" opacity="0.6"/>
+          <line x1="7" y1="4" x2="7" y2="6.5"/>
+          <line x1="2.5" y1="9" x2="2.5" y2="6.5"/>
+          <line x1="11.5" y1="9" x2="11.5" y2="6.5"/>
+          <line x1="2.5" y1="6.5" x2="11.5" y2="6.5"/>
+        </svg>
+        <span class="view-btn-label">Org</span>
+      </button>
     </div>
 
     <div class="stats-bar" role="status" aria-label="Agent statistics">
@@ -248,7 +293,19 @@
       </div>
     {/if}
 
-    {#if viewMode === 'tree'}
+    {#if viewMode === 'org'}
+      <!-- ── Org chart view ── -->
+      {#if hierarchyTree.length === 0 && !hierarchyLoading}
+        <div class="empty-state" role="status">
+          <p class="empty-title">No hierarchy configured</p>
+          <p class="empty-subtitle">Seed the default org structure to get started.</p>
+          <button class="seed-btn" onclick={seedHierarchy}>Seed Default Hierarchy</button>
+        </div>
+      {:else}
+        <OrgChart tree={hierarchyTree} onMove={handleMove} />
+      {/if}
+
+    {:else if viewMode === 'tree'}
       <!-- ── Tree view ── -->
       <AgentTree />
 
@@ -682,6 +739,24 @@
     color: var(--text-tertiary);
     max-width: 280px;
     line-height: 1.5;
+  }
+
+  .seed-btn {
+    margin-top: 8px;
+    padding: 8px 20px;
+    border-radius: var(--radius-md);
+    background: rgba(59, 130, 246, 0.12);
+    border: 1px solid rgba(59, 130, 246, 0.25);
+    color: rgba(59, 130, 246, 0.9);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+  }
+
+  .seed-btn:hover {
+    background: rgba(59, 130, 246, 0.2);
+    border-color: rgba(59, 130, 246, 0.4);
   }
 
   /* ── Agent grid ── */

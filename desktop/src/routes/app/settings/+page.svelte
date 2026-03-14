@@ -10,11 +10,12 @@
   import type { ThemeMode } from '$lib/stores/theme.svelte';
   import { PROVIDERS } from '$lib/onboarding/types';
   import { restartBackend as restartBackendUtil } from '$lib/utils/backend';
+  import ConfigHistory from '$lib/components/settings/ConfigHistory.svelte';
   import type { Provider, Settings, HealthResponse } from '$lib/api/types';
 
   // ── Tab definitions ──────────────────────────────────────────────────────────
 
-  type TabId = 'general' | 'provider' | 'voice' | 'permissions' | 'advanced' | 'about';
+  type TabId = 'general' | 'provider' | 'voice' | 'permissions' | 'advanced' | 'history' | 'about';
 
   interface Tab {
     id: TabId;
@@ -28,6 +29,7 @@
     { id: 'voice',       label: 'Voice',        icon: 'mic' },
     { id: 'permissions', label: 'Permissions',  icon: 'shield' },
     { id: 'advanced',    label: 'Advanced',     icon: 'terminal' },
+    { id: 'history',     label: 'History',      icon: 'clock' },
     { id: 'about',       label: 'About',        icon: 'info' },
   ];
 
@@ -793,6 +795,14 @@
               <pre class="doctor-pre">{doctorOutput}</pre>
             </div>
           {/if}
+        </section>
+
+      <!-- ── History ────────────────────────────────────────────────────────── -->
+      {:else if activeTab === 'history'}
+        <section class="section">
+          <h2 class="section-title">Config History</h2>
+          <p class="section-desc">Track and rollback configuration changes.</p>
+          <ConfigHistory entityType="system" entityId="global" />
         </section>
 
       <!-- ── About ─────────────────────────────────────────────────────────── -->

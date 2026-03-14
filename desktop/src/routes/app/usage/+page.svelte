@@ -39,6 +39,14 @@
   let budgetLoading = $derived(usageStore.budgetLoading);
   let pausedAgents = $derived(usageStore.pausedAgents());
 
+  // Budget derived
+  let summary = $derived(usageStore.summary);
+  let agentBudgets = $derived(usageStore.agentBudgets);
+  let costByModel = $derived(usageStore.costByModel);
+  let costByAgent = $derived(usageStore.costByAgent);
+  let budgetLoading = $derived(usageStore.budgetLoading);
+  let pausedAgents = $derived(usageStore.pausedAgents());
+
   // ── Helpers ────────────────────────────────────────────────────────────────
 
   function formatResponseTime(ms: number): string {
@@ -145,6 +153,24 @@
 
     <BudgetAlerts dailySpent={summary?.daily_spent_cents ?? 0} dailyLimit={summary?.daily_limit_cents ?? 25000} monthlySpent={summary?.monthly_spent_cents ?? 0} monthlyLimit={summary?.monthly_limit_cents ?? 250000} {pausedAgents} />
     <BudgetOverview dailySpent={summary?.daily_spent_cents ?? 0} dailyLimit={summary?.daily_limit_cents ?? 25000} monthlySpent={summary?.monthly_spent_cents ?? 0} monthlyLimit={summary?.monthly_limit_cents ?? 250000} agents={agentBudgets} loading={budgetLoading} />
+    <!-- ── Budget alerts ────────────────────────────────────────────────── -->
+    <BudgetAlerts
+      dailySpent={summary?.daily_spent_cents ?? 0}
+      dailyLimit={summary?.daily_limit_cents ?? 25000}
+      monthlySpent={summary?.monthly_spent_cents ?? 0}
+      monthlyLimit={summary?.monthly_limit_cents ?? 250000}
+      {pausedAgents}
+    />
+
+    <!-- ── Budget overview ──────────────────────────────────────────────── -->
+    <BudgetOverview
+      dailySpent={summary?.daily_spent_cents ?? 0}
+      dailyLimit={summary?.daily_limit_cents ?? 25000}
+      monthlySpent={summary?.monthly_spent_cents ?? 0}
+      monthlyLimit={summary?.monthly_limit_cents ?? 250000}
+      agents={agentBudgets}
+      loading={budgetLoading}
+    />
 
     <!-- ── Stat cards ──────────────────────────────────────────────────── -->
     <section class="ua-stat-grid" aria-label="Summary statistics">
@@ -262,6 +288,20 @@
 
     <CostBreakdown byModel={costByModel.map(m => ({ model: m.model, cost_cents: m.cost_cents, count: m.count }))} byAgent={costByAgent.map(a => ({ agent_name: a.agent_name, cost_cents: a.cost_cents, count: a.count }))} loading={budgetLoading} />
     <BudgetControls agents={agentBudgets} onUpdate={(name, daily, monthly) => usageStore.updateBudget(name, daily, monthly)} onReset={(name) => usageStore.resetBudget(name)} loading={budgetLoading} />
+    <!-- ── Cost breakdown ──────────────────────────────────────────────── -->
+    <CostBreakdown
+      byModel={costByModel.map(m => ({ model: m.model, cost_cents: m.cost_cents, count: m.count }))}
+      byAgent={costByAgent.map(a => ({ agent_name: a.agent_name, cost_cents: a.cost_cents, count: a.count }))}
+      loading={budgetLoading}
+    />
+
+    <!-- ── Budget controls ─────────────────────────────────────────────── -->
+    <BudgetControls
+      agents={agentBudgets}
+      onUpdate={(name, daily, monthly) => usageStore.updateBudget(name, daily, monthly)}
+      onReset={(name) => usageStore.resetBudget(name)}
+      loading={budgetLoading}
+    />
 
   </main>
 </div>

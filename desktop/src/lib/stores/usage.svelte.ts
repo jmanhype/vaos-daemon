@@ -201,6 +201,35 @@ class UsageStore {
       .map((a) => a.agent_name);
   });
 
+  // Budget state
+  summary = $state<CostSummary | null>(null);
+  agentBudgets = $state<AgentBudget[]>([]);
+  costByModel = $state<CostByModel[]>([]);
+  costByAgent = $state<CostByAgent[]>([]);
+  budgetLoading = $state(false);
+
+  // Derived
+  dailyPct = $derived((): number => {
+    if (!this.summary || this.summary.daily_limit_cents === 0) return 0;
+    return (
+      (this.summary.daily_spent_cents / this.summary.daily_limit_cents) * 100
+    );
+  });
+
+  monthlyPct = $derived((): number => {
+    if (!this.summary || this.summary.monthly_limit_cents === 0) return 0;
+    return (
+      (this.summary.monthly_spent_cents / this.summary.monthly_limit_cents) *
+      100
+    );
+  });
+
+  pausedAgents = $derived((): string[] => {
+    return this.agentBudgets
+      .filter((a) => a.status === "paused_budget")
+      .map((a) => a.agent_name);
+  });
+
   // ── Derived ──────────────────────────────────────────────────────────────────
 
   /**
@@ -308,6 +337,19 @@ class UsageStore {
       this.costByModel = m.models ?? [];
       this.costByAgent = a.agents ?? [];
     } catch {
+      const [summaryRes, budgetsRes, byModelRes, byAgentRes] =
+        await Promise.all([
+          costs.summary(),
+          budgets.list(),
+          costs.byModel(),
+          costs.byAgent(),
+        ]);
+      this.summary = summaryRes;
+      this.agentBudgets = budgetsRes.budgets ?? [];
+      this.costByModel = byModelRes.models ?? [];
+      this.costByAgent = byAgentRes.agents ?? [];
+    } catch {
+      // Fallback: leave existing state or set defaults
       if (!this.summary) {
         this.summary = {
           daily_spent_cents: 0,
