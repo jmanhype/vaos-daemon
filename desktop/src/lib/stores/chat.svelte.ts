@@ -205,6 +205,43 @@ class ChatStore {
           this.#finalizeStream();
         },
       });
+
+      // Polling fallback: if SSE doesn't deliver the response within 8s,
+      // poll the messages API to get the response directly.
+      // This handles cases where SSE streaming fails silently.
+      setTimeout(async () => {
+        if (this.isStreaming && this.streaming.textBuffer.length === 0 && sessionId) {
+          console.log("[chat] SSE timeout — polling for response");
+          try {
+            const msgs = await messagesApi.list(sessionId);
+            const assistantMsg = msgs.filter(m => m.role === "assistant").pop();
+            if (assistantMsg) {
+              this.streaming.textBuffer = assistantMsg.content;
+              this.#finalizeStream();
+            }
+          } catch {
+            // Poll failed — will retry
+          }
+
+          // Retry once more after another 8s
+          setTimeout(async () => {
+            if (this.isStreaming && this.streaming.textBuffer.length === 0 && sessionId) {
+              console.log("[chat] SSE timeout — second poll");
+              try {
+                const msgs = await messagesApi.list(sessionId);
+                const assistantMsg = msgs.filter(m => m.role === "assistant").pop();
+                if (assistantMsg) {
+                  this.streaming.textBuffer = assistantMsg.content;
+                  this.#finalizeStream();
+                }
+              } catch {
+                this.isStreaming = false;
+                this.error = "No response received";
+              }
+            }
+          }, 8000);
+        }
+      }, 8000);
     } catch (e) {
       this.error = (e as Error).message;
       this.isStreaming = false;
