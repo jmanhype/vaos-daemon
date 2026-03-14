@@ -5,6 +5,7 @@
   import { fade } from 'svelte/transition';
   import Sidebar from '$lib/components/layout/Sidebar.svelte';
   import ConnectionStatusBar from '$lib/components/layout/ConnectionStatusBar.svelte';
+  import { connectionStore } from '$lib/stores/connection.svelte';
   // TitleBar removed — using native decorations
   import PermissionOverlay from '$lib/components/permissions/PermissionOverlay.svelte';
   import SurveyDialog from '$lib/components/survey/SurveyDialog.svelte';
@@ -129,6 +130,7 @@
   // Register with chatStore on mount — receives every raw SSE event.
   // Cleaned up automatically when the layout is destroyed.
   onMount(() => {
+    const stopPolling = connectionStore.startPolling(10_000);
     chatStore.addStreamListener(dispatchStreamEvent);
 
     // Listen for osa:send-message events from Connectors page and other sources
@@ -142,6 +144,7 @@
     window.addEventListener('osa:send-message', handleOSASend);
 
     return () => {
+      stopPolling();
       chatStore.removeStreamListener(dispatchStreamEvent);
       window.removeEventListener('osa:send-message', handleOSASend);
     };
