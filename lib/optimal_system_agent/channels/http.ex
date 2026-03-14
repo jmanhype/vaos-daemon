@@ -52,7 +52,7 @@ defmodule OptimalSystemAgent.Channels.HTTP do
     conn
     |> put_resp_header("access-control-allow-origin", "*")
     |> put_resp_header("access-control-allow-methods", "GET, POST, PUT, DELETE, OPTIONS")
-    |> put_resp_header("access-control-allow-headers", "content-type, authorization")
+    |> put_resp_header("access-control-allow-headers", "content-type, authorization, accept, cache-control, x-accel-buffering")
     |> put_resp_header("access-control-max-age", "86400")
   end
 
