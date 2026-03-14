@@ -1,29 +1,22 @@
 // src/lib/stores/chat.svelte.ts
 // Chat store — Svelte 5 class with $state fields.
-// Manages sessions, messages, and the active SSE stream lifecycle.
+// Manages sessions, messages, and the active stream lifecycle.
 
 import type { Message, Session, StreamEvent, ToolCallRef } from "$api/types";
-import { messages as messagesApi, sessions as sessionsApi } from "$api/client";
+import { sessions as sessionsApi } from "$api/client";
 import { streamMessage, type StreamController } from "$api/sse";
 
-// ── Types ──────────────────────────────────────────────────────────────────────
+const BASE = "http://127.0.0.1:9089/api/v1";
 
-/**
- * A tool call entry while streaming — extends ToolCallRef with live result/error
- * fields that are filled in as tool_result events arrive.
- */
-export interface StreamingToolCall extends ToolCallRef {
-  result?: string;
-  isError?: boolean;
-}
+// ── Types ──────────────────────────────────────────────────────────────────────
 
 export interface StreamingMessage {
   /** Incremental text buffer during streaming */
   textBuffer: string;
   /** Incremental thinking buffer during streaming */
   thinkingBuffer: string;
-  /** Tool calls accumulated during this stream (with live result state) */
-  toolCalls: StreamingToolCall[];
+  /** Tool calls accumulated during this stream */
+  toolCalls: ToolCallRef[];
 }
 
 // ── Chat Store Class ──────────────────────────────────────────────────────────
@@ -53,16 +46,13 @@ class ChatStore {
   isLoadingMessages = $state(false);
   error = $state<string | null>(null);
 
-  // Private — not reactive, no need to expose
+  // Private — not reactive
   #streamController: StreamController | null = null;
+  #pollAborted = false;
 
   /**
    * Raw event listeners — called for every SSE event before the store
-   * processes it. Use this to forward events to other stores (tasks, survey,
-   * permissions) without coupling the chat store to them directly.
-   *
-   * Register with `chatStore.addStreamListener(fn)` and clean up with
-   * `chatStore.removeStreamListener(fn)`.
+   * processes it.
    */
   #streamListeners: Array<(event: StreamEvent) => void> = [];
 
@@ -80,18 +70,14 @@ class ChatStore {
     this.isLoadingSessions = true;
     this.error = null;
     try {
-      const data = await sessionsApi.list();
-      this.sessions = data;
-    } catch (e) {
-      // Only surface connectivity errors — not API-level issues
-      const msg = (e as Error).message ?? String(e);
-      if (
-        msg.includes("fetch") ||
-        msg.includes("network") ||
-        msg.includes("Failed")
-      ) {
-        this.error = msg;
+      const res = await fetch(`${BASE}/sessions`);
+      if (res.ok) {
+        const data = await res.json() as { sessions?: Session[] };
+        this.sessions = data.sessions ?? [];
       }
+    } catch (e) {
+      const msg = (e as Error).message ?? String(e);
+      this.error = msg;
     } finally {
       this.isLoadingSessions = false;
     }
@@ -119,25 +105,28 @@ class ChatStore {
     this.cancelGeneration();
 
     try {
-      const [session, msgs] = await Promise.all([
-        sessionsApi.get(sessionId),
-        messagesApi.list(sessionId),
+      const [sessionRes, msgsRes] = await Promise.all([
+        fetch(`${BASE}/sessions/${sessionId}`),
+        fetch(`${BASE}/sessions/${sessionId}/messages`),
       ]);
-      this.currentSession = session;
-      this.messages = msgs;
-      this.pendingUserMessage = null;
-    } catch (e) {
-      const err = e as { status?: number; message?: string };
-      // Distinguish API errors (session not found = 404/500) from
-      // real connectivity failures (fetch throws TypeError).
-      if (err.status !== undefined) {
-        // Got a response from the server — it's online, just session issue
+
+      if (!sessionRes.ok) {
         this.currentSession = null;
         this.messages = [];
-      } else {
-        // Network-level failure — backend truly offline
-        this.error = err.message ?? String(e);
+        this.isLoadingMessages = false;
+        return;
       }
+
+      const session = (await sessionRes.json()) as Session;
+      const msgsData = msgsRes.ok
+        ? ((await msgsRes.json()) as { messages?: Message[] })
+        : { messages: [] };
+
+      this.currentSession = session;
+      this.messages = msgsData.messages ?? [];
+      this.pendingUserMessage = null;
+    } catch (e) {
+      this.error = (e as Error).message ?? String(e);
     } finally {
       this.isLoadingMessages = false;
     }
@@ -154,7 +143,7 @@ class ChatStore {
 
   // ── Message Operations ──────────────────────────────────────────────────────
 
-  async sendMessage(content: string, _model?: string): Promise<void> {
+  async sendMessage(content: string, model?: string): Promise<void> {
     if (this.isStreaming) return;
     if (!content.trim()) return;
 
@@ -163,7 +152,7 @@ class ChatStore {
     // Ensure we have an active session
     let sessionId = this.currentSession?.id;
     if (!sessionId) {
-      const session = await this.createSession();
+      const session = await this.createSession(undefined, model);
       this.currentSession = session;
       sessionId = session.id;
     }
@@ -177,61 +166,101 @@ class ChatStore {
     };
 
     this.isStreaming = true;
+    this.#pollAborted = false;
+
+    // Try SSE streaming first; fall back to polling if stream endpoint fails
+    const usedSessionId = sessionId;
+    let sseSucceeded = false;
 
     try {
-      // POST the message to the session
-      const BASE = "http://127.0.0.1:9089/api/v1";
+      // Attempt SSE stream
+      this.#streamController = streamMessage({
+        sessionId: usedSessionId,
+        content,
+        model,
+        onEvent: (event: StreamEvent) => {
+          sseSucceeded = true;
+          this.#handleStreamEvent(event);
+        },
+        onConnect: () => {
+          this.error = null;
+        },
+        onDisconnect: () => {
+          // If SSE closed but we never got a done event, fall through to polling
+          if (this.isStreaming && !sseSucceeded) {
+            void this.#pollForResponse(usedSessionId);
+          }
+        },
+        onError: () => {
+          // SSE failed — fall back to polling
+          if (this.isStreaming) {
+            void this.#pollForResponse(usedSessionId);
+          }
+        },
+        onDone: () => {
+          this.#finalizeStream();
+        },
+      });
+    } catch {
+      // Sync error starting SSE — go straight to polling
+      void this.#pollForResponse(usedSessionId);
+    }
+  }
+
+  /**
+   * Simple polling fallback: POST message then poll for assistant response.
+   */
+  async #pollForResponse(sessionId: string): Promise<void> {
+    // First POST the message
+    try {
       await fetch(`${BASE}/sessions/${sessionId}/message`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: content }),
+        body: JSON.stringify({ message: this.pendingUserMessage?.content ?? "" }),
       });
-
-      // Poll for the assistant response (simple, reliable, no SSE)
-      const initialCount = this.messages.length;
-      const maxPolls = 30; // 30 x 2s = 60s max wait
-      for (let i = 0; i < maxPolls; i++) {
-        await new Promise((r) => setTimeout(r, 2000));
-        if (!this.isStreaming) return; // cancelled
-        try {
-          const res = await fetch(`${BASE}/sessions/${sessionId}/messages`);
-          const data = await res.json();
-          const msgs = data.messages || [];
-          // Check if there's a new assistant message (more messages than we started with)
-          if (msgs.length > 1) {
-            const assistantMsgs = msgs.filter((m: { role: string }) => m.role === "assistant");
-            if (assistantMsgs.length > 0) {
-              // Replace all messages with server state
-              if (this.pendingUserMessage) {
-                this.pendingUserMessage = null;
-              }
-              this.messages = msgs;
-              this.isStreaming = false;
-              this.streaming = { textBuffer: "", thinkingBuffer: "", toolCalls: [] };
-              return;
-            }
-          }
-        } catch {
-          // Network error — keep polling
-        }
-      }
-
-      // Timeout
-      if (this.pendingUserMessage) {
-        this.messages = [...this.messages, this.pendingUserMessage];
-        this.pendingUserMessage = null;
-      }
-      this.isStreaming = false;
-      this.error = "Response timed out";
     } catch (e) {
       this.error = (e as Error).message;
       this.isStreaming = false;
       this.pendingUserMessage = null;
+      return;
     }
+
+    // Poll up to 30 times (60s) for an assistant message
+    const maxPolls = 30;
+    for (let i = 0; i < maxPolls; i++) {
+      await new Promise<void>((r) => setTimeout(r, 2000));
+      if (!this.isStreaming || this.#pollAborted) return;
+
+      try {
+        const res = await fetch(`${BASE}/sessions/${sessionId}/messages`);
+        if (!res.ok) continue;
+        const data = (await res.json()) as { messages?: Message[] };
+        const msgs = data.messages ?? [];
+        const lastMsg = msgs[msgs.length - 1];
+        if (lastMsg?.role === "assistant") {
+          this.messages = msgs;
+          this.isStreaming = false;
+          this.pendingUserMessage = null;
+          this.streaming = { textBuffer: "", thinkingBuffer: "", toolCalls: [] };
+          return;
+        }
+      } catch {
+        // Network hiccup — keep polling
+      }
+    }
+
+    // Timeout — surface the pending message and stop
+    if (this.pendingUserMessage) {
+      this.messages = [...this.messages, this.pendingUserMessage];
+      this.pendingUserMessage = null;
+    }
+    this.isStreaming = false;
+    this.error = "Response timed out";
   }
 
   cancelGeneration(): void {
     if (!this.isStreaming) return;
+    this.#pollAborted = true;
     this.#streamController?.abort();
     this.#streamController = null;
     this.isStreaming = false;
@@ -248,7 +277,6 @@ class ChatStore {
   // ── Private ─────────────────────────────────────────────────────────────────
 
   #handleStreamEvent(event: StreamEvent): void {
-    // Notify raw listeners first so they see the full event shape
     for (const fn of this.#streamListeners) {
       fn(event);
     }
@@ -274,17 +302,13 @@ class ChatStore {
         break;
 
       case "tool_result": {
-        // Attach result and error flag to the matching tool call
         this.streaming.toolCalls = this.streaming.toolCalls.map((tc) =>
-          tc.id === event.tool_use_id
-            ? { ...tc, result: event.result, isError: event.is_error }
-            : tc,
+          tc.id === event.tool_use_id ? { ...tc, result: event.result } : tc,
         );
         break;
       }
 
       case "system_event":
-        // Forward to consumers if needed — no-op in base store
         break;
 
       case "done":
