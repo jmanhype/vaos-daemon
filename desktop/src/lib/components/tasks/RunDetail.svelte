@@ -2,7 +2,6 @@
   import type { ScheduledRun } from '$lib/api/types';
   import { scheduledTasksStore } from '$lib/stores/scheduledTasks.svelte';
 
-<<<<<<< HEAD
   interface Props {
     run: ScheduledRun;
     taskName?: string;
@@ -10,15 +9,12 @@
     onRerun?: (taskId: string) => void;
   }
 
-=======
   interface Props { run: ScheduledRun; taskName?: string; onClose: () => void; onRerun?: (taskId: string) => void; }
->>>>>>> ws11/projects-goals
   let { run, taskName = '', onClose, onRerun }: Props = $props();
 
   const output = $derived(scheduledTasksStore.activeRunOutput);
   const streaming = $derived(scheduledTasksStore.activeRunStreaming);
 
-<<<<<<< HEAD
   function formatDuration(ms?: number): string {
     if (!ms) return '—';
     if (ms < 1000) return `${ms}ms`;
@@ -98,7 +94,6 @@
         Re-run
       </button>
     {/if}
-=======
   function fmtDur(ms?: number): string { if (!ms) return '—'; if (ms < 1000) return `${ms}ms`; const s = Math.floor(ms / 1000); if (s < 60) return `${s}s`; return `${Math.floor(s / 60)}m ${s % 60}s`; }
   function statusClr(s: ScheduledRun['status']): string { switch (s) { case 'succeeded': return 'rgba(34,197,94,0.85)'; case 'failed': return 'rgba(239,68,68,0.85)'; case 'running': return 'rgba(245,158,11,0.85)'; default: return 'rgba(255,255,255,0.5)'; } }
   function trigLbl(t: ScheduledRun['trigger_type']): string { switch (t) { case 'schedule': return 'Scheduled'; case 'manual': return 'Manual'; case 'event': return 'Event'; case 'assignment': return 'Assignment'; } }
@@ -122,12 +117,10 @@
   <div class="rd-footer">
     {#if run.token_usage}<div class="rd-tokens"><span>In: {run.token_usage.input.toLocaleString()}</span><span>Out: {run.token_usage.output.toLocaleString()}</span><span>Cost: ${(run.token_usage.cost_cents / 100).toFixed(4)}</span></div>{/if}
     {#if onRerun}<button class="rd-rerun" onclick={() => onRerun?.(run.scheduled_task_id)}>Re-run</button>{/if}
->>>>>>> ws11/projects-goals
   </div>
 </div>
 
 <style>
-<<<<<<< HEAD
   .run-detail {
     display: flex;
     flex-direction: column;
@@ -282,7 +275,6 @@
     background: rgba(255, 255, 255, 0.12);
     border-color: rgba(255, 255, 255, 0.2);
   }
-=======
   .rd { display: flex; flex-direction: column; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: var(--radius-md); overflow: hidden; }
   .rd-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid rgba(255,255,255,0.05); gap: 12px; }
   .rd-left { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; }
@@ -302,5 +294,4 @@
   .rd-tokens { display: flex; gap: 12px; font-size: 0.6875rem; font-family: var(--font-mono); color: var(--text-tertiary); }
   .rd-rerun { padding: 5px 14px; border-radius: var(--radius-sm); background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12); color: var(--text-primary); font-size: 0.75rem; font-weight: 500; transition: background 0.15s, border-color 0.15s; }
   .rd-rerun:hover { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.2); }
->>>>>>> ws11/projects-goals
 </style>

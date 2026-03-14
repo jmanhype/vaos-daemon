@@ -2,14 +2,11 @@
   import type { ScheduledRun, ScheduledRunStatus } from '$lib/api/types';
   import { scheduledTasksStore } from '$lib/stores/scheduledTasks.svelte';
 
-<<<<<<< HEAD
   interface Props {
     onSelectRun?: (run: ScheduledRun) => void;
   }
 
-=======
   interface Props { onSelectRun?: (run: ScheduledRun) => void; }
->>>>>>> ws11/projects-goals
   let { onSelectRun }: Props = $props();
 
   const runs = $derived(scheduledTasksStore.filteredRuns);
@@ -19,7 +16,6 @@
   const filter = $derived(scheduledTasksStore.runsFilter);
   const totalPages = $derived(Math.max(1, Math.ceil(total / 20)));
 
-<<<<<<< HEAD
   const STATUS_FILTERS: { id: ScheduledRunStatus | 'all'; label: string }[] = [
     { id: 'all',       label: 'All' },
     { id: 'succeeded', label: 'Succeeded' },
@@ -114,7 +110,6 @@
               <td class="rh-time">{formatTime(run.started_at)}</td>
               <td class="rh-duration">{formatDuration(run.duration_ms)}</td>
               <td class="rh-trigger">{run.trigger_type}</td>
-=======
   const STATUSES: { id: ScheduledRunStatus | 'all'; label: string }[] = [
     { id: 'all', label: 'All' }, { id: 'succeeded', label: 'Succeeded' }, { id: 'failed', label: 'Failed' }, { id: 'timed_out', label: 'Timed Out' },
   ];
@@ -143,14 +138,12 @@
               <td class="rh-time">{fmtTime(run.started_at)}</td>
               <td class="rh-dur">{fmtDur(run.duration_ms)}</td>
               <td class="rh-trig">{run.trigger_type}</td>
->>>>>>> ws11/projects-goals
               <td class="rh-agent">{run.agent_name}</td>
             </tr>
           {/each}
         </tbody>
       </table>
     </div>
-<<<<<<< HEAD
 
     <!-- Pagination -->
     {#if totalPages > 1}
@@ -171,16 +164,13 @@
           Next
         </button>
       </div>
-=======
     {#if totalPages > 1}
       <div class="rh-pag"><button class="rh-pbtn" disabled={page <= 1} onclick={() => scheduledTasksStore.fetchRuns(undefined, page - 1)}>Prev</button><span class="rh-pinfo">{page} / {totalPages}</span><button class="rh-pbtn" disabled={page >= totalPages} onclick={() => scheduledTasksStore.fetchRuns(undefined, page + 1)}>Next</button></div>
->>>>>>> ws11/projects-goals
     {/if}
   {/if}
 </div>
 
 <style>
-<<<<<<< HEAD
   .run-history {
     display: flex;
     flex-direction: column;
@@ -365,7 +355,6 @@
     color: var(--text-tertiary);
     font-variant-numeric: tabular-nums;
   }
-=======
   .rh { display: flex; flex-direction: column; gap: 12px; }
   .rh-bar { display: flex; align-items: center; }
   .rh-filters { display: flex; gap: 4px; }
@@ -394,5 +383,4 @@
   .rh-pbtn:hover:not(:disabled) { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.14); }
   .rh-pbtn:disabled { opacity: 0.4; cursor: default; }
   .rh-pinfo { font-size: 0.75rem; color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
->>>>>>> ws11/projects-goals
 </style>
