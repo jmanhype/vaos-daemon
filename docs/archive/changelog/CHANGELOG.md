@@ -10,6 +10,31 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 ## [Unreleased]
 
 ### Added
+- **Chat Model Selector**: Compact dropdown in chat toolbar for switching models without leaving the conversation
+- **Collapsible Session History**: Toggle chat history panel via toolbar button, state persists to localStorage
+- **Dashboard Page**: System health, KPIs, active agents, recent activity at `/app` (no longer redirects to chat)
+
+### Fixed
+- **SSE Streaming**: Backend now emits `delta` field (was `text`), frontend parser correctly unwraps `system_event` wrapper type, `done` event broadcast on all response paths — streaming tokens now display in real-time
+- **Double-POST Race**: Polling fallback no longer re-sends messages already sent via SSE
+- **Navigation**: Dashboard route fixed (`/app` was redirecting to `/app/chat`), keyboard shortcuts aligned with sidebar order
+- **Dashboard Interval Leak**: Re-navigating to dashboard no longer stacks duplicate refresh intervals
+- **Dashboard Loading State**: Shows proper loading skeleton on re-visit instead of flashing stale data
+- **Settings Health Display**: Status bar shows provider/model from health endpoint, doctor output shows real data
+- **Model Activation**: Frontend now calls correct `/models/switch` endpoint with provider field
+- **SPA Config**: Root `+layout.ts` with `ssr=false` for proper Tauri WebView rendering
+
+### Removed
+- YOLO floating badge (mode still works, just no intrusive UI element)
+- Chat-to-dashboard redirect (dashboard is now its own page)
+
+### Changed
+- Keyboard shortcuts: Cmd+1=Dashboard, Cmd+2=Chat, Cmd+3=Agents, Cmd+4=Models, Cmd+5=Terminal
+- Ollama provider label simplified from "Ollama (Local)" to "Ollama"
+
+---
+
+### Added
 - **Dynamic Agent Scaling (1-50)**: ComplexityScaler maps complexity score (1-10) to Fibonacci agent counts. User intent detection ("use 25 agents") overrides auto-scaling. Removed hardcoded 10-agent caps.
 - **3-Tier Graduated Confidence Routing** (`agent/orchestrator/agent_runner.ex`): HIGH (>=4.0) uses named agent prompt, MEDIUM (2.0-4.0) blends dynamic framing with agent expertise, LOW (<2.0) generates pure dynamic prompt. All agents get ALL tools, skills, environment context, memory, and dependency context.
 - **Complexity Scoring** (`agent/orchestrator/complexity.ex`): Returns numeric 1-10 score instead of binary simple/complex. New return shapes: `{:simple, score}` and `{:complex, score, sub_tasks}`.

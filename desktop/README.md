@@ -76,16 +76,21 @@ The frontend is a compiled static SPA embedded in the Tauri shell. It communicat
 
 | Page | Route | Description |
 |------|-------|-------------|
-| Chat | `/app` | Streaming chat with token display, tool call visualization, thinking blocks |
-| Agents | `/app/agents` | Live agent dashboard, multi-agent orchestration, task tracking |
+| Dashboard | `/app` | System health, KPIs, active agents, recent activity |
+| Chat | `/app/chat` | Streaming chat with model selector, collapsible session history, thinking blocks |
+| Agents | `/app/agents` | Live agent dashboard, org chart, multi-agent orchestration |
 | Models | `/app/models` | Model browser, provider grouping, one-click model switch |
+| Skills | `/app/skills` | Skill marketplace, enable/disable, bulk operations |
+| Projects | `/app/projects` | Project tracking, goal trees, task linking |
+| Tasks | `/app/tasks` | Scheduled tasks, cron presets, run history |
 | Terminal | `/app/terminal` | Embedded terminal (xterm.js) |
-| Connectors | `/app/connectors` | Configure channel integrations (Slack, Telegram, Discord, etc.) |
-| Settings | `/app/settings` | General, Provider, Permissions, Advanced, About |
-| Activity Logs | `/app/activity` | Real-time event feed with verbosity controls |
-| Usage & Analytics | `/app/usage` | Token usage, cost tracking, session metrics |
-| Memory Vault | `/app/memory` | Browse and manage structured Vault memory (facts, decisions, lessons) |
-| Scheduled Tasks | `/app/tasks` | Cron job management, trigger scheduling, one-click execution |
+| Signals | `/app/signals` | Signal classification feed, stats, patterns |
+| Activity | `/app/activity` | Real-time event feed with verbosity controls |
+| Usage | `/app/usage` | Token usage, cost tracking, budget management |
+| Memory | `/app/memory` | Browse and manage structured Vault memory |
+| Approvals | `/app/approvals` | Governance approval queue |
+| Connectors | `/app/connectors` | Configure channel integrations |
+| Settings | `/app/settings` | General, Provider, Voice, Permissions, Advanced, About |
 
 ---
 
@@ -94,17 +99,17 @@ The frontend is a compiled static SPA embedded in the Tauri shell. It communicat
 | Shortcut | Action |
 |----------|--------|
 | Cmd+K | Command palette |
-| Cmd+1 | Chat |
-| Cmd+2 | Agents |
-| Cmd+3 | Models |
-| Cmd+4 | Terminal |
-| Cmd+5 | Connectors |
+| Cmd+1 | Dashboard |
+| Cmd+2 | Chat |
+| Cmd+3 | Agents |
+| Cmd+4 | Models |
+| Cmd+5 | Terminal |
 | Cmd+6 | Settings |
-| Cmd+7 | Activity Logs |
-| Cmd+8 | Usage & Analytics |
-| Cmd+9 | Memory Vault |
-| Cmd+0 | Scheduled Tasks |
-| Cmd+Y | Toggle YOLO mode (auto-approve all tool calls) |
+| Cmd+7 | Connectors |
+| Cmd+8 | Activity |
+| Cmd+9 | Usage |
+| Cmd+0 | Tasks |
+| Cmd+Y | Toggle YOLO mode |
 | Cmd+\ | Toggle sidebar |
 | Cmd+, | Settings |
 | Enter | Send message |
@@ -120,19 +125,26 @@ desktop/
 │   ├── routes/
 │   │   ├── app/
 │   │   │   ├── +layout.svelte      # App shell + overlays
-│   │   │   ├── +page.svelte        # Chat (default)
-│   │   │   ├── agents/             # Agent dashboard
-│   │   │   ├── connectors/         # Channel integrations
-│   │   │   ├── memory/             # Memory Vault browser
+│   │   │   ├── +page.svelte        # Dashboard (default)
+│   │   │   ├── chat/               # Chat with session history
+│   │   │   ├── agents/             # Agent dashboard + org chart
 │   │   │   ├── models/             # Model browser
-│   │   │   ├── settings/           # Settings (5 tabs)
+│   │   │   ├── skills/             # Skills marketplace
+│   │   │   ├── projects/           # Project & goal tracking
+│   │   │   ├── tasks/              # Scheduled tasks + runs
 │   │   │   ├── terminal/           # Embedded terminal
-│   │   │   └── usage/              # Usage & analytics
+│   │   │   ├── signals/            # Signal classification feed
+│   │   │   ├── activity/           # Activity logs
+│   │   │   ├── usage/              # Usage, costs, budgets
+│   │   │   ├── memory/             # Memory Vault browser
+│   │   │   ├── approvals/          # Governance approvals
+│   │   │   ├── connectors/         # Channel integrations
+│   │   │   └── settings/           # Settings (6 tabs)
 │   │   └── onboarding/             # Setup wizard
 │   ├── lib/
 │   │   ├── api/                    # HTTP client, SSE, types
-│   │   ├── components/             # 20 Svelte components
-│   │   ├── stores/                 # 12 Svelte 5 stores
+│   │   ├── components/             # 30+ Svelte components
+│   │   ├── stores/                 # 20+ Svelte 5 stores
 │   │   └── utils/                  # Platform detection
 │   └── app.css                     # Glass theme tokens
 ├── src-tauri/

@@ -6,7 +6,7 @@
 [![Elixir](https://img.shields.io/badge/Elixir-1.17+-purple.svg)](https://elixir-lang.org)
 [![OTP](https://img.shields.io/badge/OTP-27+-green.svg)](https://www.erlang.org)
 [![Tests](https://img.shields.io/badge/Tests-2082-brightgreen.svg)](#)
-[![Version](https://img.shields.io/badge/Version-0.2.5-orange.svg)](#)
+[![Version](https://img.shields.io/badge/Version-0.3.0-orange.svg)](#)
 
 ---
 
@@ -336,7 +336,8 @@ The Command Center is OSA's native desktop interface — a full visual control p
 
 | Section | What It Does |
 |---------|-------------|
-| **Chat** | Full conversation interface with markdown rendering, code highlighting, SSE streaming |
+| **Dashboard** | System health, KPIs, active agents, recent activity — all real-time from backend |
+| **Chat** | Full conversation with markdown, code highlighting, SSE streaming, model selector, collapsible history |
 | **Agents** | Browse the roster, see agent tiers/roles, dispatch agents to tasks |
 | **Models** | View and switch LLM providers and models across all 3 tiers |
 | **Terminal** | Embedded xterm.js terminal — run shell commands without leaving the app |
