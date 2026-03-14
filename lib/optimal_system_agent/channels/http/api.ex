@@ -120,6 +120,9 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
   forward "/skills", to: API.ToolRoutes
   forward "/commands", to: API.ToolRoutes
 
+  # ── Scheduled Tasks (heartbeat execution + cron presets) ─────────────
+  forward "/scheduled-tasks", to: API.SchedulerRoutes
+
   # ── Data ─────────────────────────────────────────────────────────────
   forward "/memory", to: API.DataRoutes
   forward "/models", to: API.DataRoutes
@@ -141,6 +144,9 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
 
   # ── Knowledge graph ──────────────────────────────────────────────────
   forward "/knowledge", to: API.KnowledgeRoutes
+
+  # ── Signals ──────────────────────────────────────────────────────────
+  forward "/signals", to: API.SignalRoutes
 
   # ── Platform (multi-tenant auth + CRUD) ─────────────────────────────
   forward "/platform/auth", to: API.PlatformAuthRoutes
