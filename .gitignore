@@ -52,3 +52,7 @@ TODO.md
 
 # Scratch/research directories
 .doc-research/
+
+# IP - never push to remote
+docs/archive/agent-dispatch/
+docs/archive/competitors/
