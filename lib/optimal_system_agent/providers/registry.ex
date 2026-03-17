@@ -77,7 +77,8 @@ defmodule OptimalSystemAgent.Providers.Registry do
       volcengine: {:compat, :volcengine},
       baichuan: {:compat, :baichuan}
     },
-    if Mix.env([]) == :test do
+    # Mock provider only available in test environment
+    if Application.compile_env(:optimal_system_agent, :env, :prod) == :test do
       %{mock: OptimalSystemAgent.Test.MockProvider}
     else
       %{}
