@@ -607,6 +607,20 @@ OSA is the intelligence layer of the MIOSA platform:
 
 ---
 
+## VAS-Swarm Integration
+
+VAS-Swarm (Vault Agent OS Swarm) adds enterprise-grade governance and coordination to OSA:
+
+- **JWT Authorization** — Every agent action requires a signed token from the Go Kernel
+- **Intent Hashing** — SHA256 hashes of agent intents for audit trails
+- **ALCOA+ Compliance** — Attributable, Legible, Contemporaneous, Original, Accurate records
+- **Real-time Telemetry** — Agent status and performance metrics via AMQP
+- **Signal Theory Routing** — Automatic capture of routing decisions
+
+See [README-VAS-SWARM.md](README-VAS-SWARM.md) for full integration documentation.
+
+---
+
 ## Documentation
 
 | Doc | What It Covers |
@@ -622,6 +636,7 @@ OSA is the intelligence layer of the MIOSA platform:
 | [CLI Reference](docs/frontend/cli-reference.md) | All slash commands organized by category |
 | [Features](docs/features/) | Recipes, skills, hooks, voice, proactive mode, tasks |
 | [Deployment](docs/operations/deployment.md) | Docker, systemd, Nginx, production checklist |
+| [VAS-Swarm Integration](README-VAS-SWARM.md) | JWT auth, ALCOA+ audit, telemetry, Signal Theory routing |
 
 ---
 

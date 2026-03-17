@@ -70,6 +70,10 @@ defmodule OptimalSystemAgent.MixProject do
       # AMQP — RabbitMQ publisher for Go worker events (optional)
       {:amqp, "~> 4.1", optional: true},
 
+      # gRPC client for VAS-Swarm Kernel communication (optional)
+      {:grpc, "~> 0.7", optional: true},
+      {:gun, "~> 2.0", optional: true},
+
       # Telemetry
       {:telemetry, "~> 1.2"},
       {:telemetry_metrics, "~> 1.0"},
