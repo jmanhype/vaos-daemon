@@ -13,12 +13,21 @@ defmodule OptimalSystemAgent.VasSwarm.GrpcClient do
   - Circuit breaker pattern for fault tolerance
   - Request timeout management
   - Connection pooling via gun
+  - Real gRPC calls (not mocks)
   """
 
   use GenServer
   require Logger
 
   alias OptimalSystemAgent.VasSwarm.IntentHash
+
+  # Use generated gRPC stubs if available, otherwise use gun-based implementation
+  try do
+    Code.ensure_loaded?(Vaos.Kernel.Grpc)
+    @use_generated_stubs true
+  rescue
+    _ -> @use_generated_stubs false
+  end
 
   @reconnect_interval_min 1000
   @reconnect_interval_max 30000
@@ -33,6 +42,7 @@ defmodule OptimalSystemAgent.VasSwarm.GrpcClient do
           url: String.t() | nil,
           conn: pid() | nil,
           channel: any() | nil,
+          stub: any() | nil,
           connected: boolean(),
           retry_count: non_neg_integer(),
           circuit_open: boolean(),
@@ -136,6 +146,7 @@ defmodule OptimalSystemAgent.VasSwarm.GrpcClient do
       url: kernel_url,
       conn: nil,
       channel: nil,
+      stub: nil,
       connected: false,
       retry_count: 0,
       circuit_open: false,
@@ -170,9 +181,9 @@ defmodule OptimalSystemAgent.VasSwarm.GrpcClient do
     Logger.debug("[GrpcClient] Connecting to Kernel (attempt #{retry_count + 1})")
 
     case connect_with_backoff(url, backoff) do
-      {:ok, conn, channel} ->
+      {:ok, conn, channel, stub} ->
         Logger.info("[GrpcClient] Connected to Kernel at #{url}")
-        {:noreply, %{state | conn: conn, channel: channel, connected: true, retry_count: 0}}
+        {:noreply, %{state | conn: conn, channel: channel, stub: stub, connected: true, retry_count: 0}}
 
       {:error, reason} ->
         Logger.warning("[GrpcClient] Connection failed: #{inspect(reason)}")
@@ -197,7 +208,7 @@ defmodule OptimalSystemAgent.VasSwarm.GrpcClient do
   def handle_info({:gun_down, _conn, _protocol, _reason, _}, state) do
     Logger.warning("[GrpcClient] Connection lost, reconnecting...")
     send(self(), :connect)
-    {:noreply, %{state | conn: nil, channel: nil, connected: false}}
+    {:noreply, %{state | conn: nil, channel: nil, stub: nil, connected: false}}
   end
 
   @impl true
@@ -212,82 +223,90 @@ defmodule OptimalSystemAgent.VasSwarm.GrpcClient do
   end
 
   def handle_call({:request_token, agent_id, intent_hash, action_type, metadata}, _from, %{
-        channel: channel
+        stub: stub
       } = state) do
     Logger.debug(
       "[GrpcClient] Requesting token for agent #{agent_id}, action #{action_type}"
     )
 
-    # Build the token request message
-    # Note: This is a simplified version - in production you'd use generated gRPC stubs
-    request = %{
-      agent_id: agent_id,
-      intent_hash: intent_hash,
-      action_type: action_type,
-      metadata: metadata
-    }
+    request = build_token_request(agent_id, intent_hash, action_type, metadata)
 
-    # For now, return a mock response until gRPC stubs are generated
-    # In production, this would be: Grpc.Stub.call(channel, request, timeout: @request_timeout)
-    {:reply,
-     {:ok,
-      %{
-        token: "mock_jwt_token_#{intent_hash}",
-        expires_at: System.system_time(:second) + 3600,
-        scope: action_type
-      }}, state}
+    case call_grpc(stub, :request_token, request) do
+      {:ok, response} ->
+        {:reply, {:ok, response.token}, state}
+
+      {:error, reason} ->
+        Logger.error("[GrpcClient] Token request failed: #{inspect(reason)}")
+        {:reply, {:error, reason}, state}
+    end
   end
 
   def handle_call({:submit_telemetry, telemetry}, _from, %{connected: false} = state) do
     {:reply, {:error, :not_connected}, state}
   end
 
-  def handle_call({:submit_telemetry, telemetry}, _from, %{channel: _channel} = state) do
+  def handle_call({:submit_telemetry, telemetry}, _from, %{stub: stub} = state) do
     Logger.debug("[GrpcClient] Submitting telemetry for agent #{telemetry.agent_id}")
 
-    # In production, this would call the gRPC stub
-    {:reply, {:ok, :submitted}, state}
+    request = build_telemetry_request(telemetry)
+
+    case call_grpc(stub, :submit_telemetry, request) do
+      {:ok, _response} ->
+        {:reply, {:ok, :submitted}, state}
+
+      {:error, reason} ->
+        Logger.error("[GrpcClient] Telemetry submission failed: #{inspect(reason)}")
+        {:reply, {:error, reason}, state}
+    end
   end
 
   def handle_call({:submit_routing_log, routing}, _from, %{connected: false} = state) do
     {:reply, {:error, :not_connected}, state}
   end
 
-  def handle_call({:submit_routing_log, routing}, _from, %{channel: _channel} = state) do
+  def handle_call({:submit_routing_log, routing}, _from, %{stub: stub} = state) do
     Logger.debug(
       "[GrpcClient] Submitting routing log for session #{routing.session_id}, mode #{routing.mode}"
     )
 
-    # In production, this would call the gRPC stub
-    correlation_id = "#{routing.session_id}:#{routing.intent_hash}:#{System.system_time(:microsecond)}"
+    request = build_routing_log_request(routing)
 
-    {:reply,
-     {:ok,
-      %{
-        correlation_id: correlation_id
-      }}, state}
+    case call_grpc(stub, :submit_routing_log, request) do
+      {:ok, response} ->
+        {:reply, {:ok, %{correlation_id: response.correlation_id}}, state}
+
+      {:error, reason} ->
+        Logger.error("[GrpcClient] Routing log submission failed: #{inspect(reason)}")
+        {:reply, {:error, reason}, state}
+    end
   end
 
   def handle_call({:confirm_audit, audit}, _from, %{connected: false} = state) do
     {:reply, {:error, :not_connected}, state}
   end
 
-  def handle_call({:confirm_audit, audit}, _from, %{channel: _channel} = state) do
+  def handle_call({:confirm_audit, audit}, _from, %{stub: stub} = state) do
     Logger.debug("[GrpcClient] Confirming audit for action #{audit.action_id}")
 
-    # In production, this would call the gRPC stub
-    audit_id = "audit_#{audit.action_id}_#{System.system_time(:microsecond)}"
+    request = build_audit_confirmation(audit)
 
-    {:reply, {:ok, %{audit_id: audit_id, confirmed: true}}, state}
+    case call_grpc(stub, :confirm_audit, request) do
+      {:ok, response} ->
+        {:reply, {:ok, %{audit_id: response.audit_id, confirmed: response.confirmed}}, state}
+
+      {:error, reason} ->
+        Logger.error("[GrpcClient] Audit confirmation failed: #{inspect(reason)}")
+        {:reply, {:error, reason}, state}
+    end
   end
 
   # Private helpers
 
   defp do_connect(url, state) do
     case connect_with_backoff(url, 0) do
-      {:ok, conn, channel} ->
+      {:ok, conn, channel, stub} ->
         Logger.info("[GrpcClient] Connected to Kernel at #{url}")
-        {:noreply, %{state | conn: conn, channel: channel, connected: true, retry_count: 0}}
+        {:noreply, %{state | conn: conn, channel: channel, stub: stub, connected: true, retry_count: 0}}
 
       {:error, reason} ->
         Logger.warning("[GrpcClient] Connection failed: #{inspect(reason)}")
@@ -301,14 +320,102 @@ defmodule OptimalSystemAgent.VasSwarm.GrpcClient do
       Process.sleep(backoff)
     end
 
-    # Parse URL and open gun connection
-    # For now, return a mock response until gRPC stubs are generated
-    # In production: {:ok, conn} = :gun.open(...)
+    # Parse gRPC URL (format: grpc://host:port)
+    [_protocol, host_port] = String.split(url, "://", parts: 2)
 
-    # Mock connection for development
-    {:ok, self(), :mock_channel}
+    case :gun.open(String.to_charlist(host_port), :http2) do
+      {:ok, conn} ->
+        {:ok, :up} = :gun.await_up(conn, @request_timeout)
+
+        # Create gRPC channel
+        channel = Vaos.Kernel.Grpc.channel(conn, host_port)
+
+        # Create gRPC stub
+        stub = Vaos.Kernel.Grpc.Stub.new(channel)
+
+        {:ok, conn, channel, stub}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   rescue
     e -> {:error, e}
+  end
+
+  defp call_grpc(stub, method, request) do
+    try do
+      case apply(stub, method, [request, [timeout: @request_timeout]]) do
+        {:ok, response} -> {:ok, response}
+        {:error, reason} -> {:error, reason}
+      end
+    rescue
+      e -> {:error, e}
+    end
+  end
+
+  defp build_token_request(agent_id, intent_hash, action_type, metadata) do
+    # Using map - protobuf types will be generated from Go Kernel
+    %{
+      agent_id: agent_id,
+      intent_hash: intent_hash,
+      action_type: action_type,
+      metadata: metadata
+    }
+  end
+
+  defp build_telemetry_request(telemetry) do
+    # Using map - protobuf types will be generated from Go Kernel
+    %{
+      agent_id: telemetry.agent_id,
+      timestamp: telemetry[:timestamp] || System.system_time(:second),
+      status: telemetry.status || "idle",
+      cpu_usage: telemetry[:cpu_usage] || 0.0,
+      memory_usage: telemetry[:memory_usage] || 0.0,
+      tasks_completed: telemetry[:tasks_completed] || 0,
+      tasks_failed: telemetry[:tasks_failed] || 0,
+      avg_task_duration: telemetry[:avg_task_duration] || 0.0,
+      tokens_used: telemetry[:tokens_used] || 0,
+      cost_estimate: telemetry[:cost_estimate] || 0.0,
+      custom_metrics: telemetry[:custom_metrics] || %{}
+    }
+  end
+
+  defp build_routing_log_request(routing) do
+    # Using map - protobuf types will be generated from Go Kernel
+    %{
+      session_id: routing.session_id,
+      agent_id: routing.agent_id,
+      timestamp: routing[:timestamp] || System.system_time(:second),
+      mode: routing.mode,
+      genre: routing.genre,
+      type: routing.type,
+      format: routing.format,
+      weight: routing.weight,
+      confidence: routing.confidence,
+      tier: routing.tier,
+      model: routing.model,
+      provider: routing.provider,
+      intent_hash: routing.intent_hash
+    }
+  end
+
+  defp build_audit_confirmation(audit) do
+    # Using map - protobuf types will be generated from Go Kernel
+    %{
+      agent_id: audit.agent_id,
+      action_id: audit.action_id,
+      intent_hash: audit.intent_hash,
+      jwt_token: audit.jwt_token,
+      attributable: audit.attributable,
+      legible: audit.legible,
+      contemporaneous: audit.contemporaneous,
+      original: audit.original,
+      accurate: audit.accurate,
+      performed_at: audit[:performed_at] || System.system_time(:second),
+      performed_by: audit[:performed_by] || "unknown",
+      method: audit[:method] || "unknown",
+      context: audit[:context] || %{}
+    }
   end
 
   defp calculate_backoff(retry_count) do
