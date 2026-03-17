@@ -1,8 +1,43 @@
+# Erlang/Elixir
+/_build/
+/deps/
+erl_crash.dump
+*.ez
+
+# Build artifacts
+.coverage
+cover/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git
 .git
-_build
-deps
-.elixir_ls
-.superset
-node_modules
+.gitignore
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# Documentation
+README.md
+docs/
+*.md
+
+# Logs
+logs/
 *.log
-priv/rust/tui/target
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# Testing
+test/
+*_test.exs
