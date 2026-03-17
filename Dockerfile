@@ -13,8 +13,8 @@ RUN apk add --no-cache build-base npm git python3
 ENV MIX_ENV=prod \
     ERL_AFLAGS="-kernel shell_history enabled"
 
-# Copy mix files
-COPY mix.exs mix.lock ./
+# Copy mix files and VERSION
+COPY mix.exs mix.lock VERSION ./
 RUN mix deps.get --only $MIX_ENV
 
 # Copy source code
@@ -36,12 +36,13 @@ WORKDIR /app
 RUN apk add --no-cache openssl ncurses-libs libstdc++
 
 # Copy the release from builder
-COPY --from=builder /app/_build/prod/rel/optimal_system_agent .
+COPY --from=builder /app/_build/prod/rel/osagent .
 
-# Create non-root user
+# Create non-root user and fix line endings
 RUN addgroup -g 1000 appuser && \
     adduser -D -u 1000 -G appuser appuser && \
-    chown -R appuser:appuser /app
+    chown -R appuser:appuser /app && \
+    find /app -type f \( -name '*.sh' -o -name 'osagent*' \) -exec sh -c 'tr -d "\r" < "$1" > "$1.tmp" && mv "$1.tmp" "$1" && chmod +x "$1"' sh {} \;
 
 USER appuser
 
@@ -53,7 +54,7 @@ EXPOSE 4000 4369 9100-9200
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-  CMD bin/optimal_system_agent eval "case :gen_server.call(:health_check, :ping) do :pong -> 0; _ -> 1 end" || exit 1
+  CMD /app/bin/osagent eval "case :gen_server.call(:health_check, :ping) do :pong -> 0; _ -> 1 end" || exit 1
 
 # Run the application
-CMD ["bin/optimal_system_agent", "start"]
+CMD /app/bin/osagent start

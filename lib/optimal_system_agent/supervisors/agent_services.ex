@@ -17,8 +17,10 @@ defmodule OptimalSystemAgent.Supervisors.AgentServices do
 
   @impl true
   def init(_init_arg) do
+    env = Application.get_env(:optimal_system_agent, :env, :prod)
+
     knowledge_backend =
-      if Mix.env() == :test,
+      if env == :test,
         do: MiosaKnowledge.Backend.ETS,
         else: MiosaKnowledge.Backend.Mnesia
 
