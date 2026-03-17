@@ -15,6 +15,10 @@ cover/
 *.swo
 *~
 
+# Secrets
+.env
+.env.*
+
 # Git
 .git
 .gitignore
