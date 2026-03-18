@@ -141,15 +141,19 @@ defmodule OptimalSystemAgent.Channels.HTTP.RateLimiter do
   end
 
   defp cleanup_stale do
-    cutoff = unix_now() - @stale_threshold_seconds
+    try do
+      cutoff = unix_now() - @stale_threshold_seconds
 
-    # Delete any entry whose last_refill timestamp is older than the threshold.
-    # Match spec: {ip, _tokens, last_refill} where last_refill < cutoff
-    ms = [{{:_, :_, :"$1"}, [{:<, :"$1", cutoff}], [true]}]
-    deleted = :ets.select_delete(@table, ms)
+      # Delete any entry whose last_refill timestamp is older than the threshold.
+      # Match spec: {ip, _tokens, last_refill} where last_refill < cutoff
+      ms = [{{:_, :_, :"$1"}, [{:<, :"$1", cutoff}], [true]}]
+      deleted = :ets.select_delete(@table, ms)
 
-    if deleted > 0 do
-      Logger.debug("[RateLimiter] Cleaned #{deleted} stale rate-limit entries")
+      if deleted > 0 do
+        Logger.debug("[RateLimiter] Cleaned #{deleted} stale rate-limit entries")
+      end
+    rescue
+      ArgumentError -> :ok
     end
   end
 end
