@@ -57,7 +57,15 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputerUse.Adapters.MacOS do
 
     case System.cmd("screencapture", cmd_args, stderr_to_stdout: true) do
       {_, 0} ->
-        {:ok, "Screenshot saved to #{path}. Use file_read to view it."}
+        # Downscale Retina screenshots to max 1920px wide for LLM processing
+        jpg_path = String.replace(path, ".png", ".jpg")
+        case System.cmd("sips", ["--resampleWidth", "1920", "--setProperty", "format", "jpeg", "--setProperty", "formatOptions", "60", path, "--out", jpg_path], stderr_to_stdout: true) do
+          {_, 0} ->
+            File.rm(path)
+            {:ok, "Screenshot saved to #{jpg_path}. Use file_read to view it."}
+          _ ->
+            {:ok, "Screenshot saved to #{path}. Use file_read to view it."}
+        end
 
       {output, code} ->
         {:error, "screencapture failed (exit #{code}): #{String.trim(output)}"}
