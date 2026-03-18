@@ -66,7 +66,15 @@ defmodule OptimalSystemAgent.Providers.Anthropic do
         {:ok, response}
       {:error, _} = err ->
         err
+      other ->
+        Logger.warning("[Anthropic] chat_stream unexpected: #{inspect(other)}")
+        callback.(:done)
+        {:error, "unexpected response"}
     end
+  rescue
+    e ->
+      Logger.error("[Anthropic] chat_stream crash: #{Exception.message(e)}")
+      {:error, Exception.message(e)}
   end
 
   defp do_chat(base_url, api_key, model, messages, opts) do
