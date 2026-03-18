@@ -42,7 +42,10 @@ COPY --from=builder /app/_build/prod/rel/osagent .
 RUN addgroup -g 1000 appuser && \
     adduser -D -u 1000 -G appuser appuser && \
     chown -R appuser:appuser /app && \
-    find /app -type f \( -name '*.sh' -o -name 'osagent*' \) -exec sh -c 'tr -d "\r" < "$1" > "$1.tmp" && mv "$1.tmp" "$1" && chmod +x "$1"' sh {} \;
+    find /app -type f \( -name '*.sh' -o -name 'osagent*' \) -exec sh -c 'tr -d "\r" < "$1" > "$1.tmp" && mv "$1.tmp" "$1"' sh {} \; && \
+    chmod +x /app/bin/osagent /app/bin/osagent-* 2>/dev/null; \
+    chmod +x /app/releases/*/elixir /app/releases/*/iex 2>/dev/null; \
+    chown -R appuser:appuser /app
 
 USER appuser
 

@@ -86,6 +86,7 @@ default_provider =
 config :optimal_system_agent,
   # LLM Providers — API keys
   anthropic_api_key: System.get_env("ANTHROPIC_API_KEY"),
+  anthropic_url: System.get_env("ANTHROPIC_BASE_URL") || "https://api.anthropic.com/v1",
   openai_api_key: System.get_env("OPENAI_API_KEY"),
   groq_api_key: System.get_env("GROQ_API_KEY"),
   openrouter_api_key: System.get_env("OPENROUTER_API_KEY"),
@@ -144,6 +145,7 @@ config :optimal_system_agent,
 
   # Channel tokens
   telegram_bot_token: System.get_env("TELEGRAM_BOT_TOKEN"),
+  telegram_webhook_secret: System.get_env("TELEGRAM_WEBHOOK_SECRET"),
   discord_bot_token: System.get_env("DISCORD_BOT_TOKEN"),
   slack_bot_token: System.get_env("SLACK_BOT_TOKEN"),
   # Web search

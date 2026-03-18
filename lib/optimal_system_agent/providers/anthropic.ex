@@ -48,25 +48,37 @@ defmodule OptimalSystemAgent.Providers.Anthropic do
 
   @impl true
   def chat_stream(messages, callback, opts \\ []) do
-    api_key = Application.get_env(:optimal_system_agent, :anthropic_api_key)
-
-    model =
-      Keyword.get(opts, :model) ||
-        Application.get_env(:optimal_system_agent, :anthropic_model, default_model())
-
-    base_url = Application.get_env(:optimal_system_agent, :anthropic_url, @default_url)
-
-    unless api_key do
-      {:error, "ANTHROPIC_API_KEY not configured"}
-    else
-      do_chat_stream(base_url, api_key, model, messages, callback, Keyword.delete(opts, :model))
+    # ZAI proxy: use non-streaming call, simulate callbacks
+    case chat(messages, opts) do
+      {:ok, %{content: content, tool_calls: tool_calls} = response} ->
+        if is_binary(content) and content != "", do: callback.({:text, content})
+        if is_list(tool_calls) do
+          Enum.each(tool_calls, fn tc ->
+            callback.({:tool_use_start, %{id: tc[:id] || tc["id"], name: tc[:name] || tc["name"]}})
+            callback.({:tool_use_delta, Jason.encode!(tc[:arguments] || tc["arguments"] || %{})})
+            callback.(:tool_use_end)
+          end)
+        end
+        callback.(:done)
+        {:ok, response}
+      {:ok, response} ->
+        callback.(:done)
+        {:ok, response}
+      {:error, _} = err ->
+        err
     end
   end
 
   defp do_chat(base_url, api_key, model, messages, opts) do
     formatted = format_messages(messages)
     {system_msgs, chat_msgs} = Enum.split_with(formatted, &(&1["role"] == "system"))
-    system_text = Enum.map_join(system_msgs, "\n\n", & &1["content"])
+    system_text = Enum.map_join(system_msgs, "\n\n", fn msg ->
+      case msg["content"] do
+        blocks when is_list(blocks) -> Enum.map_join(blocks, "\n", fn %{"text" => t} -> t; other -> inspect(other) end)
+        text when is_binary(text) -> text
+        other -> to_string(other)
+      end
+    end)
     thinking = Keyword.get(opts, :thinking)
 
     body =
@@ -126,7 +138,13 @@ defmodule OptimalSystemAgent.Providers.Anthropic do
   defp do_chat_stream(base_url, api_key, model, messages, callback, opts) do
     formatted = format_messages(messages)
     {system_msgs, chat_msgs} = Enum.split_with(formatted, &(&1["role"] == "system"))
-    system_text = Enum.map_join(system_msgs, "\n\n", & &1["content"])
+    system_text = Enum.map_join(system_msgs, "\n\n", fn msg ->
+      case msg["content"] do
+        blocks when is_list(blocks) -> Enum.map_join(blocks, "\n", fn %{"text" => t} -> t; other -> inspect(other) end)
+        text when is_binary(text) -> text
+        other -> to_string(other)
+      end
+    end)
     thinking = Keyword.get(opts, :thinking)
 
     body =
@@ -378,9 +396,9 @@ defmodule OptimalSystemAgent.Providers.Anthropic do
               Enum.map(tcs, fn tc ->
                 %{
                   "type" => "tool_use",
-                  "id" => tc.id || tc[:id],
-                  "name" => tc.name || tc[:name],
-                  "input" => tc.arguments || tc[:arguments] || %{}
+                  "id" => tc[:id] || tc["id"],
+                  "name" => tc[:name] || tc["name"],
+                  "input" => tc[:arguments] || tc["arguments"] || tc[:input] || tc["input"] || %{}
                 }
               end)
 

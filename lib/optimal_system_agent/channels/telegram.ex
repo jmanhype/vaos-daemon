@@ -169,8 +169,9 @@ defmodule OptimalSystemAgent.Channels.Telegram do
   end
 
   defp do_send_message(token, chat_id, message, opts) do
-    parse_mode = Keyword.get(opts, :parse_mode, "MarkdownV2")
-    body = %{chat_id: chat_id, text: message, parse_mode: parse_mode}
+    parse_mode = Keyword.get(opts, :parse_mode)
+    body = %{chat_id: chat_id, text: message}
+    body = if parse_mode, do: Map.put(body, :parse_mode, parse_mode), else: body
 
     body =
       case Keyword.get(opts, :keyboard) do
