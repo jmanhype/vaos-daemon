@@ -1,17 +1,28 @@
 defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
   @moduledoc """
-  Epistemic investigation tool - triggers a full analysis cycle on any claim.
+  Epistemic investigation tool — uses the real Vaos.Ledger.Epistemic.Ledger
+  GenServer for claim/evidence tracking with Bayesian confidence.
 
-  One mandatory LLM call generates structured supporting/opposing evidence and
-  hidden assumptions. Results are persisted to the knowledge graph and a local
-  epistemic ledger (JSON). Optional literature search at deep depth.
+  Creates claims and evidence through the ledger API, letting IT compute
+  confidence via refresh_claim. Prior knowledge search is keyword-based.
+  At standard depth, still attempts ONE literature search for the strongest
+  verifiable claim.
   """
 
   @behaviour MiosaTools.Behaviour
 
   alias MiosaProviders.Registry, as: Providers
+  alias Vaos.Ledger.Epistemic.Ledger, as: EpistemicLedger
 
   @ledger_path "/Users/batmanosama/.openclaw/investigate_ledger.json"
+  @ledger_name :investigate_ledger
+
+  @stop_words ~w(the a an is are was were be been being have has had do does did
+    will would shall should may might must can could of in to for with on at by
+    from as into through during before after above below between out off over
+    under again further then once here there when where why how all both each
+    few more most other some such no nor not only own same so than too very it
+    its this that these those and but or if while)
 
   @impl true
   def available?, do: true
@@ -25,7 +36,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
   @impl true
   def description do
     "Investigate a claim or topic: generates structured supporting/opposing evidence, " <>
-      "tracks epistemic confidence, and stores results in the knowledge graph."
+      "tracks epistemic confidence via Bayesian ledger, and stores results in the knowledge graph."
   end
 
   @impl true
@@ -40,7 +51,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
         "depth" => %{
           "type" => "string",
           "enum" => ["standard", "deep"],
-          "description" => "standard = LLM analysis only; deep = also searches literature"
+          "description" => "standard = LLM analysis + one literature search for best verifiable claim; deep = full literature enrichment"
         }
       },
       "required" => ["topic"]
@@ -59,17 +70,21 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     end
   end
 
-  defp run_investigation(topic, depth) do
-    topic_hash = Base.encode16(:crypto.hash(:sha256, topic), case: :lower) |> String.slice(0, 16)
-    topic_id = "investigate:" <> topic_hash
-    claim_id = "claim_" <> topic_hash
+  # -- Main pipeline ---------------------------------------------------
 
-    # 1. Prior check - SPARQL the knowledge graph
+  defp run_investigation(topic, depth) do
+    # 1. Start the real epistemic ledger GenServer
+    ensure_ledger_started()
+
+    # 2. Extract keywords for prior knowledge search
+    keywords = extract_keywords(topic)
+
+    # 3. Prior knowledge search -- keyword-based, not hash-based
     ensure_store_started()
     store = store_ref()
-    prior = fetch_prior(store, topic_id)
+    prior = fetch_prior_by_keywords(store, keywords)
 
-    # 2. LLM call - structured evidence generation
+    # 4. LLM call -- structured evidence generation
     prior_text = if prior == [], do: "None found.", else: Enum.join(prior, "\n")
 
     prompt =
@@ -103,83 +118,123 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
       {:ok, %{content: response}} when is_binary(response) ->
         {supporting, opposing, assumptions} = parse_analysis(response)
 
-        # Optional literature search (deep depth)
-        supporting = if depth == "deep", do: enrich_with_literature(supporting), else: supporting
-        opposing = if depth == "deep", do: enrich_with_literature(opposing), else: opposing
+        # 5. Create claim in the real ledger
+        claim = EpistemicLedger.add_claim(
+          [title: String.slice(topic, 0, 100), statement: topic, tags: ["investigate", "auto"]],
+          @ledger_name
+        )
 
-        # Compute confidence
-        has_sourced = Enum.any?(supporting ++ opposing, &(&1.source_type == :sourced))
-        support_str = supporting |> Enum.map(& &1.strength) |> Enum.sum()
-        oppose_str = opposing |> Enum.map(& &1.strength) |> Enum.sum()
-        total = support_str + oppose_str
-        confidence = if total > 0, do: Float.round(support_str / total, 3), else: 0.5
+        # 6. Add evidence through the real ledger -- with varying strengths
+        supporting_records = Enum.map(supporting, fn ev ->
+          strength = evidence_strength(ev.source_type)
+          EpistemicLedger.add_evidence(
+            [
+              claim_id: claim.id,
+              summary: ev.summary,
+              direction: :support,
+              strength: strength,
+              confidence: strength,
+              source_type: Atom.to_string(ev.source_type)
+            ],
+            @ledger_name
+          )
+        end)
 
-        status = cond do
-          confidence >= 0.7 -> "supported"
-          confidence <= 0.3 -> "contested"
-          true -> "uncertain"
-        end
+        opposing_records = Enum.map(opposing, fn ev ->
+          strength = evidence_strength(ev.source_type)
+          EpistemicLedger.add_evidence(
+            [
+              claim_id: claim.id,
+              summary: ev.summary,
+              direction: :contradict,
+              strength: strength,
+              confidence: strength,
+              source_type: Atom.to_string(ev.source_type)
+            ],
+            @ledger_name
+          )
+        end)
 
+        # 7. Add assumptions through the real ledger
+        Enum.each(assumptions, fn a ->
+          risk_val = case a.risk do
+            "high" -> 0.9
+            "medium" -> 0.5
+            "low" -> 0.2
+            _ -> 0.5
+          end
+          EpistemicLedger.add_assumption(
+            [claim_id: claim.id, text: a.text, risk: risk_val],
+            @ledger_name
+          )
+        end)
+
+        # 8. Literature search
+        #    - deep: enrich ALL verifiable evidence
+        #    - standard: try ONE search for the strongest verifiable claim
+        all_parsed = supporting ++ opposing
+
+        literature_note =
+          case depth do
+            "deep" ->
+              enriched = enrich_all_with_literature(all_parsed, claim.id)
+              if enriched > 0, do: "#{enriched} evidence items grounded with literature", else: "No literature found"
+
+            _ ->
+              # Standard: try ONE literature search for best verifiable
+              enrich_best_verifiable(all_parsed, claim.id)
+          end
+
+        # 9. Refresh claim -- let the ledger compute Bayesian confidence
+        EpistemicLedger.refresh_claim(claim.id, @ledger_name)
+        state = EpistemicLedger.state(@ledger_name)
+        updated_claim = state.claims[claim.id]
+        confidence = updated_claim.confidence
+        status = updated_claim.status
+
+        # 10. Persist ledger to disk
+        EpistemicLedger.save(@ledger_name)
+
+        # 11. Determine commitment level
+        all_ev = supporting_records ++ opposing_records
+        has_sourced = Enum.any?(all_ev, fn ev -> ev.source_type == "sourced" end)
         commitment = if has_sourced, do: "committed", else: "belief_only"
 
-        # Update ledger
-        evidence_records =
-          Enum.map(supporting, &evidence_to_map(&1, :support)) ++
-          Enum.map(opposing, &evidence_to_map(&1, :contradict))
+        # 12. Store in knowledge graph with keywords
+        topic_id = "investigate:" <> short_hash(topic)
 
-        assumption_records = Enum.map(assumptions, &assumption_to_map/1)
-
-        claim = %{
-          "id" => claim_id,
-          "title" => String.slice(topic, 0, 100),
-          "statement" => topic,
-          "tags" => ["investigate", "auto"],
-          "created_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
-          "evidence" => evidence_records,
-          "assumptions" => assumption_records,
-          "confidence" => confidence,
-          "status" => status
-        }
-
-        ledger = load_ledger()
-        ledger = Map.put(ledger, claim_id, claim)
-        save_ledger(ledger)
-
-        # Store in knowledge graph
         triples = [
           {topic_id, "rdf:type", "vaos:Investigation"},
           {topic_id, "vaos:topic", topic},
           {topic_id, "vaos:confidence", Float.to_string(confidence)},
-          {topic_id, "vaos:status", status},
+          {topic_id, "vaos:status", Atom.to_string(status)},
           {topic_id, "vaos:commitment", commitment},
+          {topic_id, "vaos:claim_id", claim.id},
           {topic_id, "vaos:timestamp", DateTime.utc_now() |> DateTime.to_iso8601()}
         ]
 
-        sourced_triples =
-          (supporting ++ opposing)
-          |> Enum.with_index()
-          |> Enum.map(fn {ev, i} ->
-            ev_id = topic_id <> ":ev" <> Integer.to_string(i)
-            kind = if ev.source_type == :sourced, do: "vaos:GroundedEvidence", else: "vaos:BeliefEvidence"
-            {ev_id, "rdf:type", kind}
-          end)
+        keyword_triples = Enum.map(keywords, fn kw ->
+          {topic_id, "vaos:keyword", kw}
+        end)
 
-        for triple <- triples ++ sourced_triples do
+        for triple <- triples ++ keyword_triples do
           MiosaKnowledge.assert(store, triple)
         end
 
-        # Format result
+        # 13. Format result
         result =
           "## Investigation: " <> topic <> "\n\n" <>
           "**Commitment**: " <> commitment <> "\n" <>
-          "**Confidence**: " <> Float.to_string(confidence) <> "\n" <>
-          "**Status**: " <> status <> "\n\n" <>
-          "### Supporting Evidence\n" <> format_evidence(supporting) <> "\n\n" <>
-          "### Opposing Evidence\n" <> format_evidence(opposing) <> "\n\n" <>
+          "**Confidence**: " <> Float.to_string(Float.round(confidence, 3)) <> "\n" <>
+          "**Status**: " <> Atom.to_string(status) <> "\n" <>
+          "**Literature**: " <> literature_note <> "\n\n" <>
+          "### Supporting Evidence\n" <> format_evidence_records(supporting_records) <> "\n\n" <>
+          "### Opposing Evidence\n" <> format_evidence_records(opposing_records) <> "\n\n" <>
           "### Assumptions\n" <> format_assumptions(assumptions) <> "\n\n" <>
           "### Prior Knowledge\n" <>
           (if prior == [], do: "  None", else: Enum.join(prior, "\n")) <> "\n\n" <>
-          "*Claim ID: " <> claim_id <> " -- stored in knowledge graph as " <> topic_id <> "*"
+          "### Keywords\n  " <> Enum.join(keywords, ", ") <> "\n\n" <>
+          "*Claim ID: " <> claim.id <> " -- stored in knowledge graph as " <> topic_id <> "*"
 
         {:ok, result}
 
@@ -193,7 +248,131 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     e -> {:error, "Investigation failed: " <> Exception.message(e)}
   end
 
-  # --- Parsing ---
+  # -- Evidence strength mapping ---------------------------------------
+
+  defp evidence_strength(:sourced), do: 0.8
+  defp evidence_strength(:verifiable), do: 0.6
+  defp evidence_strength(:reasoning), do: 0.4
+  defp evidence_strength(_), do: 0.4
+
+  # -- Keyword extraction ----------------------------------------------
+
+  defp extract_keywords(topic) do
+    topic
+    |> String.downcase()
+    |> String.replace(~r/[^a-z0-9\s\-]/, " ")
+    |> String.split(~r/\s+/, trim: true)
+    |> Enum.reject(&(&1 in @stop_words))
+    |> Enum.reject(&(String.length(&1) < 3))
+    |> Enum.uniq()
+    |> Enum.take(4)
+  end
+
+  # -- Prior knowledge search -- keyword-based -------------------------
+
+  defp fetch_prior_by_keywords(store, keywords) do
+    # Query ALL investigations from the knowledge graph
+    query = "SELECT ?s ?topic WHERE { ?s <vaos:topic> ?topic . ?s <rdf:type> <vaos:Investigation> }"
+    case MiosaKnowledge.sparql(store, query) do
+      {:ok, results} when is_list(results) ->
+        results
+        |> Enum.filter(fn bindings ->
+          topic_val = Map.get(bindings, "topic", Map.get(bindings, :topic, ""))
+          topic_lower = String.downcase(to_string(topic_val))
+          # Match if ANY keyword appears in the prior topic
+          Enum.any?(keywords, fn kw -> String.contains?(topic_lower, kw) end)
+        end)
+        |> Enum.map(fn bindings ->
+          s = Map.get(bindings, "s", Map.get(bindings, :s, "?"))
+          t = Map.get(bindings, "topic", Map.get(bindings, :topic, "?"))
+          "  Prior: " <> to_string(t) <> " (id: " <> to_string(s) <> ")"
+        end)
+      _ -> []
+    end
+  rescue
+    _ -> []
+  end
+
+  # -- Literature search -- Semantic Scholar ---------------------------
+
+  defp search_semantic_scholar(query) do
+    :inets.start()
+    :ssl.start()
+    url = "https://api.semanticscholar.org/graph/v1/paper/search?query=#{URI.encode(query)}&limit=3&fields=title,abstract,citationCount,year"
+    case :httpc.request(:get, {String.to_charlist(url), []}, [{:timeout, 10_000}], []) do
+      {:ok, {{_, 200, _}, _, body}} ->
+        {:ok, Jason.decode!(List.to_string(body))["data"] || []}
+      _ -> {:error, :search_failed}
+    end
+  rescue
+    _ -> {:error, :search_failed}
+  end
+
+  # Deep: enrich ALL verifiable evidence with literature
+  defp enrich_all_with_literature(parsed_list, claim_id) do
+    parsed_list
+    |> Enum.with_index()
+    |> Enum.reduce(0, fn {parsed, idx}, count ->
+      if parsed.source_type == :verifiable do
+        case search_semantic_scholar(parsed.summary) do
+          {:ok, papers} when papers != [] ->
+            paper = List.first(papers)
+            source_ref = "#{paper["title"]} (#{paper["year"]}, citations: #{paper["citationCount"]})"
+            direction = if idx < 3, do: :support, else: :contradict
+            EpistemicLedger.add_evidence(
+              [
+                claim_id: claim_id,
+                summary: parsed.summary <> " [grounded: " <> source_ref <> "]",
+                direction: direction,
+                strength: 0.8,
+                confidence: 0.8,
+                source_type: "sourced",
+                source_ref: source_ref
+              ],
+              @ledger_name
+            )
+            count + 1
+          _ -> count
+        end
+      else
+        count
+      end
+    end)
+  end
+
+  # Standard: try ONE literature search for the strongest verifiable claim
+  defp enrich_best_verifiable(parsed_list, claim_id) do
+    verifiable =
+      parsed_list
+      |> Enum.filter(fn parsed -> parsed.source_type == :verifiable end)
+
+    case verifiable do
+      [best_parsed | _] ->
+        case search_semantic_scholar(best_parsed.summary) do
+          {:ok, papers} when papers != [] ->
+            paper = List.first(papers)
+            source_ref = "#{paper["title"]} (#{paper["year"]}, citations: #{paper["citationCount"]})"
+            # Add sourced evidence to the ledger
+            EpistemicLedger.add_evidence(
+              [
+                claim_id: claim_id,
+                summary: best_parsed.summary <> " [grounded: " <> source_ref <> "]",
+                direction: :support,
+                strength: 0.8,
+                confidence: 0.8,
+                source_type: "sourced",
+                source_ref: source_ref
+              ],
+              @ledger_name
+            )
+            "1 evidence item grounded: " <> source_ref
+          _ -> "Literature search returned no results"
+        end
+      [] -> "No verifiable claims to search"
+    end
+  end
+
+  # -- Parsing ---------------------------------------------------------
 
   defp parse_analysis(text) do
     sections = String.split(text, ~r/\n(?=SUPPORTING|OPPOSING|ASSUMPTIONS)/i)
@@ -214,12 +393,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     |> Regex.scan(section)
     |> Enum.map(fn [_, type, summary] ->
       source_type = if String.upcase(type) == "VERIFIABLE", do: :verifiable, else: :reasoning
-      %{
-        summary: String.trim(summary),
-        source_type: source_type,
-        strength: if(source_type == :verifiable, do: 0.6, else: 0.5),
-        sourced: false
-      }
+      %{summary: String.trim(summary), source_type: source_type}
     end)
   end
 
@@ -231,50 +405,17 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     end)
   end
 
-  # --- Literature enrichment (deep depth) ---
+  # -- Formatting ------------------------------------------------------
 
-  defp enrich_with_literature(evidence_list) do
-    Enum.map(evidence_list, fn ev ->
-      if ev.source_type == :verifiable do
-        case search_literature(ev.summary) do
-          {:ok, _papers} -> %{ev | source_type: :sourced, strength: 0.8, sourced: true}
-          _ -> ev
-        end
-      else
-        ev
-      end
-    end)
-  end
-
-  defp search_literature(query) do
-    encoded = URI.encode(query)
-    url = "https://api.semanticscholar.org/graph/v1/paper/search?query=" <> encoded <> "&limit=3&fields=title,year,citationCount"
-
-    case Req.get(url, headers: [{"user-agent", "OSA/1.0"}], receive_timeout: 10_000) do
-      {:ok, %Req.Response{status: 200, body: %{"data" => papers}}} when papers != [] ->
-        {:ok, papers}
-      _ ->
-        :none
-    end
-  rescue
-    _ -> :none
-  end
-
-  # --- Formatting ---
-
-  defp format_evidence(items) do
-    if items == [] do
+  defp format_evidence_records(records) do
+    if records == [] do
       "  (none)"
     else
-      items
+      records
       |> Enum.with_index(1)
       |> Enum.map(fn {ev, i} ->
-        tag = case ev.source_type do
-          :sourced -> "SOURCED"
-          :verifiable -> "VERIFIABLE"
-          _ -> "REASONING"
-        end
-        "  " <> Integer.to_string(i) <> ". [" <> tag <> "] " <> ev.summary <> " (strength: " <> Float.to_string(ev.strength) <> ")"
+        dir = Atom.to_string(ev.direction)
+        "  #{i}. [#{ev.source_type}] #{ev.summary} (strength: #{ev.strength}, direction: #{dir})"
       end)
       |> Enum.join("\n")
     end
@@ -287,43 +428,27 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
       items
       |> Enum.with_index(1)
       |> Enum.map(fn {a, i} ->
-        "  " <> Integer.to_string(i) <> ". " <> a.text <> " (risk: " <> a.risk <> ")"
+        "  #{i}. #{a.text} (risk: #{a.risk})"
       end)
       |> Enum.join("\n")
     end
   end
 
-  # --- Ledger persistence ---
+  # -- Helpers ---------------------------------------------------------
 
-  defp load_ledger do
-    case File.read(@ledger_path) do
-      {:ok, data} -> Jason.decode!(data)
-      _ -> %{}
+  defp short_hash(topic) do
+    Base.encode16(:crypto.hash(:sha256, topic), case: :lower) |> String.slice(0, 16)
+  end
+
+  defp ensure_ledger_started do
+    case Process.whereis(@ledger_name) do
+      nil ->
+        {:ok, _pid} = EpistemicLedger.start_link(path: @ledger_path, name: @ledger_name)
+        :ok
+      _pid ->
+        :ok
     end
-  rescue
-    _ -> %{}
   end
-
-  defp save_ledger(ledger) do
-    File.mkdir_p!(Path.dirname(@ledger_path))
-    File.write!(@ledger_path, Jason.encode!(ledger, pretty: true))
-  end
-
-  defp evidence_to_map(ev, direction) do
-    %{
-      "summary" => ev.summary,
-      "direction" => Atom.to_string(direction),
-      "strength" => ev.strength,
-      "source_type" => Atom.to_string(ev.source_type),
-      "sourced" => ev.sourced
-    }
-  end
-
-  defp assumption_to_map(a) do
-    %{"text" => a.text, "risk" => a.risk}
-  end
-
-  # --- Knowledge graph helpers ---
 
   defp store_ref, do: Vaos.Knowledge.store_ref("osa_default")
 
@@ -333,20 +458,5 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
       {:error, {:already_started, _}} -> :ok
       _ -> :ok
     end
-  end
-
-  defp fetch_prior(store, topic_id) do
-    query = "SELECT ?p ?o WHERE { <" <> topic_id <> "> ?p ?o }"
-    case MiosaKnowledge.sparql(store, query) do
-      {:ok, results} when is_list(results) ->
-        Enum.map(results, fn bindings ->
-          p = Map.get(bindings, "p", Map.get(bindings, :p, "?"))
-          o = Map.get(bindings, "o", Map.get(bindings, :o, "?"))
-          "  " <> to_string(p) <> " = " <> to_string(o)
-        end)
-      _ -> []
-    end
-  rescue
-    _ -> []
   end
 end
