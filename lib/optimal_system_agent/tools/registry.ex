@@ -816,7 +816,8 @@ defmodule OptimalSystemAgent.Tools.Registry do
       "vault_sleep" => OptimalSystemAgent.Tools.Builtins.VaultSleep,
       "vault_checkpoint" => OptimalSystemAgent.Tools.Builtins.VaultCheckpoint,
       "vault_inject" => OptimalSystemAgent.Tools.Builtins.VaultInject,
-      "compute_vm" => OptimalSystemAgent.Tools.Builtins.ComputeVm
+      "compute_vm" => OptimalSystemAgent.Tools.Builtins.ComputeVm,
+      "investigate" => OptimalSystemAgent.Tools.Builtins.Investigate
     }
   end
 
