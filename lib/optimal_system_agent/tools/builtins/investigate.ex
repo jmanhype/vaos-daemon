@@ -9,12 +9,16 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
   verifiable claim.
   """
 
+  require Logger
+
   @behaviour MiosaTools.Behaviour
 
   alias MiosaProviders.Registry, as: Providers
   alias Vaos.Ledger.Epistemic.Ledger, as: EpistemicLedger
+  alias Vaos.Ledger.Epistemic.Models
 
-  @ledger_path "/Users/batmanosama/.openclaw/investigate_ledger.json"
+  # BUG 11: Use System.user_home!() instead of hardcoded path
+  @ledger_path Path.join(System.user_home!(), ".openclaw/investigate_ledger.json")
   @ledger_name :investigate_ledger
 
   @stop_words ~w(the a an is are was were be been being have has had do does did
@@ -73,6 +77,10 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
   # -- Main pipeline ---------------------------------------------------
 
   defp run_investigation(topic, depth) do
+    # BUG 6: Start :inets/:ssl once at investigation start, not per-request in search_semantic_scholar
+    :inets.start()
+    :ssl.start()
+
     # 1. Start the real epistemic ledger GenServer
     ensure_ledger_started()
 
@@ -80,7 +88,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     keywords = extract_keywords(topic)
 
     # 3. Prior knowledge search -- keyword-based, not hash-based
-    ensure_store_started()
+    # BUG 18: Check ensure_store_started return value
+    case ensure_store_started() do
+      :ok -> :ok
+      {:error, reason} ->
+        Logger.warning("[investigate] Knowledge store unavailable: #{inspect(reason)}")
+    end
     store = store_ref()
     prior = fetch_prior_by_keywords(store, keywords)
 
@@ -125,37 +138,55 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
         )
 
         # 6. Add evidence through the real ledger -- with varying strengths
-        supporting_records = Enum.map(supporting, fn ev ->
-          strength = evidence_strength(ev.source_type)
-          EpistemicLedger.add_evidence(
-            [
-              claim_id: claim.id,
-              summary: ev.summary,
-              direction: :support,
-              strength: strength,
-              confidence: strength,
-              source_type: Atom.to_string(ev.source_type)
-            ],
-            @ledger_name
-          )
-        end)
+        # BUG 2: Wrap add_evidence calls to handle {:error, _} and filter nils
+        supporting_records =
+          supporting
+          |> Enum.map(fn ev ->
+            strength = evidence_strength(ev.source_type)
+            case EpistemicLedger.add_evidence(
+              [
+                claim_id: claim.id,
+                summary: ev.summary,
+                direction: :support,
+                strength: strength,
+                confidence: strength,
+                source_type: Atom.to_string(ev.source_type)
+              ],
+              @ledger_name
+            ) do
+              %Models.Evidence{} = record -> record
+              {:error, reason} ->
+                Logger.warning("[investigate] Failed to add supporting evidence: #{inspect(reason)}")
+                nil
+            end
+          end)
+          |> Enum.reject(&is_nil/1)
 
-        opposing_records = Enum.map(opposing, fn ev ->
-          strength = evidence_strength(ev.source_type)
-          EpistemicLedger.add_evidence(
-            [
-              claim_id: claim.id,
-              summary: ev.summary,
-              direction: :contradict,
-              strength: strength,
-              confidence: strength,
-              source_type: Atom.to_string(ev.source_type)
-            ],
-            @ledger_name
-          )
-        end)
+        opposing_records =
+          opposing
+          |> Enum.map(fn ev ->
+            strength = evidence_strength(ev.source_type)
+            case EpistemicLedger.add_evidence(
+              [
+                claim_id: claim.id,
+                summary: ev.summary,
+                direction: :contradict,
+                strength: strength,
+                confidence: strength,
+                source_type: Atom.to_string(ev.source_type)
+              ],
+              @ledger_name
+            ) do
+              %Models.Evidence{} = record -> record
+              {:error, reason} ->
+                Logger.warning("[investigate] Failed to add opposing evidence: #{inspect(reason)}")
+                nil
+            end
+          end)
+          |> Enum.reject(&is_nil/1)
 
         # 7. Add assumptions through the real ledger
+        # BUG 4: Check add_assumption return value
         Enum.each(assumptions, fn a ->
           risk_val = case a.risk do
             "high" -> 0.9
@@ -163,16 +194,23 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
             "low" -> 0.2
             _ -> 0.5
           end
-          EpistemicLedger.add_assumption(
+          case EpistemicLedger.add_assumption(
             [claim_id: claim.id, text: a.text, risk: risk_val],
             @ledger_name
-          )
+          ) do
+            {:error, reason} ->
+              Logger.warning("[investigate] Failed to add assumption: #{inspect(reason)}")
+            _ -> :ok
+          end
         end)
 
         # 8. Literature search
         #    - deep: enrich ALL verifiable evidence
         #    - standard: try ONE search for the strongest verifiable claim
-        all_parsed = supporting ++ opposing
+        # BUG 20: Tag parsed evidence with direction so we don't use idx < 3 heuristic
+        supporting_parsed = Enum.map(supporting, &Map.put(&1, :direction, :support))
+        opposing_parsed = Enum.map(opposing, &Map.put(&1, :direction, :contradict))
+        all_parsed = supporting_parsed ++ opposing_parsed
 
         literature_note =
           case depth do
@@ -188,16 +226,27 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
         # 9. Refresh claim -- let the ledger compute Bayesian confidence
         EpistemicLedger.refresh_claim(claim.id, @ledger_name)
         state = EpistemicLedger.state(@ledger_name)
+
+        # BUG 9: state.claims[claim.id] can be nil -- add nil check
         updated_claim = state.claims[claim.id]
-        confidence = updated_claim.confidence
-        status = updated_claim.status
+        {confidence, status} = if updated_claim do
+          {updated_claim.confidence, updated_claim.status}
+        else
+          Logger.warning("[investigate] Claim #{claim.id} not found in ledger state after refresh")
+          {0.5, :uncertain}
+        end
 
         # 10. Persist ledger to disk
         EpistemicLedger.save(@ledger_name)
 
         # 11. Determine commitment level
-        all_ev = supporting_records ++ opposing_records
-        has_sourced = Enum.any?(all_ev, fn ev -> ev.source_type == "sourced" end)
+        # BUG 1: Re-query ledger for ALL evidence after enrichment
+        # (supporting_records ++ opposing_records only has originals, not literature-enriched ones)
+        fresh_state = EpistemicLedger.state(@ledger_name)
+        all_evidence = fresh_state.evidence
+          |> Map.values()
+          |> Enum.filter(fn ev -> ev.claim_id == claim.id end)
+        has_sourced = Enum.any?(all_evidence, fn ev -> ev.source_type == "sourced" end)
         commitment = if has_sourced, do: "committed", else: "belief_only"
 
         # 12. Store in knowledge graph with keywords
@@ -271,8 +320,8 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
   # -- Prior knowledge search -- keyword-based -------------------------
 
   defp fetch_prior_by_keywords(store, keywords) do
-    # Query ALL investigations from the knowledge graph
-    query = "SELECT ?s ?topic WHERE { ?s <vaos:topic> ?topic . ?s <rdf:type> <vaos:Investigation> }"
+    # BUG 17: Remove angle brackets from SPARQL query -- store uses bare strings like "vaos:topic"
+    query = "SELECT ?s ?topic WHERE { ?s vaos:topic ?topic . ?s rdf:type vaos:Investigation }"
     case MiosaKnowledge.sparql(store, query) do
       {:ok, results} when is_list(results) ->
         results
@@ -295,31 +344,41 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
 
   # -- Literature search -- Semantic Scholar ---------------------------
 
+  # BUG 6: Removed :inets.start()/:ssl.start() -- moved to run_investigation init
+  # BUG 7: Log non-200 HTTP status codes
   defp search_semantic_scholar(query) do
-    :inets.start()
-    :ssl.start()
     url = "https://api.semanticscholar.org/graph/v1/paper/search?query=#{URI.encode(query)}&limit=3&fields=title,abstract,citationCount,year"
     case :httpc.request(:get, {String.to_charlist(url), []}, [{:timeout, 10_000}], []) do
       {:ok, {{_, 200, _}, _, body}} ->
         {:ok, Jason.decode!(List.to_string(body))["data"] || []}
-      _ -> {:error, :search_failed}
+      {:ok, {{_, status_code, reason_phrase}, _, _body}} ->
+        Logger.warning("[investigate] Semantic Scholar returned HTTP #{status_code}: #{reason_phrase}")
+        {:error, :search_failed}
+      {:error, reason} ->
+        Logger.warning("[investigate] Semantic Scholar request failed: #{inspect(reason)}")
+        {:error, :search_failed}
     end
   rescue
-    _ -> {:error, :search_failed}
+    e ->
+      Logger.warning("[investigate] Semantic Scholar exception: #{Exception.message(e)}")
+      {:error, :search_failed}
   end
 
   # Deep: enrich ALL verifiable evidence with literature
+  # BUG 20: Use direction from parsed data instead of idx < 3 heuristic
   defp enrich_all_with_literature(parsed_list, claim_id) do
     parsed_list
-    |> Enum.with_index()
-    |> Enum.reduce(0, fn {parsed, idx}, count ->
+    |> Enum.reduce(0, fn parsed, count ->
       if parsed.source_type == :verifiable do
         case search_semantic_scholar(parsed.summary) do
           {:ok, papers} when papers != [] ->
             paper = List.first(papers)
-            source_ref = "#{paper["title"]} (#{paper["year"]}, citations: #{paper["citationCount"]})"
-            direction = if idx < 3, do: :support, else: :contradict
-            EpistemicLedger.add_evidence(
+            # BUG 8: Handle nil year/citationCount from API
+            year = paper["year"] || "unknown"
+            citations = paper["citationCount"] || 0
+            source_ref = "#{paper["title"]} (#{year}, citations: #{citations})"
+            direction = Map.get(parsed, :direction, :support)
+            case EpistemicLedger.add_evidence(
               [
                 claim_id: claim_id,
                 summary: parsed.summary <> " [grounded: " <> source_ref <> "]",
@@ -330,8 +389,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
                 source_ref: source_ref
               ],
               @ledger_name
-            )
-            count + 1
+            ) do
+              %Models.Evidence{} -> count + 1
+              {:error, reason} ->
+                Logger.warning("[investigate] Failed to add enriched evidence: #{inspect(reason)}")
+                count
+            end
           _ -> count
         end
       else
@@ -351,21 +414,30 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
         case search_semantic_scholar(best_parsed.summary) do
           {:ok, papers} when papers != [] ->
             paper = List.first(papers)
-            source_ref = "#{paper["title"]} (#{paper["year"]}, citations: #{paper["citationCount"]})"
+            # BUG 8: Handle nil year/citationCount from API
+            year = paper["year"] || "unknown"
+            citations = paper["citationCount"] || 0
+            source_ref = "#{paper["title"]} (#{year}, citations: #{citations})"
+            direction = Map.get(best_parsed, :direction, :support)
             # Add sourced evidence to the ledger
-            EpistemicLedger.add_evidence(
+            case EpistemicLedger.add_evidence(
               [
                 claim_id: claim_id,
                 summary: best_parsed.summary <> " [grounded: " <> source_ref <> "]",
-                direction: :support,
+                direction: direction,
                 strength: 0.8,
                 confidence: 0.8,
                 source_type: "sourced",
                 source_ref: source_ref
               ],
               @ledger_name
-            )
-            "1 evidence item grounded: " <> source_ref
+            ) do
+              %Models.Evidence{} ->
+                "1 evidence item grounded: " <> source_ref
+              {:error, reason} ->
+                Logger.warning("[investigate] Failed to add sourced evidence: #{inspect(reason)}")
+                "Literature found but failed to store: " <> source_ref
+            end
           _ -> "Literature search returned no results"
         end
       [] -> "No verifiable claims to search"
@@ -452,11 +524,14 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
 
   defp store_ref, do: Vaos.Knowledge.store_ref("osa_default")
 
+  # BUG 18: Return errors instead of swallowing them
   defp ensure_store_started do
     case Vaos.Knowledge.open("osa_default") do
       {:ok, _} -> :ok
       {:error, {:already_started, _}} -> :ok
-      _ -> :ok
+      {:error, reason} ->
+        Logger.error("[investigate] Failed to start knowledge store: #{inspect(reason)}")
+        {:error, reason}
     end
   end
 end
