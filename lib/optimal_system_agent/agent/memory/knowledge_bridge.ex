@@ -80,9 +80,14 @@ defmodule OptimalSystemAgent.Agent.Memory.KnowledgeBridge do
     Vaos.Knowledge.store_ref(@store_name)
   end
 
+  defp store_via do
+    {:via, Registry, {Vaos.Knowledge.Registry, @store_name}}
+  end
+
   defp sync_to_knowledge do
-    case GenServer.whereis(store_ref()) do
+    case GenServer.whereis(store_via()) do
       nil ->
+        Logger.debug("[KnowledgeBridge] store not running, skipping sync")
         :ok
 
       _pid ->

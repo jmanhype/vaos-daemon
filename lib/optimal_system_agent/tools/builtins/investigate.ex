@@ -116,7 +116,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
       "1. <assumption> (risk: high/medium/low)\n" <>
       "2. <assumption> (risk: high/medium/low)\n"
 
-    sys_msg = "You are a rigorous epistemic analyst. Produce exactly the requested format. Each evidence line must start with [VERIFIABLE] or [REASONING]."
+    sys_msg = "You are a rigorous epistemic analyst. Produce exactly the requested format. Each evidence line must start with [VERIFIABLE] or [REASONING] followed by (strength: N) where N is 1-10 rating of how strong/compelling the argument is. 10 = irrefutable empirical evidence, 1 = weak speculation. Be honest and differentiated — do NOT give all arguments the same strength."
 
     messages = [
       %{role: "system", content: sys_msg},
@@ -142,7 +142,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
         supporting_records =
           supporting
           |> Enum.map(fn ev ->
-            strength = evidence_strength(ev.source_type)
+            strength = ev.llm_strength || evidence_strength(ev.source_type)
             case EpistemicLedger.add_evidence(
               [
                 claim_id: claim.id,
@@ -165,7 +165,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
         opposing_records =
           opposing
           |> Enum.map(fn ev ->
-            strength = evidence_strength(ev.source_type)
+            strength = ev.llm_strength || evidence_strength(ev.source_type)
             case EpistemicLedger.add_evidence(
               [
                 claim_id: claim.id,
@@ -314,32 +314,70 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     |> Enum.reject(&(&1 in @stop_words))
     |> Enum.reject(&(String.length(&1) < 3))
     |> Enum.uniq()
-    |> Enum.take(4)
+    |> Enum.take(8)
   end
 
   # -- Prior knowledge search -- keyword-based -------------------------
 
   defp fetch_prior_by_keywords(store, keywords) do
-    # BUG 17: Remove angle brackets from SPARQL query -- store uses bare strings like "vaos:topic"
-    query = "SELECT ?s ?topic WHERE { ?s vaos:topic ?topic . ?s rdf:type vaos:Investigation }"
-    case MiosaKnowledge.sparql(store, query) do
-      {:ok, results} when is_list(results) ->
-        results
-        |> Enum.filter(fn bindings ->
-          topic_val = Map.get(bindings, "topic", Map.get(bindings, :topic, ""))
-          topic_lower = String.downcase(to_string(topic_val))
-          # Match if ANY keyword appears in the prior topic
-          Enum.any?(keywords, fn kw -> String.contains?(topic_lower, kw) end)
-        end)
-        |> Enum.map(fn bindings ->
-          s = Map.get(bindings, "s", Map.get(bindings, :s, "?"))
-          t = Map.get(bindings, "topic", Map.get(bindings, :topic, "?"))
-          "  Prior: " <> to_string(t) <> " (id: " <> to_string(s) <> ")"
-        end)
+    # Two-phase search: match by topic text OR by stored keyword overlap
+    topic_query = "SELECT ?s ?topic WHERE { ?s vaos:topic ?topic . ?s rdf:type vaos:Investigation }"
+    kw_query = "SELECT ?s ?kw WHERE { ?s vaos:keyword ?kw . ?s rdf:type vaos:Investigation }"
+
+    Logger.debug("[investigate] SPARQL prior search: #{length(keywords)} keywords = #{inspect(keywords)}")
+
+    # Phase 1: Get all investigations with their topics
+    topic_results = case MiosaKnowledge.sparql(store, topic_query) do
+      {:ok, results} when is_list(results) -> results
       _ -> []
     end
+
+    # Phase 2: Get all investigations with their stored keywords
+    kw_results = case MiosaKnowledge.sparql(store, kw_query) do
+      {:ok, results} when is_list(results) -> results
+      _ -> []
+    end
+
+    Logger.debug("[investigate] Found #{length(topic_results)} investigation(s), #{length(kw_results)} keyword triple(s)")
+
+    # Build a set of investigation IDs that match by stored keyword overlap
+    # Check both directions: new keywords match stored keywords, AND stored keywords appear in new topic
+    kw_matched_ids =
+      kw_results
+      |> Enum.filter(fn bindings ->
+        stored_kw = Map.get(bindings, "kw", "") |> to_string() |> String.downcase()
+        # Direction 1: new keyword exactly matches stored keyword
+        exact_match = Enum.any?(keywords, fn kw -> kw == stored_kw end)
+        # Direction 2: stored keyword appears in the new investigation topic (bidirectional)
+        topic_match = Enum.any?(keywords, fn kw -> String.contains?(stored_kw, kw) or String.contains?(kw, stored_kw) end)
+        exact_match or topic_match
+      end)
+      |> Enum.map(fn bindings -> Map.get(bindings, "s", "") |> to_string() end)
+      |> MapSet.new()
+
+    Logger.debug("[investigate] Keyword-matched investigation IDs: #{inspect(MapSet.to_list(kw_matched_ids))}")
+
+    # Filter topic_results: match if keyword in topic text OR investigation ID matched by stored keywords
+    topic_results
+    |> Enum.filter(fn bindings ->
+      s = Map.get(bindings, "s", "") |> to_string()
+      topic_val = Map.get(bindings, "topic", Map.get(bindings, :topic, ""))
+      topic_lower = String.downcase(to_string(topic_val))
+
+      topic_match = Enum.any?(keywords, fn kw -> String.contains?(topic_lower, kw) end)
+      kw_match = MapSet.member?(kw_matched_ids, s)
+
+      topic_match or kw_match
+    end)
+    |> Enum.map(fn bindings ->
+      s = Map.get(bindings, "s", Map.get(bindings, :s, "?"))
+      t = Map.get(bindings, "topic", Map.get(bindings, :topic, "?"))
+      "  Prior: " <> to_string(t) <> " (id: " <> to_string(s) <> ")"
+    end)
   rescue
-    _ -> []
+    e ->
+      Logger.warning("[investigate] fetch_prior_by_keywords failed: #{Exception.message(e)}")
+      []
   end
 
   # -- Literature search -- Semantic Scholar ---------------------------
@@ -461,13 +499,28 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
   end
 
   defp parse_evidence_section(section) do
-    ~r/\d+\.\s*\[(VERIFIABLE|REASONING)\]\s*(.+)/i
+    ~r/\d+\.\s*\[(VERIFIABLE|REASONING)\]\s*(?:\(strength:\s*(\d+)\))?\s*(.+)/i
     |> Regex.scan(section)
-    |> Enum.map(fn [_, type, summary] ->
-      source_type = if String.upcase(type) == "VERIFIABLE", do: :verifiable, else: :reasoning
-      %{summary: String.trim(summary), source_type: source_type}
+    |> Enum.map(fn
+      [_, type, strength_str, summary] ->
+        source_type = if String.upcase(type) == "VERIFIABLE", do: :verifiable, else: :reasoning
+        llm_strength = parse_strength(strength_str)
+        %{summary: String.trim(summary), source_type: source_type, llm_strength: llm_strength}
+      [_, type, "", summary] ->
+        source_type = if String.upcase(type) == "VERIFIABLE", do: :verifiable, else: :reasoning
+        %{summary: String.trim(summary), source_type: source_type, llm_strength: nil}
     end)
   end
+
+  defp parse_strength(str) when is_binary(str) and str != "" do
+    case Integer.parse(str) do
+      {n, _} when n >= 1 and n <= 10 -> n / 10.0
+      {n, _} when n > 10 -> 1.0
+      {n, _} when n < 1 -> 0.1
+      _ -> nil
+    end
+  end
+  defp parse_strength(_), do: nil
 
   defp parse_assumptions_section(section) do
     ~r/\d+\.\s*(.+?)\s*\(risk:\s*(high|medium|low)\)/i
