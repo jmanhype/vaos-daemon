@@ -195,6 +195,7 @@ config :optimal_system_agent,
 
   # Treasury — keys match Treasury GenServer expectations
   treasury_enabled: System.get_env("OSA_TREASURY_ENABLED") == "true",
+  computer_use_enabled: System.get_env("OSA_COMPUTER_USE_ENABLED") == "true",
   treasury_auto_debit: System.get_env("OSA_TREASURY_AUTO_DEBIT") != "false",
   treasury_daily_limit: parse_float.(System.get_env("OSA_TREASURY_DAILY_LIMIT"), 250.0),
   treasury_max_single: parse_float.(System.get_env("OSA_TREASURY_MAX_SINGLE"), 50.0),
@@ -316,3 +317,10 @@ config :optimal_system_agent,
   jwt_secret: System.get_env("JWT_SECRET"),
   amqp_url: System.get_env("AMQP_URL"),
   platform_enabled: database_url != nil
+
+# ── Production (Film Studio Chrome Automation) ────────────────────────
+# Set OSA_PRODUCTION_ENABLED=true to start the Chrome automation subsystem:
+# ChromeSlot (1 concurrent Chrome user), FlowRateLimiter (submission cooldowns),
+# ChromeHealth (periodic Chrome/OSA.app health checks).
+config :optimal_system_agent,
+  production_enabled: System.get_env("OSA_PRODUCTION_ENABLED") == "true"

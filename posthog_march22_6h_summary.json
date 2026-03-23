@@ -1,0 +1,27 @@
+{
+  "query_summary": {
+    "time_period": "Last 6 hours (March 22, 2026)",
+    "total_pageviews": 8,
+    "pages_by_views": [
+      {"path": "/blog/non-human-identity-ai-agents", "views": 2, "unique": 1},
+      {"path": "/", "views": 6, "unique": 3}
+    ],
+    "pricing_page": {
+      "path": "/pricing",
+      "views": 0,
+      "unique": 0
+    }
+  },
+  "baseline_comparison": {
+    "march_20_14days": {
+      "pricing": {"unique": 6, "per_day": 0.43},
+      "landing": {"unique": 38, "per_day": 2.71},
+      "blog": {"unique": 42, "per_day": 3.0}
+    },
+    "march_22_6hours": {
+      "pricing": {"unique": 0, "per_day_projected": 0},
+      "landing": {"unique": 3, "per_day_projected": 12},
+      "blog": {"unique": 1, "per_day_projected": 4}
+    }
+  }
+}

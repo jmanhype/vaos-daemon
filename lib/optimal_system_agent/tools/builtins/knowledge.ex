@@ -180,16 +180,14 @@ defmodule OptimalSystemAgent.Tools.Builtins.Knowledge do
   defp maybe_add(pattern, key, value), do: [{key, value} | pattern]
 
   defp store do
-    {:via, Registry, {MiosaKnowledge.Registry, "osa_default"}}
+    Vaos.Knowledge.store_ref("osa_default")
   end
 
   defp ensure_store_started do
-    case GenServer.whereis(store()) do
-      nil ->
-        MiosaKnowledge.open("osa_default")
-
-      _pid ->
-        :ok
+    case Vaos.Knowledge.open("osa_default") do
+      {:ok, _} -> :ok
+      {:error, {:already_started, _}} -> :ok
+      err -> err
     end
   end
 end

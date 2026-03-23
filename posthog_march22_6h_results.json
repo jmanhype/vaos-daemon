@@ -1,0 +1,25 @@
+{
+  "query_timestamp": "2026-03-22T09:25:35Z",
+  "time_range": "last_6_hours",
+  "results": {
+    "/blog/non-human-identity-ai-agents": {
+      "views": 3,
+      "unique": 2
+    },
+    "/": {
+      "views": 2,
+      "unique": 2
+    },
+    "/pricing": {
+      "views": 0,
+      "unique": 0
+    }
+  },
+  "baseline_march20_14days": {
+    "landing": {"unique": 38, "per_day": 2.7},
+    "blog": {"unique": 42, "per_day": 3.0},
+    "pricing": {"unique": 6, "per_day": 0.43}
+  },
+  "analysis": "Traffic has collapsed to near-zero. Pricing page went from 0.43/day baseline to 0 visitors in last 6 hours. Overall site traffic is only 5 pageviews in 6 hours. Blog CTA fix from March 21 is not sustaining - need consistent traffic source before optimizing pricing conversion.",
+  "recommendation": "Add blog footer CTA to capture existing blog traffic and drive to pricing page. Blog is getting traffic (3 views/6h = ~12x baseline) but no path to pricing."
+}

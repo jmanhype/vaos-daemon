@@ -1,0 +1,271 @@
+defmodule OptimalSystemAgent.Production.XPublisher do
+  @moduledoc """
+  Publishes content to X (Twitter) via Chrome automation on Mac Mini.
+
+  Handles articles (with cover images and video), tweets, and threads.
+  Uses osascript for DOM interaction and DataTransfer injection for file uploads.
+
+  CRITICAL: NEVER restart Chrome or touch the Chrome profile.
+
+  ## Usage
+
+      XPublisher.publish_article(%{
+        title: "My Article Title",
+        html_path: "/tmp/article.html",
+        cover_image_path: "/tmp/cover.jpg",
+        video_path: "/tmp/video.mp4"
+      })
+
+      XPublisher.post_thread(%{
+        tweets: ["Tweet 1 text", "Tweet 2 text"],
+        media_path: "/tmp/video.mp4"
+      })
+
+      XPublisher.status()
+  """
+  use GenServer
+  require Logger
+
+  @name __MODULE__
+
+  # ── Public API ──────────────────────────────────────────────────────────
+
+  def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: @name)
+
+  def publish_article(params), do: GenServer.call(@name, {:publish_article, params})
+  def post_thread(params), do: GenServer.call(@name, {:post_thread, params})
+  def post_tweet(text, opts \\ []), do: GenServer.call(@name, {:post_tweet, text, opts})
+  def status, do: GenServer.call(@name, :status)
+  def abort, do: GenServer.call(@name, :abort)
+
+  # ── Init ────────────────────────────────────────────────────────────────
+
+  @impl true
+  def init(_opts), do: {:ok, %{state: :idle, step: nil, error: nil, result: nil, params: nil}}
+
+  # ── Dispatch ────────────────────────────────────────────────────────────
+
+  @impl true
+  def handle_call({:publish_article, params}, _from, %{state: :idle} = state) do
+    {:reply, :ok, %{state | state: :article, step: :navigate, params: params}, {:continue, :art_navigate}}
+  end
+
+  def handle_call({:post_thread, params}, _from, %{state: :idle} = state) do
+    {:reply, :ok, %{state | state: :thread, step: :navigate, params: Map.put(params, :index, 0)}, {:continue, :thread_navigate}}
+  end
+
+  def handle_call({:post_tweet, text, opts}, _from, %{state: :idle} = state) do
+    params = %{text: text, media_path: Keyword.get(opts, :media)}
+    {:reply, :ok, %{state | state: :tweet, step: :navigate, params: params}, {:continue, :tweet_navigate}}
+  end
+
+  def handle_call({action, _}, _from, state) when action in [:publish_article, :post_thread],
+    do: {:reply, {:error, :busy}, state}
+
+  def handle_call(:status, _from, state),
+    do: {:reply, Map.take(state, [:state, :step, :error, :result]), state}
+
+  def handle_call(:abort, _from, state),
+    do: {:reply, :ok, %{state | state: :idle, step: nil}}
+
+  # ── Article Pipeline ────────────────────────────────────────────────────
+
+  @impl true
+  def handle_continue(:art_navigate, state) do
+    Logger.info("[XPub] Navigating to Articles")
+    osascript_set_url("https://x.com/compose/articles")
+    Process.sleep(4_000)
+    {:noreply, %{state | step: :create_draft}, {:continue, :art_create_draft}}
+  end
+
+  def handle_continue(:art_create_draft, state) do
+    Logger.info("[XPub] Creating draft")
+    chrome_js(~s|document.querySelector("[aria-label=create]").click()|)
+    Process.sleep(3_000)
+    chrome_js(~s|var t=document.querySelectorAll("[data-testid=twitter-article-title]");if(t.length>0)t[0].click()|)
+    Process.sleep(3_000)
+    {:noreply, %{state | step: :set_title}, {:continue, :art_set_title}}
+  end
+
+  def handle_continue(:art_set_title, state) do
+    title = state.params[:title] || state.params["title"] || "Untitled"
+    Logger.info("[XPub] Setting title: #{title}")
+    chrome_js(~s|var t=document.querySelector("textarea[placeholder=\\"Add a title\\"]");if(t){var s=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,"value").set;s.call(t,"#{esc(title)}");t.dispatchEvent(new Event("input",{bubbles:true}))}|)
+    Process.sleep(1_000)
+    {:noreply, %{state | step: :paste_content}, {:continue, :art_paste}}
+  end
+
+  def handle_continue(:art_paste, state) do
+    html_path = state.params[:html_path] || state.params["html_path"]
+    Logger.info("[XPub] Pasting content")
+    System.cmd("python3", ["/tmp/copy_to_clipboard.py", "html", "--file", html_path])
+    Process.sleep(1_000)
+    chrome_js(~s|var e=document.querySelector("[role=textbox]");if(e){e.focus();e.click()}|)
+    Process.sleep(500)
+    computer_use_key("cmd+v")
+    Process.sleep(3_000)
+
+    cover = state.params[:cover_image_path] || state.params["cover_image_path"]
+    if cover do
+      {:noreply, %{state | step: :upload_cover}, {:continue, :art_cover}}
+    else
+      {:noreply, %{state | step: :check_video}, {:continue, :art_check_video}}
+    end
+  end
+
+  def handle_continue(:art_cover, state) do
+    cover = state.params[:cover_image_path] || state.params["cover_image_path"]
+    Logger.info("[XPub] Uploading cover: #{cover}")
+    upload_image_datatransfer(cover, ~s|input[type=file][accept*=image]|)
+    Process.sleep(3_000)
+    chrome_js(~s|var b=document.querySelectorAll("button");for(var i=0;i<b.length;i++){if(b[i].textContent.trim()==="Apply"){b[i].click();break}}|)
+    Process.sleep(2_000)
+    {:noreply, %{state | step: :check_video}, {:continue, :art_check_video}}
+  end
+
+  def handle_continue(:art_check_video, state) do
+    video = state.params[:video_path] || state.params["video_path"]
+    if video do
+      {:noreply, %{state | step: :upload_video}, {:continue, :art_video}}
+    else
+      {:noreply, %{state | step: :done}, {:continue, :art_done}}
+    end
+  end
+
+  def handle_continue(:art_video, state) do
+    Logger.info("[XPub] Opening media menu + uploading video")
+    chrome_js(~s|var b=document.querySelectorAll("button,[role=button]");for(var i=0;i<b.length;i++){if(b[i].getAttribute("aria-label")==="Add Media"){b[i].click();break}}|)
+    Process.sleep(2_000)
+    chrome_js(~s|var m=document.querySelectorAll("[role=menuitem]");for(var i=0;i<m.length;i++){if(m[i].textContent.trim()==="Media"){m[i].click();break}}|)
+    Process.sleep(2_000)
+    System.cmd("python3", ["/tmp/upload_video.py"], cd: "/tmp", stderr_to_stdout: true)
+    Process.sleep(5_000)
+    {:noreply, %{state | step: :done}, {:continue, :art_done}}
+  end
+
+  def handle_continue(:art_done, state) do
+    Logger.info("[XPub] Article draft complete")
+    {:noreply, %{state | state: :idle, step: nil, result: :article_saved}}
+  end
+
+  # ── Thread Pipeline ─────────────────────────────────────────────────────
+
+  def handle_continue(:thread_navigate, state) do
+    Logger.info("[XPub] Navigating to compose")
+    osascript_set_url("https://x.com/compose/post")
+    Process.sleep(4_000)
+    {:noreply, %{state | step: :posting}, {:continue, :thread_post}}
+  end
+
+  def handle_continue(:thread_post, state) do
+    tweets = state.params[:tweets] || state.params["tweets"] || []
+    index = state.params[:index] || 0
+
+    if index >= length(tweets) do
+      Logger.info("[XPub] Thread complete (#{index} tweets)")
+      {:noreply, %{state | state: :idle, step: nil, result: {:thread_done, index}}}
+    else
+      tweet = Enum.at(tweets, index)
+      Logger.info("[XPub] Tweet #{index + 1}/#{length(tweets)}")
+
+      chrome_js(~s|var e=document.querySelector("[data-testid=tweetTextarea_0]");if(e)e.focus()|)
+      Process.sleep(500)
+      computer_use_type(tweet)
+      Process.sleep(1_000)
+
+      # Media on first tweet only
+      if index == 0 do
+        media = state.params[:media_path] || state.params["media_path"]
+        if media do
+          Logger.info("[XPub] Attaching media to tweet 1")
+          upload_video_chunked(media)
+          Process.sleep(10_000)
+        end
+      end
+
+      # Post
+      chrome_js(~s|var b=document.querySelector("[data-testid=tweetButton]");if(b)b.click()|)
+      Process.sleep(3_000)
+
+      # For thread: go to profile, click latest tweet, reply
+      if index == 0 and length(tweets) > 1 do
+        Process.sleep(2_000)
+        osascript_set_url("https://x.com/StraughterG")
+        Process.sleep(4_000)
+        chrome_js(~s|var t=document.querySelector("[data-testid=tweet]");if(t)t.click()|)
+        Process.sleep(3_000)
+        chrome_js(~s|var r=document.querySelector("[data-testid=reply]");if(r)r.click()|)
+        Process.sleep(2_000)
+      end
+
+      new_params = Map.put(state.params, :index, index + 1)
+      {:noreply, %{state | step: :"tweet_#{index + 2}", params: new_params}, {:continue, :thread_post}}
+    end
+  end
+
+  # ── Single Tweet Pipeline ───────────────────────────────────────────────
+
+  def handle_continue(:tweet_navigate, state) do
+    osascript_set_url("https://x.com/compose/post")
+    Process.sleep(4_000)
+    chrome_js(~s|var e=document.querySelector("[data-testid=tweetTextarea_0]");if(e)e.focus()|)
+    Process.sleep(500)
+    computer_use_type(state.params.text)
+    Process.sleep(1_000)
+
+    if state.params.media_path do
+      upload_video_chunked(state.params.media_path)
+      Process.sleep(10_000)
+    end
+
+    chrome_js(~s|var b=document.querySelector("[data-testid=tweetButton]");if(b)b.click()|)
+    Process.sleep(3_000)
+    Logger.info("[XPub] Tweet posted")
+    {:noreply, %{state | state: :idle, step: nil, result: :tweet_posted}}
+  end
+
+  # ── Helpers ─────────────────────────────────────────────────────────────
+
+  defp osascript_set_url(url) do
+    System.cmd("osascript", ["-e", ~s|tell application "Google Chrome" to set URL of active tab of first window to "#{url}"|])
+  end
+
+  defp chrome_js(js) do
+    escaped = js |> String.replace("\\", "\\\\") |> String.replace("\"", "\\\"") |> String.replace("\n", " ")
+    System.cmd("osascript", ["-e", ~s|tell application "Google Chrome" to execute active tab of first window javascript "#{escaped}"|], stderr_to_stdout: true)
+  end
+
+  defp computer_use_key(key) do
+    Req.post("http://localhost:8089/api/v1/tools/computer_use/execute",
+      json: %{arguments: %{action: "key", text: key}}, receive_timeout: 10_000)
+  end
+
+  defp computer_use_type(text) do
+    Req.post("http://localhost:8089/api/v1/tools/computer_use/execute",
+      json: %{arguments: %{action: "type", text: text}}, receive_timeout: 30_000)
+  end
+
+  defp esc(text), do: text |> String.replace("\\", "\\\\") |> String.replace("\"", "\\\"") |> String.replace("\n", "\\n")
+
+  defp upload_image_datatransfer(image_path, selector) do
+    {_, 0} = System.cmd("python3", ["-c", """
+    from PIL import Image
+    img = Image.open("#{image_path}")
+    if img.width > 1400: img = img.resize((1400, int(1400 * img.height / img.width)))
+    img.convert("RGB").save("/tmp/_upload_img.jpg", quality=80)
+    """])
+
+    b64 = File.read!("/tmp/_upload_img.jpg") |> Base.encode64()
+
+    js = """
+    (function(){var b64="#{b64}";var c=atob(b64);var b=new Uint8Array(c.length);for(var i=0;i<c.length;i++)b[i]=c.charCodeAt(i);var blob=new Blob([b],{type:"image/jpeg"});var f=new File([blob],"img.jpg",{type:"image/jpeg",lastModified:Date.now()});var dt=new DataTransfer();dt.items.add(f);var inp=document.querySelector("#{selector}");inp.files=dt.files;inp.dispatchEvent(new Event("change",{bubbles:true}));return "ok "+f.size})();
+    """
+
+    File.write!("/tmp/_upload.js", js)
+    System.cmd("osascript", ["-e", ~s|set js to do shell script "cat /tmp/_upload.js"\ntell application "Google Chrome" to execute active tab of first window javascript js|])
+  end
+
+  defp upload_video_chunked(video_path) do
+    System.cmd("python3", ["/tmp/upload_video.py"], cd: "/tmp", stderr_to_stdout: true, env: [{"VIDEO_PATH", video_path}])
+  end
+end

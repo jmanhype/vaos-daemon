@@ -138,6 +138,9 @@ defmodule OptimalSystemAgent.Channels.HTTP.API do
   # ── Dashboard ────────────────────────────────────────────────────────
   forward "/dashboard", to: API.DashboardRoutes
 
+  # Production (Film Pipeline)
+  forward "/produce", to: OptimalSystemAgent.Production.API
+
   # ── Command Center ───────────────────────────────────────────────────
   forward "/command-center", to: API.CommandCenterRoutes
 

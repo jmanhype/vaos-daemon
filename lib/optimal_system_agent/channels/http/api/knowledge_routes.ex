@@ -186,13 +186,15 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.KnowledgeRoutes do
   # ── Private helpers ────────────────────────────────────────────────
 
   defp store do
-    {:via, Registry, {MiosaKnowledge.Registry, "osa_default"}}
+    # Use the real Vaos.Knowledge registry (MiosaKnowledge shims delegate here)
+    Vaos.Knowledge.store_ref("osa_default")
   end
 
   defp ensure_store_started do
-    case GenServer.whereis(store()) do
-      nil -> MiosaKnowledge.open("osa_default")
-      _pid -> :ok
+    case Vaos.Knowledge.open("osa_default") do
+      {:ok, _} -> :ok
+      {:error, {:already_started, _}} -> :ok
+      err -> err
     end
   end
 

@@ -30,7 +30,8 @@ defmodule OptimalSystemAgent.Supervisors.Extensions do
       sandbox_children() ++
       wallet_children() ++
       updater_children() ++
-      amqp_children()
+      amqp_children() ++
+      production_children()
 
     Supervisor.init(children, strategy: :one_for_one)
   end
@@ -174,4 +175,15 @@ defmodule OptimalSystemAgent.Supervisors.Extensions do
       []
     end
   end
+
+  # Production infrastructure — opt-in via OSA_PRODUCTION_ENABLED=true
+  defp production_children do
+    if Application.get_env(:optimal_system_agent, :production_enabled, false) do
+      Logger.info("[Extensions] Production enabled — starting Production.Supervisor")
+      [OptimalSystemAgent.Production.Supervisor]
+    else
+      []
+    end
+  end
+
 end

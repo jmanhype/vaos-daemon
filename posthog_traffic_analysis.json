@@ -1,0 +1,19 @@
+{
+  "results": [
+    {"url": "/pricing", "views": 95, "unique": 5},
+    {"url": "/", "views": 90, "unique": 7},
+    {"url": "/login", "views": 22, "unique": 6},
+    {"url": "/dashboard", "views": 22, "unique": 3},
+    {"url": "/dashboard/chat", "views": 11, "unique": 1},
+    {"url": "/blog/i-built-a-7-agent-ai-marketing-crew", "views": 6, "unique": 3},
+    {"url": "/dashboard/rules", "views": 5, "unique": 1},
+    {"url": "/dashboard/activity", "views": 5, "unique": 1},
+    {"url": "/dashboard/memory", "views": 5, "unique": 1},
+    {"url": "/dashboard/billing", "views": 5, "unique": 1},
+    {"url": "/documentation", "views": 4, "unique": 1},
+    {"url": "/dashboard/success", "views": 2, "unique": 1},
+    {"url": "/terms", "views": 1, "unique": 1}
+  ],
+  "period": "24 hours",
+  "timestamp": "2026-03-21T11:33:00Z"
+}

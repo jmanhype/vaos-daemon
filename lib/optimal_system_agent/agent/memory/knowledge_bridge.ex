@@ -77,7 +77,7 @@ defmodule OptimalSystemAgent.Agent.Memory.KnowledgeBridge do
   end
 
   defp store_ref do
-    {:via, Registry, {MiosaKnowledge.Registry, @store_name}}
+    Vaos.Knowledge.store_ref(@store_name)
   end
 
   defp sync_to_knowledge do

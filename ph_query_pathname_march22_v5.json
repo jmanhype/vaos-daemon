@@ -1,0 +1,6 @@
+{
+  "query": {
+    "kind": "HogQLQuery",
+    "query": "SELECT properties.pathname as pathname, count() as views, uniqExact(distinct_id) as uniq FROM events WHERE event = '\u0024pageview' AND timestamp > now() - toIntervalHour(6) GROUP BY pathname ORDER BY views DESC LIMIT 15"
+  }
+}
