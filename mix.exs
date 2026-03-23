@@ -81,6 +81,12 @@ defmodule OptimalSystemAgent.MixProject do
       # OTP 28: rustler removed — nif.ex uses pure Elixir fallbacks
       # {:rustler, "~> 0.37", optional: true}
 
+      # Epistemic ledger — AIEQ claim tracking
+      {:vaos_ledger, path: "../Projects/vaos-ledger-build"},
+
+      # Knowledge graph — triple store with SPARQL and OWL 2 RL reasoning
+      {:vaos_knowledge, path: "../Projects/vaos-knowledge"},
+
       # miosa_* packages are not standalone deps — their implementations live
       # in this repo. Shim modules in lib/miosa/ satisfy all call sites.
     ]

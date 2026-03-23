@@ -656,54 +656,90 @@ defmodule MiosaBudget.Treasury do
 end
 
 # ---------------------------------------------------------------------------
-# MiosaKnowledge  (stubs — no OSA equivalent)
+# MiosaKnowledge  (delegates to Vaos.Knowledge — wired 2026-03-23)
 # ---------------------------------------------------------------------------
 
 defmodule MiosaKnowledge.Registry do
-  @moduledoc "Stub — knowledge store registry."
-  def lookup(_name), do: {:error, :not_implemented}
+  @moduledoc "Bridge — lookups resolve through Vaos.Knowledge.Registry."
+  def lookup(name), do: Vaos.Knowledge.Registry.lookup(Vaos.Knowledge.Registry, name)
 end
 
 defmodule MiosaKnowledge.Backend.ETS do
-  @moduledoc "Stub ETS backend."
-  def open(_name, _opts \\ []), do: {:ok, :ets_stub}
+  @moduledoc "Bridge — delegates to Vaos.Knowledge.Backend.ETS."
+  defdelegate init(opts), to: Vaos.Knowledge.Backend.ETS
+  def open(name, opts \\ []), do: Vaos.Knowledge.Backend.ETS.init(Keyword.put(opts, :name, name))
   def close(_ref), do: :ok
 end
 
 defmodule MiosaKnowledge.Backend.Mnesia do
-  @moduledoc "Stub Mnesia backend."
-  def open(_name, _opts \\ []), do: {:ok, :mnesia_stub}
+  @moduledoc "Bridge — Mnesia not implemented in Vaos.Knowledge, falls back to ETS."
+  defdelegate init(opts), to: Vaos.Knowledge.Backend.ETS
+  def open(name, opts \\ []), do: MiosaKnowledge.Backend.ETS.open(name, opts)
   def close(_ref), do: :ok
 end
 
 defmodule MiosaKnowledge.Context do
-  @moduledoc "Stub — knowledge context for agent prompts."
-  def for_agent(_store_ref, _opts \\ []), do: %{}
-  def to_prompt(_ctx), do: ""
+  @moduledoc "Bridge — delegates to Vaos.Knowledge.Context."
+
+  def for_agent(store_ref, opts \\ []) do
+    Vaos.Knowledge.Context.for_agent(MiosaKnowledge.extract_name(store_ref), opts)
+  end
+
+  defdelegate to_prompt(ctx), to: Vaos.Knowledge.Context
 end
 
 defmodule MiosaKnowledge.Reasoner do
-  @moduledoc "Stub — forward-chaining reasoner."
-  def materialize(_store_ref, _rules \\ []), do: {:ok, []}
+  @moduledoc "Bridge — delegates to Vaos.Knowledge.materialize/2."
+
+  def materialize(store_ref, _rules \\ []) do
+    name = MiosaKnowledge.extract_name(store_ref)
+    case Vaos.Knowledge.materialize(name) do
+      {:ok, rounds} -> {:ok, rounds}
+      error -> error
+    end
+  end
 end
 
 defmodule MiosaKnowledge.Store do
-  @moduledoc "Stub — knowledge store supervisor entry."
-  def start_link(_opts \\ []), do: {:ok, self()}
+  @moduledoc "Bridge — starts a Vaos.Knowledge.Store via the dependency."
+
+  def start_link(opts \\ []) do
+    name = Keyword.get(opts, :store_id) || Keyword.get(opts, :name, "default")
+    # Ignore :backend — Vaos.Knowledge always uses its own ETS backend
+    Vaos.Knowledge.open(name, Keyword.drop(opts, [:backend, :store_id]))
+  end
+
   def child_spec(opts) do
-    %{id: __MODULE__, start: {__MODULE__, :start_link, [opts]}, type: :worker}
+    %{
+      id: __MODULE__,
+      start: {__MODULE__, :start_link, [opts]},
+      type: :worker
+    }
   end
 end
 
 defmodule MiosaKnowledge do
-  @moduledoc "Stub — top-level knowledge graph API."
-  def open(_name, _opts \\ []), do: {:ok, :stub}
-  def assert(_store, _triple), do: {:ok, 1}
-  def assert_many(_store, _triples), do: {:ok, 0}
-  def retract(_store, _triple), do: {:ok, 0}
-  def query(_store, _pattern), do: {:ok, []}
-  def count(_store, _pattern \\ nil), do: {:ok, 0}
-  def sparql(_store, _query), do: {:ok, %{results: []}}
+  @moduledoc "Bridge — top-level knowledge graph API delegating to Vaos.Knowledge."
+
+  @doc false
+  def extract_name({:via, Registry, {_registry, name}}), do: name
+  def extract_name(name) when is_binary(name), do: name
+  def extract_name(_other), do: "default"
+
+  def open(name, opts \\ []), do: Vaos.Knowledge.open(name, opts)
+
+  def assert(store_ref, triple), do: Vaos.Knowledge.assert(extract_name(store_ref), triple)
+
+  def assert_many(store_ref, triples), do: Vaos.Knowledge.assert_many(extract_name(store_ref), triples)
+
+  def retract(store_ref, triple), do: Vaos.Knowledge.retract(extract_name(store_ref), triple)
+
+  def query(store_ref, pattern), do: Vaos.Knowledge.query(extract_name(store_ref), pattern)
+
+  def count(store_ref), do: Vaos.Knowledge.count(extract_name(store_ref))
+  def count(store_ref, _pattern), do: Vaos.Knowledge.count(extract_name(store_ref))
+
+  def sparql(store_ref, query_string), do: Vaos.Knowledge.sparql(extract_name(store_ref), query_string)
 end
 
 # ---------------------------------------------------------------------------
