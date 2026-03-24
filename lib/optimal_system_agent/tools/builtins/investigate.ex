@@ -74,7 +74,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
         "depth" => %{
           "type" => "string",
           "enum" => ["standard", "deep"],
-          "description" => "standard = search papers + LLM analysis; deep = broader paper search + LLM analysis"
+          "description" => "standard = adversarial debate + citation verification; deep = standard + research pipeline (hypotheses, testing, report)"
         }
       },
       "required" => ["topic"]
