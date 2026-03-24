@@ -2,12 +2,18 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
   @moduledoc """
   Epistemic investigation tool — adversarial dual-prompt architecture.
 
-  ZERO-BULLSHIT SCORING: Citation verification replaces LLM-assigned strength ratings.
-  Every citation is verified against paper abstracts. Scores come from verification
-  status (1.0 verified, 0.5 partial, 0.3 reasoning-only, 0.0 unverified/fraudulent).
+  EVIDENCE QUALITY PIPELINE: Paper type classification + evidence hierarchy scoring.
+  Every citation is verified against paper abstracts AND classified by type
+  (systematic review, RCT, observational study, other).
 
-  PAPER-FIRST DESIGN: Runs TWO parallel paper searches (evidence FOR and AGAINST),
-  then feeds merged papers to TWO adversarial LLM prompts that argue each side.
+  Scores come from: verification status * evidence hierarchy weight * citation bonus.
+  - Systematic reviews/meta-analyses score 3x
+  - RCTs/experiments score 2x
+  - Observational studies score 1.5x
+  - Unclassified score 1x
+
+  PAPER-FIRST DESIGN: Runs THREE parallel paper search pairs (FOR, AGAINST, and
+  SYSTEMATIC REVIEWS), then feeds merged papers to TWO adversarial LLM prompts.
 
   Multi-source literature search: Semantic Scholar + OpenAlex + alphaXiv.
   Uses vaos-ledger's Literature module for Semantic Scholar and OpenAlex,
@@ -49,8 +55,8 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
   @impl true
   def description do
     "Investigate a claim or topic: runs multi-source paper search (Semantic Scholar + OpenAlex + alphaXiv, " <>
-      "FOR and AGAINST), then dual adversarial LLM analysis with citation verification. " <>
-      "Scores come from verified citations, not LLM-assigned strengths."
+      "FOR, AGAINST, and REVIEWS), then dual adversarial LLM analysis with citation verification " <>
+      "and evidence hierarchy scoring (review > trial > study > other)."
   end
 
   @impl true
@@ -108,6 +114,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     prior_evidence = fetch_prior_evidence_by_keywords(store, keywords)
 
     # 4. MULTI-SOURCE PAPER SEARCH: Semantic Scholar + OpenAlex + alphaXiv (parallel)
+    #    Now includes a THIRD pair specifically for systematic reviews / meta-analyses
     {all_papers, source_counts} = search_all_papers(topic)
 
     Logger.info("[investigate] Papers: #{length(all_papers)} total (#{inspect(source_counts)})")
@@ -243,46 +250,19 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
 
   defp run_full_analysis(topic, supporting_raw, opposing_raw, all_papers, paper_map,
                          source_counts, keywords, prior_evidence, store) do
-    # 9. CITATION VERIFICATION — the zero-bullshit step
+    # 9. CITATION VERIFICATION + PAPER TYPE CLASSIFICATION — the evidence quality step
     # Run all verification calls in parallel via Task.async
     verified_supporting = verify_citations(supporting_raw, paper_map)
     verified_opposing = verify_citations(opposing_raw, paper_map)
 
-    # 10. Compute direction from VERIFIED citation counts (not LLM strengths)
+    # 10. Compute direction from hierarchy-weighted scores
     verified_for = Enum.count(verified_supporting, & &1.verified)
     verified_against = Enum.count(verified_opposing, & &1.verified)
     total_for_score = Enum.sum(Enum.map(verified_supporting, & &1.score))
     total_against_score = Enum.sum(Enum.map(verified_opposing, & &1.score))
 
-    # Citation count bonus: highly-cited papers matter more
-    citation_bonus_for = verified_supporting
-      |> Enum.filter(& &1.verified)
-      |> Enum.map(fn ev ->
-        case extract_paper_ref(ev.summary) do
-          nil -> 0
-          n ->
-            paper = Map.get(paper_map, n, %{})
-            cite_count = paper["citation_count"] || paper["citationCount"] || 1
-            :math.log10(max(cite_count, 1))
-        end
-      end)
-      |> Enum.sum()
-
-    citation_bonus_against = verified_opposing
-      |> Enum.filter(& &1.verified)
-      |> Enum.map(fn ev ->
-        case extract_paper_ref(ev.summary) do
-          nil -> 0
-          n ->
-            paper = Map.get(paper_map, n, %{})
-            cite_count = paper["citation_count"] || paper["citationCount"] || 1
-            :math.log10(max(cite_count, 1))
-        end
-      end)
-      |> Enum.sum()
-
-    for_total = total_for_score + citation_bonus_for
-    against_total = total_against_score + citation_bonus_against
+    for_total = total_for_score
+    against_total = total_against_score
 
     direction = cond do
       for_total > against_total * 1.3 -> "supporting"
@@ -295,9 +275,15 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
       fn ev -> ev.verification == "unverified" end)
 
     reasoning_for = Enum.count(verified_supporting,
-      fn ev -> not ev.verified and ev.score > 0 end)
+      fn ev -> ev.verification == "no_citation" end)
     reasoning_against = Enum.count(verified_opposing,
-      fn ev -> not ev.verified and ev.score > 0 end)
+      fn ev -> ev.verification == "no_citation" end)
+
+    # Count paper types across all evidence
+    all_evidence = verified_supporting ++ verified_opposing
+    review_count = Enum.count(all_evidence, fn ev -> ev.paper_type == :review end)
+    trial_count = Enum.count(all_evidence, fn ev -> ev.paper_type == :trial end)
+    study_count = Enum.count(all_evidence, fn ev -> ev.paper_type == :study end)
 
     # 11. Create claim and add evidence to ledger
     claim = EpistemicLedger.add_claim(
@@ -305,7 +291,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
       @ledger_name
     )
 
-    # Add FOR arguments as supporting evidence (using verification score, not LLM strength)
+    # Add FOR arguments as supporting evidence (using hierarchy-weighted score)
     supporting_records = add_evidence_to_ledger(verified_supporting, claim, :support)
 
     # Add AGAINST arguments as BOTH attacks AND contradicting evidence
@@ -340,13 +326,20 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
       fraudulent_citations: fraudulent_count,
       belief: Float.round(belief * 1.0, 3),
       uncertainty: Float.round(uncertainty * 1.0, 3),
+      evidence_quality: %{
+        reviews: review_count,
+        trials: trial_count,
+        studies: study_count
+      },
       supporting: Enum.map(verified_supporting, fn ev ->
         %{summary: ev.summary, score: ev.score, verified: ev.verified,
-          verification: ev.verification, strength_display: ev.strength}
+          verification: ev.verification, paper_type: Atom.to_string(ev.paper_type),
+          citation_count: ev.citation_count, strength_display: ev.strength}
       end),
       opposing: Enum.map(verified_opposing, fn ev ->
         %{summary: ev.summary, score: ev.score, verified: ev.verified,
-          verification: ev.verification, strength_display: ev.strength}
+          verification: ev.verification, paper_type: Atom.to_string(ev.paper_type),
+          citation_count: ev.citation_count, strength_display: ev.strength}
       end),
       papers_found: length(all_papers),
       source_counts: source_counts,
@@ -410,19 +403,19 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
       "\n### Cross-Investigation Conflicts\n" <> Enum.join(conflict_lines, "\n") <> "\n"
     end
 
-    # 15. Format result with verification status
-    for_arguments = format_verified_evidence(verified_supporting, "Strongest Case FOR")
-    against_arguments = format_verified_evidence(verified_opposing, "Strongest Case AGAINST")
+    # 15. Format result with verification status and evidence quality
+    for_arguments = format_verified_evidence(verified_supporting, "Case For (score: #{Float.round(for_total * 1.0, 2)})")
+    against_arguments = format_verified_evidence(verified_opposing, "Case Against (score: #{Float.round(against_total * 1.0, 2)})")
 
     paper_list = format_paper_list(all_papers)
 
     result =
       "## Investigation: #{topic}\n\n" <>
       "**Direction: #{direction}**\n" <>
-      "**Verified citations: #{verified_for} for, #{verified_against} against**\n" <>
-      "**Reasoning-only arguments: #{reasoning_for} for, #{reasoning_against} against** (weighted 0.3 each)\n" <>
-      "**Score: #{Float.round(for_total * 1.0, 1)} for vs #{Float.round(against_total * 1.0, 1)} against**\n" <>
+      "**Verified citations for: #{verified_for} | Verified citations against: #{verified_against}**\n" <>
       "**Fraudulent citations detected: #{fraudulent_count}**\n" <>
+      "**Evidence quality: #{review_count} reviews, #{trial_count} trials, #{study_count} studies**\n" <>
+      "**Score: #{Float.round(for_total * 1.0, 2)} for vs #{Float.round(against_total * 1.0, 2)} against**\n" <>
       "**Ledger belief: #{Float.round(belief * 1.0, 3)}, uncertainty: #{Float.round(uncertainty * 1.0, 3)}**\n" <>
       "**Papers found:** #{length(all_papers)} (#{format_source_counts(source_counts)})\n\n" <>
       "### #{for_arguments}\n\n" <>
@@ -437,7 +430,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     {:ok, result}
   end
 
-  # -- Citation Verification (the zero-bullshit engine) ------------------
+  # -- Citation Verification + Paper Type Classification ------------------
 
   defp verify_citations(evidence_list, paper_map) do
     # Split into items that need LLM verification and those that don't
@@ -451,8 +444,8 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     # Handle non-LLM items immediately
     no_llm_verified = Enum.map(no_llm, fn ev ->
       case extract_paper_ref(ev.summary) do
-        nil -> %{ev | verified: false, verification: "no_citation", score: 0.3}
-        _n -> %{ev | verified: false, verification: "invalid_ref", score: 0.0}
+        nil -> %{ev | verified: false, verification: "no_citation", paper_type: :reasoning, citation_count: 0, score: 0.15}
+        _n -> %{ev | verified: false, verification: "invalid_ref", paper_type: :other, citation_count: 0, score: 0.0}
       end
     end)
 
@@ -464,10 +457,14 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
           Task.async(fn ->
             paper_num = extract_paper_ref(ev.summary)
             paper = Map.get(paper_map, paper_num)
+            citation_count = paper["citation_count"] || paper["citationCount"] || 0
+
             case verify_single_citation(ev, paper) do
-              :verified -> %{ev | verified: true, verification: "verified", score: 1.0}
-              :unverified -> %{ev | verified: false, verification: "unverified", score: 0.0}
-              :partial -> %{ev | verified: true, verification: "partial", score: 0.5}
+              {verification, paper_type} ->
+                score = compute_evidence_score(verification, paper_type, citation_count)
+                verified = verification in [:verified, :partial]
+                verification_str = Atom.to_string(verification)
+                %{ev | verified: verified, verification: verification_str, paper_type: paper_type, citation_count: citation_count, score: score}
             end
           end)
         end)
@@ -493,38 +490,74 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
   end
 
   defp verify_single_citation(evidence, paper) do
-    abstract = Map.get(paper, "abstract", "") |> to_string()
-    title = Map.get(paper, "title", "") |> to_string()
+    abstract = Map.get(paper, "abstract", "") || ""
+    title = Map.get(paper, "title", "") || ""
 
     prompt = """
     Paper title: #{title}
-    Paper abstract: #{abstract}
+    Paper abstract: #{String.slice(to_string(abstract), 0, 500)}
 
-    Claim made about this paper: #{evidence.summary}
+    Claim: #{evidence.summary}
 
-    Does this paper's abstract actually support or discuss the specific claim being made?
-    Answer ONLY one word: VERIFIED (the paper clearly discusses this topic and supports the claim made), PARTIAL (the paper is related but doesn't directly support the specific claim), or UNVERIFIED (the paper does not support this claim or is being misrepresented).
+    Two questions:
+    1. Does this paper's abstract support the specific claim? VERIFIED / PARTIAL / UNVERIFIED
+    2. Paper type? REVIEW (systematic review/meta-analysis), TRIAL (RCT/experiment), STUDY (observational/single study), OTHER
+
+    Answer format: WORD WORD (e.g., VERIFIED REVIEW or UNVERIFIED STUDY)
     """
 
     messages = [%{role: "user", content: prompt}]
 
     model = Application.get_env(:optimal_system_agent, :utility_model)
-    verify_opts = [temperature: 0.0, max_tokens: 10]
+    verify_opts = [temperature: 0.0, max_tokens: 15]
     verify_opts = if model, do: Keyword.put(verify_opts, :model, model), else: verify_opts
 
     case Providers.chat(messages, verify_opts) do
       {:ok, %{content: response}} when is_binary(response) ->
         response_clean = String.trim(response) |> String.upcase()
-        cond do
-          String.contains?(response_clean, "VERIFIED") and
-            not String.contains?(response_clean, "UNVERIFIED") -> :verified
+
+        verification = cond do
+          String.contains?(response_clean, "UNVERIFIED") -> :unverified
           String.contains?(response_clean, "PARTIAL") -> :partial
+          String.contains?(response_clean, "VERIFIED") -> :verified
           true -> :unverified
         end
-      _ ->
-        # API failure = unverified (fail safe)
-        :unverified
+
+        paper_type = cond do
+          String.contains?(response_clean, "REVIEW") -> :review
+          String.contains?(response_clean, "TRIAL") -> :trial
+          String.contains?(response_clean, "STUDY") -> :study
+          true -> :other
+        end
+
+        {verification, paper_type}
+      _ -> {:unverified, :other}
     end
+  end
+
+  # -- Evidence hierarchy scoring -----------------------------------------
+
+  defp compute_evidence_score(verification, paper_type, citation_count) do
+    # Base score from verification
+    base = case verification do
+      :verified -> 1.0
+      :partial -> 0.5
+      :unverified -> 0.0
+    end
+
+    # Evidence hierarchy weight
+    type_weight = case paper_type do
+      :review -> 3.0    # Systematic review / meta-analysis
+      :trial -> 2.0     # RCT / experiment
+      :study -> 1.5     # Observational / single study
+      :other -> 1.0     # Unclassified
+    end
+
+    # Citation count bonus (log scale)
+    citation_bonus = :math.log10(max(citation_count, 2))
+
+    # Final score
+    base * type_weight * citation_bonus
   end
 
   # -- Balanced paper merge with title dedup ----------------------------
@@ -580,10 +613,11 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
         _ -> 5
       end
       # Keep LLM-assigned strength for DISPLAY only.
-      # Score and verified fields start at defaults — filled by verify_citations.
+      # Score, verified, paper_type, citation_count filled by verify_citations.
       %{summary: String.trim(summary), source_type: source_type, strength: strength,
         paper_ref: extract_paper_ref(String.trim(summary)),
-        verified: false, verification: "pending", score: 0.0}
+        verified: false, verification: "pending", paper_type: :other,
+        citation_count: 0, score: 0.0}
     end)
   end
 
@@ -591,7 +625,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
 
   defp add_evidence_to_ledger(evidence_list, claim, direction) do
     Enum.flat_map(evidence_list, fn ev ->
-      # Use VERIFICATION score, not LLM strength
+      # Use hierarchy-weighted VERIFICATION score, not LLM strength
       ledger_strength = ev.score
       case EpistemicLedger.add_evidence(
         [
@@ -616,7 +650,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
 
   defp add_attacks_to_ledger(evidence_list, claim) do
     Enum.flat_map(evidence_list, fn ev ->
-      # Use VERIFICATION score, not LLM strength
+      # Use hierarchy-weighted VERIFICATION score, not LLM strength
       ledger_severity = ev.score
       source = if ev.source_type == :sourced, do: "paper", else: "llm_reasoning"
       case EpistemicLedger.add_attack(
@@ -633,6 +667,8 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
             "raw_strength" => ev.strength,
             "verified" => ev.verified,
             "verification" => ev.verification,
+            "paper_type" => Atom.to_string(ev.paper_type),
+            "citation_count" => ev.citation_count,
             "score" => ev.score
           }
         ],
@@ -653,39 +689,51 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     lines = evidence
       |> Enum.with_index(1)
       |> Enum.map(fn {ev, i} ->
-        {status_tag, detail} = case ev.verification do
+        type_tag = ev.paper_type |> Atom.to_string() |> String.upcase()
+        cite_count = ev.citation_count
+        score_str = Float.round(ev.score * 1.0, 1) |> to_string()
+
+        {status_icon, detail} = case ev.verification do
           "verified" ->
             paper_info = case ev.paper_ref do
               nil -> ""
-              n -> ", Paper #{n}"
+              n -> "Paper #{n}, "
             end
-            {"VERIFIED", "(score: 1.0#{paper_info})"}
+            cite_str = format_citation_count(cite_count)
+            {"VERIFIED \u2713 #{type_tag}", "(#{paper_info}#{cite_str}, score: #{score_str})"}
           "partial" ->
             paper_info = case ev.paper_ref do
               nil -> ""
-              n -> ", Paper #{n}"
+              n -> "Paper #{n}, "
             end
-            {"PARTIAL", "(score: 0.5#{paper_info} -- related but doesn't directly support)"}
+            cite_str = format_citation_count(cite_count)
+            {"PARTIAL ~ #{type_tag}", "(#{paper_info}#{cite_str}, score: #{score_str})"}
           "unverified" ->
             paper_info = case ev.paper_ref do
               nil -> ""
-              n -> ", Paper #{n}"
+              n -> "Paper #{n}, "
             end
-            {"UNVERIFIED *", "(score: 0.0#{paper_info} -- abstract doesn't support claim)"}
+            cite_str = format_citation_count(cite_count)
+            {"UNVERIFIED \u2717", "(#{paper_info}#{cite_str}, score: #{score_str}) -- FRAUDULENT CITATION"}
           "no_citation" ->
-            {"NO CITATION", "(reasoning only, score: 0.3)"}
+            {"NO CITATION", "(reasoning only, score: #{score_str})"}
           "invalid_ref" ->
             {"INVALID REF", "(score: 0.0 -- cited paper doesn't exist)"}
           _ ->
-            {"PENDING", "(score: #{ev.score})"}
+            {"PENDING", "(score: #{score_str})"}
         end
 
-        "  #{i}. [#{status_tag}] #{detail} #{ev.summary}"
+        "  #{i}. [#{status_icon}] #{detail} #{ev.summary}"
       end)
       |> Enum.join("\n")
 
     "#{heading}\n#{lines}"
   end
+
+  defp format_citation_count(count) when count >= 1000 do
+    "#{Float.round(count / 1000.0, 1)}k citations"
+  end
+  defp format_citation_count(count), do: "#{count} citations"
 
   # -- Format paper list for display -----------------------------------
 
@@ -872,6 +920,19 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
           _ -> {:openalex_against, []}
         end
       end),
+      # Systematic review / meta-analysis search (highest quality evidence)
+      Task.async(fn ->
+        case Literature.search_openalex("systematic review OR meta-analysis #{topic}", http_fn, limit: 5) do
+          {:ok, papers} -> {:openalex_reviews, papers}
+          _ -> {:openalex_reviews, []}
+        end
+      end),
+      Task.async(fn ->
+        case Literature.search_semantic_scholar("systematic review meta-analysis #{topic}", http_fn, limit: 5) do
+          {:ok, papers} -> {:semantic_scholar_reviews, papers}
+          _ -> {:semantic_scholar_reviews, []}
+        end
+      end),
       # alphaXiv - embedding search (general, covers both sides)
       Task.async(fn ->
         alias OptimalSystemAgent.Tools.Builtins.AlphaXivClient
@@ -893,8 +954,10 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
       source_key = case source do
         :semantic_scholar_for -> :semantic_scholar
         :semantic_scholar_against -> :semantic_scholar
+        :semantic_scholar_reviews -> :semantic_scholar
         :openalex_for -> :openalex
         :openalex_against -> :openalex
+        :openalex_reviews -> :openalex
         :alphaxiv -> :alphaxiv
       end
       Map.update(acc, source_key, length(papers), &(&1 + length(papers)))
