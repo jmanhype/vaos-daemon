@@ -3,10 +3,10 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
   Epistemic investigation tool — uses the real Vaos.Ledger.Epistemic.Ledger
   GenServer for claim/evidence tracking with Bayesian confidence.
 
-  Creates claims and evidence through the ledger API, letting IT compute
-  confidence via refresh_claim. Prior knowledge search is keyword-based.
-  At standard depth, still attempts ONE literature search for the strongest
-  verifiable claim.
+  PAPER-FIRST DESIGN: Searches alphaXiv/arXiv for papers BEFORE asking the LLM.
+  Papers are fed as context so evidence is generated FROM the literature, not
+  stapled on after. Each evidence item must cite [Paper N] or be marked [REASONING].
+  Unsourced evidence strength is halved. Temperature 0.1 for reproducibility.
   """
 
   require Logger
@@ -39,7 +39,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
 
   @impl true
   def description do
-    "Investigate a claim or topic: generates structured supporting/opposing evidence, " <>
+    "Investigate a claim or topic: searches papers first, generates evidence from literature, " <>
       "tracks epistemic confidence via Bayesian ledger, and stores results in the knowledge graph."
   end
 
@@ -55,7 +55,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
         "depth" => %{
           "type" => "string",
           "enum" => ["standard", "deep"],
-          "description" => "standard = LLM analysis + one literature search for best verifiable claim; deep = full literature enrichment"
+          "description" => "standard = search papers + LLM analysis; deep = broader paper search + LLM analysis"
         }
       },
       "required" => ["topic"]
@@ -100,21 +100,57 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     store = store_ref()
     prior = fetch_prior_by_keywords(store, keywords)
 
-    # 4. LLM call -- structured evidence generation
+    # 4. PAPER-FIRST: Search for papers BEFORE generating evidence
+    paper_query = case depth do
+      "deep" -> "Research on #{topic}. Papers covering empirical evidence, methods, and analysis."
+      _ -> topic
+    end
+
+    papers = case search_papers(paper_query) do
+      {:ok, found} when found != [] -> found
+      _ -> []
+    end
+
+    Logger.info("[investigate] Found #{length(papers)} papers for topic: #{topic}")
+
+    papers_context = if papers != [] do
+      papers_text = papers
+        |> Enum.with_index(1)
+        |> Enum.map(fn {p, i} ->
+          "[Paper #{i}] #{p["title"]} (#{p["year"]})\nAbstract: #{p["abstract"]}"
+        end)
+        |> Enum.join("\n\n")
+
+      "\n\nRELEVANT PAPERS FOUND:\n" <> papers_text <>
+        "\n\nYou MUST cite specific papers by number [Paper N] when your evidence is based on them.\n"
+    else
+      "\n\nNo relevant papers found. Base your evidence on your training knowledge, but mark everything as [REASONING].\n"
+    end
+
+    # 5. LLM call -- structured evidence generation WITH paper context
     prior_text = if prior == [], do: "None found.", else: Enum.join(prior, "\n")
 
     prompt =
       "Given this topic: \"" <> topic <> "\"\n" <>
-      "Prior knowledge from our database: " <> prior_text <> "\n\n" <>
+      "Prior knowledge from our database: " <> prior_text <> "\n" <>
+      papers_context <> "\n" <>
       "Generate ALL evidence relevant to this claim. Do NOT force equal numbers.\n" <>
       "For each piece of evidence:\n" <>
+      "- If based on a specific paper above, cite it as [Paper N] and tag as [VERIFIABLE]\n" <>
+      "- If based on your own reasoning without a paper, tag as [REASONING]\n" <>
+      "- Rate strength 1-10. Paper-backed evidence should be 7-10. Pure reasoning should be 3-7.\n" <>
+      "- Be honest about which side the evidence favors.\n" <>
       "- Label it SUPPORTING or OPPOSING based on what it actually shows\n" <>
-      "- Tag as [VERIFIABLE] if it could be checked via literature, or [REASONING] if logical analysis\n" <>
-      "- Rate strength 1-10 honestly. Strong empirical evidence = 8-10. Weak speculation = 1-3.\n" <>
       "- If the evidence overwhelmingly supports one side, reflect that. Do NOT manufacture balance.\n\n" <>
-      "Format:\nSUPPORTING:\n1. [VERIFIABLE/REASONING] (strength: N) <evidence>\n...\n\nOPPOSING:\n1. [VERIFIABLE/REASONING] (strength: N) <evidence>\n...\n\nASSUMPTIONS (2 hidden assumptions this rests on):\n1. <assumption> (risk: high/medium/low)\n2. <assumption> (risk: high/medium/low)\n"
+      "Format:\nSUPPORTING:\n1. [VERIFIABLE/REASONING] [Paper N] (strength: N) <evidence>\n...\n\nOPPOSING:\n1. [VERIFIABLE/REASONING] [Paper N] (strength: N) <evidence>\n...\n\nASSUMPTIONS (2 hidden assumptions this rests on):\n1. <assumption> (risk: high/medium/low)\n2. <assumption> (risk: high/medium/low)\n"
 
-    sys_msg = "You are a rigorous epistemic analyst. Produce exactly the requested format. Each evidence line must start with [VERIFIABLE] or [REASONING] followed by (strength: N) where N is 1-10 rating of how strong/compelling the argument is. 10 = irrefutable empirical evidence, 1 = weak speculation. Be intellectually honest. If the evidence strongly favors one side, do not artificially balance it. Your strength ratings should vary — not every argument is a 7."
+    sys_msg = "You are a rigorous epistemic analyst. Produce exactly the requested format. " <>
+      "Each evidence line must start with [VERIFIABLE] or [REASONING]. " <>
+      "If citing a paper, include [Paper N] right after the tag. " <>
+      "Follow with (strength: N) where N is 1-10. " <>
+      "Paper-backed [VERIFIABLE] evidence should score 7-10. " <>
+      "Pure [REASONING] without paper support should score 3-7. " <>
+      "Be intellectually honest. Your strength ratings should vary."
 
     messages = [
       %{role: "system", content: sys_msg},
@@ -122,25 +158,26 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     ]
 
     model = Application.get_env(:optimal_system_agent, :utility_model)
-    llm_opts = [temperature: 0.3, max_tokens: 2_000]
+    llm_opts = [temperature: 0.1, max_tokens: 2_500]
     llm_opts = if model, do: Keyword.put(llm_opts, :model, model), else: llm_opts
 
     case Providers.chat(messages, llm_opts) do
       {:ok, %{content: response}} when is_binary(response) ->
         {supporting, opposing, assumptions} = parse_analysis(response)
 
-        # 5. Create claim in the real ledger
+        # 6. Create claim in the real ledger
         claim = EpistemicLedger.add_claim(
           [title: String.slice(topic, 0, 100), statement: topic, tags: ["investigate", "auto"]],
           @ledger_name
         )
 
-        # 6. Add evidence through the real ledger -- with varying strengths
-        # BUG 2: Wrap add_evidence calls to handle {:error, _} and filter nils
+        # 7. Add evidence through the real ledger
+        #    Unsourced (reasoning-only) evidence gets strength halved
         supporting_records =
           supporting
           |> Enum.map(fn ev ->
-            strength = ev.llm_strength || evidence_strength(ev.source_type)
+            raw_strength = ev.llm_strength || evidence_strength(ev.source_type)
+            strength = if ev.source_type == :sourced, do: raw_strength, else: raw_strength * 0.5
             case EpistemicLedger.add_evidence(
               [
                 claim_id: claim.id,
@@ -163,7 +200,8 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
         opposing_records =
           opposing
           |> Enum.map(fn ev ->
-            strength = ev.llm_strength || evidence_strength(ev.source_type)
+            raw_strength = ev.llm_strength || evidence_strength(ev.source_type)
+            strength = if ev.source_type == :sourced, do: raw_strength, else: raw_strength * 0.5
             case EpistemicLedger.add_evidence(
               [
                 claim_id: claim.id,
@@ -183,7 +221,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
           end)
           |> Enum.reject(&is_nil/1)
 
-        # 7. Add assumptions through the real ledger
+        # 8. Add assumptions through the real ledger
         # BUG 4: Check add_assumption return value
         Enum.each(assumptions, fn a ->
           risk_val = case a.risk do
@@ -202,26 +240,15 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
           end
         end)
 
-        # 8. Literature search
-        #    - deep: enrich ALL verifiable evidence
-        #    - standard: try ONE search for the strongest verifiable claim
-        # BUG 20: Tag parsed evidence with direction so we don't use idx < 3 heuristic
+        # 9. Literature note -- how many papers found and cited
         supporting_parsed = Enum.map(supporting, &Map.put(&1, :direction, :support))
         opposing_parsed = Enum.map(opposing, &Map.put(&1, :direction, :contradict))
         all_parsed = supporting_parsed ++ opposing_parsed
 
-        literature_note =
-          case depth do
-            "deep" ->
-              enriched = enrich_all_with_literature(all_parsed, claim.id, topic)
-              if enriched > 0, do: "#{enriched} evidence items grounded with literature", else: "No literature found"
+        cited_count = Enum.count(all_parsed, fn p -> p.source_type == :sourced end)
+        literature_note = "#{length(papers)} papers found, #{cited_count} cited in evidence"
 
-            _ ->
-              # Standard: try ONE literature search for best verifiable
-              enrich_best_verifiable(all_parsed, claim.id, topic)
-          end
-
-        # 9. Refresh claim -- let the ledger compute Bayesian confidence
+        # 10. Refresh claim -- let the ledger compute Bayesian confidence
         EpistemicLedger.refresh_claim(claim.id, @ledger_name)
         state = EpistemicLedger.state(@ledger_name)
 
@@ -234,12 +261,10 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
           {0.5, :uncertain}
         end
 
-        # 10. Persist ledger to disk
+        # 11. Persist ledger to disk
         EpistemicLedger.save(@ledger_name)
 
-        # 11. Determine commitment level
-        # BUG 1: Re-query ledger for ALL evidence after enrichment
-        # (supporting_records ++ opposing_records only has originals, not literature-enriched ones)
+        # 12. Determine commitment level
         fresh_state = EpistemicLedger.state(@ledger_name)
         all_evidence = fresh_state.evidence
           |> Map.values()
@@ -247,7 +272,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
         has_sourced = Enum.any?(all_evidence, fn ev -> ev.source_type == "sourced" end)
         commitment = if has_sourced, do: "committed", else: "belief_only"
 
-        # 12. Store in knowledge graph with keywords
+        # 13. Store in knowledge graph with keywords
         topic_id = "investigate:" <> short_hash(topic)
 
         triples = [
@@ -268,14 +293,14 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
           MiosaKnowledge.assert(store, triple)
         end
 
-        # 12b. Run OWL reasoner to infer new facts from combined old + new triples
+        # 13b. Run OWL reasoner to infer new facts from combined old + new triples
         case MiosaKnowledge.Reasoner.materialize(store) do
           {:ok, count} when count > 0 ->
             Logger.info("[investigate] OWL reasoner inferred #{count} new triples")
           _ -> :ok
         end
 
-        # 12c. Cross-investigation contradiction detection
+        # 13c. Cross-investigation contradiction detection
         conflicts = detect_contradictions(store, topic_id, status, confidence, keywords)
         conflict_note = if conflicts == [] do
           ""
@@ -286,7 +311,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
           "\n### Cross-Investigation Conflicts\n" <> Enum.join(conflict_lines, "\n") <> "\n"
         end
 
-        # 13. Format result
+        # 14. Format result
         result =
           "## Investigation: " <> topic <> "\n\n" <>
           "**Commitment**: " <> commitment <> "\n" <>
@@ -310,6 +335,8 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
           confidence: confidence,
           status: Atom.to_string(status),
           literature: literature_note,
+          papers_found: length(papers),
+          papers_cited: cited_count,
           supporting: Enum.map(supporting_records, fn ev -> %{summary: ev.summary, strength: ev.strength, source_type: ev.source_type, direction: ev.direction} end),
           opposing: Enum.map(opposing_records, fn ev -> %{summary: ev.summary, strength: ev.strength, source_type: ev.source_type, direction: ev.direction} end),
           assumptions: Enum.map(assumptions, fn a -> %{text: a.text, risk: a.risk} end),
@@ -393,14 +420,11 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     Logger.debug("[investigate] Found #{length(topic_results)} investigation(s), #{length(kw_results)} keyword triple(s)")
 
     # Build a set of investigation IDs that match by stored keyword overlap
-    # Check both directions: new keywords match stored keywords, AND stored keywords appear in new topic
     kw_matched_ids =
       kw_results
       |> Enum.filter(fn bindings ->
         stored_kw = Map.get(bindings, "kw", "") |> to_string() |> String.downcase()
-        # Direction 1: new keyword exactly matches stored keyword
         exact_match = Enum.any?(keywords, fn kw -> kw == stored_kw end)
-        # Direction 2: stored keyword appears in the new investigation topic (bidirectional)
         topic_match = Enum.any?(keywords, fn kw -> String.contains?(stored_kw, kw) or String.contains?(kw, stored_kw) end)
         exact_match or topic_match
       end)
@@ -409,7 +433,6 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
 
     Logger.debug("[investigate] Keyword-matched investigation IDs: #{inspect(MapSet.to_list(kw_matched_ids))}")
 
-    # Filter topic_results: match if keyword in topic text OR investigation ID matched by stored keywords
     topic_results
     |> Enum.filter(fn bindings ->
       s = Map.get(bindings, "s", "") |> to_string()
@@ -432,7 +455,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
       []
   end
 
-  # -- Literature search -- Semantic Scholar ---------------------------
+  # -- Literature search -- alphaXiv/arXiv ---------------------------
 
   # BUG 6: Removed :inets.start()/:ssl.start() -- moved to run_investigation init
   # BUG 7: Log non-200 HTTP status codes
@@ -453,9 +476,9 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
   end
 
   defp search_arxiv(query) do
-    # Use arXiv API (free, no auth, reliable) instead of Semantic Scholar (429 rate limited)
+    # Use arXiv API (free, no auth, reliable)
     terms = query |> String.split(~r/\s+/) |> Enum.take(5) |> Enum.join("+")
-    url = "https://export.arxiv.org/api/query?search_query=all:#{URI.encode(terms)}&max_results=3"
+    url = "https://export.arxiv.org/api/query?search_query=all:#{URI.encode(terms)}&max_results=5"
     headers = [{~c"User-Agent", ~c"VAOS/1.0 (https://vaos.sh; mailto:straughter@vaos.sh)"}]
     case :httpc.request(:get, {String.to_charlist(url), headers}, [{:timeout, 15_000}, {:autoredirect, true}], []) do
       {:ok, {{_, 200, _}, _, body}} ->
@@ -463,106 +486,22 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
         papers = Regex.scan(~r/<entry>[\s\S]*?<\/entry>/, xml)
         |> Enum.map(fn [entry] ->
           title = case Regex.run(~r/<title>([^<]+)<\/title>/, entry) do [_, t] -> String.trim(t); _ -> "Unknown" end
-          abstract = case Regex.run(~r/<summary>([\s\S]*?)<\/summary>/, entry) do [_, a] -> String.trim(a) |> String.slice(0, 200); _ -> "" end
+          abstract = case Regex.run(~r/<summary>([\s\S]*?)<\/summary>/, entry) do [_, a] -> String.trim(a) |> String.slice(0, 500); _ -> "" end
           year = case Regex.run(~r/<published>(\d{4})/, entry) do [_, y] -> y; _ -> "unknown" end
           %{"title" => title, "abstract" => abstract, "year" => year, "citationCount" => 0}
         end)
         {:ok, papers}
       {:ok, {{_, status_code, reason_phrase}, _, _body}} ->
-        Logger.warning("[investigate] Semantic Scholar returned HTTP #{status_code}: #{reason_phrase}")
+        Logger.warning("[investigate] arXiv returned HTTP #{status_code}: #{reason_phrase}")
         {:error, :search_failed}
       {:error, reason} ->
-        Logger.warning("[investigate] Semantic Scholar request failed: #{inspect(reason)}")
+        Logger.warning("[investigate] arXiv request failed: #{inspect(reason)}")
         {:error, :search_failed}
     end
   rescue
     e ->
-      Logger.warning("[investigate] Semantic Scholar exception: #{Exception.message(e)}")
+      Logger.warning("[investigate] arXiv exception: #{Exception.message(e)}")
       {:error, :search_failed}
-  end
-
-  # Deep: enrich ALL verifiable evidence with literature
-  # BUG 20: Use direction from parsed data instead of idx < 3 heuristic
-  defp enrich_all_with_literature(parsed_list, claim_id, topic) do
-    # FIX 3: Search by topic, not evidence sentence
-    topic_query = "Research on #{topic}. Papers covering empirical evidence, methods, and analysis."
-    parsed_list
-    |> Enum.reduce(0, fn parsed, count ->
-      if parsed.source_type == :verifiable do
-        case search_papers(topic_query) do
-          {:ok, papers} when papers != [] ->
-            paper = List.first(papers)
-            # BUG 8: Handle nil year/citationCount from API
-            year = paper["year"] || "unknown"
-            citations = paper["citationCount"] || 0
-            source_ref = "#{paper["title"]} (#{year}, citations: #{citations})"
-            direction = Map.get(parsed, :direction, :support)
-            case EpistemicLedger.add_evidence(
-              [
-                claim_id: claim_id,
-                summary: parsed.summary <> " [grounded: " <> source_ref <> "]",
-                direction: direction,
-                strength: 0.8,
-                confidence: 0.8,
-                source_type: "sourced",
-                source_ref: source_ref
-              ],
-              @ledger_name
-            ) do
-              %Models.Evidence{} -> count + 1
-              {:error, reason} ->
-                Logger.warning("[investigate] Failed to add enriched evidence: #{inspect(reason)}")
-                count
-            end
-          _ -> count
-        end
-      else
-        count
-      end
-    end)
-  end
-
-  # Standard: try ONE literature search for the strongest verifiable claim
-  defp enrich_best_verifiable(parsed_list, claim_id, topic) do
-    # FIX 3: Search by topic, not evidence sentence
-    topic_query = "Research on #{topic}. Papers covering empirical evidence, methods, and analysis."
-    verifiable =
-      parsed_list
-      |> Enum.filter(fn parsed -> parsed.source_type == :verifiable end)
-
-    case verifiable do
-      [best_parsed | _] ->
-        case search_papers(topic_query) do
-          {:ok, papers} when papers != [] ->
-            paper = List.first(papers)
-            # BUG 8: Handle nil year/citationCount from API
-            year = paper["year"] || "unknown"
-            citations = paper["citationCount"] || 0
-            source_ref = "#{paper["title"]} (#{year}, citations: #{citations})"
-            direction = Map.get(best_parsed, :direction, :support)
-            # Add sourced evidence to the ledger
-            case EpistemicLedger.add_evidence(
-              [
-                claim_id: claim_id,
-                summary: best_parsed.summary <> " [grounded: " <> source_ref <> "]",
-                direction: direction,
-                strength: 0.8,
-                confidence: 0.8,
-                source_type: "sourced",
-                source_ref: source_ref
-              ],
-              @ledger_name
-            ) do
-              %Models.Evidence{} ->
-                "1 evidence item grounded: " <> source_ref
-              {:error, reason} ->
-                Logger.warning("[investigate] Failed to add sourced evidence: #{inspect(reason)}")
-                "Literature found but failed to store: " <> source_ref
-            end
-          _ -> "Literature search returned no results"
-        end
-      [] -> "No verifiable claims to search"
-    end
   end
 
   # -- Parsing ---------------------------------------------------------
@@ -591,17 +530,31 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
   end
 
   defp parse_evidence_section(section) do
-    ~r/\d+\.\s*\[(VERIFIABLE|REASONING)\]\s*(?:\(strength:\s*(\d+)\))?\s*(.+)/i
+    # Match: N. [VERIFIABLE/REASONING] [Paper N] (strength: N) <evidence>
+    # Paper citation is optional
+    ~r/\d+\.\s*\[(VERIFIABLE|REASONING)\]\s*(?:\[Paper\s+(\d+)\]\s*)?(?:\(strength:\s*(\d+)\))?\s*(.+)/i
     |> Regex.scan(section)
     |> Enum.map(fn
-      [_, type, strength_str, summary] ->
-        source_type = if String.upcase(type) == "VERIFIABLE", do: :verifiable, else: :reasoning
+      [_, type, paper_ref, strength_str, summary] ->
+        has_paper = paper_ref != "" and paper_ref != nil
+        source_type = if has_paper, do: :sourced, else: parse_source_type(type)
         llm_strength = parse_strength(strength_str)
-        %{summary: String.trim(summary), source_type: source_type, llm_strength: llm_strength}
-      [_, type, "", summary] ->
-        source_type = if String.upcase(type) == "VERIFIABLE", do: :verifiable, else: :reasoning
-        %{summary: String.trim(summary), source_type: source_type, llm_strength: nil}
+        paper_num = if has_paper, do: String.to_integer(paper_ref), else: nil
+        summary = if has_paper do
+          summary <> " [Paper #{paper_ref}]"
+        else
+          summary
+        end
+        %{summary: String.trim(summary), source_type: source_type, llm_strength: llm_strength, paper_num: paper_num}
     end)
+  end
+
+  defp parse_source_type(type) do
+    case String.upcase(type) do
+      "VERIFIABLE" -> :verifiable
+      "REASONING" -> :reasoning
+      _ -> :reasoning
+    end
   end
 
   defp parse_strength(str) when is_binary(str) and str != "" do
@@ -687,9 +640,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
               prior_status = Map.get(prior, "status", "unknown")
               prior_conf = Map.get(prior, "conf", "0.5")
 
-              # Check for contradiction: one supported, other contested/unsupported
               current_s = Atom.to_string(current_status)
-              # FIX 5: Real contradiction = opposite conclusions, not raw confidence diff
               is_conflict =
                 (current_s == "supported" and prior_status in ["contested", "falsified", "uncertain"]) or
                 (current_s in ["contested", "falsified"] and prior_status == "supported") or
@@ -697,7 +648,6 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
                  abs(current_confidence - parse_float(prior_conf)) > 0.25)
 
               if is_conflict do
-                # Assert the contradiction edge in the knowledge graph
                 MiosaKnowledge.assert(store, {current_id, "vaos:contradicts", prior_id})
                 MiosaKnowledge.assert(store, {prior_id, "vaos:contradictedBy", current_id})
                 Logger.warning("[investigate] Epistemic tension: #{current_id} contradicts #{prior_id}")
