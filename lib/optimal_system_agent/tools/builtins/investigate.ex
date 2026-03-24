@@ -575,7 +575,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     end
   end
 
-  defp store_ref, do: Vaos.Knowledge.store_ref("osa_default")
+  defp store_ref, do: "osa_default"
 
   # BUG 18: Return errors instead of swallowing them
   defp ensure_store_started do
