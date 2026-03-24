@@ -1252,12 +1252,11 @@ Known failure patterns to avoid:
   # Build search queries from topic and keywords.
   # Returns [{label, query_string, opts}] — each gets sent to both SS and OA.
   defp build_search_queries(topic, keywords) do
-    keyword_suffix = case Enum.take(keywords, 3) do
-      [] -> ""
-      kws -> " " <> Enum.join(kws, " ")
-    end
+    # Build keyword-augmented query only if keywords add new terms
+    topic_words = topic |> String.downcase() |> String.split(~r/\s+/, trim: true) |> MapSet.new()
+    novel_keywords = Enum.reject(keywords, fn kw -> MapSet.member?(topic_words, kw) end) |> Enum.take(3)
 
-    [
+    base = [
       # Direct topic search (most natural query)
       {:topic, topic, []},
       # Systematic reviews and meta-analyses (highest quality evidence)
@@ -1265,25 +1264,30 @@ Known failure patterns to avoid:
       # Cochrane reviews (gold standard for medical/health topics)
       {:cochrane, "Cochrane review #{topic}", []},
       # Placebo-controlled studies (strong experimental evidence)
-      {:placebo, "#{topic} placebo controlled", []},
+      {:placebo, "#{topic} placebo controlled trial", []},
       # Scientific consensus queries
       {:consensus, "scientific consensus #{topic}", []},
-      # Keyword-augmented search (uses extracted keywords for specificity)
-      {:keywords, "#{topic}#{keyword_suffix}", []},
-      # Critical evaluation / debunking (finds evaluation papers, not just topic papers)
-      {:critique, "#{topic} critical evaluation efficacy", []},
+      # Critical evaluation (finds evaluation papers, not just topic papers)
+      {:critique, "#{topic} critical evaluation", []},
       # Randomized controlled trials
-      {:rct, "randomized controlled trial #{topic}", []},
-      # Safety and adverse effects (captures the "against" side better)
-      {:safety, "#{topic} safety adverse effects risks", []}
+      {:rct, "randomized controlled trial #{topic}", []}
     ]
+
+    # Only add keyword query if it differs from plain topic search
+    keyword_query = if novel_keywords != [] do
+      [{:keywords, "#{topic} #{Enum.join(novel_keywords, " ")}", []}]
+    else
+      []
+    end
+
+    base ++ keyword_query
   end
 
   # Categorize source labels into summary keys
   defp source_category("alphaxiv"), do: :alphaxiv
   defp source_category("ss_" <> _), do: :semantic_scholar
   defp source_category("oa_" <> _), do: :openalex
-  defp source_category(other), do: String.to_atom(other)
+  defp source_category(_other), do: :other
 
   # Dedup raw papers (handles both atom-key and string-key formats)
   defp merge_papers_raw(papers) when is_list(papers) do
@@ -1382,9 +1386,9 @@ Known failure patterns to avoid:
     %{
       title: paper["title"] || "",
       abstract: paper["abstract"] || "",
-      year: paper["year"],
+      year: parse_year(paper["year"]),
       citation_count: paper["citation_count"] || paper["citationCount"] || 0,
-      source: String.to_atom(paper["source"] || "unknown"),
+      source: safe_to_atom(paper["source"] || "alphaxiv"),
       authors: paper["authors"] || [],
       paper_id: paper["paper_id"] || paper["paperId"] || "",
       url: paper["url"] || "",
@@ -1392,6 +1396,23 @@ Known failure patterns to avoid:
     }
   end
   defp ensure_atom_keys(other), do: other
+
+  # Safe atom conversion for known source values
+  defp safe_to_atom(s) when is_atom(s), do: s
+  defp safe_to_atom("semantic_scholar"), do: :semantic_scholar
+  defp safe_to_atom("openalex"), do: :openalex
+  defp safe_to_atom("alphaxiv"), do: :alphaxiv
+  defp safe_to_atom(_), do: :unknown
+
+  defp parse_year(nil), do: nil
+  defp parse_year(y) when is_integer(y), do: y
+  defp parse_year(y) when is_binary(y) do
+    case Integer.parse(y) do
+      {n, _} -> n
+      :error -> nil
+    end
+  end
+  defp parse_year(_), do: nil
 
   # HTTP adapter for vaos-ledger Literature module — uses Req
   defp literature_http_fn do
