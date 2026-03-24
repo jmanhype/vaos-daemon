@@ -84,6 +84,9 @@ defmodule OptimalSystemAgent.MixProject do
       # Epistemic ledger — AIEQ claim tracking
       {:vaos_ledger, path: "../Projects/vaos-ledger-build"},
 
+      # AlphaXiv MCP client — BEAM-native MCP SDK
+      {:anubis_mcp, "~> 1.0"},
+
       # Knowledge graph — triple store with SPARQL and OWL 2 RL reasoning
       {:vaos_knowledge, path: "../Projects/vaos-knowledge"},
 

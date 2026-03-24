@@ -81,6 +81,9 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     :inets.start()
     :ssl.start()
 
+    # Start alphaXiv MCP client (best-effort, falls back to arXiv if unavailable)
+    OptimalSystemAgent.Tools.Builtins.AlphaXivClient.start_link()
+
     # 1. Start the real epistemic ledger GenServer
     ensure_ledger_started()
 
@@ -384,7 +387,23 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
 
   # BUG 6: Removed :inets.start()/:ssl.start() -- moved to run_investigation init
   # BUG 7: Log non-200 HTTP status codes
-  defp search_semantic_scholar(query) do
+
+  # Try alphaXiv MCP first (semantic embedding search), fall back to arXiv API
+  defp search_papers(query) do
+    alias OptimalSystemAgent.Tools.Builtins.AlphaXivClient
+
+    case AlphaXivClient.embedding_search(query) do
+      {:ok, papers} when papers != [] ->
+        Logger.debug("[investigate] alphaXiv returned #{length(papers)} papers")
+        {:ok, papers}
+
+      _ ->
+        Logger.debug("[investigate] alphaXiv unavailable, falling back to arXiv API")
+        search_arxiv(query)
+    end
+  end
+
+  defp search_arxiv(query) do
     # Use arXiv API (free, no auth, reliable) instead of Semantic Scholar (429 rate limited)
     terms = query |> String.split(~r/\s+/) |> Enum.take(5) |> Enum.join("+")
     url = "https://export.arxiv.org/api/query?search_query=all:#{URI.encode(terms)}&max_results=3"
@@ -419,7 +438,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     parsed_list
     |> Enum.reduce(0, fn parsed, count ->
       if parsed.source_type == :verifiable do
-        case search_semantic_scholar(parsed.summary) do
+        case search_papers(parsed.summary) do
           {:ok, papers} when papers != [] ->
             paper = List.first(papers)
             # BUG 8: Handle nil year/citationCount from API
@@ -460,7 +479,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
 
     case verifiable do
       [best_parsed | _] ->
-        case search_semantic_scholar(best_parsed.summary) do
+        case search_papers(best_parsed.summary) do
           {:ok, papers} when papers != [] ->
             paper = List.first(papers)
             # BUG 8: Handle nil year/citationCount from API
