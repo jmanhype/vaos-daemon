@@ -227,7 +227,10 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
       # 9c. Add FOR arguments as supporting evidence
       supporting_records = add_evidence_to_ledger(supporting, claim, :support)
 
-      # 9d. Add AGAINST arguments as attacks (falsification attempts)
+      # 9d. Add AGAINST arguments as BOTH attacks AND contradicting evidence
+      # Attacks track the falsification attempt. Contradicting evidence affects belief calculation.
+      IO.puts("CONTRADICT_DEBUG: adding #{length(opposing)} opposing as contradict")
+      _contra_records = add_evidence_to_ledger(opposing, claim, :contradict)
       opposing_records = add_attacks_to_ledger(opposing, claim)
 
       # 9e. Refresh claim to recompute metrics after all evidence/attacks added
