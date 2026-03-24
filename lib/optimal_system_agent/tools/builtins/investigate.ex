@@ -19,6 +19,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
   Uses vaos-ledger's Literature module for Semantic Scholar and OpenAlex,
   with alphaXiv MCP for embedding-based arXiv search.
 
+  AEC TWO-STORE ARCHITECTURE (arxiv.org/abs/2602.03974):
+  Evidence is classified into two stores based on source quality:
+  - Grounded store: high-quality sources (major journals, high citations) — determines verdict
+  - Belief store: low-quality sources (predatory journals, niche) — context only, cannot flip direction
+  This prevents the homeopathy problem where niche journals outvote established science.
+
   ACE PATTERN (Agentic Context Engineering):
   - Helpful/Harmful counters on evidence triples in the knowledge graph
   - Compound loop fetches prior EVIDENCE, not prior conclusions
@@ -45,6 +51,30 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     under again further then once here there when where why how all both each
     few more most other some such no nor not only own same so than too very it
     its this that these those and but or if while)
+
+  # AEC Two-Store Architecture (arxiv.org/abs/2602.03974)
+  # Grounded store: high-quality sources that can determine the verdict
+  # Belief store: low-quality sources for context only (cannot flip direction)
+  @grounded_threshold 0.4
+
+  @high_quality_publishers ~w(nature science lancet bmj nejm cochrane jama plos
+    cell annual_review pnas wiley springer elsevier oxford cambridge ieee acm
+    american_medical american_psychological british_medical world_health)
+
+  @low_quality_patterns [
+    ~r/journal.of.alternative/i,
+    ~r/complementary.*medicine/i,
+    ~r/integrative.*medicine/i,
+    ~r/homeopath/i,
+    ~r/naturopath/i,
+    ~r/ayurved/i,
+    ~r/traditional.*medicine/i,
+    ~r/holistic/i,
+    ~r/journal.*healing/i,
+    ~r/explore.*journal/i,
+    ~r/frontier.*alternative/i,
+    ~r/evidence.based.complementary/i
+  ]
 
   @impl true
   def available?, do: true
@@ -297,24 +327,46 @@ Known failure patterns to avoid:
   defp run_full_analysis(topic, supporting_raw, opposing_raw, all_papers, paper_map,
                          source_counts, keywords, prior_evidence, store, depth) do
     # 9. CITATION VERIFICATION + PAPER TYPE CLASSIFICATION — the evidence quality step
-    # Run all verification calls in parallel via Task.async
     verified_supporting = verify_citations(supporting_raw, paper_map)
     verified_opposing = verify_citations(opposing_raw, paper_map)
 
-    # 10. Compute direction from hierarchy-weighted scores
-    verified_for = Enum.count(verified_supporting, & &1.verified)
-    verified_against = Enum.count(verified_opposing, & &1.verified)
-    total_for_score = Enum.sum(Enum.map(verified_supporting, & &1.score))
-    total_against_score = Enum.sum(Enum.map(verified_opposing, & &1.score))
+    # 9a. AEC TWO-STORE CLASSIFICATION (arxiv.org/abs/2602.03974)
+    # Split into grounded (high-quality, determines verdict) and belief (context only)
+    classified_supporting = classify_evidence_store(verified_supporting, paper_map)
+    classified_opposing = classify_evidence_store(verified_opposing, paper_map)
+
+    grounded_for = Enum.filter(classified_supporting, & &1.evidence_store == :grounded)
+    grounded_against = Enum.filter(classified_opposing, & &1.evidence_store == :grounded)
+
+    grounded_for_count = length(grounded_for)
+    grounded_against_count = length(grounded_against)
+    belief_for_count = length(classified_supporting) - grounded_for_count
+    belief_against_count = length(classified_opposing) - grounded_against_count
+
+    # 10. Compute direction from GROUNDED evidence only (AEC commitment gating)
+    verified_for = Enum.count(classified_supporting, & &1.verified)
+    verified_against = Enum.count(classified_opposing, & &1.verified)
+
+    grounded_for_score = Enum.sum(Enum.map(grounded_for, & &1.score))
+    grounded_against_score = Enum.sum(Enum.map(grounded_against, & &1.score))
+    total_for_score = Enum.sum(Enum.map(classified_supporting, & &1.score))
+    total_against_score = Enum.sum(Enum.map(classified_opposing, & &1.score))
 
     for_total = total_for_score
     against_total = total_against_score
 
+    # Direction uses ONLY grounded scores (AEC commitment gating)
     direction = cond do
-      for_total > against_total * 1.3 -> "supporting"
-      against_total > for_total * 1.3 -> "opposing"
+      grounded_for_score == 0 and grounded_against_score == 0 ->
+        "insufficient_grounded_evidence"
+      grounded_for_score > grounded_against_score * 1.3 -> "supporting"
+      grounded_against_score > grounded_for_score * 1.3 -> "opposing"
       true -> "genuinely_contested"
     end
+
+    # Rebind for downstream compatibility (classified versions are supersets)
+    verified_supporting = classified_supporting
+    verified_opposing = classified_opposing
 
     # Count fraudulent citations
     fraudulent_count = Enum.count(verified_supporting ++ verified_opposing,
@@ -369,6 +421,13 @@ Known failure patterns to avoid:
       reasoning_against: reasoning_against,
       for_score: Float.round(for_total * 1.0, 3),
       against_score: Float.round(against_total * 1.0, 3),
+      grounded_for_score: Float.round(grounded_for_score * 1.0, 3),
+      grounded_against_score: Float.round(grounded_against_score * 1.0, 3),
+      grounded_for_count: grounded_for_count,
+      grounded_against_count: grounded_against_count,
+      belief_for_count: belief_for_count,
+      belief_against_count: belief_against_count,
+      aec_methodology: "arxiv.org/abs/2602.03974",
       fraudulent_citations: fraudulent_count,
       belief: Float.round(belief * 1.0, 3),
       uncertainty: Float.round(uncertainty * 1.0, 3),
@@ -380,12 +439,16 @@ Known failure patterns to avoid:
       supporting: Enum.map(verified_supporting, fn ev ->
         %{summary: ev.summary, score: ev.score, verified: ev.verified,
           verification: ev.verification, paper_type: Atom.to_string(ev.paper_type),
-          citation_count: ev.citation_count, strength_display: ev.strength}
+          citation_count: ev.citation_count, strength_display: ev.strength,
+          source_quality: Map.get(ev, :source_quality, 0),
+          evidence_store: Atom.to_string(Map.get(ev, :evidence_store, :unknown))}
       end),
       opposing: Enum.map(verified_opposing, fn ev ->
         %{summary: ev.summary, score: ev.score, verified: ev.verified,
           verification: ev.verification, paper_type: Atom.to_string(ev.paper_type),
-          citation_count: ev.citation_count, strength_display: ev.strength}
+          citation_count: ev.citation_count, strength_display: ev.strength,
+          source_quality: Map.get(ev, :source_quality, 0),
+          evidence_store: Atom.to_string(Map.get(ev, :evidence_store, :unknown))}
       end),
       papers_found: length(all_papers),
       source_counts: source_counts,
@@ -495,18 +558,21 @@ Known failure patterns to avoid:
     end
 
     # 16. Format result with verification status and evidence quality
-    for_arguments = format_verified_evidence(verified_supporting, "Case For (score: #{Float.round(for_total * 1.0, 2)})")
-    against_arguments = format_verified_evidence(verified_opposing, "Case Against (score: #{Float.round(against_total * 1.0, 2)})")
+    for_arguments = format_verified_evidence(verified_supporting, "Case For (grounded: #{Float.round(grounded_for_score * 1.0, 2)}, total: #{Float.round(for_total * 1.0, 2)})")
+    against_arguments = format_verified_evidence(verified_opposing, "Case Against (grounded: #{Float.round(grounded_against_score * 1.0, 2)}, total: #{Float.round(against_total * 1.0, 2)})")
 
     paper_list = format_paper_list(all_papers)
 
     result =
       "## Investigation: #{topic}\n\n" <>
-      "**Direction: #{direction}**\n" <>
+      "**Direction: #{direction}** (AEC grounded-only verdict)\n" <>
+      "**Grounded score: #{Float.round(grounded_for_score * 1.0, 2)} for vs #{Float.round(grounded_against_score * 1.0, 2)} against**\n" <>
+      "**Total score (incl. belief): #{Float.round(for_total * 1.0, 2)} for vs #{Float.round(against_total * 1.0, 2)} against**\n" <>
+      "**Evidence stores: #{grounded_for_count + grounded_against_count} grounded, #{belief_for_count + belief_against_count} belief**\n" <>
       "**Verified citations for: #{verified_for} | Verified citations against: #{verified_against}**\n" <>
       "**Fraudulent citations detected: #{fraudulent_count}**\n" <>
       "**Evidence quality: #{review_count} reviews, #{trial_count} trials, #{study_count} studies**\n" <>
-      "**Score: #{Float.round(for_total * 1.0, 2)} for vs #{Float.round(against_total * 1.0, 2)} against**\n" <>
+
       "**Ledger belief: #{Float.round(belief * 1.0, 3)}, uncertainty: #{Float.round(uncertainty * 1.0, 3)}**\n" <>
       "**Papers found:** #{length(all_papers)} (#{format_source_counts(source_counts)})\n\n" <>
       (if quality_note != "", do: quality_note <> "\n\n", else: "") <>
@@ -683,6 +749,49 @@ Known failure patterns to avoid:
     base * type_weight * citation_bonus
   end
 
+  # -- AEC Two-Store: Source Quality Scoring --------------------------------
+  # Per arxiv.org/abs/2602.03974 — Active Epistemic Control
+  # Only grounded (high-quality) evidence can determine the verdict.
+  # Belief (low-quality) evidence provides context but cannot flip direction.
+
+  defp score_source_quality(paper) do
+    title = (paper["title"] || "") |> String.downcase()
+    source = (paper["source"] || "") |> String.downcase()
+    abstract = (paper["abstract"] || "") |> String.downcase()
+    citations = paper["citation_count"] || paper["citationCount"] || 0
+
+    # 1. Citation count score (log scale, normalized to 0-1)
+    citation_score = if citations > 0, do: :math.log10(citations) / 5.0, else: 0.0
+    citation_score = min(citation_score, 1.0)
+
+    # 2. Publisher/journal quality
+    all_text = "#{title} #{source} #{abstract}"
+    publisher_score = cond do
+      Enum.any?(@high_quality_publishers, &String.contains?(all_text, &1)) -> 0.8
+      Enum.any?(@low_quality_patterns, &Regex.match?(&1, all_text)) -> 0.05
+      true -> 0.3
+    end
+
+    # 3. Combined (citation weight + publisher weight)
+    Float.round(citation_score * 0.5 + publisher_score * 0.5, 3)
+  end
+
+  defp classify_evidence_store(verified_evidence, paper_map) do
+    Enum.map(verified_evidence, fn ev ->
+      source_quality = case ev.paper_ref do
+        nil -> 0.15
+        n ->
+          case Map.get(paper_map, n) do
+            nil -> 0.1
+            paper -> score_source_quality(paper)
+          end
+      end
+
+      store = if source_quality >= @grounded_threshold, do: :grounded, else: :belief
+      Map.merge(ev, %{source_quality: source_quality, evidence_store: store})
+    end)
+  end
+
   # -- Balanced paper merge with title dedup ----------------------------
 
   defp merge_papers(papers) when is_list(papers) do
@@ -816,6 +925,12 @@ Known failure patterns to avoid:
         cite_count = ev.citation_count
         score_str = Float.round(ev.score * 1.0, 1) |> to_string()
 
+        store_label = case Map.get(ev, :evidence_store) do
+          :grounded -> "GROUNDED"
+          :belief -> "BELIEF"
+          _ -> ""
+        end
+
         {status_icon, detail} = case ev.verification do
           "verified" ->
             paper_info = case ev.paper_ref do
@@ -846,7 +961,8 @@ Known failure patterns to avoid:
             {"PENDING", "(score: #{score_str})"}
         end
 
-        "  #{i}. [#{status_icon}] #{detail} #{ev.summary}"
+        store_tag = if store_label != "", do: " [#{store_label}]", else: ""
+        "  #{i}. [#{status_icon}]#{store_tag} #{detail} #{ev.summary}"
       end)
       |> Enum.join("\n")
 
