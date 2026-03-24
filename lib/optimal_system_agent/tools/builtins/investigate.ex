@@ -538,6 +538,15 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     opposing = parse_evidence_section(opp_section)
     assumptions = parse_assumptions_section(asm_section)
 
+    # Deduplicate: if same evidence appears in both supporting and opposing, keep only in supporting
+    sup_summaries = MapSet.new(Enum.map(supporting, & &1.summary))
+    opposing = Enum.reject(opposing, fn ev -> MapSet.member?(sup_summaries, ev.summary) end)
+
+    # If opposing is now empty (LLM duplicated everything), generate a warning
+    if opposing == [] and supporting != [] do
+      Logger.warning("[investigate] LLM returned identical evidence for both sides — opposing section was deduplicated to empty")
+    end
+
     {supporting, opposing, assumptions}
   end
 
