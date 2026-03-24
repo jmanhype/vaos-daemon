@@ -219,13 +219,29 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     if supporting == [] and opposing == [] do
       {:error, "Both adversarial LLM calls failed"}
     else
-      # 9. Determine direction (NOT a confidence number)
+      # 9. Determine direction — average strength + source quality bonus
+      #    (more robust than single best argument; prevents one pedantic 10/10 from dominating)
       best_for = Enum.max_by(supporting, fn ev -> ev.strength end, fn -> %{strength: 0, summary: "none"} end)
       best_against = Enum.max_by(opposing, fn ev -> ev.strength end, fn -> %{strength: 0, summary: "none"} end)
 
+      # Average strength for each side (more robust than single best)
+      avg_for = if supporting == [], do: 0,
+        else: Enum.sum(Enum.map(supporting, & &1.strength)) / length(supporting)
+      avg_against = if opposing == [], do: 0,
+        else: Enum.sum(Enum.map(opposing, & &1.strength)) / length(opposing)
+
+      # Also count sourced vs reasoning
+      sourced_for = Enum.count(supporting, & &1.source_type == :sourced)
+      sourced_against = Enum.count(opposing, & &1.source_type == :sourced)
+
+      # Direction: combine average strength + source quality
+      # Sourced arguments count more: each sourced item adds 0.5 to that side's score
+      for_score = avg_for + (sourced_for * 0.5)
+      against_score = avg_against + (sourced_against * 0.5)
+
       direction = cond do
-        best_for.strength >= best_against.strength + 2 -> "supporting"
-        best_against.strength >= best_for.strength + 2 -> "opposing"
+        for_score >= against_score + 1.5 -> "supporting"
+        against_score >= for_score + 1.5 -> "opposing"
         true -> "genuinely_contested"
       end
 
@@ -259,6 +275,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
         against_strength: against_strength,
         best_for_strength: best_for.strength,
         best_against_strength: best_against.strength,
+        avg_for: Float.round(avg_for, 2),
+        avg_against: Float.round(avg_against, 2),
+        for_score: Float.round(for_score, 2),
+        against_score: Float.round(against_score, 2),
+        sourced_for: sourced_for,
+        sourced_against: sourced_against,
         supporting: Enum.map(supporting, fn ev ->
           %{summary: ev.summary, strength: ev.strength, source_type: ev.source_type}
         end),
@@ -328,8 +350,8 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
       result =
         "## Investigation: #{topic}\n\n" <>
         "**Direction:** #{direction}\n" <>
-        "**Case for:** #{for_strength} (best argument: strength #{best_for.strength}/10)\n" <>
-        "**Case against:** #{against_strength} (best argument: strength #{best_against.strength}/10)\n" <>
+        "**Case for:** #{for_strength} (best: #{best_for.strength}/10, avg: #{Float.round(avg_for, 1)}, sourced: #{sourced_for}, score: #{Float.round(for_score, 1)})\n" <>
+        "**Case against:** #{against_strength} (best: #{best_against.strength}/10, avg: #{Float.round(avg_against, 1)}, sourced: #{sourced_against}, score: #{Float.round(against_score, 1)})\n" <>
         "**Papers found:** #{length(all_papers)} (#{for_count} via supporting search, #{against_count} via opposing search)\n\n" <>
         "### Strongest Case FOR\n#{for_arguments}\n\n" <>
         "### Strongest Case AGAINST\n#{against_arguments}\n\n" <>
