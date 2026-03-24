@@ -32,6 +32,8 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
   alias Vaos.Ledger.Epistemic.Ledger, as: EpistemicLedger
   alias Vaos.Ledger.Epistemic.Models
   alias Vaos.Ledger.Research.Literature
+  alias Vaos.Ledger.Epistemic.Policy
+  alias Vaos.Ledger.ML.CrashLearner
 
   @ledger_path Path.join(System.user_home!(), ".openclaw/investigate_ledger.json")
   @ledger_name :investigate_ledger
@@ -101,6 +103,13 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     # 1. Start the real epistemic ledger GenServer
     ensure_ledger_started()
 
+    # 1a. Start CrashLearner if not running
+    case CrashLearner.start_link(name: :osa_crash_learner) do
+      {:ok, _} -> :ok
+      {:error, {:already_started, _}} -> :ok
+      _ -> :ok
+    end
+
     # 2. Extract keywords for prior knowledge search
     keywords = extract_keywords(topic)
 
@@ -128,6 +137,26 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     else
       "\n\nPreviously investigated evidence on related topics:\n" <>
         Enum.join(prior_evidence, "\n") <> "\n"
+    end
+
+    # 6a. Fetch known failure pitfalls from CrashLearner
+    pitfalls = try do
+      {:ok, plist} = CrashLearner.get_pitfalls(:osa_crash_learner)
+      plist
+    rescue
+      _ -> []
+    end
+
+    pitfall_context = if pitfalls != [] do
+      text = Enum.map(pitfalls, fn p -> "- #{p.summary}" end) |> Enum.join("
+")
+      "
+
+Known failure patterns to avoid:
+#{text}
+"
+    else
+      ""
     end
 
     # 7. TWO ADVERSARIAL LLM CALLS (parallel)
@@ -170,12 +199,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     """
 
     for_messages = [
-      %{role: "system", content: "You are an intellectually honest researcher making the strongest case FOR a claim. Vary your strength ratings — not every argument is equally strong."},
+      %{role: "system", content: "You are an intellectually honest researcher making the strongest case FOR a claim. Vary your strength ratings — not every argument is equally strong." <> pitfall_context},
       %{role: "user", content: for_prompt}
     ]
 
     against_messages = [
-      %{role: "system", content: "You are an intellectually honest researcher making the strongest case AGAINST a claim. Vary your strength ratings — not every argument is equally strong."},
+      %{role: "system", content: "You are an intellectually honest researcher making the strongest case AGAINST a claim. Vary your strength ratings — not every argument is equally strong." <> pitfall_context},
       %{role: "user", content: against_prompt}
     ]
 
@@ -194,6 +223,14 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     supporting = case for_result do
       {:ok, %{content: response}} when is_binary(response) ->
         parse_adversarial_evidence(response)
+      {:error, reason} ->
+        Logger.warning("[investigate] FOR-side LLM call failed: #{inspect(reason)}")
+        try do
+          CrashLearner.report_crash(:osa_crash_learner, "investigate_for_#{short_hash(topic)}", inspect(reason), nil, %{topic: topic, side: "for", papers_count: length(all_papers)})
+        rescue
+          _ -> :ok
+        end
+        []
       _ ->
         Logger.warning("[investigate] FOR-side LLM call failed")
         []
@@ -202,6 +239,14 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     opposing = case against_result do
       {:ok, %{content: response}} when is_binary(response) ->
         parse_adversarial_evidence(response)
+      {:error, reason} ->
+        Logger.warning("[investigate] AGAINST-side LLM call failed: #{inspect(reason)}")
+        try do
+          CrashLearner.report_crash(:osa_crash_learner, "investigate_against_#{short_hash(topic)}", inspect(reason), nil, %{topic: topic, side: "against", papers_count: length(all_papers)})
+        rescue
+          _ -> :ok
+        end
+        []
       _ ->
         Logger.warning("[investigate] AGAINST-side LLM call failed")
         []
@@ -348,7 +393,17 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
           citations: p["citation_count"] || p["citationCount"] || 0,
           source: p["source"] || "unknown"}
       end),
-      investigation_id: topic_id
+      investigation_id: topic_id,
+      suggested_next: try do
+        Policy.rank_actions(@ledger_name, limit: 3)
+        |> Enum.map(fn a ->
+          %{action_type: a.action_type, claim_title: a.claim_title,
+            information_gain: a.expected_information_gain, claim_id: a.claim_id,
+            reason: a.reason}
+        end)
+      rescue
+        _ -> []
+      end
     })
 
     triples = [
@@ -392,6 +447,28 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     # Increment helpful counters for prior evidence that was independently regenerated
     increment_helpful_for_reused_evidence(store, prior_evidence, verified_supporting ++ verified_opposing)
 
+    # 13a. OWL Reasoner bridge — materialize inferred triples and check for contradictions
+    try do
+      case MiosaKnowledge.Reasoner.materialize(store) do
+        {:ok, rounds} when rounds > 0 ->
+          Logger.info("[investigate] OWL reasoner ran #{rounds} fixpoint round(s), inferred new triples")
+          # Check if any inferred contradictions relate to our investigation
+          case MiosaKnowledge.sparql(store,
+            "SELECT ?s ?p ?o WHERE { ?s vaos:contradicts ?o }") do
+            {:ok, results} when is_list(results) and results != [] ->
+              for r <- results do
+                Logger.info("[investigate] OWL-visible contradiction: #{r["s"]} contradicts #{r["o"]}")
+              end
+            _ -> :ok
+          end
+        {:ok, 0} ->
+          Logger.debug("[investigate] OWL reasoner: no new inferences")
+        _ -> :ok
+      end
+    rescue
+      e -> Logger.warning("[investigate] OWL reasoner failed: #{Exception.message(e)}")
+    end
+
     # 14. Cross-investigation contradiction detection
     conflicts = detect_contradictions(store, topic_id, direction, keywords)
     conflict_note = if conflicts == [] do
@@ -426,6 +503,35 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
       "\n### Keywords\n  " <> Enum.join(keywords, ", ") <> "\n\n" <>
       "*Claim ID: #{claim_id} -- stored in knowledge graph as #{topic_id}*" <>
       "\n\n<!-- VAOS_JSON:#{json_result} -->"
+
+    # 16. Policy — suggest next investigations based on information gain
+    next_actions_text = try do
+      next_actions = Policy.rank_actions(@ledger_name, limit: 3)
+      if next_actions != [] do
+        suggestions = next_actions
+          |> Enum.with_index(1)
+          |> Enum.map(fn {action, i} ->
+            gain_str = Float.round(action.expected_information_gain, 2) |> to_string()
+            "  #{i}. #{action.action_type}: \"#{action.claim_title}\" (gain: #{gain_str}) — #{action.reason}"
+          end)
+          |> Enum.join("
+")
+        "
+
+### Suggested Next Investigations
+" <>
+          "Based on where uncertainty is highest in the knowledge graph:
+" <> suggestions
+      else
+        ""
+      end
+    rescue
+      e ->
+        Logger.warning("[investigate] Policy.rank_actions failed: #{Exception.message(e)}")
+        ""
+    end
+
+    result = result <> next_actions_text
 
     {:ok, result}
   end
