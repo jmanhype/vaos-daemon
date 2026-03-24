@@ -273,6 +273,17 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
           MiosaKnowledge.assert(store, triple)
         end
 
+        # 12b. Cross-investigation contradiction detection
+        conflicts = detect_contradictions(store, topic_id, status, confidence, keywords)
+        conflict_note = if conflicts == [] do
+          ""
+        else
+          conflict_lines = Enum.map(conflicts, fn c ->
+            "  - #{c.prior_topic} (#{c.prior_id}): #{c.prior_status} @ #{c.prior_confidence} vs current #{Atom.to_string(status)} @ #{Float.round(confidence, 3)}"
+          end)
+          "\n### Cross-Investigation Conflicts\n" <> Enum.join(conflict_lines, "\n") <> "\n"
+        end
+
         # 13. Format result
         result =
           "## Investigation: " <> topic <> "\n\n" <>
@@ -282,7 +293,9 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
           "**Literature**: " <> literature_note <> "\n\n" <>
           "### Supporting Evidence\n" <> format_evidence_records(supporting_records) <> "\n\n" <>
           "### Opposing Evidence\n" <> format_evidence_records(opposing_records) <> "\n\n" <>
-          "### Assumptions\n" <> format_assumptions(assumptions) <> "\n\n" <>
+          "### Assumptions\n" <> format_assumptions(assumptions) <> "\n" <>
+          conflict_note <>
+          "\n" <>
           "### Prior Knowledge\n" <>
           (if prior == [], do: "  None", else: Enum.join(prior, "\n")) <> "\n\n" <>
           "### Keywords\n  " <> Enum.join(keywords, ", ") <> "\n\n" <>
@@ -604,6 +617,57 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
         :ok
     end
   end
+
+  defp detect_contradictions(store, current_id, current_status, current_confidence, current_keywords) do
+    # Find prior investigations with overlapping keywords
+    case MiosaKnowledge.sparql(store, "SELECT ?s ?topic WHERE { ?s vaos:topic ?topic . ?s rdf:type vaos:Investigation }") do
+      {:ok, results} when is_list(results) ->
+        results
+        |> Enum.reject(fn r -> Map.get(r, "s") == current_id end)
+        |> Enum.filter(fn r ->
+          prior_topic = Map.get(r, "topic", "") |> String.downcase()
+          Enum.any?(current_keywords, fn kw -> String.contains?(prior_topic, kw) end)
+        end)
+        |> Enum.flat_map(fn r ->
+          prior_id = Map.get(r, "s", "")
+          prior_topic = Map.get(r, "topic", "")
+
+          # Get the prior investigation's status and confidence
+          case MiosaKnowledge.sparql(store, "SELECT ?status ?conf WHERE { <" <> prior_id <> "> vaos:status ?status . <" <> prior_id <> "> vaos:confidence ?conf }") do
+            {:ok, [prior | _]} ->
+              prior_status = Map.get(prior, "status", "unknown")
+              prior_conf = Map.get(prior, "conf", "0.5")
+
+              # Check for contradiction: one supported, other contested/unsupported
+              current_s = Atom.to_string(current_status)
+              is_conflict = (current_s == "supported" and prior_status in ["contested", "falsified"]) or
+                            (current_s in ["contested", "falsified"] and prior_status == "supported") or
+                            (abs(current_confidence - parse_float(prior_conf)) > 0.3)
+
+              if is_conflict do
+                # Assert the contradiction edge in the knowledge graph
+                MiosaKnowledge.assert(store, {current_id, "vaos:contradicts", prior_id})
+                MiosaKnowledge.assert(store, {prior_id, "vaos:contradictedBy", current_id})
+                Logger.warning("[investigate] Epistemic tension: #{current_id} contradicts #{prior_id}")
+
+                [%{prior_id: prior_id, prior_topic: prior_topic, prior_status: prior_status, prior_confidence: prior_conf}]
+              else
+                []
+              end
+            _ -> []
+          end
+        end)
+      _ -> []
+    end
+  end
+
+  defp parse_float(s) when is_binary(s) do
+    case Float.parse(s) do
+      {f, _} -> f
+      :error -> 0.5
+    end
+  end
+  defp parse_float(_), do: 0.5
 
   defp store_ref, do: "osa_default"
 
