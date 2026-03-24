@@ -386,7 +386,8 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
   # BUG 7: Log non-200 HTTP status codes
   defp search_semantic_scholar(query) do
     url = "https://api.semanticscholar.org/graph/v1/paper/search?query=#{URI.encode(query)}&limit=3&fields=title,abstract,citationCount,year"
-    case :httpc.request(:get, {String.to_charlist(url), []}, [{:timeout, 10_000}], []) do
+    headers = [{~c"User-Agent", ~c"VAOS/1.0 (https://vaos.sh; mailto:straughter@vaos.sh)"}]
+    case :httpc.request(:get, {String.to_charlist(url), headers}, [{:timeout, 10_000}], []) do
       {:ok, {{_, 200, _}, _, body}} ->
         {:ok, Jason.decode!(List.to_string(body))["data"] || []}
       {:ok, {{_, status_code, reason_phrase}, _, _body}} ->
