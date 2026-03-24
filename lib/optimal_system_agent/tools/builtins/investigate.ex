@@ -863,8 +863,8 @@ Known failure patterns to avoid:
       |> Enum.join("\n\n")
 
     "RELEVANT PAPERS FOUND:\n" <> papers_text <>
-      "\n\nPapers are sorted by citation count. Higher-cited papers are more established." <>
-      "\nWhen citing, prefer papers with more citations for stronger arguments." <>
+      "\n\nPapers are sorted by relevance. Citation counts are shown for each paper." <>
+      "\nWhen citing, prefer papers with higher citation counts and from established journals." <>
       "\nYou MUST cite specific papers by number [Paper N] when your arguments are based on them."
   end
 
