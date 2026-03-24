@@ -74,8 +74,6 @@ defmodule MiosaProviders.Registry do
   defdelegate context_window(model), to: OptimalSystemAgent.Providers.Registry
   defdelegate provider_configured?(provider), to: OptimalSystemAgent.Providers.Registry
   defdelegate register_provider(name, module), to: OptimalSystemAgent.Providers.Registry
-  defdelegate provider_info(provider), to: OptimalSystemAgent.Providers.Registry
-  defdelegate provider_configured?(provider), to: OptimalSystemAgent.Providers.Registry
 end
 
 defmodule MiosaProviders.Ollama do

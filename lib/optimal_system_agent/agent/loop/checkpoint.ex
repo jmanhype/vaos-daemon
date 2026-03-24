@@ -66,7 +66,12 @@ defmodule OptimalSystemAgent.Agent.Loop.Checkpoint do
                 (data["messages"] || [])
                 |> Enum.map(fn msg when is_map(msg) ->
                   for {k, v} <- msg, into: %{} do
-                    {String.to_atom(k), v}
+                    key = try do
+                      String.to_existing_atom(k)
+                    rescue
+                      ArgumentError -> String.to_atom(k)
+                    end
+                    {key, v}
                   end
                 end)
 

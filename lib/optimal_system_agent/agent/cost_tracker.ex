@@ -191,7 +191,7 @@ defmodule OptimalSystemAgent.Agent.CostTracker do
     cost_cents = calc_cost(model, input + cache_read + cache_write, output)
     now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
 
-    Repo.insert_all(:cost_events, [
+    Repo.insert_all("cost_events", [
       %{
         agent_name: agent_name,
         session_id: payload[:session_id],

@@ -62,30 +62,33 @@ defmodule OptimalSystemAgent.VasSwarm.Integration do
   @spec request_action_token(String.t(), String.t(), String.t(), String.t(), map()) ::
           {:ok, reference()} | {:error, term()}
   def request_action_token(agent_id, session_id, action_type, intent, metadata \\ %{}) do
-    unless enabled?(), do: {:error, :disabled}
+    if not enabled?() do
+      {:error, :disabled}
+    else
+      # Compute intent hash
+      case IntentHash.compute_with_metadata(intent, agent_id, session_id) do
+        {:ok, intent_hash} ->
+          # Store audit record asynchronously
+          Task.Supervisor.start_child(OptimalSystemAgent.TaskSupervisor, fn ->
+            IntentHash.store_audit_record(intent_hash)
+          end)
 
-    # Compute intent hash
-    case IntentHash.compute_with_metadata(intent, agent_id, session_id) do
-      {:ok, intent_hash} ->
-        # Store audit record asynchronously
-        Task.Supervisor.start_child(OptimalSystemAgent.TaskSupervisor, fn ->
-          IntentHash.store_audit_record(intent_hash)
-        end)
+          # Request token from Kernel
+          ref = make_ref()
+          caller = self()
 
-        # Request token from Kernel
-        ref = make_ref()
+          Task.Supervisor.start_child(OptimalSystemAgent.TaskSupervisor, fn ->
+            token_response = GrpcClient.request_token(agent_id, intent_hash.hash, action_type, metadata)
 
-        Task.Supervisor.start_child(OptimalSystemAgent.TaskSupervisor, fn ->
-          token_response = GrpcClient.request_token(agent_id, intent_hash.hash, action_type, metadata)
+            send(caller, {ref, token_response})
+          end)
 
-          send(self(), {ref, token_response})
-        end)
+          {:ok, ref}
 
-        {:ok, ref}
-
-      {:error, reason} ->
-        Logger.error("[VAS-Swarm] Failed to compute intent hash: #{inspect(reason)}")
-        {:error, reason}
+        {:error, reason} ->
+          Logger.error("[VAS-Swarm] Failed to compute intent hash: #{inspect(reason)}")
+          {:error, reason}
+      end
     end
   end
 
@@ -155,16 +158,10 @@ defmodule OptimalSystemAgent.VasSwarm.Integration do
     # Register a handler on the Events.Bus for :signal_classified events
     bus = OptimalSystemAgent.Events.Bus
 
-    case bus.register_handler(:signal_classified, fn payload ->
+    ref = bus.register_handler(:signal_classified, fn payload ->
       process_signal_classification(payload.signal)
-    end) do
-      {:ok, ref} ->
-        Logger.info("[VAS-Swarm] Registered signal classifier hook")
-        # Store ref for cleanup (not implemented in this version)
-
-      {:error, reason} ->
-        Logger.warning("[VAS-Swarm] Failed to register signal classifier hook: #{inspect(reason)}")
-    end
+    end)
+    Logger.info("[VAS-Swarm] Registered signal classifier hook (ref: #{inspect(ref)})")
 
     :ok
   end
@@ -177,9 +174,9 @@ defmodule OptimalSystemAgent.VasSwarm.Integration do
 
     case TelemetryPublisher.subscribe_to_commands(handler) do
       {:ok, ref} ->
-        Logger.info("[VAS-Swarm] Subscribed to Kernel commands")
-        # Store ref for cleanup
-
+        Logger.info("[VAS-Swarm] Subscribed to Kernel commands (ref: #{inspect(ref)})")
+      ref when is_reference(ref) ->
+        Logger.info("[VAS-Swarm] Subscribed to Kernel commands (ref: #{inspect(ref)})")
       {:error, reason} ->
         Logger.warning("[VAS-Swarm] Failed to subscribe to Kernel commands: #{inspect(reason)}")
     end

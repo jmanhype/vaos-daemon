@@ -134,7 +134,14 @@ defmodule OptimalSystemAgent.Vault.FactStore do
             {:ok, fact} ->
               id = fact["id"] || generate_id()
               # Convert string keys to atom keys for internal consistency
-              atom_fact = for {k, v} <- fact, into: %{}, do: {String.to_atom(k), v}
+              atom_fact = for {k, v} <- fact, into: %{} do
+        atom_key = try do
+          String.to_existing_atom(k)
+        rescue
+          ArgumentError -> String.to_atom(k)
+        end
+        {atom_key, v}
+      end
               :ets.insert(table, {id, atom_fact})
 
             {:error, _} ->
