@@ -6,7 +6,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
   PAPER-FIRST DESIGN: Searches alphaXiv/arXiv for papers BEFORE asking the LLM.
   Papers are fed as context so evidence is generated FROM the literature, not
   stapled on after. Each evidence item must cite [Paper N] or be marked [REASONING].
-  Unsourced evidence strength is halved. Temperature 0.1 for reproducibility.
+  Unsourced evidence strength is halved.
+
+  ACE PATTERN (Agentic Context Engineering, Stanford 2510.04618):
+  - Helpful/Harmful counters on evidence triples in the knowledge graph
+  - Semantic dedup of evidence across compound investigation loops
+  - Parallel multi-run ensemble (3 LLM calls, consensus weighting)
   """
 
   require Logger
@@ -17,7 +22,6 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
   alias Vaos.Ledger.Epistemic.Ledger, as: EpistemicLedger
   alias Vaos.Ledger.Epistemic.Models
 
-  # BUG 11: Use System.user_home!() instead of hardcoded path
   @ledger_path Path.join(System.user_home!(), ".openclaw/investigate_ledger.json")
   @ledger_name :investigate_ledger
 
@@ -40,7 +44,8 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
   @impl true
   def description do
     "Investigate a claim or topic: searches papers first, generates evidence from literature, " <>
-      "tracks epistemic confidence via Bayesian ledger, and stores results in the knowledge graph."
+      "tracks epistemic confidence via Bayesian ledger, and stores results in the knowledge graph. " <>
+      "Uses ACE pattern: 3-run ensemble with consensus weighting, semantic dedup, helpful/harmful counters."
   end
 
   @impl true
@@ -77,11 +82,9 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
   # -- Main pipeline ---------------------------------------------------
 
   defp run_investigation(topic, depth) do
-    # BUG 6: Start :inets/:ssl once at investigation start, not per-request in search_semantic_scholar
     :inets.start()
     :ssl.start()
 
-    # Start alphaXiv MCP client (best-effort, falls back to arXiv if unavailable)
     OptimalSystemAgent.Tools.Builtins.AlphaXivClient.start_link()
 
     # 1. Start the real epistemic ledger GenServer
@@ -90,8 +93,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     # 2. Extract keywords for prior knowledge search
     keywords = extract_keywords(topic)
 
-    # 3. Prior knowledge search -- keyword-based, not hash-based
-    # BUG 18: Check ensure_store_started return value
+    # 3. Prior knowledge search
     case ensure_store_started() do
       :ok -> :ok
       {:error, reason} ->
@@ -127,7 +129,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
       "\n\nNo relevant papers found. Base your evidence on your training knowledge, but mark everything as [REASONING].\n"
     end
 
-    # 5. LLM call -- structured evidence generation WITH paper context
+    # 5. ACE: Parallel multi-run ensemble (3 temperatures)
     prior_text = if prior == [], do: "None found.", else: Enum.join(prior, "\n")
 
     prompt =
@@ -152,212 +154,386 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
       "Pure [REASONING] without paper support should score 3-7. " <>
       "Be intellectually honest. Your strength ratings should vary."
 
-    messages = [
+    messages_with_papers = [
       %{role: "system", content: sys_msg},
       %{role: "user", content: prompt}
     ]
 
     model = Application.get_env(:optimal_system_agent, :utility_model)
-    llm_opts = [temperature: 0.1, max_tokens: 2_500]
+    llm_opts = [max_tokens: 2_500]
     llm_opts = if model, do: Keyword.put(llm_opts, :model, model), else: llm_opts
 
-    case Providers.chat(messages, llm_opts) do
-      {:ok, %{content: response}} when is_binary(response) ->
-        {supporting, opposing, assumptions} = parse_analysis(response)
+    # ACE: Run 3 parallel LLM calls with different temperatures
+    temperatures = [0.0, 0.15, 0.3]
+    tasks = Enum.map(temperatures, fn temp ->
+      Task.async(fn ->
+        opts = Keyword.put(llm_opts, :temperature, temp)
+        Providers.chat(messages_with_papers, opts)
+      end)
+    end)
 
-        # 6. Create claim in the real ledger
-        claim = EpistemicLedger.add_claim(
-          [title: String.slice(topic, 0, 100), statement: topic, tags: ["investigate", "auto"]],
+    # 180s timeout to handle Anthropic rate limiting (60s retry + LLM generation time)
+    results = Task.await_many(tasks, 180_000)
+
+    # Parse evidence from all 3 runs
+    all_parsed = results
+      |> Enum.with_index()
+      |> Enum.flat_map(fn {result, idx} ->
+        case result do
+          {:ok, %{content: response}} when is_binary(response) ->
+            {sup, opp, _asm} = parse_analysis(response)
+            sup_tagged = Enum.map(sup, &Map.put(&1, :direction, :support))
+            opp_tagged = Enum.map(opp, &Map.put(&1, :direction, :contradict))
+            all = sup_tagged ++ opp_tagged
+            Enum.map(all, &Map.put(&1, :run_index, idx))
+          _ ->
+            Logger.warning("[investigate] ACE ensemble run #{idx} failed")
+            []
+        end
+      end)
+
+    # Collect assumptions from all successful runs
+    all_assumptions = results
+      |> Enum.flat_map(fn
+        {:ok, %{content: response}} when is_binary(response) ->
+          {_sup, _opp, asm} = parse_analysis(response)
+          asm
+        _ -> []
+      end)
+
+    # Dedup assumptions by text similarity
+    assumptions = dedup_assumptions(all_assumptions)
+
+    successful_runs = Enum.count(results, fn
+      {:ok, %{content: r}} when is_binary(r) -> true
+      _ -> false
+    end)
+
+    if successful_runs == 0 do
+      {:error, "All 3 LLM ensemble runs failed"}
+    else
+      # ACE: Dedup with consensus counting
+      {deduped, consensus_counts} = dedup_with_consensus(all_parsed)
+
+      # Log consensus stats
+      by_consensus = Enum.group_by(deduped, fn ev ->
+        Map.get(consensus_counts, ev.summary, 1)
+      end)
+      consensus_log = Enum.map(by_consensus, fn {count, items} ->
+        "#{count}/#{successful_runs} for #{length(items)} items"
+      end) |> Enum.join(", ")
+      Logger.info("[investigate] Evidence consensus: #{consensus_log}")
+
+      # Weight by consensus: evidence in N/N runs gets full strength, 1/N gets 1/N
+      final_evidence = Enum.map(deduped, fn ev ->
+        consensus = Map.get(consensus_counts, ev.summary, 1)
+        consensus_weight = consensus / successful_runs
+        raw_strength = ev.llm_strength || evidence_strength(ev.source_type)
+        %{ev | llm_strength: raw_strength * consensus_weight}
+        |> Map.put(:consensus, consensus)
+      end)
+
+      supporting = Enum.filter(final_evidence, &(&1.direction == :support))
+      opposing = Enum.filter(final_evidence, &(&1.direction == :contradict))
+
+      # 6. Create claim in the real ledger
+      claim = EpistemicLedger.add_claim(
+        [title: String.slice(topic, 0, 100), statement: topic, tags: ["investigate", "auto", "ace"]],
+        @ledger_name
+      )
+
+      # ACE: Semantic dedup against prior evidence in the ledger
+      existing_state = EpistemicLedger.state(@ledger_name)
+      existing_evidence = Map.values(existing_state.evidence)
+
+      # 7. Add evidence with ACE dedup
+      {supporting_records, sup_dupes} = add_evidence_with_dedup(
+        supporting, claim, :support, existing_evidence
+      )
+
+      {opposing_records, opp_dupes} = add_evidence_with_dedup(
+        opposing, claim, :contradict, existing_evidence
+      )
+
+      total_dupes = sup_dupes + opp_dupes
+      if total_dupes > 0 do
+        Logger.info("[investigate] ACE semantic dedup: skipped #{total_dupes} duplicate evidence items")
+      end
+
+      # 8. Add assumptions
+      Enum.each(assumptions, fn a ->
+        risk_val = case a.risk do
+          "high" -> 0.9
+          "medium" -> 0.5
+          "low" -> 0.2
+          _ -> 0.5
+        end
+        case EpistemicLedger.add_assumption(
+          [claim_id: claim.id, text: a.text, risk: risk_val],
           @ledger_name
-        )
-
-        # 7. Add evidence through the real ledger
-        #    Unsourced (reasoning-only) evidence gets strength halved
-        supporting_records =
-          supporting
-          |> Enum.map(fn ev ->
-            raw_strength = ev.llm_strength || evidence_strength(ev.source_type)
-            strength = if ev.source_type == :sourced, do: raw_strength, else: raw_strength * 0.5
-            case EpistemicLedger.add_evidence(
-              [
-                claim_id: claim.id,
-                summary: ev.summary,
-                direction: :support,
-                strength: strength,
-                confidence: strength,
-                source_type: Atom.to_string(ev.source_type)
-              ],
-              @ledger_name
-            ) do
-              %Models.Evidence{} = record -> record
-              {:error, reason} ->
-                Logger.warning("[investigate] Failed to add supporting evidence: #{inspect(reason)}")
-                nil
-            end
-          end)
-          |> Enum.reject(&is_nil/1)
-
-        opposing_records =
-          opposing
-          |> Enum.map(fn ev ->
-            raw_strength = ev.llm_strength || evidence_strength(ev.source_type)
-            strength = if ev.source_type == :sourced, do: raw_strength, else: raw_strength * 0.5
-            case EpistemicLedger.add_evidence(
-              [
-                claim_id: claim.id,
-                summary: ev.summary,
-                direction: :contradict,
-                strength: strength,
-                confidence: strength,
-                source_type: Atom.to_string(ev.source_type)
-              ],
-              @ledger_name
-            ) do
-              %Models.Evidence{} = record -> record
-              {:error, reason} ->
-                Logger.warning("[investigate] Failed to add opposing evidence: #{inspect(reason)}")
-                nil
-            end
-          end)
-          |> Enum.reject(&is_nil/1)
-
-        # 8. Add assumptions through the real ledger
-        # BUG 4: Check add_assumption return value
-        Enum.each(assumptions, fn a ->
-          risk_val = case a.risk do
-            "high" -> 0.9
-            "medium" -> 0.5
-            "low" -> 0.2
-            _ -> 0.5
-          end
-          case EpistemicLedger.add_assumption(
-            [claim_id: claim.id, text: a.text, risk: risk_val],
-            @ledger_name
-          ) do
-            {:error, reason} ->
-              Logger.warning("[investigate] Failed to add assumption: #{inspect(reason)}")
-            _ -> :ok
-          end
-        end)
-
-        # 9. Literature note -- how many papers found and cited
-        supporting_parsed = Enum.map(supporting, &Map.put(&1, :direction, :support))
-        opposing_parsed = Enum.map(opposing, &Map.put(&1, :direction, :contradict))
-        all_parsed = supporting_parsed ++ opposing_parsed
-
-        cited_count = Enum.count(all_parsed, fn p -> p.source_type == :sourced end)
-        literature_note = "#{length(papers)} papers found, #{cited_count} cited in evidence"
-
-        # 10. Refresh claim -- let the ledger compute Bayesian confidence
-        EpistemicLedger.refresh_claim(claim.id, @ledger_name)
-        state = EpistemicLedger.state(@ledger_name)
-
-        # BUG 9: state.claims[claim.id] can be nil -- add nil check
-        updated_claim = state.claims[claim.id]
-        {confidence, status} = if updated_claim do
-          {updated_claim.confidence, updated_claim.status}
-        else
-          Logger.warning("[investigate] Claim #{claim.id} not found in ledger state after refresh")
-          {0.5, :uncertain}
-        end
-
-        # 11. Persist ledger to disk
-        EpistemicLedger.save(@ledger_name)
-
-        # 12. Determine commitment level
-        fresh_state = EpistemicLedger.state(@ledger_name)
-        all_evidence = fresh_state.evidence
-          |> Map.values()
-          |> Enum.filter(fn ev -> ev.claim_id == claim.id end)
-        has_sourced = Enum.any?(all_evidence, fn ev -> ev.source_type == "sourced" end)
-        commitment = if has_sourced, do: "committed", else: "belief_only"
-
-        # 13. Store in knowledge graph with keywords
-        topic_id = "investigate:" <> short_hash(topic)
-
-        triples = [
-          {topic_id, "rdf:type", "vaos:Investigation"},
-          {topic_id, "vaos:topic", topic},
-          {topic_id, "vaos:confidence", Float.to_string(confidence)},
-          {topic_id, "vaos:status", Atom.to_string(status)},
-          {topic_id, "vaos:commitment", commitment},
-          {topic_id, "vaos:claim_id", claim.id},
-          {topic_id, "vaos:timestamp", DateTime.utc_now() |> DateTime.to_iso8601()}
-        ]
-
-        keyword_triples = Enum.map(keywords, fn kw ->
-          {topic_id, "vaos:keyword", kw}
-        end)
-
-        for triple <- triples ++ keyword_triples do
-          MiosaKnowledge.assert(store, triple)
-        end
-
-        # 13b. Run OWL reasoner to infer new facts from combined old + new triples
-        case MiosaKnowledge.Reasoner.materialize(store) do
-          {:ok, count} when count > 0 ->
-            Logger.info("[investigate] OWL reasoner inferred #{count} new triples")
+        ) do
+          {:error, reason} ->
+            Logger.warning("[investigate] Failed to add assumption: #{inspect(reason)}")
           _ -> :ok
         end
+      end)
 
-        # 13c. Cross-investigation contradiction detection
-        conflicts = detect_contradictions(store, topic_id, status, confidence, keywords)
-        conflict_note = if conflicts == [] do
-          ""
-        else
-          conflict_lines = Enum.map(conflicts, fn c ->
-            "  - #{c.prior_topic} (#{c.prior_id}): #{c.prior_status} @ #{c.prior_confidence} vs current #{Atom.to_string(status)} @ #{Float.round(confidence, 3)}"
-          end)
-          "\n### Cross-Investigation Conflicts\n" <> Enum.join(conflict_lines, "\n") <> "\n"
-        end
+      # 9. Literature note
+      all_final = supporting ++ opposing
+      cited_count = Enum.count(all_final, fn p -> p.source_type == :sourced end)
+      literature_note = "#{length(papers)} papers found, #{cited_count} cited in evidence"
 
-        # 14. Format result
-        result =
-          "## Investigation: " <> topic <> "\n\n" <>
-          "**Commitment**: " <> commitment <> "\n" <>
-          "**Confidence**: " <> Float.to_string(Float.round(confidence, 3)) <> "\n" <>
-          "**Status**: " <> Atom.to_string(status) <> "\n" <>
-          "**Literature**: " <> literature_note <> "\n\n" <>
-          "### Supporting Evidence\n" <> format_evidence_records(supporting_records) <> "\n\n" <>
-          "### Opposing Evidence\n" <> format_evidence_records(opposing_records) <> "\n\n" <>
-          "### Assumptions\n" <> format_assumptions(assumptions) <> "\n" <>
-          conflict_note <>
-          "\n" <>
-          "### Prior Knowledge\n" <>
-          (if prior == [], do: "  None", else: Enum.join(prior, "\n")) <> "\n\n" <>
-          "### Keywords\n  " <> Enum.join(keywords, ", ") <> "\n\n" <>
-          "*Claim ID: " <> claim.id <> " -- stored in knowledge graph as " <> topic_id <> "*"
+      # 10. Refresh claim -- let the ledger compute Bayesian confidence
+      EpistemicLedger.refresh_claim(claim.id, @ledger_name)
+      state = EpistemicLedger.state(@ledger_name)
 
-        # FIX 2: Build JSON result and store in knowledge graph
-        json_result = Jason.encode!(%{
-          topic: topic,
-          commitment: commitment,
-          confidence: confidence,
-          status: Atom.to_string(status),
-          literature: literature_note,
-          papers_found: length(papers),
-          papers_cited: cited_count,
-          supporting: Enum.map(supporting_records, fn ev -> %{summary: ev.summary, strength: ev.strength, source_type: ev.source_type, direction: ev.direction} end),
-          opposing: Enum.map(opposing_records, fn ev -> %{summary: ev.summary, strength: ev.strength, source_type: ev.source_type, direction: ev.direction} end),
-          assumptions: Enum.map(assumptions, fn a -> %{text: a.text, risk: a.risk} end),
-          claim_id: claim.id,
-          investigation_id: topic_id,
-          keywords: keywords
-        })
-        MiosaKnowledge.assert(store, {topic_id, "vaos:json_result", json_result})
+      updated_claim = state.claims[claim.id]
+      {confidence, status} = if updated_claim do
+        {updated_claim.confidence, updated_claim.status}
+      else
+        Logger.warning("[investigate] Claim #{claim.id} not found in ledger state after refresh")
+        {0.5, :uncertain}
+      end
 
-        result = result <> "\n\n<!-- VAOS_JSON:" <> json_result <> " -->"
+      # 11. Persist ledger to disk
+      EpistemicLedger.save(@ledger_name)
 
-        {:ok, result}
+      # 12. Determine commitment level
+      fresh_state = EpistemicLedger.state(@ledger_name)
+      all_evidence_records = fresh_state.evidence
+        |> Map.values()
+        |> Enum.filter(fn ev -> ev.claim_id == claim.id end)
+      has_sourced = Enum.any?(all_evidence_records, fn ev -> ev.source_type == "sourced" end)
+      commitment = if has_sourced, do: "committed", else: "belief_only"
 
-      {:ok, _} ->
-        {:error, "LLM returned empty or unexpected response"}
+      # 13. Store in knowledge graph with keywords
+      topic_id = "investigate:" <> short_hash(topic)
 
-      {:error, reason} ->
-        {:error, "LLM call failed: " <> inspect(reason)}
+      triples = [
+        {topic_id, "rdf:type", "vaos:Investigation"},
+        {topic_id, "vaos:topic", topic},
+        {topic_id, "vaos:confidence", Float.to_string(confidence)},
+        {topic_id, "vaos:status", Atom.to_string(status)},
+        {topic_id, "vaos:commitment", commitment},
+        {topic_id, "vaos:claim_id", claim.id},
+        {topic_id, "vaos:ensemble_runs", Integer.to_string(successful_runs)},
+        {topic_id, "vaos:timestamp", DateTime.utc_now() |> DateTime.to_iso8601()}
+      ]
+
+      keyword_triples = Enum.map(keywords, fn kw ->
+        {topic_id, "vaos:keyword", kw}
+      end)
+
+      for triple <- triples ++ keyword_triples do
+        MiosaKnowledge.assert(store, triple)
+      end
+
+      # ACE: Store helpful/harmful counters for each evidence item in the KG
+      Enum.each(supporting_records ++ opposing_records, fn ev ->
+        ev_id = "evidence:" <> ev.id
+        MiosaKnowledge.assert(store, {topic_id, "vaos:has_evidence", ev_id})
+        MiosaKnowledge.assert(store, {ev_id, "vaos:helpful_count", "0"})
+        MiosaKnowledge.assert(store, {ev_id, "vaos:harmful_count", "0"})
+        MiosaKnowledge.assert(store, {ev_id, "vaos:summary", ev.summary})
+      end)
+
+      # ACE: Increment helpful counters for prior evidence that was reused
+      increment_helpful_counters(store, prior)
+
+      # 13b. Run OWL reasoner
+      case MiosaKnowledge.Reasoner.materialize(store) do
+        {:ok, count} when count > 0 ->
+          Logger.info("[investigate] OWL reasoner inferred #{count} new triples")
+        _ -> :ok
+      end
+
+      # 13c. Cross-investigation contradiction detection
+      conflicts = detect_contradictions(store, topic_id, status, confidence, keywords)
+      conflict_note = if conflicts == [] do
+        ""
+      else
+        conflict_lines = Enum.map(conflicts, fn c ->
+          "  - #{c.prior_topic} (#{c.prior_id}): #{c.prior_status} @ #{c.prior_confidence} vs current #{Atom.to_string(status)} @ #{Float.round(confidence, 3)}"
+        end)
+        "\n### Cross-Investigation Conflicts\n" <> Enum.join(conflict_lines, "\n") <> "\n"
+      end
+
+      # 14. Format result with ACE consensus info
+      consensus_summary = Enum.map(final_evidence, fn ev ->
+        "#{ev.consensus}/#{successful_runs}"
+      end) |> Enum.frequencies()
+      consensus_line = Enum.map(consensus_summary, fn {rating, count} ->
+        "#{count} items at #{rating}"
+      end) |> Enum.join(", ")
+
+      result =
+        "## Investigation: " <> topic <> "\n\n" <>
+        "**Commitment**: " <> commitment <> "\n" <>
+        "**Confidence**: " <> Float.to_string(Float.round(confidence, 3)) <> "\n" <>
+        "**Status**: " <> Atom.to_string(status) <> "\n" <>
+        "**Literature**: " <> literature_note <> "\n" <>
+        "**ACE Ensemble**: #{successful_runs}/3 runs succeeded, consensus: #{consensus_line}\n" <>
+        "**Semantic Dedup**: #{total_dupes} duplicates skipped\n\n" <>
+        "### Supporting Evidence\n" <> format_evidence_records_with_consensus(supporting_records, final_evidence, successful_runs) <> "\n\n" <>
+        "### Opposing Evidence\n" <> format_evidence_records_with_consensus(opposing_records, final_evidence, successful_runs) <> "\n\n" <>
+        "### Assumptions\n" <> format_assumptions(assumptions) <> "\n" <>
+        conflict_note <>
+        "\n" <>
+        "### Prior Knowledge\n" <>
+        (if prior == [], do: "  None", else: Enum.join(prior, "\n")) <> "\n\n" <>
+        "### Keywords\n  " <> Enum.join(keywords, ", ") <> "\n\n" <>
+        "*Claim ID: " <> claim.id <> " -- stored in knowledge graph as " <> topic_id <> "*"
+
+      # Build JSON result with consensus data
+      json_result = Jason.encode!(%{
+        topic: topic,
+        commitment: commitment,
+        confidence: confidence,
+        status: Atom.to_string(status),
+        literature: literature_note,
+        papers_found: length(papers),
+        papers_cited: cited_count,
+        ensemble_runs: successful_runs,
+        semantic_dupes_skipped: total_dupes,
+        supporting: Enum.map(supporting_records, fn ev ->
+          consensus = find_consensus(ev, final_evidence)
+          %{summary: ev.summary, strength: ev.strength, source_type: ev.source_type,
+            direction: ev.direction, consensus: consensus}
+        end),
+        opposing: Enum.map(opposing_records, fn ev ->
+          consensus = find_consensus(ev, final_evidence)
+          %{summary: ev.summary, strength: ev.strength, source_type: ev.source_type,
+            direction: ev.direction, consensus: consensus}
+        end),
+        assumptions: Enum.map(assumptions, fn a -> %{text: a.text, risk: a.risk} end),
+        claim_id: claim.id,
+        investigation_id: topic_id,
+        keywords: keywords
+      })
+      MiosaKnowledge.assert(store, {topic_id, "vaos:json_result", json_result})
+
+      result = result <> "\n\n<!-- VAOS_JSON:" <> json_result <> " -->"
+
+      {:ok, result}
     end
   rescue
     e -> {:error, "Investigation failed: " <> Exception.message(e)}
+  end
+
+  # -- ACE: Add evidence with semantic dedup ---------------------------
+
+  defp add_evidence_with_dedup(evidence_list, claim, direction, existing_evidence) do
+    Enum.reduce(evidence_list, {[], 0}, fn ev, {acc, dupe_count} ->
+      is_duplicate = Enum.any?(existing_evidence, fn existing ->
+        existing.claim_id != claim.id and
+          semantically_similar?(existing.summary, ev.summary)
+      end)
+
+      if is_duplicate do
+        Logger.debug("[investigate] Skipping duplicate evidence: #{String.slice(ev.summary, 0, 50)}")
+        {acc, dupe_count + 1}
+      else
+        raw_strength = ev.llm_strength || evidence_strength(ev.source_type)
+        strength = if ev.source_type == :sourced, do: raw_strength, else: raw_strength * 0.5
+        case EpistemicLedger.add_evidence(
+          [
+            claim_id: claim.id,
+            summary: ev.summary,
+            direction: direction,
+            strength: strength,
+            confidence: strength,
+            source_type: Atom.to_string(ev.source_type)
+          ],
+          @ledger_name
+        ) do
+          %Models.Evidence{} = record -> {[record | acc], dupe_count}
+          {:error, reason} ->
+            Logger.warning("[investigate] Failed to add evidence: #{inspect(reason)}")
+            {acc, dupe_count}
+        end
+      end
+    end)
+    |> then(fn {records, dupe_count} -> {Enum.reverse(records), dupe_count} end)
+  end
+
+  # -- ACE: Semantic similarity for dedup ------------------------------
+
+  defp semantically_similar?(summary1, summary2) do
+    words1 = extract_significant_words(summary1)
+    words2 = extract_significant_words(summary2)
+
+    set1 = MapSet.new(words1)
+    set2 = MapSet.new(words2)
+    intersection = MapSet.intersection(set1, set2) |> MapSet.size()
+    union_size = MapSet.union(set1, set2) |> MapSet.size()
+
+    if union_size == 0, do: false, else: intersection / union_size >= 0.4
+  end
+
+  defp extract_significant_words(text) do
+    text
+    |> String.downcase()
+    |> String.replace(~r/[^a-z0-9\s]/, "")
+    |> String.split(~r/\s+/, trim: true)
+    |> Enum.reject(&(&1 in @stop_words))
+    |> Enum.reject(&(String.length(&1) < 4))
+    |> Enum.take(10)
+  end
+
+  # -- ACE: Parallel ensemble dedup with consensus --------------------
+
+  defp dedup_with_consensus(evidence_list) do
+    {deduped, counts} = Enum.reduce(evidence_list, {[], %{}}, fn ev, {acc, counts} ->
+      case Enum.find(acc, fn existing -> semantically_similar?(existing.summary, ev.summary) end) do
+        nil ->
+          {[ev | acc], Map.put(counts, ev.summary, 1)}
+        existing ->
+          new_count = Map.get(counts, existing.summary, 1) + 1
+          {acc, Map.put(counts, existing.summary, new_count)}
+      end
+    end)
+
+    {Enum.reverse(deduped), counts}
+  end
+
+  defp dedup_assumptions(assumptions_list) do
+    Enum.reduce(assumptions_list, [], fn a, acc ->
+      if Enum.any?(acc, fn existing ->
+        semantically_similar?(existing.text, a.text)
+      end) do
+        acc
+      else
+        [a | acc]
+      end
+    end)
+    |> Enum.reverse()
+  end
+
+  # -- ACE: Helpful counter increment ---------------------------------
+
+  defp increment_helpful_counters(store, prior_entries) do
+    Enum.each(prior_entries, fn prior_text ->
+      case Regex.run(~r/\(id:\s*(investigate:[a-f0-9]+)\)/, prior_text) do
+        [_, prior_id] ->
+          query = "SELECT ?ev ?count WHERE { <#{prior_id}> vaos:has_evidence ?ev . ?ev vaos:helpful_count ?count }"
+          case MiosaKnowledge.sparql(store, query) do
+            {:ok, results} when is_list(results) ->
+              for r <- results do
+                ev_id = Map.get(r, "ev", "")
+                old_count_str = Map.get(r, "count", "0")
+                old_count = case Integer.parse(old_count_str) do
+                  {n, _} -> n
+                  :error -> 0
+                end
+                MiosaKnowledge.retract(store, {ev_id, "vaos:helpful_count", old_count_str})
+                MiosaKnowledge.assert(store, {ev_id, "vaos:helpful_count", Integer.to_string(old_count + 1)})
+                Logger.debug("[investigate] ACE: Incremented helpful count for #{ev_id} to #{old_count + 1}")
+              end
+            _ -> :ok
+          end
+        _ -> :ok
+      end
+    end)
   end
 
   # -- Evidence strength mapping ---------------------------------------
@@ -377,7 +553,6 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     |> Enum.reject(&(&1 in @stop_words))
     |> Enum.reject(&(String.length(&1) < 3))
     |> Enum.flat_map(fn word ->
-      # Basic stemming: add both the word and its stem
       stem = word
         |> String.replace(~r/ing$/, "")
         |> String.replace(~r/tion$/, "t")
@@ -399,19 +574,16 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
   # -- Prior knowledge search -- keyword-based -------------------------
 
   defp fetch_prior_by_keywords(store, keywords) do
-    # Two-phase search: match by topic text OR by stored keyword overlap
     topic_query = "SELECT ?s ?topic WHERE { ?s vaos:topic ?topic . ?s rdf:type vaos:Investigation }"
     kw_query = "SELECT ?s ?kw WHERE { ?s vaos:keyword ?kw . ?s rdf:type vaos:Investigation }"
 
     Logger.debug("[investigate] SPARQL prior search: #{length(keywords)} keywords = #{inspect(keywords)}")
 
-    # Phase 1: Get all investigations with their topics
     topic_results = case MiosaKnowledge.sparql(store, topic_query) do
       {:ok, results} when is_list(results) -> results
       _ -> []
     end
 
-    # Phase 2: Get all investigations with their stored keywords
     kw_results = case MiosaKnowledge.sparql(store, kw_query) do
       {:ok, results} when is_list(results) -> results
       _ -> []
@@ -419,7 +591,6 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
 
     Logger.debug("[investigate] Found #{length(topic_results)} investigation(s), #{length(kw_results)} keyword triple(s)")
 
-    # Build a set of investigation IDs that match by stored keyword overlap
     kw_matched_ids =
       kw_results
       |> Enum.filter(fn bindings ->
@@ -457,10 +628,6 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
 
   # -- Literature search -- alphaXiv/arXiv ---------------------------
 
-  # BUG 6: Removed :inets.start()/:ssl.start() -- moved to run_investigation init
-  # BUG 7: Log non-200 HTTP status codes
-
-  # Try alphaXiv MCP first (semantic embedding search), fall back to arXiv API
   defp search_papers(query) do
     alias OptimalSystemAgent.Tools.Builtins.AlphaXivClient
 
@@ -476,7 +643,6 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
   end
 
   defp search_arxiv(query) do
-    # Use arXiv API (free, no auth, reliable)
     terms = query |> String.split(~r/\s+/) |> Enum.take(5) |> Enum.join("+")
     url = "https://export.arxiv.org/api/query?search_query=all:#{URI.encode(terms)}&max_results=5"
     headers = [{~c"User-Agent", ~c"VAOS/1.0 (https://vaos.sh; mailto:straughter@vaos.sh)"}]
@@ -517,21 +683,17 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     opposing = parse_evidence_section(opp_section)
     assumptions = parse_assumptions_section(asm_section)
 
-    # Deduplicate: if same evidence appears in both supporting and opposing, keep only in supporting
     sup_summaries = MapSet.new(Enum.map(supporting, & &1.summary))
     opposing = Enum.reject(opposing, fn ev -> MapSet.member?(sup_summaries, ev.summary) end)
 
-    # If opposing is now empty (LLM duplicated everything), generate a warning
     if opposing == [] and supporting != [] do
-      Logger.warning("[investigate] LLM returned identical evidence for both sides — opposing section was deduplicated to empty")
+      Logger.warning("[investigate] LLM returned identical evidence for both sides -- opposing section was deduplicated to empty")
     end
 
     {supporting, opposing, assumptions}
   end
 
   defp parse_evidence_section(section) do
-    # Match: N. [VERIFIABLE/REASONING] [Paper N] (strength: N) <evidence>
-    # Paper citation is optional
     ~r/\d+\.\s*\[(VERIFIABLE|REASONING)\]\s*(?:\[Paper\s+(\d+)\]\s*)?(?:\(strength:\s*(\d+)\))?\s*(.+)/i
     |> Regex.scan(section)
     |> Enum.map(fn
@@ -577,7 +739,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
 
   # -- Formatting ------------------------------------------------------
 
-  defp format_evidence_records(records) do
+  defp format_evidence_records_with_consensus(records, final_evidence, total_runs) do
     if records == [] do
       "  (none)"
     else
@@ -585,9 +747,19 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
       |> Enum.with_index(1)
       |> Enum.map(fn {ev, i} ->
         dir = Atom.to_string(ev.direction)
-        "  #{i}. [#{ev.source_type}] #{ev.summary} (strength: #{ev.strength}, direction: #{dir})"
+        consensus = find_consensus(ev, final_evidence)
+        "  #{i}. [#{ev.source_type}] #{ev.summary} (strength: #{ev.strength}, direction: #{dir}, consensus: #{consensus}/#{total_runs})"
       end)
       |> Enum.join("\n")
+    end
+  end
+
+  defp find_consensus(record, final_evidence) do
+    case Enum.find(final_evidence, fn fe ->
+      semantically_similar?(fe.summary, record.summary)
+    end) do
+      nil -> 1
+      found -> Map.get(found, :consensus, 1)
     end
   end
 
@@ -621,7 +793,6 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
   end
 
   defp detect_contradictions(store, current_id, current_status, current_confidence, current_keywords) do
-    # Find prior investigations with overlapping keywords
     case MiosaKnowledge.sparql(store, "SELECT ?s ?topic WHERE { ?s vaos:topic ?topic . ?s rdf:type vaos:Investigation }") do
       {:ok, results} when is_list(results) ->
         results
@@ -634,7 +805,6 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
           prior_id = Map.get(r, "s", "")
           prior_topic = Map.get(r, "topic", "")
 
-          # Get the prior investigation's status and confidence
           case MiosaKnowledge.sparql(store, "SELECT ?status ?conf WHERE { <" <> prior_id <> "> vaos:status ?status . <" <> prior_id <> "> vaos:confidence ?conf }") do
             {:ok, [prior | _]} ->
               prior_status = Map.get(prior, "status", "unknown")
@@ -673,7 +843,6 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
 
   defp store_ref, do: "osa_default"
 
-  # BUG 18: Return errors instead of swallowing them
   defp ensure_store_started do
     case Vaos.Knowledge.open("osa_default") do
       {:ok, _} -> :ok
