@@ -1242,18 +1242,21 @@ Known failure patterns to avoid:
     topic_words = topic |> String.downcase() |> String.split(~r/\s+/, trim: true) |> MapSet.new()
     novel_keywords = Enum.reject(keywords, fn kw -> MapSet.member?(topic_words, kw) end) |> Enum.take(3)
 
-    # SS: only 3 highest-value queries (avoids rate limiting)
+    # Opts for review-specific queries: filter at API level for reviews/meta-analyses
+    review_opts = [publication_types: "Review,MetaAnalysis", type: "review"]
+
+    # SS: only 3 highest-value queries (avoids rate limiting without API key)
     ss_queries = [
       {:topic, topic, []},
-      {:reviews, "systematic review meta-analysis #{topic}", []},
+      {:reviews, "systematic review #{topic}", review_opts},
       {:rct, "randomized controlled trial #{topic}", []}
     ]
 
     # OA: all queries (10 req/s polite pool)
     oa_queries = [
       {:topic, topic, []},
-      {:reviews, "systematic review meta-analysis #{topic}", []},
-      {:cochrane, "Cochrane review #{topic}", []},
+      {:reviews, "systematic review #{topic}", review_opts},
+      {:cochrane, "Cochrane review #{topic}", review_opts},
       {:placebo, "#{topic} placebo controlled trial", []},
       {:consensus, "scientific consensus #{topic}", []},
       {:critique, "#{topic} critical evaluation", []},
