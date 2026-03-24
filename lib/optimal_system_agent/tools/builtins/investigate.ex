@@ -246,11 +246,23 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
       evidence_count = metrics["evidence_count"]
       belief = metrics["belief"]
 
-      direction = cond do
-        uncertainty > 0.6 -> "genuinely_contested"
-        support_score > contradict_score + 0.15 -> "supporting"
-        contradict_score > support_score + 0.15 -> "opposing"
-        true -> "genuinely_contested"
+      # Use the ledger\x27s own claim status as primary signal
+      # The Bayesian belief calculation already incorporates evidence count + strength
+      claim_after = EpistemicLedger.get_claim(claim.id, @ledger_name)
+      ledger_status = if is_map(claim_after), do: Map.get(claim_after, :status, "active"), else: "active"
+      ledger_status_str = if is_atom(ledger_status), do: Atom.to_string(ledger_status), else: to_string(ledger_status)
+
+      direction = case ledger_status_str do
+        "supported" -> "supporting"
+        "falsified" -> "opposing"
+        "contested" -> "genuinely_contested"
+        _ ->
+          # Fallback: use belief directly
+          cond do
+            belief > 0.65 -> "supporting"
+            belief < 0.35 -> "opposing"
+            true -> "genuinely_contested"
+          end
       end
 
       for_strength = case support_score do
