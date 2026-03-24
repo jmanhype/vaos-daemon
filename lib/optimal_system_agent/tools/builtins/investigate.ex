@@ -203,49 +203,66 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     if supporting == [] and opposing == [] do
       {:error, "Both adversarial LLM calls failed"}
     else
-      # 9. Determine direction — average strength + source quality bonus
-      #    (more robust than single best argument; prevents one pedantic 10/10 from dominating)
+      # 9. Create claim and add evidence/attacks to ledger FIRST,
+      #    then use claim_metrics for scoring (AIEQ-Core integration).
+
+      # 9a. Keep best/avg for display purposes
       best_for = Enum.max_by(supporting, fn ev -> ev.strength end, fn -> %{strength: 0, summary: "none"} end)
       best_against = Enum.max_by(opposing, fn ev -> ev.strength end, fn -> %{strength: 0, summary: "none"} end)
 
-      # Average strength for each side (more robust than single best)
-      avg_for = if supporting == [], do: 0,
+      avg_for = if supporting == [], do: 0.0,
         else: Enum.sum(Enum.map(supporting, & &1.strength)) / length(supporting)
-      avg_against = if opposing == [], do: 0,
+      avg_against = if opposing == [], do: 0.0,
         else: Enum.sum(Enum.map(opposing, & &1.strength)) / length(opposing)
 
-      # Also count sourced vs reasoning
       sourced_for = Enum.count(supporting, & &1.source_type == :sourced)
       sourced_against = Enum.count(opposing, & &1.source_type == :sourced)
 
-      # Direction: combine average strength + source quality
-      # Sourced arguments count more: each sourced item adds 0.5 to that side's score
-      for_score = avg_for + (sourced_for * 0.5)
-      against_score = avg_against + (sourced_against * 0.5)
-
-      direction = cond do
-        for_score >= against_score + 1.5 -> "supporting"
-        against_score >= for_score + 1.5 -> "opposing"
-        true -> "genuinely_contested"
-      end
-
-      for_strength = strength_label(best_for.strength)
-      against_strength = strength_label(best_against.strength)
-
-      # 10. Create claim in the real ledger
+      # 9b. Create claim in the epistemic ledger
       claim = EpistemicLedger.add_claim(
         [title: String.slice(topic, 0, 100), statement: topic, tags: ["investigate", "auto", "adversarial"]],
         @ledger_name
       )
 
-      # 11. Add evidence to ledger
+      # 9c. Add FOR arguments as supporting evidence
       supporting_records = add_evidence_to_ledger(supporting, claim, :support)
-      opposing_records = add_evidence_to_ledger(opposing, claim, :contradict)
 
-      # 12. Refresh claim
+      # 9d. Add AGAINST arguments as attacks (falsification attempts)
+      opposing_records = add_attacks_to_ledger(opposing, claim)
+
+      # 9e. Refresh claim to recompute metrics after all evidence/attacks added
       EpistemicLedger.refresh_claim(claim.id, @ledger_name)
 
-      # 13. Persist ledger to disk
+      # 9f. Now use the real ledger metrics for direction
+      metrics = EpistemicLedger.claim_metrics(claim.id, @ledger_name)
+
+      uncertainty = metrics["uncertainty"]
+      support_score = metrics["support_score"]
+      contradict_score = metrics["contradict_score"]
+      open_attack_load = metrics["open_attack_load"]
+      evidence_count = metrics["evidence_count"]
+      belief = metrics["belief"]
+
+      direction = cond do
+        uncertainty > 0.6 -> "genuinely_contested"
+        support_score > contradict_score + 0.15 -> "supporting"
+        contradict_score > support_score + 0.15 -> "opposing"
+        true -> "genuinely_contested"
+      end
+
+      for_strength = case support_score do
+        s when s >= 0.7 -> "strong"
+        s when s >= 0.4 -> "moderate"
+        _ -> "weak"
+      end
+
+      against_strength = case contradict_score do
+        s when s >= 0.7 -> "strong"
+        s when s >= 0.4 -> "moderate"
+        _ -> "weak"
+      end
+
+      # 10. Persist ledger to disk
       EpistemicLedger.save(@ledger_name)
 
       # 14. Store in knowledge graph
@@ -254,15 +271,20 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
 
       json_result = Jason.encode!(%{
         topic: topic,
+        claim_id: claim_id,
         direction: direction,
         for_strength: for_strength,
         against_strength: against_strength,
+        uncertainty: Float.round(uncertainty * 1.0, 3),
+        support_score: Float.round(support_score * 1.0, 3),
+        contradict_score: Float.round(contradict_score * 1.0, 3),
+        attack_pressure: Float.round(open_attack_load * 1.0, 3),
+        belief: Float.round(belief * 1.0, 3),
+        evidence_count: evidence_count,
         best_for_strength: best_for.strength,
         best_against_strength: best_against.strength,
-        avg_for: Float.round(avg_for, 2),
-        avg_against: Float.round(avg_against, 2),
-        for_score: Float.round(for_score, 2),
-        against_score: Float.round(against_score, 2),
+        avg_for: Float.round(avg_for * 1.0, 2),
+        avg_against: Float.round(avg_against * 1.0, 2),
         sourced_for: sourced_for,
         sourced_against: sourced_against,
         supporting: Enum.map(supporting, fn ev ->
@@ -276,8 +298,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
         papers_detail: Enum.map(all_papers, fn p ->
           %{title: p["title"], year: p["year"], citations: p["citation_count"] || p["citationCount"] || 0, source: p["source"] || "unknown"}
         end),
-        investigation_id: topic_id,
-        claim_id: claim_id
+        investigation_id: topic_id
       })
 
       triples = [
@@ -299,13 +320,22 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
         MiosaKnowledge.assert(store, triple)
       end
 
-      # Store helpful/harmful counters for each evidence item
-      Enum.each(supporting_records ++ opposing_records, fn ev ->
+      # Store helpful/harmful counters for supporting evidence
+      Enum.each(supporting_records, fn ev ->
         ev_id = "evidence:" <> ev.id
         MiosaKnowledge.assert(store, {topic_id, "vaos:has_evidence", ev_id})
         MiosaKnowledge.assert(store, {ev_id, "vaos:helpful_count", "0"})
         MiosaKnowledge.assert(store, {ev_id, "vaos:harmful_count", "0"})
         MiosaKnowledge.assert(store, {ev_id, "vaos:summary", ev.summary})
+      end)
+
+      # Store attack records in knowledge graph
+      Enum.each(opposing_records, fn atk ->
+        atk_id = "attack:" <> atk.id
+        MiosaKnowledge.assert(store, {topic_id, "vaos:has_attack", atk_id})
+        MiosaKnowledge.assert(store, {atk_id, "vaos:helpful_count", "0"})
+        MiosaKnowledge.assert(store, {atk_id, "vaos:harmful_count", "0"})
+        MiosaKnowledge.assert(store, {atk_id, "vaos:summary", atk.description})
       end)
 
       # Increment helpful counters for prior evidence that was independently regenerated
@@ -338,8 +368,9 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
       result =
         "## Investigation: #{topic}\n\n" <>
         "**Direction:** #{direction}\n" <>
-        "**Case for:** #{for_strength} (best: #{best_for.strength}/10, avg: #{Float.round(avg_for, 1)}, sourced: #{sourced_for}, score: #{Float.round(for_score, 1)})\n" <>
-        "**Case against:** #{against_strength} (best: #{best_against.strength}/10, avg: #{Float.round(avg_against, 1)}, sourced: #{sourced_against}, score: #{Float.round(against_score, 1)})\n" <>
+        "**Ledger Metrics:** belief=#{Float.round(belief * 1.0, 3)}, uncertainty=#{Float.round(uncertainty * 1.0, 3)}, support=#{Float.round(support_score * 1.0, 3)}, contradict=#{Float.round(contradict_score * 1.0, 3)}, attack_pressure=#{Float.round(open_attack_load * 1.0, 3)}\n" <>
+        "**Case for:** #{for_strength} (best: #{best_for.strength}/10, avg: #{Float.round(avg_for * 1.0, 1)}, sourced: #{sourced_for})\n" <>
+        "**Case against:** #{against_strength} (best: #{best_against.strength}/10, avg: #{Float.round(avg_against * 1.0, 1)}, sourced: #{sourced_against})\n" <>
         "**Papers found:** #{length(all_papers)} (#{format_source_counts(source_counts)})\n\n" <>
         "### Strongest Case FOR\n#{for_arguments}\n\n" <>
         "### Strongest Case AGAINST\n#{against_arguments}\n\n" <>
@@ -437,6 +468,36 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
         %Models.Evidence{} = record -> [record]
         {:error, reason} ->
           Logger.warning("[investigate] Failed to add evidence: #{inspect(reason)}")
+          []
+      end
+    end)
+  end
+
+  # -- Add attacks to ledger (AGAINST arguments = falsification attempts) --
+
+  defp add_attacks_to_ledger(evidence_list, claim) do
+    Enum.flat_map(evidence_list, fn ev ->
+      ledger_severity = ev.strength / 10.0
+      source = if ev.source_type == :sourced, do: "paper", else: "llm_reasoning"
+      case EpistemicLedger.add_attack(
+        [
+          claim_id: claim.id,
+          description: ev.summary,
+          target_kind: "claim",
+          target_id: claim.id,
+          severity: ledger_severity,
+          status: :open,
+          metadata: %{
+            "source" => source,
+            "source_type" => Atom.to_string(ev.source_type),
+            "raw_strength" => ev.strength
+          }
+        ],
+        @ledger_name
+      ) do
+        %Models.Attack{} = record -> [record]
+        {:error, reason} ->
+          Logger.warning("[investigate] Failed to add attack: #{inspect(reason)}")
           []
       end
     end)
