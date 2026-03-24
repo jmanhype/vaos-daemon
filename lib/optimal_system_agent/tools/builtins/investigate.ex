@@ -797,16 +797,19 @@ Known failure patterns to avoid:
     citation_score = if citations > 0, do: :math.log10(citations) / 5.0, else: 0.0
     citation_score = min(citation_score, 1.0)
 
-    # 2. Publication type boost — systematic reviews and meta-analyses
-    # are high-quality evidence regardless of publisher
-    is_review_type = is_review_or_meta_analysis?(title, pub_types)
-
-    # 3. Publisher/journal quality
+    # 2. Publisher/journal quality — low-quality check MUST come first
+    # to prevent review-type boost from laundering garbage journals
     all_text = "#{title} #{source} #{abstract}"
+    is_low_quality = Enum.any?(@low_quality_patterns, &Regex.match?(&1, all_text))
+
+    # 3. Publication type boost — only if NOT from a low-quality source
+    # A "systematic review" in a CAM journal is not the same as one in Cochrane
+    is_review_type = not is_low_quality and is_review_or_meta_analysis?(title, pub_types)
+
     publisher_score = cond do
-      is_review_type -> 0.8  # Reviews/meta-analyses get grounded status
+      is_low_quality -> 0.05  # Low-quality journals always score low, review or not
+      is_review_type -> 0.8   # Reviews from non-garbage sources get grounded
       Enum.any?(@high_quality_patterns, &Regex.match?(&1, all_text)) -> 0.8
-      Enum.any?(@low_quality_patterns, &Regex.match?(&1, all_text)) -> 0.05
       true -> 0.3
     end
 
