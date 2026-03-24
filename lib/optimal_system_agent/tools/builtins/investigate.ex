@@ -106,20 +106,15 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     prompt =
       "Given this topic: \"" <> topic <> "\"\n" <>
       "Prior knowledge from our database: " <> prior_text <> "\n\n" <>
-      "Generate a structured analysis:\n\n" <>
-      "SUPPORTING (3 arguments for this claim):\n" <>
-      "1. [VERIFIABLE/REASONING] <argument>\n" <>
-      "2. [VERIFIABLE/REASONING] <argument>\n" <>
-      "3. [VERIFIABLE/REASONING] <argument>\n\n" <>
-      "OPPOSING (3 arguments against):\n" <>
-      "1. [VERIFIABLE/REASONING] <argument>\n" <>
-      "2. [VERIFIABLE/REASONING] <argument>\n" <>
-      "3. [VERIFIABLE/REASONING] <argument>\n\n" <>
-      "ASSUMPTIONS (2 hidden assumptions this rests on):\n" <>
-      "1. <assumption> (risk: high/medium/low)\n" <>
-      "2. <assumption> (risk: high/medium/low)\n"
+      "Generate ALL evidence relevant to this claim. Do NOT force equal numbers.\n" <>
+      "For each piece of evidence:\n" <>
+      "- Label it SUPPORTING or OPPOSING based on what it actually shows\n" <>
+      "- Tag as [VERIFIABLE] if it could be checked via literature, or [REASONING] if logical analysis\n" <>
+      "- Rate strength 1-10 honestly. Strong empirical evidence = 8-10. Weak speculation = 1-3.\n" <>
+      "- If the evidence overwhelmingly supports one side, reflect that. Do NOT manufacture balance.\n\n" <>
+      "Format:\nSUPPORTING:\n1. [VERIFIABLE/REASONING] (strength: N) <evidence>\n...\n\nOPPOSING:\n1. [VERIFIABLE/REASONING] (strength: N) <evidence>\n...\n\nASSUMPTIONS (2 hidden assumptions this rests on):\n1. <assumption> (risk: high/medium/low)\n2. <assumption> (risk: high/medium/low)\n"
 
-    sys_msg = "You are a rigorous epistemic analyst. Produce exactly the requested format. Each evidence line must start with [VERIFIABLE] or [REASONING] followed by (strength: N) where N is 1-10 rating of how strong/compelling the argument is. 10 = irrefutable empirical evidence, 1 = weak speculation. Be honest and differentiated — do NOT give all arguments the same strength."
+    sys_msg = "You are a rigorous epistemic analyst. Produce exactly the requested format. Each evidence line must start with [VERIFIABLE] or [REASONING] followed by (strength: N) where N is 1-10 rating of how strong/compelling the argument is. 10 = irrefutable empirical evidence, 1 = weak speculation. Be intellectually honest. If the evidence strongly favors one side, do not artificially balance it. Your strength ratings should vary — not every argument is a 7."
 
     messages = [
       %{role: "system", content: sys_msg},
@@ -218,12 +213,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
         literature_note =
           case depth do
             "deep" ->
-              enriched = enrich_all_with_literature(all_parsed, claim.id)
+              enriched = enrich_all_with_literature(all_parsed, claim.id, topic)
               if enriched > 0, do: "#{enriched} evidence items grounded with literature", else: "No literature found"
 
             _ ->
               # Standard: try ONE literature search for best verifiable
-              enrich_best_verifiable(all_parsed, claim.id)
+              enrich_best_verifiable(all_parsed, claim.id, topic)
           end
 
         # 9. Refresh claim -- let the ledger compute Bayesian confidence
@@ -273,7 +268,14 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
           MiosaKnowledge.assert(store, triple)
         end
 
-        # 12b. Cross-investigation contradiction detection
+        # 12b. Run OWL reasoner to infer new facts from combined old + new triples
+        case MiosaKnowledge.Reasoner.materialize(store) do
+          {:ok, count} when count > 0 ->
+            Logger.info("[investigate] OWL reasoner inferred #{count} new triples")
+          _ -> :ok
+        end
+
+        # 12c. Cross-investigation contradiction detection
         conflicts = detect_contradictions(store, topic_id, status, confidence, keywords)
         conflict_note = if conflicts == [] do
           ""
@@ -300,6 +302,24 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
           (if prior == [], do: "  None", else: Enum.join(prior, "\n")) <> "\n\n" <>
           "### Keywords\n  " <> Enum.join(keywords, ", ") <> "\n\n" <>
           "*Claim ID: " <> claim.id <> " -- stored in knowledge graph as " <> topic_id <> "*"
+
+        # FIX 2: Build JSON result and store in knowledge graph
+        json_result = Jason.encode!(%{
+          topic: topic,
+          commitment: commitment,
+          confidence: confidence,
+          status: Atom.to_string(status),
+          literature: literature_note,
+          supporting: Enum.map(supporting_records, fn ev -> %{summary: ev.summary, strength: ev.strength, source_type: ev.source_type, direction: ev.direction} end),
+          opposing: Enum.map(opposing_records, fn ev -> %{summary: ev.summary, strength: ev.strength, source_type: ev.source_type, direction: ev.direction} end),
+          assumptions: Enum.map(assumptions, fn a -> %{text: a.text, risk: a.risk} end),
+          claim_id: claim.id,
+          investigation_id: topic_id,
+          keywords: keywords
+        })
+        MiosaKnowledge.assert(store, {topic_id, "vaos:json_result", json_result})
+
+        result = result <> "\n\n<!-- VAOS_JSON:" <> json_result <> " -->"
 
         {:ok, result}
 
@@ -329,8 +349,24 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     |> String.split(~r/\s+/, trim: true)
     |> Enum.reject(&(&1 in @stop_words))
     |> Enum.reject(&(String.length(&1) < 3))
+    |> Enum.flat_map(fn word ->
+      # Basic stemming: add both the word and its stem
+      stem = word
+        |> String.replace(~r/ing$/, "")
+        |> String.replace(~r/tion$/, "t")
+        |> String.replace(~r/ness$/, "")
+        |> String.replace(~r/ment$/, "")
+        |> String.replace(~r/able$/, "")
+        |> String.replace(~r/ible$/, "")
+        |> String.replace(~r/ly$/, "")
+        |> String.replace(~r/ed$/, "")
+        |> String.replace(~r/er$/, "")
+        |> String.replace(~r/es$/, "")
+        |> String.replace(~r/s$/, "")
+      if stem != word and String.length(stem) >= 3, do: [word, stem], else: [word]
+    end)
     |> Enum.uniq()
-    |> Enum.take(8)
+    |> Enum.take(20)
   end
 
   # -- Prior knowledge search -- keyword-based -------------------------
@@ -447,11 +483,13 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
 
   # Deep: enrich ALL verifiable evidence with literature
   # BUG 20: Use direction from parsed data instead of idx < 3 heuristic
-  defp enrich_all_with_literature(parsed_list, claim_id) do
+  defp enrich_all_with_literature(parsed_list, claim_id, topic) do
+    # FIX 3: Search by topic, not evidence sentence
+    topic_query = "Research on #{topic}. Papers covering empirical evidence, methods, and analysis."
     parsed_list
     |> Enum.reduce(0, fn parsed, count ->
       if parsed.source_type == :verifiable do
-        case search_papers(parsed.summary) do
+        case search_papers(topic_query) do
           {:ok, papers} when papers != [] ->
             paper = List.first(papers)
             # BUG 8: Handle nil year/citationCount from API
@@ -485,14 +523,16 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
   end
 
   # Standard: try ONE literature search for the strongest verifiable claim
-  defp enrich_best_verifiable(parsed_list, claim_id) do
+  defp enrich_best_verifiable(parsed_list, claim_id, topic) do
+    # FIX 3: Search by topic, not evidence sentence
+    topic_query = "Research on #{topic}. Papers covering empirical evidence, methods, and analysis."
     verifiable =
       parsed_list
       |> Enum.filter(fn parsed -> parsed.source_type == :verifiable end)
 
     case verifiable do
       [best_parsed | _] ->
-        case search_papers(best_parsed.summary) do
+        case search_papers(topic_query) do
           {:ok, papers} when papers != [] ->
             paper = List.first(papers)
             # BUG 8: Handle nil year/citationCount from API
@@ -649,9 +689,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
 
               # Check for contradiction: one supported, other contested/unsupported
               current_s = Atom.to_string(current_status)
-              is_conflict = (current_s == "supported" and prior_status in ["contested", "falsified"]) or
-                            (current_s in ["contested", "falsified"] and prior_status == "supported") or
-                            (abs(current_confidence - parse_float(prior_conf)) > 0.3)
+              # FIX 5: Real contradiction = opposite conclusions, not raw confidence diff
+              is_conflict =
+                (current_s == "supported" and prior_status in ["contested", "falsified", "uncertain"]) or
+                (current_s in ["contested", "falsified"] and prior_status == "supported") or
+                (current_s == "supported" and prior_status == "supported" and
+                 abs(current_confidence - parse_float(prior_conf)) > 0.25)
 
               if is_conflict do
                 # Assert the contradiction edge in the knowledge graph
