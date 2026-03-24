@@ -5,6 +5,10 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
   PAPER-FIRST DESIGN: Runs TWO parallel paper searches (evidence FOR and AGAINST),
   then feeds merged papers to TWO adversarial LLM prompts that argue each side.
 
+  Multi-source literature search: Semantic Scholar + OpenAlex + alphaXiv.
+  Uses vaos-ledger's Literature module for Semantic Scholar and OpenAlex,
+  with alphaXiv MCP for embedding-based arXiv search.
+
   Produces an honest direction label (supporting / opposing / genuinely_contested)
   instead of fake confidence numbers. Each side's strength is labeled
   strong / moderate / weak based on the best argument.
@@ -21,6 +25,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
   alias MiosaProviders.Registry, as: Providers
   alias Vaos.Ledger.Epistemic.Ledger, as: EpistemicLedger
   alias Vaos.Ledger.Epistemic.Models
+  alias Vaos.Ledger.Research.Literature
 
   @ledger_path Path.join(System.user_home!(), ".openclaw/investigate_ledger.json")
   @ledger_name :investigate_ledger
@@ -43,8 +48,8 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
 
   @impl true
   def description do
-    "Investigate a claim or topic: runs balanced paper search (FOR and AGAINST), " <>
-      "then dual adversarial LLM analysis. Returns honest direction " <>
+    "Investigate a claim or topic: runs multi-source paper search (Semantic Scholar + OpenAlex + alphaXiv, " <>
+      "FOR and AGAINST), then dual adversarial LLM analysis. Returns honest direction " <>
       "(supporting/opposing/genuinely_contested) with strength labels instead of fake confidence."
   end
 
@@ -102,31 +107,10 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     store = store_ref()
     prior_evidence = fetch_prior_evidence_by_keywords(store, keywords)
 
-    # 4. BALANCED PAPER SEARCH: Two parallel searches (FOR and AGAINST)
-    paper_tasks = [
-      Task.async(fn -> search_papers("evidence supporting #{topic}") end),
-      Task.async(fn -> search_papers("evidence against #{topic}") end)
-    ]
+    # 4. MULTI-SOURCE PAPER SEARCH: Semantic Scholar + OpenAlex + alphaXiv (parallel)
+    {all_papers, source_counts} = search_all_papers(topic)
 
-    [for_papers_result, against_papers_result] = Task.await_many(paper_tasks, 30_000)
-
-    for_papers = case for_papers_result do
-      {:ok, found} when found != [] -> found
-      _ -> []
-    end
-
-    against_papers = case against_papers_result do
-      {:ok, found} when found != [] -> found
-      _ -> []
-    end
-
-    for_count = length(for_papers)
-    against_count = length(against_papers)
-
-    # Merge and dedup papers by title similarity
-    all_papers = merge_papers(for_papers, against_papers)
-
-    Logger.info("[investigate] Papers: #{for_count} via supporting search, #{against_count} via opposing search, #{length(all_papers)} after merge")
+    Logger.info("[investigate] Papers: #{length(all_papers)} total (#{inspect(source_counts)})")
 
     # 5. Format papers context for LLM prompts
     papers_context = format_papers(all_papers)
@@ -288,8 +272,10 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
           %{summary: ev.summary, strength: ev.strength, source_type: ev.source_type}
         end),
         papers_found: length(all_papers),
-        papers_for: for_count,
-        papers_against: against_count,
+        source_counts: source_counts,
+        papers_detail: Enum.map(all_papers, fn p ->
+          %{title: p["title"], year: p["year"], citations: p["citation_count"] || p["citationCount"] || 0, source: p["source"] || "unknown"}
+        end),
         investigation_id: topic_id,
         claim_id: claim_id
       })
@@ -343,7 +329,9 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
       paper_list = all_papers
         |> Enum.with_index(1)
         |> Enum.map(fn {p, i} ->
-          "  [Paper #{i}] #{p["title"]} (#{p["year"]})"
+          citations = p["citation_count"] || p["citationCount"] || 0
+          source = p["source"] || "unknown"
+          "  [Paper #{i}] #{p["title"]} (#{p["year"]}, #{citations} citations, via #{source})"
         end)
         |> Enum.join("\n")
 
@@ -352,7 +340,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
         "**Direction:** #{direction}\n" <>
         "**Case for:** #{for_strength} (best: #{best_for.strength}/10, avg: #{Float.round(avg_for, 1)}, sourced: #{sourced_for}, score: #{Float.round(for_score, 1)})\n" <>
         "**Case against:** #{against_strength} (best: #{best_against.strength}/10, avg: #{Float.round(avg_against, 1)}, sourced: #{sourced_against}, score: #{Float.round(against_score, 1)})\n" <>
-        "**Papers found:** #{length(all_papers)} (#{for_count} via supporting search, #{against_count} via opposing search)\n\n" <>
+        "**Papers found:** #{length(all_papers)} (#{format_source_counts(source_counts)})\n\n" <>
         "### Strongest Case FOR\n#{for_arguments}\n\n" <>
         "### Strongest Case AGAINST\n#{against_arguments}\n\n" <>
         "### Papers Consulted\n#{paper_list}\n" <>
@@ -370,9 +358,8 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
 
   # -- Balanced paper merge with title dedup ----------------------------
 
-  defp merge_papers(list_a, list_b) do
-    combined = list_a ++ list_b
-    Enum.uniq_by(combined, fn p ->
+  defp merge_papers(papers) when is_list(papers) do
+    Enum.uniq_by(papers, fn p ->
       p["title"]
       |> to_string()
       |> String.downcase()
@@ -392,12 +379,17 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     papers_text = papers
       |> Enum.with_index(1)
       |> Enum.map(fn {p, i} ->
-        "[Paper #{i}] #{p["title"]} (#{p["year"]})\nAbstract: #{p["abstract"]}"
+        citations = p["citation_count"] || p["citationCount"] || 0
+        source = p["source"] || "unknown"
+        abstract = String.slice(to_string(p["abstract"] || ""), 0, 500)
+        "[Paper #{i}] #{p["title"]} (#{p["year"]}, #{citations} citations, via #{source})\nAbstract: #{abstract}"
       end)
       |> Enum.join("\n\n")
 
     "RELEVANT PAPERS FOUND:\n" <> papers_text <>
-      "\n\nYou MUST cite specific papers by number [Paper N] when your arguments are based on them."
+      "\n\nPapers are sorted by citation count. Higher-cited papers are more established." <>
+      "\nWhen citing, prefer papers with more citations for stronger arguments." <>
+      "\nYou MUST cite specific papers by number [Paper N] when your arguments are based on them."
   end
 
   # -- Adversarial evidence parsing ------------------------------------
@@ -601,48 +593,167 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
       []
   end
 
-  # -- Literature search -- alphaXiv/arXiv ---------------------------
+  # -- Multi-source literature search: Semantic Scholar + OpenAlex + alphaXiv --
 
-  defp search_papers(query) do
-    alias OptimalSystemAgent.Tools.Builtins.AlphaXivClient
+  defp search_all_papers(topic) do
+    http_fn = literature_http_fn()
 
-    case AlphaXivClient.embedding_search(query) do
-      {:ok, papers} when papers != [] ->
-        Logger.debug("[investigate] alphaXiv returned #{length(papers)} papers")
-        {:ok, papers}
+    tasks = [
+      # Semantic Scholar - supporting evidence
+      Task.async(fn ->
+        case Literature.search_semantic_scholar("evidence supporting #{topic}", http_fn, limit: 5) do
+          {:ok, papers} -> {:semantic_scholar_for, papers}
+          _ -> {:semantic_scholar_for, []}
+        end
+      end),
+      # Semantic Scholar - opposing evidence
+      Task.async(fn ->
+        case Literature.search_semantic_scholar("evidence against #{topic}", http_fn, limit: 5) do
+          {:ok, papers} -> {:semantic_scholar_against, papers}
+          _ -> {:semantic_scholar_against, []}
+        end
+      end),
+      # OpenAlex - supporting evidence
+      Task.async(fn ->
+        case Literature.search_openalex("#{topic} supporting evidence", http_fn, limit: 5) do
+          {:ok, papers} -> {:openalex_for, papers}
+          _ -> {:openalex_for, []}
+        end
+      end),
+      # OpenAlex - opposing evidence
+      Task.async(fn ->
+        case Literature.search_openalex("#{topic} opposing evidence", http_fn, limit: 5) do
+          {:ok, papers} -> {:openalex_against, papers}
+          _ -> {:openalex_against, []}
+        end
+      end),
+      # alphaXiv - embedding search (general, covers both sides)
+      Task.async(fn ->
+        alias OptimalSystemAgent.Tools.Builtins.AlphaXivClient
+        case AlphaXivClient.embedding_search(topic) do
+          {:ok, papers} when papers != [] ->
+            Logger.debug("[investigate] alphaXiv returned #{length(papers)} papers")
+            {:alphaxiv, papers}
+          _ ->
+            Logger.debug("[investigate] alphaXiv unavailable")
+            {:alphaxiv, []}
+        end
+      end)
+    ]
 
-      _ ->
-        Logger.debug("[investigate] alphaXiv unavailable, falling back to arXiv API")
-        search_arxiv(query)
+    results = Task.await_many(tasks, 30_000)
+
+    # Collect source counts
+    source_counts = Enum.reduce(results, %{}, fn {source, papers}, acc ->
+      source_key = case source do
+        :semantic_scholar_for -> :semantic_scholar
+        :semantic_scholar_against -> :semantic_scholar
+        :openalex_for -> :openalex
+        :openalex_against -> :openalex
+        :alphaxiv -> :alphaxiv
+      end
+      Map.update(acc, source_key, length(papers), &(&1 + length(papers)))
+    end)
+
+    # Normalize all papers to common string-key format
+    all_raw = Enum.flat_map(results, fn {_source, papers} ->
+      Enum.map(papers, &normalize_paper_format/1)
+    end)
+
+    # Dedup by title similarity
+    deduped = merge_papers(all_raw)
+
+    # Sort by citation count (most cited first)
+    sorted = Enum.sort_by(deduped, fn p ->
+      -(p["citation_count"] || p["citationCount"] || 0)
+    end)
+    |> Enum.take(15)
+
+    {sorted, source_counts}
+  end
+
+  # Normalize Literature module structs (atom keys) to the string-key format
+  # used throughout investigate.ex
+  defp normalize_paper_format(%{title: t, source: src} = paper) do
+    %{
+      "title" => to_string(t || "Unknown"),
+      "abstract" => to_string(paper[:abstract] || ""),
+      "year" => to_string(paper[:year] || "unknown"),
+      "citation_count" => paper[:citation_count] || 0,
+      "citationCount" => paper[:citation_count] || 0,
+      "source" => to_string(src),
+      "authors" => Enum.join(paper[:authors] || [], ", "),
+      "paper_id" => to_string(paper[:paper_id] || ""),
+      "url" => to_string(paper[:url] || "")
+    }
+  end
+
+  # Already string-keyed (from alphaXiv or legacy formats)
+  defp normalize_paper_format(%{"title" => _} = paper) do
+    Map.merge(%{
+      "citation_count" => 0,
+      "citationCount" => 0,
+      "source" => "alphaxiv",
+      "authors" => "",
+      "abstract" => "",
+      "year" => "unknown"
+    }, paper)
+    |> Map.update("citation_count", 0, fn v -> v || 0 end)
+    |> Map.update("citationCount", 0, fn v -> v || 0 end)
+  end
+
+  defp normalize_paper_format(other) do
+    Logger.warning("[investigate] Unknown paper format: #{inspect(other) |> String.slice(0, 200)}")
+    %{"title" => "Unknown", "abstract" => "", "year" => "unknown",
+      "citation_count" => 0, "citationCount" => 0, "source" => "unknown"}
+  end
+
+  # HTTP adapter for vaos-ledger Literature module — uses Req
+  defp literature_http_fn do
+    fn url, opts ->
+      params = Keyword.get(opts, :params, [])
+      headers = Keyword.get(opts, :headers, [])
+
+      # Build query string from params
+      query_string = case params do
+        [] -> ""
+        kv_list ->
+          kv_list
+          |> Enum.map(fn
+            {k, v} -> "#{URI.encode_www_form(to_string(k))}=#{URI.encode_www_form(to_string(v))}"
+            other -> to_string(other)
+          end)
+          |> Enum.join("&")
+      end
+
+      full_url = if query_string == "", do: url, else: "#{url}?#{query_string}"
+      req_headers = Enum.map(headers, fn {k, v} -> {to_string(k), to_string(v)} end)
+
+      case Req.get(full_url, headers: req_headers, receive_timeout: 15_000) do
+        {:ok, %{status: 200, body: body}} when is_map(body) ->
+          {:ok, body}
+
+        {:ok, %{status: 200, body: body}} when is_binary(body) ->
+          case Jason.decode(body) do
+            {:ok, decoded} -> {:ok, decoded}
+            err -> {:error, {:json_decode_failed, err}}
+          end
+
+        {:ok, %{status: status, body: body}} ->
+          Logger.warning("[investigate] HTTP #{status} from #{url}: #{inspect(body) |> String.slice(0, 200)}")
+          {:error, "HTTP #{status}"}
+
+        {:error, reason} ->
+          Logger.warning("[investigate] HTTP request failed for #{url}: #{inspect(reason)}")
+          {:error, reason}
+      end
     end
   end
 
-  defp search_arxiv(query) do
-    terms = query |> String.split(~r/\s+/) |> Enum.take(5) |> Enum.join("+")
-    url = "https://export.arxiv.org/api/query?search_query=all:#{URI.encode(terms)}&max_results=5"
-    headers = [{~c"User-Agent", ~c"VAOS/1.0 (https://vaos.sh; mailto:straughter@vaos.sh)"}]
-    case :httpc.request(:get, {String.to_charlist(url), headers}, [{:timeout, 15_000}, {:autoredirect, true}], []) do
-      {:ok, {{_, 200, _}, _, body}} ->
-        xml = List.to_string(body)
-        papers = Regex.scan(~r/<entry>[\s\S]*?<\/entry>/, xml)
-        |> Enum.map(fn [entry] ->
-          title = case Regex.run(~r/<title>([^<]+)<\/title>/, entry) do [_, t] -> String.trim(t); _ -> "Unknown" end
-          abstract = case Regex.run(~r/<summary>([\s\S]*?)<\/summary>/, entry) do [_, a] -> String.trim(a) |> String.slice(0, 500); _ -> "" end
-          year = case Regex.run(~r/<published>(\d{4})/, entry) do [_, y] -> y; _ -> "unknown" end
-          %{"title" => title, "abstract" => abstract, "year" => year, "citationCount" => 0}
-        end)
-        {:ok, papers}
-      {:ok, {{_, status_code, reason_phrase}, _, _body}} ->
-        Logger.warning("[investigate] arXiv returned HTTP #{status_code}: #{reason_phrase}")
-        {:error, :search_failed}
-      {:error, reason} ->
-        Logger.warning("[investigate] arXiv request failed: #{inspect(reason)}")
-        {:error, :search_failed}
-    end
-  rescue
-    e ->
-      Logger.warning("[investigate] arXiv exception: #{Exception.message(e)}")
-      {:error, :search_failed}
+  defp format_source_counts(counts) do
+    counts
+    |> Enum.map(fn {source, count} -> "#{count} via #{source}" end)
+    |> Enum.join(", ")
   end
 
   # -- Cross-investigation contradiction detection ---------------------
