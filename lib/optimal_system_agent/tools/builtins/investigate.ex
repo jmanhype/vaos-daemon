@@ -356,9 +356,15 @@ Known failure patterns to avoid:
     against_total = total_against_score
 
     # Direction uses ONLY grounded scores (AEC commitment gating)
+    # Key insight: when ONE side has zero grounded evidence, that's asymmetric search,
+    # not a real verdict. Settled science won't have papers titled "X doesn't work."
     direction = cond do
       grounded_for_score == 0 and grounded_against_score == 0 ->
         "insufficient_grounded_evidence"
+      grounded_against_score == 0 and grounded_for_score > 0 ->
+        "asymmetric_evidence_for"
+      grounded_for_score == 0 and grounded_against_score > 0 ->
+        "asymmetric_evidence_against"
       grounded_for_score > grounded_against_score * 1.3 -> "supporting"
       grounded_against_score > grounded_for_score * 1.3 -> "opposing"
       true -> "genuinely_contested"
