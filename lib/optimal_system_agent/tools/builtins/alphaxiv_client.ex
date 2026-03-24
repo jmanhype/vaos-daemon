@@ -72,8 +72,9 @@ defmodule OptimalSystemAgent.Tools.Builtins.AlphaXivClient do
       _pid ->
         try do
           case Anubis.Client.call_tool(@client_name, tool_name, params, timeout: 30_000) do
-            {:ok, %{result: result}} -> {:ok, extract_content(result)}
-            {:ok, response} -> {:ok, extract_content(response)}
+            {:ok, response} ->
+              Logger.debug("[alphaxiv] Got response: #{inspect(response) |> String.slice(0, 300)}")
+              {:ok, response}
             {:error, _} = err -> err
           end
         rescue
