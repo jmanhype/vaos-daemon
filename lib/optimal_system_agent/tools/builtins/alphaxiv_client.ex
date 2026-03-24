@@ -36,16 +36,20 @@ defmodule OptimalSystemAgent.Tools.Builtins.AlphaXivClient do
   @doc "Search papers by semantic embedding similarity"
   def embedding_search(query) do
     case call_tool("embedding_similarity_search", %{"query" => query}) do
-      {:ok, results} -> {:ok, parse_papers(results)}
-      error -> error
+      {:ok, response} -> {:ok, extract_papers(response)}
+      error ->
+        Logger.debug("[alphaxiv] embedding_search error: #{inspect(error)}")
+        error
     end
   end
 
   @doc "Search papers by keywords"
   def keyword_search(query) do
     case call_tool("full_text_papers_search", %{"query" => query}) do
-      {:ok, results} -> {:ok, parse_papers(results)}
-      error -> error
+      {:ok, response} -> {:ok, extract_papers(response)}
+      error ->
+        Logger.debug("[alphaxiv] keyword_search error: #{inspect(error)}")
+        error
     end
   end
 
@@ -99,18 +103,68 @@ defmodule OptimalSystemAgent.Tools.Builtins.AlphaXivClient do
   defp extract_content(result) when is_map(result), do: [result]
   defp extract_content(_), do: []
 
-  defp parse_papers(results) when is_list(results) do
-    Enum.map(results, fn paper ->
+  defp extract_papers(response) do
+    # MCP Response has content: [%{"type" => "text", "text" => "..."}]
+    # The text contains the paper results, possibly as JSON or formatted text
+    text = extract_text(response)
+
+    # Try to parse as JSON first
+    case Jason.decode(text) do
+      {:ok, papers} when is_list(papers) ->
+        Enum.map(papers, &normalize_paper/1)
+      {:ok, %{"papers" => papers}} when is_list(papers) ->
+        Enum.map(papers, &normalize_paper/1)
+      {:ok, %{"results" => papers}} when is_list(papers) ->
+        Enum.map(papers, &normalize_paper/1)
+      _ ->
+        # Parse structured text response
+        parse_text_papers(text)
+    end
+  end
+
+  defp extract_text(response) when is_binary(response), do: response
+  defp extract_text(%{content: content}) when is_list(content) do
+    content
+    |> Enum.filter(fn item -> is_map(item) and Map.get(item, "type") == "text" end)
+    |> Enum.map(fn item -> Map.get(item, "text", "") end)
+    |> Enum.join("\n")
+  end
+  defp extract_text(%{result: result}) when is_map(result) do
+    case Map.get(result, "content") do
+      content when is_list(content) -> extract_text(%{content: content})
+      _ -> inspect(result)
+    end
+  end
+  defp extract_text(other) do
+    Logger.debug("[alphaxiv] Unexpected response format: #{inspect(other) |> String.slice(0, 200)}")
+    ""
+  end
+
+  defp normalize_paper(paper) when is_map(paper) do
+    %{
+      "title" => Map.get(paper, "title", "Unknown"),
+      "abstract" => (Map.get(paper, "abstract", "") || "") |> to_string() |> String.slice(0, 200),
+      "year" => (Map.get(paper, "publicationDate", Map.get(paper, "year", "unknown")) || "unknown") |> to_string() |> String.slice(0, 4),
+      "citationCount" => Map.get(paper, "likes", Map.get(paper, "citationCount", 0)) || 0,
+      "arxivId" => Map.get(paper, "arxivId", Map.get(paper, "id", "")) || ""
+    }
+  end
+  defp normalize_paper(_), do: %{"title" => "Unknown", "abstract" => "", "year" => "unknown", "citationCount" => 0, "arxivId" => ""}
+
+  defp parse_text_papers(text) do
+    # Extract papers from alphaXiv formatted text response
+    # Pattern: [ID=XXXX] **Title**. Published on DATE by ORG: Abstract...
+    Regex.scan(~r/\[ID=([^\]]+)\]\s*\*\*([^*]+)\*\*\.\s*Published on (\d{4})[^:]*:(.+?)(?=\[ID=|\z)/s, text)
+    |> Enum.map(fn [_, id, title, year, abstract] ->
       %{
-        "title" => Map.get(paper, "title", "Unknown"),
-        "abstract" => Map.get(paper, "abstract", "") |> String.slice(0, 200),
-        "year" => Map.get(paper, "publicationDate", Map.get(paper, "year", "unknown")) |> to_string() |> String.slice(0, 4),
-        "citationCount" => Map.get(paper, "likes", Map.get(paper, "citationCount", 0)),
-        "arxivId" => Map.get(paper, "arxivId", "")
+        "title" => String.trim(title),
+        "abstract" => String.trim(abstract) |> String.slice(0, 200),
+        "year" => year,
+        "citationCount" => 0,
+        "arxivId" => String.trim(id)
       }
     end)
   end
-  defp parse_papers(_), do: []
 
   defp load_auth_headers do
     case File.read(@token_path) do
