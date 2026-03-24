@@ -845,22 +845,6 @@ Known failure patterns to avoid:
     end)
   end
 
-  # -- Balanced paper merge with title dedup ----------------------------
-
-  defp merge_papers(papers) when is_list(papers) do
-    Enum.uniq_by(papers, fn p ->
-      p["title"]
-      |> to_string()
-      |> String.downcase()
-      |> String.replace(~r/[^a-z0-9\s]/, "")
-      |> String.split()
-      |> Enum.reject(&(String.length(&1) < 4))
-      |> Enum.sort()
-      |> Enum.take(5)
-      |> Enum.join(" ")
-    end)
-  end
-
   # -- Format papers for LLM context -----------------------------------
 
   defp format_papers([]), do: "No relevant papers found. Base your arguments on your training knowledge, but mark everything as [REASONING]."
@@ -1182,25 +1166,28 @@ Known failure patterns to avoid:
 
   defp search_all_papers(topic, keywords \\ []) do
     http_fn = literature_http_fn()
-    queries = build_search_queries(topic, keywords)
+    {ss_queries, oa_queries} = build_search_queries(topic, keywords)
 
-    # Build search tasks from query pairs (SS + OA for each query)
-    api_tasks = Enum.flat_map(queries, fn {label, query, opts} ->
+    # SS gets fewer queries to avoid rate limiting (unauthenticated: ~1 req/s)
+    ss_tasks = Enum.map(ss_queries, fn {label, query, opts} ->
       search_opts = Keyword.merge([limit: 5], opts)
-      [
-        Task.async(fn ->
-          case Literature.search_semantic_scholar(query, http_fn, search_opts) do
-            {:ok, papers} -> {:"ss_#{label}", papers}
-            _ -> {:"ss_#{label}", []}
-          end
-        end),
-        Task.async(fn ->
-          case Literature.search_openalex(query, http_fn, search_opts) do
-            {:ok, papers} -> {:"oa_#{label}", papers}
-            _ -> {:"oa_#{label}", []}
-          end
-        end)
-      ]
+      Task.async(fn ->
+        case Literature.search_semantic_scholar(query, http_fn, search_opts) do
+          {:ok, papers} -> {:"ss_#{label}", papers}
+          _ -> {:"ss_#{label}", []}
+        end
+      end)
+    end)
+
+    # OA is more generous with rate limits — send all queries
+    oa_tasks = Enum.map(oa_queries, fn {label, query, opts} ->
+      search_opts = Keyword.merge([limit: 5], opts)
+      Task.async(fn ->
+        case Literature.search_openalex(query, http_fn, search_opts) do
+          {:ok, papers} -> {:"oa_#{label}", papers}
+          _ -> {:"oa_#{label}", []}
+        end
+      end)
     end)
 
     # alphaXiv embedding search (always included, covers both sides)
@@ -1216,7 +1203,7 @@ Known failure patterns to avoid:
       end
     end)
 
-    results = Task.await_many(api_tasks ++ [alphaxiv_task], 30_000)
+    results = Task.await_many(ss_tasks ++ oa_tasks ++ [alphaxiv_task], 30_000)
 
     # Collect source counts
     source_counts = Enum.reduce(results, %{}, fn {source, papers}, acc ->
@@ -1249,38 +1236,38 @@ Known failure patterns to avoid:
     {sorted, source_counts}
   end
 
-  # Build search queries from topic and keywords.
-  # Returns [{label, query_string, opts}] — each gets sent to both SS and OA.
+  # Build search queries split by API. SS gets 3 queries (rate limit safe),
+  # OA gets all 7+ (generous rate limits). Returns {ss_queries, oa_queries}.
   defp build_search_queries(topic, keywords) do
-    # Build keyword-augmented query only if keywords add new terms
     topic_words = topic |> String.downcase() |> String.split(~r/\s+/, trim: true) |> MapSet.new()
     novel_keywords = Enum.reject(keywords, fn kw -> MapSet.member?(topic_words, kw) end) |> Enum.take(3)
 
-    base = [
-      # Direct topic search (most natural query)
+    # SS: only 3 highest-value queries (avoids rate limiting)
+    ss_queries = [
       {:topic, topic, []},
-      # Systematic reviews and meta-analyses (highest quality evidence)
       {:reviews, "systematic review meta-analysis #{topic}", []},
-      # Cochrane reviews (gold standard for medical/health topics)
-      {:cochrane, "Cochrane review #{topic}", []},
-      # Placebo-controlled studies (strong experimental evidence)
-      {:placebo, "#{topic} placebo controlled trial", []},
-      # Scientific consensus queries
-      {:consensus, "scientific consensus #{topic}", []},
-      # Critical evaluation (finds evaluation papers, not just topic papers)
-      {:critique, "#{topic} critical evaluation", []},
-      # Randomized controlled trials
       {:rct, "randomized controlled trial #{topic}", []}
     ]
 
-    # Only add keyword query if it differs from plain topic search
-    keyword_query = if novel_keywords != [] do
-      [{:keywords, "#{topic} #{Enum.join(novel_keywords, " ")}", []}]
+    # OA: all queries (10 req/s polite pool)
+    oa_queries = [
+      {:topic, topic, []},
+      {:reviews, "systematic review meta-analysis #{topic}", []},
+      {:cochrane, "Cochrane review #{topic}", []},
+      {:placebo, "#{topic} placebo controlled trial", []},
+      {:consensus, "scientific consensus #{topic}", []},
+      {:critique, "#{topic} critical evaluation", []},
+      {:rct, "randomized controlled trial #{topic}", []}
+    ]
+
+    # Add keyword-augmented query to OA only if novel keywords exist
+    oa_queries = if novel_keywords != [] do
+      oa_queries ++ [{:keywords, "#{topic} #{Enum.join(novel_keywords, " ")}", []}]
     else
-      []
+      oa_queries
     end
 
-    base ++ keyword_query
+    {ss_queries, oa_queries}
   end
 
   # Categorize source labels into summary keys
@@ -1311,35 +1298,39 @@ Known failure patterns to avoid:
   end
 
   # Filter papers by topic-term overlap. Returns {relevant_papers, dropped_count}.
-  defp filter_relevant(papers, topic, keywords) do
-    # Build set of terms to check against
-    topic_terms = topic
+  # Uses only distinctive terms (>= 5 chars, no stems) to avoid matching everything.
+  defp filter_relevant(papers, topic, _keywords) do
+    # Extract distinctive terms from topic — skip short/generic words and stems
+    distinctive_terms = topic
     |> String.downcase()
     |> String.replace(~r/[^a-z0-9\s\-]/, " ")
     |> String.split(~r/\s+/, trim: true)
     |> Enum.reject(&(&1 in @stop_words))
-    |> Enum.reject(&(String.length(&1) < 3))
+    |> Enum.reject(&(String.length(&1) < 5))
 
-    all_terms = MapSet.new(topic_terms ++ keywords)
+    # If no distinctive terms found, skip filtering entirely
+    if distinctive_terms == [] do
+      {papers, 0}
+    else
+      {relevant, dropped} = Enum.split_with(papers, fn paper ->
+        {title, abstract} = case paper do
+          %{title: t, abstract: a} -> {t, a}
+          %{"title" => t, "abstract" => a} -> {t, a}
+          _ -> {"", ""}
+        end
 
-    {relevant, dropped} = Enum.split_with(papers, fn paper ->
-      {title, abstract} = case paper do
-        %{title: t, abstract: a} -> {t, a}
-        %{"title" => t, "abstract" => a} -> {t, a}
-        _ -> {"", ""}
-      end
+        paper_text = "#{title} #{abstract}"
+        |> String.downcase()
+        |> String.replace(~r/[^a-z0-9\s\-]/, " ")
 
-      paper_text = "#{title} #{abstract}"
-      |> String.downcase()
-      |> String.replace(~r/[^a-z0-9\s\-]/, " ")
-
-      # At least one topic term must appear in the paper's title or abstract
-      Enum.any?(all_terms, fn term ->
-        String.contains?(paper_text, term)
+        # At least one distinctive topic term must appear in title or abstract
+        Enum.any?(distinctive_terms, fn term ->
+          String.contains?(paper_text, term)
+        end)
       end)
-    end)
 
-    {relevant, length(dropped)}
+      {relevant, length(dropped)}
+    end
   end
 
   # Normalize Literature module structs (atom keys) to the string-key format
