@@ -57,9 +57,31 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
   # Belief store: low-quality sources for context only (cannot flip direction)
   @grounded_threshold 0.4
 
-  @high_quality_publishers ~w(nature science lancet bmj nejm cochrane jama plos
-    cell annual_review pnas wiley springer elsevier oxford cambridge ieee acm
-    american_medical american_psychological british_medical world_health)
+  # Word-boundary patterns to avoid false positives on common words like "cell", "nature", "science"
+  @high_quality_patterns [
+    ~r/\bnature\b(?!\s+of\b)/i,
+    ~r/\bscience\b(?!\s+of\b|\s+fiction\b)/i,
+    ~r/\blancet\b/i,
+    ~r/\bbmj\b/i,
+    ~r/\bnejm\b/i,
+    ~r/\bcochrane\b/i,
+    ~r/\bjama\b/i,
+    ~r/\bplos\b/i,
+    ~r/\bcell\s+(press|reports|research|biology|metabolism|host|systems|stem|chemical)\b/i,
+    ~r/\bannual\s+review/i,
+    ~r/\bpnas\b/i,
+    ~r/\bwiley\b/i,
+    ~r/\bspringer\b/i,
+    ~r/\belsevier\b/i,
+    ~r/\boxford\s+(university|academic|press)/i,
+    ~r/\bcambridge\s+(university|press)/i,
+    ~r/\bieee\b/i,
+    ~r/\bacm\b/i,
+    ~r/\bamerican\s+medical/i,
+    ~r/\bamerican\s+psychological/i,
+    ~r/\bbritish\s+medical/i,
+    ~r/\bworld\s+health/i
+  ]
 
   @low_quality_patterns [
     ~r/journal.of.alternative/i,
@@ -113,8 +135,10 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
 
   @impl true
   def execute(args) do
-    topic = Map.get(args, "topic", "")
-    depth = Map.get(args, "depth", "standard")
+    topic = Map.get(args, "topic") || ""
+    depth = Map.get(args, "depth") || "standard"
+
+    topic = String.trim(to_string(topic))
 
     if topic == "" do
       {:error, "Missing topic"}
@@ -319,7 +343,9 @@ Known failure patterns to avoid:
                           source_counts, keywords, prior_evidence, store, depth)
     end
   rescue
-    e -> {:error, "Investigation failed: " <> Exception.message(e)}
+    e ->
+      Logger.error("[investigate] Investigation failed: #{Exception.message(e)}\n#{Exception.format_stacktrace(__STACKTRACE__)}")
+      {:error, "Investigation failed: " <> Exception.message(e)}
   end
 
   # -- Full analysis (both sides succeeded) ------------------------------
@@ -773,7 +799,7 @@ Known failure patterns to avoid:
     # 2. Publisher/journal quality
     all_text = "#{title} #{source} #{abstract}"
     publisher_score = cond do
-      Enum.any?(@high_quality_publishers, &String.contains?(all_text, &1)) -> 0.8
+      Enum.any?(@high_quality_patterns, &Regex.match?(&1, all_text)) -> 0.8
       Enum.any?(@low_quality_patterns, &Regex.match?(&1, all_text)) -> 0.05
       true -> 0.3
     end
@@ -1006,7 +1032,7 @@ Known failure patterns to avoid:
         set2 = MapSet.new(ev_words)
         intersection = MapSet.intersection(set1, set2) |> MapSet.size()
         union_size = MapSet.union(set1, set2) |> MapSet.size()
-        union_size > 0 and intersection / union_size >= 0.3
+        union_size > 0 and (intersection * 1.0 / union_size) >= 0.3
       end)
 
       if was_reused do
@@ -1369,7 +1395,11 @@ Known failure patterns to avoid:
 
   defp ensure_scorer_cache do
     if :ets.whereis(:scorer_cache) == :undefined do
-      :ets.new(:scorer_cache, [:set, :public, :named_table])
+      try do
+        :ets.new(:scorer_cache, [:set, :public, :named_table])
+      rescue
+        ArgumentError -> :ok  # Another process created it between whereis and new
+      end
     end
 
     :ok
@@ -1489,12 +1519,20 @@ Known failure patterns to avoid:
                   summary = String.slice(research.idea || "", 0, 200)
                   method_summary = String.slice(research.methodology || "", 0, 200)
 
+                  # Determine direction from hypothesis/summary content
+                  research_direction = cond do
+                    Regex.match?(~r/\b(refut|contra|disprove|against|fail|negat|not\s+support)\b/i, hypothesis <> " " <> summary) ->
+                      :oppose
+                    true ->
+                      :support
+                  end
+
                   # Add finding as new evidence to the ledger
                   EpistemicLedger.add_evidence(
                     [
                       claim_id: claim.id,
                       summary: "Deep research finding: #{summary}",
-                      direction: :support,
+                      direction: research_direction,
                       strength: 0.3,
                       confidence: 0.3,
                       source_type: "research_pipeline",
@@ -1600,8 +1638,10 @@ Known failure patterns to avoid:
   defp ensure_ledger_started do
     case Process.whereis(@ledger_name) do
       nil ->
-        {:ok, _pid} = EpistemicLedger.start_link(path: @ledger_path, name: @ledger_name)
-        :ok
+        case EpistemicLedger.start_link(path: @ledger_path, name: @ledger_name) do
+          {:ok, _pid} -> :ok
+          {:error, {:already_started, _pid}} -> :ok  # Another process started it between whereis and start_link
+        end
       _pid ->
         :ok
     end
