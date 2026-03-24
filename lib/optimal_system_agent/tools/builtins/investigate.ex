@@ -483,15 +483,106 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
   # -- ACE: Parallel ensemble dedup with consensus --------------------
 
   defp dedup_with_consensus(evidence_list) do
-    {deduped, counts} = Enum.reduce(evidence_list, {[], %{}}, fn ev, {acc, counts} ->
-      case Enum.find(acc, fn existing -> semantically_similar?(existing.summary, ev.summary) end) do
-        nil ->
-          {[ev | acc], Map.put(counts, ev.summary, 1)}
-        existing ->
-          new_count = Map.get(counts, existing.summary, 1) + 1
-          {acc, Map.put(counts, existing.summary, new_count)}
+    if length(evidence_list) <= 3 do
+      # Too few to dedup, just return them all with consensus 1
+      counts = Map.new(evidence_list, fn ev -> {ev.summary, 1} end)
+      {evidence_list, counts}
+    else
+      case llm_dedup(evidence_list) do
+        {:ok, groups} ->
+          # For each group, pick the best item (highest strength), set consensus = group size
+          {deduped, counts} =
+            Enum.reduce(groups, {[], %{}}, fn group, {acc, counts} ->
+              best = Enum.max_by(group, fn ev -> ev.llm_strength || 0 end)
+              {[best | acc], Map.put(counts, best.summary, length(group))}
+            end)
+
+          {Enum.reverse(deduped), counts}
+
+        {:error, reason} ->
+          Logger.warning("[investigate] LLM dedup failed (#{inspect(reason)}), falling back to Jaccard")
+          jaccard_dedup_with_consensus(evidence_list)
       end
-    end)
+    end
+  end
+
+  defp llm_dedup(evidence_list) do
+    numbered =
+      evidence_list
+      |> Enum.with_index(1)
+      |> Enum.map(fn {ev, i} -> "#{i}. [#{ev.direction}] #{ev.summary}" end)
+      |> Enum.join("\n")
+
+    prompt =
+      "You are deduplicating evidence items from multiple analysis runs.\n" <>
+        "Group the following evidence items by semantic similarity — items making the same argument should be in the same group.\n\n" <>
+        "Evidence items:\n#{numbered}\n\n" <>
+        "Return ONLY a JSON array of groups. Each group is an array of item numbers.\n" <>
+        "Example: [[1, 5, 9], [2, 7], [3], [4, 6, 8], [10]]\n\n" <>
+        "Items in the same group are making the same core argument even if worded differently.\n" <>
+        "Items that are genuinely distinct should be in their own group."
+
+    messages = [%{role: "user", content: prompt}]
+
+    model = Application.get_env(:optimal_system_agent, :utility_model)
+    llm_opts = [temperature: 0.0, max_tokens: 500]
+    llm_opts = if model, do: Keyword.put(llm_opts, :model, model), else: llm_opts
+
+    case Providers.chat(messages, llm_opts) do
+      {:ok, %{content: response}} when is_binary(response) ->
+        # Extract JSON array from response
+        case Regex.run(~r/\[[\s\S]*\]/, response) do
+          [json_str] ->
+            case Jason.decode(json_str) do
+              {:ok, groups} when is_list(groups) ->
+                # Convert number groups to evidence item groups
+                indexed =
+                  evidence_list
+                  |> Enum.with_index(1)
+                  |> Map.new(fn {ev, i} -> {i, ev} end)
+
+                evidence_groups =
+                  groups
+                  |> Enum.map(fn group ->
+                    group
+                    |> Enum.map(fn idx -> Map.get(indexed, idx) end)
+                    |> Enum.reject(&is_nil/1)
+                  end)
+                  |> Enum.reject(&(&1 == []))
+
+                {:ok, evidence_groups}
+
+              _ ->
+                {:error, :json_parse_failed}
+            end
+
+          _ ->
+            {:error, :no_json_found}
+        end
+
+      {:ok, _} ->
+        {:error, :unexpected_response_format}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  # Jaccard fallback (original dedup implementation)
+  defp jaccard_dedup_with_consensus(evidence_list) do
+    {deduped, counts} =
+      Enum.reduce(evidence_list, {[], %{}}, fn ev, {acc, counts} ->
+        case Enum.find(acc, fn existing ->
+               semantically_similar?(existing.summary, ev.summary)
+             end) do
+          nil ->
+            {[ev | acc], Map.put(counts, ev.summary, 1)}
+
+          existing ->
+            new_count = Map.get(counts, existing.summary, 1) + 1
+            {acc, Map.put(counts, existing.summary, new_count)}
+        end
+      end)
 
     {Enum.reverse(deduped), counts}
   end
