@@ -60,7 +60,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
   # Word-boundary patterns to avoid false positives on common words like "cell", "nature", "science"
   @high_quality_patterns [
     ~r/\bnature\b(?!\s+of\b)/i,
-    ~r/\bscience\b(?!\s+of\b|\s+fiction\b)/i,
+    ~r/(?<!\bcomputer\s)(?<!\bdata\s)\bscience\b(?!\s+of\b|\s+fiction\b)/i,
     ~r/\blancet\b/i,
     ~r/\bbmj\b/i,
     ~r/\bnejm\b/i,
@@ -178,8 +178,8 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     prior_evidence = fetch_prior_evidence_by_keywords(store, keywords)
 
     # 4. MULTI-SOURCE PAPER SEARCH: Semantic Scholar + OpenAlex + alphaXiv (parallel)
-    #    Now includes a THIRD pair specifically for systematic reviews / meta-analyses
-    {all_papers, source_counts} = search_all_papers(topic)
+    #    Uses extracted keywords to augment queries for better relevance
+    {all_papers, source_counts} = search_all_papers(topic, keywords)
 
     Logger.info("[investigate] Papers: #{length(all_papers)} total (#{inspect(source_counts)})")
 
@@ -791,21 +791,42 @@ Known failure patterns to avoid:
     source = (paper["source"] || "") |> String.downcase()
     abstract = (paper["abstract"] || "") |> String.downcase()
     citations = paper["citation_count"] || paper["citationCount"] || 0
+    pub_types = paper["publicationTypes"] || []
 
     # 1. Citation count score (log scale, normalized to 0-1)
     citation_score = if citations > 0, do: :math.log10(citations) / 5.0, else: 0.0
     citation_score = min(citation_score, 1.0)
 
-    # 2. Publisher/journal quality
+    # 2. Publication type boost — systematic reviews and meta-analyses
+    # are high-quality evidence regardless of publisher
+    is_review_type = is_review_or_meta_analysis?(title, pub_types)
+
+    # 3. Publisher/journal quality
     all_text = "#{title} #{source} #{abstract}"
     publisher_score = cond do
+      is_review_type -> 0.8  # Reviews/meta-analyses get grounded status
       Enum.any?(@high_quality_patterns, &Regex.match?(&1, all_text)) -> 0.8
       Enum.any?(@low_quality_patterns, &Regex.match?(&1, all_text)) -> 0.05
       true -> 0.3
     end
 
-    # 3. Combined (citation weight + publisher weight)
+    # 4. Combined (citation weight + publisher weight)
     Float.round(citation_score * 0.5 + publisher_score * 0.5, 3)
+  end
+
+  # Detect systematic reviews and meta-analyses from publicationTypes field or title keywords
+  defp is_review_or_meta_analysis?(title, pub_types) do
+    type_match = Enum.any?(List.wrap(pub_types), fn t ->
+      t_lower = String.downcase(to_string(t))
+      t_lower in ["review", "meta-analysis", "metaanalysis", "systematic review"]
+    end)
+
+    title_match = Regex.match?(
+      ~r/\b(systematic\s+review|meta[\-\s]?analysis|cochrane|umbrella\s+review)\b/i,
+      title
+    )
+
+    type_match or title_match
   end
 
   defp classify_evidence_store(verified_evidence, paper_map) do
@@ -1159,96 +1180,162 @@ Known failure patterns to avoid:
 
   # -- Multi-source literature search: Semantic Scholar + OpenAlex + alphaXiv --
 
-  defp search_all_papers(topic) do
+  defp search_all_papers(topic, keywords \\ []) do
     http_fn = literature_http_fn()
+    queries = build_search_queries(topic, keywords)
 
-    tasks = [
-      # Semantic Scholar - supporting evidence
-      Task.async(fn ->
-        case Literature.search_semantic_scholar("evidence supporting #{topic}", http_fn, limit: 5) do
-          {:ok, papers} -> {:semantic_scholar_for, papers}
-          _ -> {:semantic_scholar_for, []}
-        end
-      end),
-      # Semantic Scholar - opposing evidence
-      Task.async(fn ->
-        case Literature.search_semantic_scholar("evidence against #{topic}", http_fn, limit: 5) do
-          {:ok, papers} -> {:semantic_scholar_against, papers}
-          _ -> {:semantic_scholar_against, []}
-        end
-      end),
-      # OpenAlex - supporting evidence
-      Task.async(fn ->
-        case Literature.search_openalex("#{topic} supporting evidence", http_fn, limit: 5) do
-          {:ok, papers} -> {:openalex_for, papers}
-          _ -> {:openalex_for, []}
-        end
-      end),
-      # OpenAlex - opposing evidence
-      Task.async(fn ->
-        case Literature.search_openalex("#{topic} opposing evidence", http_fn, limit: 5) do
-          {:ok, papers} -> {:openalex_against, papers}
-          _ -> {:openalex_against, []}
-        end
-      end),
-      # Systematic review / meta-analysis search (highest quality evidence)
-      Task.async(fn ->
-        case Literature.search_openalex("systematic review OR meta-analysis #{topic}", http_fn, limit: 5) do
-          {:ok, papers} -> {:openalex_reviews, papers}
-          _ -> {:openalex_reviews, []}
-        end
-      end),
-      Task.async(fn ->
-        case Literature.search_semantic_scholar("systematic review meta-analysis #{topic}", http_fn, limit: 5) do
-          {:ok, papers} -> {:semantic_scholar_reviews, papers}
-          _ -> {:semantic_scholar_reviews, []}
-        end
-      end),
-      # alphaXiv - embedding search (general, covers both sides)
-      Task.async(fn ->
-        alias OptimalSystemAgent.Tools.Builtins.AlphaXivClient
-        case AlphaXivClient.embedding_search(topic) do
-          {:ok, papers} when papers != [] ->
-            Logger.debug("[investigate] alphaXiv returned #{length(papers)} papers")
-            {:alphaxiv, papers}
-          _ ->
-            Logger.debug("[investigate] alphaXiv unavailable")
-            {:alphaxiv, []}
-        end
-      end)
-    ]
+    # Build search tasks from query pairs (SS + OA for each query)
+    api_tasks = Enum.flat_map(queries, fn {label, query, opts} ->
+      search_opts = Keyword.merge([limit: 5], opts)
+      [
+        Task.async(fn ->
+          case Literature.search_semantic_scholar(query, http_fn, search_opts) do
+            {:ok, papers} -> {:"ss_#{label}", papers}
+            _ -> {:"ss_#{label}", []}
+          end
+        end),
+        Task.async(fn ->
+          case Literature.search_openalex(query, http_fn, search_opts) do
+            {:ok, papers} -> {:"oa_#{label}", papers}
+            _ -> {:"oa_#{label}", []}
+          end
+        end)
+      ]
+    end)
 
-    results = Task.await_many(tasks, 30_000)
+    # alphaXiv embedding search (always included, covers both sides)
+    alphaxiv_task = Task.async(fn ->
+      alias OptimalSystemAgent.Tools.Builtins.AlphaXivClient
+      case AlphaXivClient.embedding_search(topic) do
+        {:ok, papers} when papers != [] ->
+          Logger.debug("[investigate] alphaXiv returned #{length(papers)} papers")
+          {:alphaxiv, papers}
+        _ ->
+          Logger.debug("[investigate] alphaXiv unavailable")
+          {:alphaxiv, []}
+      end
+    end)
+
+    results = Task.await_many(api_tasks ++ [alphaxiv_task], 30_000)
 
     # Collect source counts
     source_counts = Enum.reduce(results, %{}, fn {source, papers}, acc ->
-      source_key = case source do
-        :semantic_scholar_for -> :semantic_scholar
-        :semantic_scholar_against -> :semantic_scholar
-        :semantic_scholar_reviews -> :semantic_scholar
-        :openalex_for -> :openalex
-        :openalex_against -> :openalex
-        :openalex_reviews -> :openalex
-        :alphaxiv -> :alphaxiv
-      end
+      source_key = source |> Atom.to_string() |> source_category()
       Map.update(acc, source_key, length(papers), &(&1 + length(papers)))
     end)
 
-    # Normalize all papers to common string-key format
+    # Collect raw papers and ensure atom keys for rank_papers compatibility
     all_raw = Enum.flat_map(results, fn {_source, papers} ->
-      Enum.map(papers, &normalize_paper_format/1)
+      Enum.map(papers, &ensure_atom_keys/1)
     end)
 
-    # Dedup by title similarity
-    deduped = merge_papers(all_raw)
+    # Dedup by title similarity (works on both atom and string keys)
+    deduped = merge_papers_raw(all_raw)
 
-    # Sort by citation count (most cited first)
-    sorted = Enum.sort_by(deduped, fn p ->
-      -(p["citation_count"] || p["citationCount"] || 0)
-    end)
+    # Rank by relevance BEFORE normalizing (papers have atom keys)
+    ranked = Literature.rank_papers(deduped, topic)
+
+    # Filter out irrelevant papers (zero topic-term overlap)
+    {relevant, dropped} = filter_relevant(ranked, topic, keywords)
+    if dropped > 0 do
+      Logger.info("[investigate] Filtered out #{dropped} irrelevant papers")
+    end
+
+    # Normalize to string-key format and take top 15
+    sorted = relevant
+    |> Enum.map(&normalize_paper_format/1)
     |> Enum.take(15)
 
     {sorted, source_counts}
+  end
+
+  # Build search queries from topic and keywords.
+  # Returns [{label, query_string, opts}] — each gets sent to both SS and OA.
+  defp build_search_queries(topic, keywords) do
+    keyword_suffix = case Enum.take(keywords, 3) do
+      [] -> ""
+      kws -> " " <> Enum.join(kws, " ")
+    end
+
+    [
+      # Direct topic search (most natural query)
+      {:topic, topic, []},
+      # Systematic reviews and meta-analyses (highest quality evidence)
+      {:reviews, "systematic review meta-analysis #{topic}", []},
+      # Cochrane reviews (gold standard for medical/health topics)
+      {:cochrane, "Cochrane review #{topic}", []},
+      # Placebo-controlled studies (strong experimental evidence)
+      {:placebo, "#{topic} placebo controlled", []},
+      # Scientific consensus queries
+      {:consensus, "scientific consensus #{topic}", []},
+      # Keyword-augmented search (uses extracted keywords for specificity)
+      {:keywords, "#{topic}#{keyword_suffix}", []},
+      # Critical evaluation / debunking (finds evaluation papers, not just topic papers)
+      {:critique, "#{topic} critical evaluation efficacy", []},
+      # Randomized controlled trials
+      {:rct, "randomized controlled trial #{topic}", []},
+      # Safety and adverse effects (captures the "against" side better)
+      {:safety, "#{topic} safety adverse effects risks", []}
+    ]
+  end
+
+  # Categorize source labels into summary keys
+  defp source_category("alphaxiv"), do: :alphaxiv
+  defp source_category("ss_" <> _), do: :semantic_scholar
+  defp source_category("oa_" <> _), do: :openalex
+  defp source_category(other), do: String.to_atom(other)
+
+  # Dedup raw papers (handles both atom-key and string-key formats)
+  defp merge_papers_raw(papers) when is_list(papers) do
+    Enum.uniq_by(papers, fn p ->
+      title = case p do
+        %{title: t} -> t
+        %{"title" => t} -> t
+        _ -> ""
+      end
+
+      title
+      |> to_string()
+      |> String.downcase()
+      |> String.replace(~r/[^a-z0-9\s]/, "")
+      |> String.split()
+      |> Enum.reject(&(String.length(&1) < 4))
+      |> Enum.sort()
+      |> Enum.take(5)
+      |> Enum.join(" ")
+    end)
+  end
+
+  # Filter papers by topic-term overlap. Returns {relevant_papers, dropped_count}.
+  defp filter_relevant(papers, topic, keywords) do
+    # Build set of terms to check against
+    topic_terms = topic
+    |> String.downcase()
+    |> String.replace(~r/[^a-z0-9\s\-]/, " ")
+    |> String.split(~r/\s+/, trim: true)
+    |> Enum.reject(&(&1 in @stop_words))
+    |> Enum.reject(&(String.length(&1) < 3))
+
+    all_terms = MapSet.new(topic_terms ++ keywords)
+
+    {relevant, dropped} = Enum.split_with(papers, fn paper ->
+      {title, abstract} = case paper do
+        %{title: t, abstract: a} -> {t, a}
+        %{"title" => t, "abstract" => a} -> {t, a}
+        _ -> {"", ""}
+      end
+
+      paper_text = "#{title} #{abstract}"
+      |> String.downcase()
+      |> String.replace(~r/[^a-z0-9\s\-]/, " ")
+
+      # At least one topic term must appear in the paper's title or abstract
+      Enum.any?(all_terms, fn term ->
+        String.contains?(paper_text, term)
+      end)
+    end)
+
+    {relevant, length(dropped)}
   end
 
   # Normalize Literature module structs (atom keys) to the string-key format
@@ -1263,7 +1350,8 @@ Known failure patterns to avoid:
       "source" => to_string(src),
       "authors" => Enum.join(paper[:authors] || [], ", "),
       "paper_id" => to_string(paper[:paper_id] || ""),
-      "url" => to_string(paper[:url] || "")
+      "url" => to_string(paper[:url] || ""),
+      "publicationTypes" => paper[:publication_types] || []
     }
   end
 
@@ -1275,7 +1363,8 @@ Known failure patterns to avoid:
       "source" => "alphaxiv",
       "authors" => "",
       "abstract" => "",
-      "year" => "unknown"
+      "year" => "unknown",
+      "publicationTypes" => []
     }, paper)
     |> Map.update("citation_count", 0, fn v -> v || 0 end)
     |> Map.update("citationCount", 0, fn v -> v || 0 end)
@@ -1286,6 +1375,23 @@ Known failure patterns to avoid:
     %{"title" => "Unknown", "abstract" => "", "year" => "unknown",
       "citation_count" => 0, "citationCount" => 0, "source" => "unknown"}
   end
+
+  # Convert string-keyed papers (e.g. from alphaXiv) to atom keys for rank_papers compatibility
+  defp ensure_atom_keys(%{title: _} = paper), do: paper
+  defp ensure_atom_keys(%{"title" => _} = paper) do
+    %{
+      title: paper["title"] || "",
+      abstract: paper["abstract"] || "",
+      year: paper["year"],
+      citation_count: paper["citation_count"] || paper["citationCount"] || 0,
+      source: String.to_atom(paper["source"] || "unknown"),
+      authors: paper["authors"] || [],
+      paper_id: paper["paper_id"] || paper["paperId"] || "",
+      url: paper["url"] || "",
+      publication_types: paper["publicationTypes"] || []
+    }
+  end
+  defp ensure_atom_keys(other), do: other
 
   # HTTP adapter for vaos-ledger Literature module — uses Req
   defp literature_http_fn do
