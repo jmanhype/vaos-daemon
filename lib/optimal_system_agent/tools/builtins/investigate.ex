@@ -33,6 +33,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
   alias Vaos.Ledger.Epistemic.Models
   alias Vaos.Ledger.Research.Literature
   alias Vaos.Ledger.Epistemic.Policy
+  alias Vaos.Ledger.Research.Pipeline
   alias Vaos.Ledger.ML.CrashLearner
 
   @ledger_path Path.join(System.user_home!(), ".openclaw/investigate_ledger.json")
@@ -94,7 +95,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
 
   # -- Main pipeline ---------------------------------------------------
 
-  defp run_investigation(topic, _depth) do
+  defp run_investigation(topic, depth) do
     :inets.start()
     :ssl.start()
 
@@ -285,7 +286,7 @@ Known failure patterns to avoid:
       true ->
         # Both succeeded — full analysis with citation verification
         run_full_analysis(topic, supporting, opposing, all_papers, paper_map,
-                          source_counts, keywords, prior_evidence, store)
+                          source_counts, keywords, prior_evidence, store, depth)
     end
   rescue
     e -> {:error, "Investigation failed: " <> Exception.message(e)}
@@ -294,7 +295,7 @@ Known failure patterns to avoid:
   # -- Full analysis (both sides succeeded) ------------------------------
 
   defp run_full_analysis(topic, supporting_raw, opposing_raw, all_papers, paper_map,
-                         source_counts, keywords, prior_evidence, store) do
+                         source_counts, keywords, prior_evidence, store, depth) do
     # 9. CITATION VERIFICATION + PAPER TYPE CLASSIFICATION — the evidence quality step
     # Run all verification calls in parallel via Task.async
     verified_supporting = verify_citations(supporting_raw, paper_map)
@@ -480,7 +481,20 @@ Known failure patterns to avoid:
       "\n### Cross-Investigation Conflicts\n" <> Enum.join(conflict_lines, "\n") <> "\n"
     end
 
-    # 15. Format result with verification status and evidence quality
+    # 15. Assess advocacy quality (flag unreliable advocates)
+    quality_note = assess_advocacy_quality(verified_supporting, verified_opposing)
+
+    # 15a. Check uncertainty and suggest iteration
+    iteration_note = maybe_suggest_iteration(claim, @ledger_name)
+
+    # 15b. Deep mode: run research pipeline if requested
+    deep_note = if depth == "deep" do
+      deep_research_note(topic, claim, all_papers, store)
+    else
+      ""
+    end
+
+    # 16. Format result with verification status and evidence quality
     for_arguments = format_verified_evidence(verified_supporting, "Case For (score: #{Float.round(for_total * 1.0, 2)})")
     against_arguments = format_verified_evidence(verified_opposing, "Case Against (score: #{Float.round(against_total * 1.0, 2)})")
 
@@ -495,18 +509,21 @@ Known failure patterns to avoid:
       "**Score: #{Float.round(for_total * 1.0, 2)} for vs #{Float.round(against_total * 1.0, 2)} against**\n" <>
       "**Ledger belief: #{Float.round(belief * 1.0, 3)}, uncertainty: #{Float.round(uncertainty * 1.0, 3)}**\n" <>
       "**Papers found:** #{length(all_papers)} (#{format_source_counts(source_counts)})\n\n" <>
+      (if quality_note != "", do: quality_note <> "\n\n", else: "") <>
       "### #{for_arguments}\n\n" <>
       "### #{against_arguments}\n\n" <>
       "### Papers Consulted\n#{paper_list}\n" <>
       conflict_note <>
       (if prior_evidence != [], do: "\n### Prior Evidence (related topics)\n" <> Enum.join(prior_evidence, "\n") <> "\n", else: "") <>
+      deep_note <>
+      iteration_note <>
       "\n### Keywords\n  " <> Enum.join(keywords, ", ") <> "\n\n" <>
       "*Claim ID: #{claim_id} -- stored in knowledge graph as #{topic_id}*" <>
       "\n\n<!-- VAOS_JSON:#{json_result} -->"
 
     # 16. Policy — suggest next investigations based on information gain
     next_actions_text = try do
-      next_actions = Policy.rank_actions(@ledger_name, limit: 3)
+      next_actions = Policy.rank_actions(Process.whereis(@ledger_name), limit: 5)
       if next_actions != [] do
         suggestions = next_actions
           |> Enum.with_index(1)
@@ -565,7 +582,7 @@ Known failure patterns to avoid:
             paper = Map.get(paper_map, paper_num)
             citation_count = paper["citation_count"] || paper["citationCount"] || 0
 
-            case verify_single_citation(ev, paper) do
+            case cached_verify(ev, paper) do
               {verification, paper_type} ->
                 score = compute_evidence_score(verification, paper_type, citation_count)
                 verified = verification in [:verified, :partial]
@@ -1206,6 +1223,249 @@ Known failure patterns to avoid:
           end
         end)
       _ -> []
+    end
+  end
+
+  # -- Cached citation verification (uses Scorer ETS table) -----------
+
+  defp cached_verify(evidence, paper) do
+    # Use the same ETS table as Vaos.Ledger.Experiment.Scorer for caching
+    ensure_scorer_cache()
+    cache_key = :erlang.phash2({evidence.summary, paper["title"]})
+
+    case :ets.lookup(:scorer_cache, {:verify, cache_key}) do
+      [{{:verify, ^cache_key}, result}] ->
+        Logger.debug("[investigate] Cache hit for citation verification")
+        result
+
+      [] ->
+        result = verify_single_citation(evidence, paper)
+        :ets.insert(:scorer_cache, {{:verify, cache_key}, result})
+        result
+    end
+  end
+
+  defp ensure_scorer_cache do
+    if :ets.whereis(:scorer_cache) == :undefined do
+      :ets.new(:scorer_cache, [:set, :public, :named_table])
+    end
+
+    :ok
+  end
+
+  # -- Advocacy quality assessment (Referee-inspired) -----------------
+
+  defp assess_advocacy_quality(supporting, opposing) do
+    for_fraud_rate =
+      if supporting == [] do
+        0.0
+      else
+        Enum.count(supporting, fn ev -> ev.verification == "unverified" end) / length(supporting)
+      end
+
+    against_fraud_rate =
+      if opposing == [] do
+        0.0
+      else
+        Enum.count(opposing, fn ev -> ev.verification == "unverified" end) / length(opposing)
+      end
+
+    cond do
+      for_fraud_rate > 0.5 ->
+        "### Advocacy Quality Warning\n" <>
+          "FOR advocate had #{round(for_fraud_rate * 100)}% fraudulent citations -- arguments are poorly grounded"
+
+      against_fraud_rate > 0.5 ->
+        "### Advocacy Quality Warning\n" <>
+          "AGAINST advocate had #{round(against_fraud_rate * 100)}% fraudulent citations -- arguments are poorly grounded"
+
+      for_fraud_rate > 0.3 or against_fraud_rate > 0.3 ->
+        "### Advocacy Quality Note\n" <>
+          "Some citations were not supported by paper abstracts -- interpret with caution " <>
+          "(FOR: #{round(for_fraud_rate * 100)}% unverified, AGAINST: #{round(against_fraud_rate * 100)}% unverified)"
+
+      true ->
+        ""
+    end
+  end
+
+  # -- Uncertainty iteration hint (Experiment.Loop-inspired) ----------
+
+  defp maybe_suggest_iteration(claim, ledger_name) do
+    try do
+      metrics = EpistemicLedger.claim_metrics(claim.id, ledger_name)
+      uncertainty = metrics["uncertainty"]
+
+      if uncertainty > 0.5 do
+        "\n### Iteration Suggested\n" <>
+          "High uncertainty detected (#{Float.round(uncertainty * 1.0, 3)}). " <>
+          "Consider re-investigating with more specific sub-questions to reduce epistemic uncertainty.\n"
+      else
+        ""
+      end
+    rescue
+      _ -> ""
+    end
+  end
+
+  # -- Deep research mode (Pipeline integration) ----------------------
+  #
+  # Runner (Vaos.Ledger.ML.Runner) is available for code-execution
+  # investigations in a future "experimental" depth mode.
+  # When depth: "experimental":
+  #   alias Vaos.Ledger.ML.Runner
+  #   Runner.start_link(trial_id: topic_id, experiment_fn: fn config -> ... end,
+  #                     max_steps: 100, max_seconds: 120)
+  #   This would execute Python/Elixir code to test hypotheses empirically,
+  #   with Referee (Vaos.Ledger.ML.Referee) monitoring trials and killing
+  #   underperformers via early stopping.
+
+  defp deep_research_note(topic, claim, _all_papers, _store) do
+    try do
+      Logger.info("[investigate] Running deep research pipeline for: #{topic}")
+
+      # Build an LLM callback compatible with Pipeline
+      llm_fn = fn prompt ->
+        model = Application.get_env(:optimal_system_agent, :utility_model)
+        llm_opts = [temperature: 0.3, max_tokens: 2000]
+        llm_opts = if model, do: Keyword.put(llm_opts, :model, model), else: llm_opts
+        messages = [%{role: "user", content: prompt}]
+
+        case Providers.chat(messages, llm_opts) do
+          {:ok, %{content: response}} when is_binary(response) -> {:ok, response}
+          {:ok, other} -> {:error, {:unexpected_response, other}}
+          {:error, reason} -> {:error, reason}
+        end
+      end
+
+      # Build an HTTP callback for literature search
+      http_fn = literature_http_fn()
+
+      # Generate hypotheses from the investigation topic
+      hypotheses = generate_research_hypotheses(topic, claim, llm_fn)
+
+      if hypotheses == [] do
+        ""
+      else
+        # Run lightweight pipeline passes for each hypothesis (idea -> method -> literature)
+        # We skip code execution for now (no code_fn) to keep it safe
+        results =
+          hypotheses
+          |> Enum.take(3)
+          |> Enum.map(fn hypothesis ->
+            try do
+              case Pipeline.run(
+                     ledger: ensure_ledger_pid(),
+                     llm_fn: llm_fn,
+                     input: hypothesis,
+                     http_fn: http_fn,
+                     max_iterations: 1,
+                     target_score: 0.5
+                   ) do
+                {:ok, pipeline_state} ->
+                  research = pipeline_state.research
+                  summary = String.slice(research.idea || "", 0, 200)
+                  method_summary = String.slice(research.methodology || "", 0, 200)
+
+                  # Add finding as new evidence to the ledger
+                  EpistemicLedger.add_evidence(
+                    [
+                      claim_id: claim.id,
+                      summary: "Deep research finding: #{summary}",
+                      direction: :support,
+                      strength: 0.3,
+                      confidence: 0.3,
+                      source_type: "research_pipeline",
+                      metadata: %{"hypothesis" => hypothesis, "method" => method_summary}
+                    ],
+                    @ledger_name
+                  )
+
+                  {:ok, %{hypothesis: hypothesis, idea: summary, method: method_summary}}
+
+                {:error, reason} ->
+                  {:error, %{hypothesis: hypothesis, reason: inspect(reason)}}
+              end
+            rescue
+              e -> {:error, %{hypothesis: hypothesis, reason: Exception.message(e)}}
+            end
+          end)
+
+        # Refresh claim metrics after adding new evidence
+        EpistemicLedger.refresh_claim(claim.id, @ledger_name)
+        EpistemicLedger.save(@ledger_name)
+
+        # Format results
+        ok_results = Enum.filter(results, fn {status, _} -> status == :ok end)
+        err_results = Enum.filter(results, fn {status, _} -> status == :error end)
+
+        if ok_results == [] do
+          "\n### Deep Research\nPipeline attempted #{length(hypotheses)} hypotheses but all failed.\n"
+        else
+          lines =
+            ok_results
+            |> Enum.with_index(1)
+            |> Enum.map(fn {{:ok, r}, i} ->
+              "  #{i}. **Hypothesis:** #{r.hypothesis}\n" <>
+                "     **Idea:** #{r.idea}\n" <>
+                "     **Method:** #{r.method}"
+            end)
+            |> Enum.join("\n\n")
+
+          err_note =
+            if err_results != [] do
+              "\n  (#{length(err_results)} hypothesis pipeline(s) failed)"
+            else
+              ""
+            end
+
+          "\n### Deep Research (Pipeline)\n" <>
+            "Generated #{length(hypotheses)} hypotheses, ran #{length(ok_results)} successfully:\n\n" <>
+            lines <> err_note <> "\n"
+        end
+      end
+    rescue
+      e ->
+        Logger.warning("[investigate] Deep research failed: #{Exception.message(e)}")
+        "\n### Deep Research\nPipeline failed: #{Exception.message(e)}\n"
+    end
+  end
+
+  defp generate_research_hypotheses(topic, _claim, llm_fn) do
+    prompt = """
+    Given this research topic, generate 3 testable hypotheses that could advance
+    understanding. Each hypothesis should be specific, falsifiable, and distinct.
+
+    Topic: #{topic}
+
+    Respond with one hypothesis per line, numbered 1-3. Just the hypothesis text, nothing else.
+    """
+
+    case llm_fn.(prompt) do
+      {:ok, response} ->
+        response
+        |> String.split("\n", trim: true)
+        |> Enum.map(fn line ->
+          line
+          |> String.replace(~r/^\d+\.\s*/, "")
+          |> String.trim()
+        end)
+        |> Enum.reject(&(&1 == ""))
+        |> Enum.take(3)
+
+      {:error, _} ->
+        []
+    end
+  end
+
+  defp ensure_ledger_pid do
+    case Process.whereis(@ledger_name) do
+      nil ->
+        {:ok, pid} = EpistemicLedger.start_link(path: @ledger_path, name: @ledger_name)
+        pid
+
+      pid ->
+        pid
     end
   end
 
