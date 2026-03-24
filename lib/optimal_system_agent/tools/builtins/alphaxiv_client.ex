@@ -9,12 +9,15 @@ defmodule OptimalSystemAgent.Tools.Builtins.AlphaXivClient do
   @alphaxiv_base_url "https://api.alphaxiv.org"
   @alphaxiv_mcp_path "/mcp/v1"
   @client_name :alphaxiv_mcp
+  @token_path Path.join(System.user_home!(), ".openclaw/alphaxiv_token.txt")
 
   def start_link(_opts \\ []) do
     try do
+      headers = load_auth_headers()
+      Logger.info("[alphaxiv] Starting MCP client with #{if map_size(headers) > 0, do: "auth token", else: "no auth"}")
       Anubis.Client.start_link(
         name: @client_name,
-        transport: {:streamable_http, base_url: @alphaxiv_base_url, mcp_path: @alphaxiv_mcp_path},
+        transport: {:streamable_http, base_url: @alphaxiv_base_url, mcp_path: @alphaxiv_mcp_path, headers: headers},
         client_info: %{"name" => "VAOS", "version" => "1.0.0"},
         capabilities: %{},
         protocol_version: "2025-06-18"
@@ -108,4 +111,13 @@ defmodule OptimalSystemAgent.Tools.Builtins.AlphaXivClient do
     end)
   end
   defp parse_papers(_), do: []
+
+  defp load_auth_headers do
+    case File.read(@token_path) do
+      {:ok, token} ->
+        t = String.trim(token)
+        if t != "", do: %{"authorization" => "Bearer " <> t}, else: %{}
+      _ -> %{}
+    end
+  end
 end
