@@ -385,11 +385,21 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
   # BUG 6: Removed :inets.start()/:ssl.start() -- moved to run_investigation init
   # BUG 7: Log non-200 HTTP status codes
   defp search_semantic_scholar(query) do
-    url = "https://api.semanticscholar.org/graph/v1/paper/search?query=#{URI.encode(query)}&limit=3&fields=title,abstract,citationCount,year"
+    # Use arXiv API (free, no auth, reliable) instead of Semantic Scholar (429 rate limited)
+    terms = query |> String.split(~r/\s+/) |> Enum.take(5) |> Enum.join("+")
+    url = "https://export.arxiv.org/api/query?search_query=all:#{URI.encode(terms)}&max_results=3"
     headers = [{~c"User-Agent", ~c"VAOS/1.0 (https://vaos.sh; mailto:straughter@vaos.sh)"}]
-    case :httpc.request(:get, {String.to_charlist(url), headers}, [{:timeout, 10_000}], []) do
+    case :httpc.request(:get, {String.to_charlist(url), headers}, [{:timeout, 15_000}, {:autoredirect, true}], []) do
       {:ok, {{_, 200, _}, _, body}} ->
-        {:ok, Jason.decode!(List.to_string(body))["data"] || []}
+        xml = List.to_string(body)
+        papers = Regex.scan(~r/<entry>[\s\S]*?<\/entry>/, xml)
+        |> Enum.map(fn [entry] ->
+          title = case Regex.run(~r/<title>([^<]+)<\/title>/, entry) do [_, t] -> String.trim(t); _ -> "Unknown" end
+          abstract = case Regex.run(~r/<summary>([\s\S]*?)<\/summary>/, entry) do [_, a] -> String.trim(a) |> String.slice(0, 200); _ -> "" end
+          year = case Regex.run(~r/<published>(\d{4})/, entry) do [_, y] -> y; _ -> "unknown" end
+          %{"title" => title, "abstract" => abstract, "year" => year, "citationCount" => 0}
+        end)
+        {:ok, papers}
       {:ok, {{_, status_code, reason_phrase}, _, _body}} ->
         Logger.warning("[investigate] Semantic Scholar returned HTTP #{status_code}: #{reason_phrase}")
         {:error, :search_failed}
