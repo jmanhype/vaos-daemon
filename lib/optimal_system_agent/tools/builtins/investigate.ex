@@ -2,16 +2,16 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
   @moduledoc """
   Epistemic investigation tool — adversarial dual-prompt architecture.
 
+  ZERO-BULLSHIT SCORING: Citation verification replaces LLM-assigned strength ratings.
+  Every citation is verified against paper abstracts. Scores come from verification
+  status (1.0 verified, 0.5 partial, 0.3 reasoning-only, 0.0 unverified/fraudulent).
+
   PAPER-FIRST DESIGN: Runs TWO parallel paper searches (evidence FOR and AGAINST),
   then feeds merged papers to TWO adversarial LLM prompts that argue each side.
 
   Multi-source literature search: Semantic Scholar + OpenAlex + alphaXiv.
   Uses vaos-ledger's Literature module for Semantic Scholar and OpenAlex,
   with alphaXiv MCP for embedding-based arXiv search.
-
-  Produces an honest direction label (supporting / opposing / genuinely_contested)
-  instead of fake confidence numbers. Each side's strength is labeled
-  strong / moderate / weak based on the best argument.
 
   ACE PATTERN (Agentic Context Engineering):
   - Helpful/Harmful counters on evidence triples in the knowledge graph
@@ -49,8 +49,8 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
   @impl true
   def description do
     "Investigate a claim or topic: runs multi-source paper search (Semantic Scholar + OpenAlex + alphaXiv, " <>
-      "FOR and AGAINST), then dual adversarial LLM analysis. Returns honest direction " <>
-      "(supporting/opposing/genuinely_contested) with strength labels instead of fake confidence."
+      "FOR and AGAINST), then dual adversarial LLM analysis with citation verification. " <>
+      "Scores come from verified citations, not LLM-assigned strengths."
   end
 
   @impl true
@@ -200,206 +200,331 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
         []
     end
 
-    if supporting == [] and opposing == [] do
-      {:error, "Both adversarial LLM calls failed"}
-    else
-      # 9. Create claim and add evidence/attacks to ledger FIRST,
-      #    then use claim_metrics for scoring (AIEQ-Core integration).
+    # 8a. Build paper map for citation verification
+    paper_map = all_papers
+      |> Enum.with_index(1)
+      |> Map.new(fn {p, i} -> {i, p} end)
 
-      # 9a. Keep best/avg for display purposes
-      best_for = Enum.max_by(supporting, fn ev -> ev.strength end, fn -> %{strength: 0, summary: "none"} end)
-      best_against = Enum.max_by(opposing, fn ev -> ev.strength end, fn -> %{strength: 0, summary: "none"} end)
+    # 8b. Handle partial results honestly
+    cond do
+      supporting == [] and opposing == [] ->
+        {:error, "Both adversarial LLM calls failed"}
 
-      avg_for = if supporting == [], do: 0.0,
-        else: Enum.sum(Enum.map(supporting, & &1.strength)) / length(supporting)
-      avg_against = if opposing == [], do: 0.0,
-        else: Enum.sum(Enum.map(opposing, & &1.strength)) / length(opposing)
+      supporting == [] ->
+        # Only AGAINST succeeded — verify what we have
+        verified_opposing = verify_citations(opposing, paper_map)
+        result = "## Investigation: #{topic}\n\n" <>
+          "**Status: PARTIAL** -- Only the case AGAINST was analyzed (FOR advocate failed)\n" <>
+          "**Cannot determine direction from one-sided analysis**\n\n" <>
+          format_verified_evidence(verified_opposing, "Case Against") <>
+          "\n\n### Papers Consulted\n" <> format_paper_list(all_papers)
+        {:ok, result}
 
-      sourced_for = Enum.count(supporting, & &1.source_type == :sourced)
-      sourced_against = Enum.count(opposing, & &1.source_type == :sourced)
+      opposing == [] ->
+        # Only FOR succeeded — verify what we have
+        verified_supporting = verify_citations(supporting, paper_map)
+        result = "## Investigation: #{topic}\n\n" <>
+          "**Status: PARTIAL** -- Only the case FOR was analyzed (AGAINST advocate failed)\n" <>
+          "**Cannot determine direction from one-sided analysis**\n\n" <>
+          format_verified_evidence(verified_supporting, "Case For") <>
+          "\n\n### Papers Consulted\n" <> format_paper_list(all_papers)
+        {:ok, result}
 
-      # 9b. Create claim in the epistemic ledger
-      claim = EpistemicLedger.add_claim(
-        [title: String.slice(topic, 0, 100), statement: topic, tags: ["investigate", "auto", "adversarial"]],
-        @ledger_name
-      )
-
-      # 9c. Add FOR arguments as supporting evidence
-      supporting_records = add_evidence_to_ledger(supporting, claim, :support)
-
-      # 9d. Add AGAINST arguments as BOTH attacks AND contradicting evidence
-      # Attacks track the falsification attempt. Contradicting evidence affects belief calculation.
-      IO.puts("CONTRADICT_DEBUG: adding #{length(opposing)} opposing as contradict")
-      _contra_records = add_evidence_to_ledger(opposing, claim, :contradict)
-      opposing_records = add_attacks_to_ledger(opposing, claim)
-
-      # 9e. Refresh claim to recompute metrics after all evidence/attacks added
-      EpistemicLedger.refresh_claim(claim.id, @ledger_name)
-
-      # 9f. Now use the real ledger metrics for direction
-      metrics = EpistemicLedger.claim_metrics(claim.id, @ledger_name)
-
-      uncertainty = metrics["uncertainty"]
-      support_score = metrics["support_score"]
-      contradict_score = metrics["contradict_score"]
-      open_attack_load = metrics["open_attack_load"]
-      evidence_count = metrics["evidence_count"]
-      belief = metrics["belief"]
-
-      # Use the ledger\x27s own claim status as primary signal
-      # The Bayesian belief calculation already incorporates evidence count + strength
-      claim_after = EpistemicLedger.get_claim(claim.id, @ledger_name)
-      ledger_status = if is_map(claim_after), do: Map.get(claim_after, :status, "active"), else: "active"
-      ledger_status_str = if is_atom(ledger_status), do: Atom.to_string(ledger_status), else: to_string(ledger_status)
-
-      direction = case ledger_status_str do
-        "supported" -> "supporting"
-        "falsified" -> "opposing"
-        "contested" -> "genuinely_contested"
-        _ ->
-          # Fallback: use belief directly
-          cond do
-            belief > 0.65 -> "supporting"
-            belief < 0.35 -> "opposing"
-            true -> "genuinely_contested"
-          end
-      end
-
-      for_strength = case support_score do
-        s when s >= 0.7 -> "strong"
-        s when s >= 0.4 -> "moderate"
-        _ -> "weak"
-      end
-
-      against_strength = case contradict_score do
-        s when s >= 0.7 -> "strong"
-        s when s >= 0.4 -> "moderate"
-        _ -> "weak"
-      end
-
-      # 10. Persist ledger to disk
-      EpistemicLedger.save(@ledger_name)
-
-      # 14. Store in knowledge graph
-      topic_id = "investigate:" <> short_hash(topic)
-      claim_id = claim.id
-
-      json_result = Jason.encode!(%{
-        topic: topic,
-        claim_id: claim_id,
-        direction: direction,
-        for_strength: for_strength,
-        against_strength: against_strength,
-        uncertainty: Float.round(uncertainty * 1.0, 3),
-        support_score: Float.round(support_score * 1.0, 3),
-        contradict_score: Float.round(contradict_score * 1.0, 3),
-        attack_pressure: Float.round(open_attack_load * 1.0, 3),
-        belief: Float.round(belief * 1.0, 3),
-        evidence_count: evidence_count,
-        best_for_strength: best_for.strength,
-        best_against_strength: best_against.strength,
-        avg_for: Float.round(avg_for * 1.0, 2),
-        avg_against: Float.round(avg_against * 1.0, 2),
-        sourced_for: sourced_for,
-        sourced_against: sourced_against,
-        supporting: Enum.map(supporting, fn ev ->
-          %{summary: ev.summary, strength: ev.strength, source_type: ev.source_type}
-        end),
-        opposing: Enum.map(opposing, fn ev ->
-          %{summary: ev.summary, strength: ev.strength, source_type: ev.source_type}
-        end),
-        papers_found: length(all_papers),
-        source_counts: source_counts,
-        papers_detail: Enum.map(all_papers, fn p ->
-          %{title: p["title"], year: p["year"], citations: p["citation_count"] || p["citationCount"] || 0, source: p["source"] || "unknown"}
-        end),
-        investigation_id: topic_id
-      })
-
-      triples = [
-        {topic_id, "rdf:type", "vaos:Investigation"},
-        {topic_id, "vaos:topic", topic},
-        {topic_id, "vaos:direction", direction},
-        {topic_id, "vaos:for_strength", for_strength},
-        {topic_id, "vaos:against_strength", against_strength},
-        {topic_id, "vaos:json_result", json_result},
-        {topic_id, "vaos:claim_id", claim_id},
-        {topic_id, "vaos:timestamp", DateTime.utc_now() |> DateTime.to_iso8601()}
-      ]
-
-      keyword_triples = Enum.map(keywords, fn kw ->
-        {topic_id, "vaos:keyword", kw}
-      end)
-
-      for triple <- triples ++ keyword_triples do
-        MiosaKnowledge.assert(store, triple)
-      end
-
-      # Store helpful/harmful counters for supporting evidence
-      Enum.each(supporting_records, fn ev ->
-        ev_id = "evidence:" <> ev.id
-        MiosaKnowledge.assert(store, {topic_id, "vaos:has_evidence", ev_id})
-        MiosaKnowledge.assert(store, {ev_id, "vaos:helpful_count", "0"})
-        MiosaKnowledge.assert(store, {ev_id, "vaos:harmful_count", "0"})
-        MiosaKnowledge.assert(store, {ev_id, "vaos:summary", ev.summary})
-      end)
-
-      # Store attack records in knowledge graph
-      Enum.each(opposing_records, fn atk ->
-        atk_id = "attack:" <> atk.id
-        MiosaKnowledge.assert(store, {topic_id, "vaos:has_attack", atk_id})
-        MiosaKnowledge.assert(store, {atk_id, "vaos:helpful_count", "0"})
-        MiosaKnowledge.assert(store, {atk_id, "vaos:harmful_count", "0"})
-        MiosaKnowledge.assert(store, {atk_id, "vaos:summary", atk.description})
-      end)
-
-      # Increment helpful counters for prior evidence that was independently regenerated
-      increment_helpful_for_reused_evidence(store, prior_evidence, supporting ++ opposing)
-
-      # 15. Cross-investigation contradiction detection
-      conflicts = detect_contradictions(store, topic_id, direction, keywords)
-      conflict_note = if conflicts == [] do
-        ""
-      else
-        conflict_lines = Enum.map(conflicts, fn c ->
-          "  - #{c.prior_topic} (#{c.prior_id}): #{c.prior_direction} vs current #{direction}"
-        end)
-        "\n### Cross-Investigation Conflicts\n" <> Enum.join(conflict_lines, "\n") <> "\n"
-      end
-
-      # 16. Format result
-      for_arguments = format_adversarial_evidence(supporting)
-      against_arguments = format_adversarial_evidence(opposing)
-
-      paper_list = all_papers
-        |> Enum.with_index(1)
-        |> Enum.map(fn {p, i} ->
-          citations = p["citation_count"] || p["citationCount"] || 0
-          source = p["source"] || "unknown"
-          "  [Paper #{i}] #{p["title"]} (#{p["year"]}, #{citations} citations, via #{source})"
-        end)
-        |> Enum.join("\n")
-
-      result =
-        "## Investigation: #{topic}\n\n" <>
-        "**Direction:** #{direction}\n" <>
-        "**Ledger Metrics:** belief=#{Float.round(belief * 1.0, 3)}, uncertainty=#{Float.round(uncertainty * 1.0, 3)}, support=#{Float.round(support_score * 1.0, 3)}, contradict=#{Float.round(contradict_score * 1.0, 3)}, attack_pressure=#{Float.round(open_attack_load * 1.0, 3)}\n" <>
-        "**Case for:** #{for_strength} (best: #{best_for.strength}/10, avg: #{Float.round(avg_for * 1.0, 1)}, sourced: #{sourced_for})\n" <>
-        "**Case against:** #{against_strength} (best: #{best_against.strength}/10, avg: #{Float.round(avg_against * 1.0, 1)}, sourced: #{sourced_against})\n" <>
-        "**Papers found:** #{length(all_papers)} (#{format_source_counts(source_counts)})\n\n" <>
-        "### Strongest Case FOR\n#{for_arguments}\n\n" <>
-        "### Strongest Case AGAINST\n#{against_arguments}\n\n" <>
-        "### Papers Consulted\n#{paper_list}\n" <>
-        conflict_note <>
-        (if prior_evidence != [], do: "\n### Prior Evidence (related topics)\n" <> Enum.join(prior_evidence, "\n") <> "\n", else: "") <>
-        "\n### Keywords\n  " <> Enum.join(keywords, ", ") <> "\n\n" <>
-        "*Claim ID: #{claim_id} -- stored in knowledge graph as #{topic_id}*" <>
-        "\n\n<!-- VAOS_JSON:#{json_result} -->"
-
-      {:ok, result}
+      true ->
+        # Both succeeded — full analysis with citation verification
+        run_full_analysis(topic, supporting, opposing, all_papers, paper_map,
+                          source_counts, keywords, prior_evidence, store)
     end
   rescue
     e -> {:error, "Investigation failed: " <> Exception.message(e)}
+  end
+
+  # -- Full analysis (both sides succeeded) ------------------------------
+
+  defp run_full_analysis(topic, supporting_raw, opposing_raw, all_papers, paper_map,
+                         source_counts, keywords, prior_evidence, store) do
+    # 9. CITATION VERIFICATION — the zero-bullshit step
+    # Run all verification calls in parallel via Task.async
+    verified_supporting = verify_citations(supporting_raw, paper_map)
+    verified_opposing = verify_citations(opposing_raw, paper_map)
+
+    # 10. Compute direction from VERIFIED citation counts (not LLM strengths)
+    verified_for = Enum.count(verified_supporting, & &1.verified)
+    verified_against = Enum.count(verified_opposing, & &1.verified)
+    total_for_score = Enum.sum(Enum.map(verified_supporting, & &1.score))
+    total_against_score = Enum.sum(Enum.map(verified_opposing, & &1.score))
+
+    # Citation count bonus: highly-cited papers matter more
+    citation_bonus_for = verified_supporting
+      |> Enum.filter(& &1.verified)
+      |> Enum.map(fn ev ->
+        case extract_paper_ref(ev.summary) do
+          nil -> 0
+          n ->
+            paper = Map.get(paper_map, n, %{})
+            cite_count = paper["citation_count"] || paper["citationCount"] || 1
+            :math.log10(max(cite_count, 1))
+        end
+      end)
+      |> Enum.sum()
+
+    citation_bonus_against = verified_opposing
+      |> Enum.filter(& &1.verified)
+      |> Enum.map(fn ev ->
+        case extract_paper_ref(ev.summary) do
+          nil -> 0
+          n ->
+            paper = Map.get(paper_map, n, %{})
+            cite_count = paper["citation_count"] || paper["citationCount"] || 1
+            :math.log10(max(cite_count, 1))
+        end
+      end)
+      |> Enum.sum()
+
+    for_total = total_for_score + citation_bonus_for
+    against_total = total_against_score + citation_bonus_against
+
+    direction = cond do
+      for_total > against_total * 1.3 -> "supporting"
+      against_total > for_total * 1.3 -> "opposing"
+      true -> "genuinely_contested"
+    end
+
+    # Count fraudulent citations
+    fraudulent_count = Enum.count(verified_supporting ++ verified_opposing,
+      fn ev -> ev.verification == "unverified" end)
+
+    reasoning_for = Enum.count(verified_supporting,
+      fn ev -> not ev.verified and ev.score > 0 end)
+    reasoning_against = Enum.count(verified_opposing,
+      fn ev -> not ev.verified and ev.score > 0 end)
+
+    # 11. Create claim and add evidence to ledger
+    claim = EpistemicLedger.add_claim(
+      [title: String.slice(topic, 0, 100), statement: topic, tags: ["investigate", "auto", "adversarial"]],
+      @ledger_name
+    )
+
+    # Add FOR arguments as supporting evidence (using verification score, not LLM strength)
+    supporting_records = add_evidence_to_ledger(verified_supporting, claim, :support)
+
+    # Add AGAINST arguments as BOTH attacks AND contradicting evidence
+    _contra_records = add_evidence_to_ledger(verified_opposing, claim, :contradict)
+    opposing_records = add_attacks_to_ledger(verified_opposing, claim)
+
+    # Refresh claim to recompute metrics
+    EpistemicLedger.refresh_claim(claim.id, @ledger_name)
+
+    # Get ledger metrics for supplementary display
+    metrics = EpistemicLedger.claim_metrics(claim.id, @ledger_name)
+    belief = metrics["belief"]
+    uncertainty = metrics["uncertainty"]
+
+    # 12. Persist ledger to disk
+    EpistemicLedger.save(@ledger_name)
+
+    # 13. Store in knowledge graph
+    topic_id = "investigate:" <> short_hash(topic)
+    claim_id = claim.id
+
+    json_result = Jason.encode!(%{
+      topic: topic,
+      claim_id: claim_id,
+      direction: direction,
+      verified_for: verified_for,
+      verified_against: verified_against,
+      reasoning_for: reasoning_for,
+      reasoning_against: reasoning_against,
+      for_score: Float.round(for_total * 1.0, 3),
+      against_score: Float.round(against_total * 1.0, 3),
+      fraudulent_citations: fraudulent_count,
+      belief: Float.round(belief * 1.0, 3),
+      uncertainty: Float.round(uncertainty * 1.0, 3),
+      supporting: Enum.map(verified_supporting, fn ev ->
+        %{summary: ev.summary, score: ev.score, verified: ev.verified,
+          verification: ev.verification, strength_display: ev.strength}
+      end),
+      opposing: Enum.map(verified_opposing, fn ev ->
+        %{summary: ev.summary, score: ev.score, verified: ev.verified,
+          verification: ev.verification, strength_display: ev.strength}
+      end),
+      papers_found: length(all_papers),
+      source_counts: source_counts,
+      papers_detail: Enum.map(all_papers, fn p ->
+        %{title: p["title"], year: p["year"],
+          citations: p["citation_count"] || p["citationCount"] || 0,
+          source: p["source"] || "unknown"}
+      end),
+      investigation_id: topic_id
+    })
+
+    triples = [
+      {topic_id, "rdf:type", "vaos:Investigation"},
+      {topic_id, "vaos:topic", topic},
+      {topic_id, "vaos:direction", direction},
+      {topic_id, "vaos:verified_for", Integer.to_string(verified_for)},
+      {topic_id, "vaos:verified_against", Integer.to_string(verified_against)},
+      {topic_id, "vaos:fraudulent_citations", Integer.to_string(fraudulent_count)},
+      {topic_id, "vaos:json_result", json_result},
+      {topic_id, "vaos:claim_id", claim_id},
+      {topic_id, "vaos:timestamp", DateTime.utc_now() |> DateTime.to_iso8601()}
+    ]
+
+    keyword_triples = Enum.map(keywords, fn kw ->
+      {topic_id, "vaos:keyword", kw}
+    end)
+
+    for triple <- triples ++ keyword_triples do
+      MiosaKnowledge.assert(store, triple)
+    end
+
+    # Store helpful/harmful counters for supporting evidence
+    Enum.each(supporting_records, fn ev ->
+      ev_id = "evidence:" <> ev.id
+      MiosaKnowledge.assert(store, {topic_id, "vaos:has_evidence", ev_id})
+      MiosaKnowledge.assert(store, {ev_id, "vaos:helpful_count", "0"})
+      MiosaKnowledge.assert(store, {ev_id, "vaos:harmful_count", "0"})
+      MiosaKnowledge.assert(store, {ev_id, "vaos:summary", ev.summary})
+    end)
+
+    # Store attack records in knowledge graph
+    Enum.each(opposing_records, fn atk ->
+      atk_id = "attack:" <> atk.id
+      MiosaKnowledge.assert(store, {topic_id, "vaos:has_attack", atk_id})
+      MiosaKnowledge.assert(store, {atk_id, "vaos:helpful_count", "0"})
+      MiosaKnowledge.assert(store, {atk_id, "vaos:harmful_count", "0"})
+      MiosaKnowledge.assert(store, {atk_id, "vaos:summary", atk.description})
+    end)
+
+    # Increment helpful counters for prior evidence that was independently regenerated
+    increment_helpful_for_reused_evidence(store, prior_evidence, verified_supporting ++ verified_opposing)
+
+    # 14. Cross-investigation contradiction detection
+    conflicts = detect_contradictions(store, topic_id, direction, keywords)
+    conflict_note = if conflicts == [] do
+      ""
+    else
+      conflict_lines = Enum.map(conflicts, fn c ->
+        "  - #{c.prior_topic} (#{c.prior_id}): #{c.prior_direction} vs current #{direction}"
+      end)
+      "\n### Cross-Investigation Conflicts\n" <> Enum.join(conflict_lines, "\n") <> "\n"
+    end
+
+    # 15. Format result with verification status
+    for_arguments = format_verified_evidence(verified_supporting, "Strongest Case FOR")
+    against_arguments = format_verified_evidence(verified_opposing, "Strongest Case AGAINST")
+
+    paper_list = format_paper_list(all_papers)
+
+    result =
+      "## Investigation: #{topic}\n\n" <>
+      "**Direction: #{direction}**\n" <>
+      "**Verified citations: #{verified_for} for, #{verified_against} against**\n" <>
+      "**Reasoning-only arguments: #{reasoning_for} for, #{reasoning_against} against** (weighted 0.3 each)\n" <>
+      "**Score: #{Float.round(for_total * 1.0, 1)} for vs #{Float.round(against_total * 1.0, 1)} against**\n" <>
+      "**Fraudulent citations detected: #{fraudulent_count}**\n" <>
+      "**Ledger belief: #{Float.round(belief * 1.0, 3)}, uncertainty: #{Float.round(uncertainty * 1.0, 3)}**\n" <>
+      "**Papers found:** #{length(all_papers)} (#{format_source_counts(source_counts)})\n\n" <>
+      "### #{for_arguments}\n\n" <>
+      "### #{against_arguments}\n\n" <>
+      "### Papers Consulted\n#{paper_list}\n" <>
+      conflict_note <>
+      (if prior_evidence != [], do: "\n### Prior Evidence (related topics)\n" <> Enum.join(prior_evidence, "\n") <> "\n", else: "") <>
+      "\n### Keywords\n  " <> Enum.join(keywords, ", ") <> "\n\n" <>
+      "*Claim ID: #{claim_id} -- stored in knowledge graph as #{topic_id}*" <>
+      "\n\n<!-- VAOS_JSON:#{json_result} -->"
+
+    {:ok, result}
+  end
+
+  # -- Citation Verification (the zero-bullshit engine) ------------------
+
+  defp verify_citations(evidence_list, paper_map) do
+    # Split into items that need LLM verification and those that don't
+    {need_llm, no_llm} = Enum.split_with(evidence_list, fn ev ->
+      case extract_paper_ref(ev.summary) do
+        nil -> false
+        n -> Map.has_key?(paper_map, n)
+      end
+    end)
+
+    # Handle non-LLM items immediately
+    no_llm_verified = Enum.map(no_llm, fn ev ->
+      case extract_paper_ref(ev.summary) do
+        nil -> %{ev | verified: false, verification: "no_citation", score: 0.3}
+        _n -> %{ev | verified: false, verification: "invalid_ref", score: 0.0}
+      end
+    end)
+
+    # Run LLM verification in batches of 3 to avoid rate limits
+    llm_verified = need_llm
+      |> Enum.chunk_every(3)
+      |> Enum.flat_map(fn batch ->
+        tasks = Enum.map(batch, fn ev ->
+          Task.async(fn ->
+            paper_num = extract_paper_ref(ev.summary)
+            paper = Map.get(paper_map, paper_num)
+            case verify_single_citation(ev, paper) do
+              :verified -> %{ev | verified: true, verification: "verified", score: 1.0}
+              :unverified -> %{ev | verified: false, verification: "unverified", score: 0.0}
+              :partial -> %{ev | verified: true, verification: "partial", score: 0.5}
+            end
+          end)
+        end)
+        results = Task.await_many(tasks, 120_000)
+        # Small pause between batches to avoid rate limits
+        if length(need_llm) > 3, do: Process.sleep(1_000)
+        results
+      end)
+
+    # Recombine in original order by matching on summary
+    original_order = Enum.map(evidence_list, fn ev ->
+      Enum.find(llm_verified ++ no_llm_verified, fn v -> v.summary == ev.summary end) || ev
+    end)
+
+    original_order
+  end
+
+  defp extract_paper_ref(summary) do
+    case Regex.run(~r/\[Paper (\d+)\]/, summary) do
+      [_, num] -> String.to_integer(num)
+      _ -> nil
+    end
+  end
+
+  defp verify_single_citation(evidence, paper) do
+    abstract = Map.get(paper, "abstract", "") |> to_string()
+    title = Map.get(paper, "title", "") |> to_string()
+
+    prompt = """
+    Paper title: #{title}
+    Paper abstract: #{abstract}
+
+    Claim made about this paper: #{evidence.summary}
+
+    Does this paper's abstract actually support or discuss the specific claim being made?
+    Answer ONLY one word: VERIFIED (the paper clearly discusses this topic and supports the claim made), PARTIAL (the paper is related but doesn't directly support the specific claim), or UNVERIFIED (the paper does not support this claim or is being misrepresented).
+    """
+
+    messages = [%{role: "user", content: prompt}]
+
+    model = Application.get_env(:optimal_system_agent, :utility_model)
+    verify_opts = [temperature: 0.0, max_tokens: 10]
+    verify_opts = if model, do: Keyword.put(verify_opts, :model, model), else: verify_opts
+
+    case Providers.chat(messages, verify_opts) do
+      {:ok, %{content: response}} when is_binary(response) ->
+        response_clean = String.trim(response) |> String.upcase()
+        cond do
+          String.contains?(response_clean, "VERIFIED") and
+            not String.contains?(response_clean, "UNVERIFIED") -> :verified
+          String.contains?(response_clean, "PARTIAL") -> :partial
+          true -> :unverified
+        end
+      _ ->
+        # API failure = unverified (fail safe)
+        :unverified
+    end
   end
 
   # -- Balanced paper merge with title dedup ----------------------------
@@ -454,21 +579,20 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
         {n, _} when n < 1 -> 1
         _ -> 5
       end
-      %{summary: String.trim(summary), source_type: source_type, strength: strength}
+      # Keep LLM-assigned strength for DISPLAY only.
+      # Score and verified fields start at defaults — filled by verify_citations.
+      %{summary: String.trim(summary), source_type: source_type, strength: strength,
+        paper_ref: extract_paper_ref(String.trim(summary)),
+        verified: false, verification: "pending", score: 0.0}
     end)
   end
-
-  # -- Strength label ---------------------------------------------------
-
-  defp strength_label(s) when s >= 8, do: "strong"
-  defp strength_label(s) when s >= 5, do: "moderate"
-  defp strength_label(_), do: "weak"
 
   # -- Add evidence to ledger ------------------------------------------
 
   defp add_evidence_to_ledger(evidence_list, claim, direction) do
     Enum.flat_map(evidence_list, fn ev ->
-      ledger_strength = ev.strength / 10.0
+      # Use VERIFICATION score, not LLM strength
+      ledger_strength = ev.score
       case EpistemicLedger.add_evidence(
         [
           claim_id: claim.id,
@@ -492,7 +616,8 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
 
   defp add_attacks_to_ledger(evidence_list, claim) do
     Enum.flat_map(evidence_list, fn ev ->
-      ledger_severity = ev.strength / 10.0
+      # Use VERIFICATION score, not LLM strength
+      ledger_severity = ev.score
       source = if ev.source_type == :sourced, do: "paper", else: "llm_reasoning"
       case EpistemicLedger.add_attack(
         [
@@ -505,7 +630,10 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
           metadata: %{
             "source" => source,
             "source_type" => Atom.to_string(ev.source_type),
-            "raw_strength" => ev.strength
+            "raw_strength" => ev.strength,
+            "verified" => ev.verified,
+            "verification" => ev.verification,
+            "score" => ev.score
           }
         ],
         @ledger_name
@@ -518,15 +646,56 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     end)
   end
 
-  # -- Format adversarial evidence for display -------------------------
+  # -- Format verified evidence for display -----------------------------
 
-  defp format_adversarial_evidence([]), do: "  (none)"
-  defp format_adversarial_evidence(evidence) do
-    evidence
+  defp format_verified_evidence([], _heading), do: "(none)"
+  defp format_verified_evidence(evidence, heading) do
+    lines = evidence
+      |> Enum.with_index(1)
+      |> Enum.map(fn {ev, i} ->
+        {status_tag, detail} = case ev.verification do
+          "verified" ->
+            paper_info = case ev.paper_ref do
+              nil -> ""
+              n -> ", Paper #{n}"
+            end
+            {"VERIFIED", "(score: 1.0#{paper_info})"}
+          "partial" ->
+            paper_info = case ev.paper_ref do
+              nil -> ""
+              n -> ", Paper #{n}"
+            end
+            {"PARTIAL", "(score: 0.5#{paper_info} -- related but doesn't directly support)"}
+          "unverified" ->
+            paper_info = case ev.paper_ref do
+              nil -> ""
+              n -> ", Paper #{n}"
+            end
+            {"UNVERIFIED *", "(score: 0.0#{paper_info} -- abstract doesn't support claim)"}
+          "no_citation" ->
+            {"NO CITATION", "(reasoning only, score: 0.3)"}
+          "invalid_ref" ->
+            {"INVALID REF", "(score: 0.0 -- cited paper doesn't exist)"}
+          _ ->
+            {"PENDING", "(score: #{ev.score})"}
+        end
+
+        "  #{i}. [#{status_tag}] #{detail} #{ev.summary}"
+      end)
+      |> Enum.join("\n")
+
+    "#{heading}\n#{lines}"
+  end
+
+  # -- Format paper list for display -----------------------------------
+
+  defp format_paper_list(all_papers) do
+    all_papers
     |> Enum.with_index(1)
-    |> Enum.map(fn {ev, i} ->
-      tag = if ev.source_type == :sourced, do: "SOURCED", else: "REASONING"
-      "  #{i}. [#{tag}] (strength: #{ev.strength}/10) #{ev.summary}"
+    |> Enum.map(fn {p, i} ->
+      citations = p["citation_count"] || p["citationCount"] || 0
+      source = p["source"] || "unknown"
+      "  [Paper #{i}] #{p["title"]} (#{p["year"]}, #{citations} citations, via #{source})"
     end)
     |> Enum.join("\n")
   end
