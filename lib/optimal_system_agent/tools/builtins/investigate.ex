@@ -1230,11 +1230,43 @@ Known failure patterns to avoid:
         _ -> []
       end
     end)
-    |> Enum.take(20)  # Limit to avoid prompt bloat
+    |> Enum.take(10)  # Limit keyword-matched to 10
+    |> then(fn keyword_results ->
+      # Widen: also search ALL evidence summaries for term overlap with topic
+      broad_results = fetch_broad_evidence(store, keywords)
+      # Merge, deduplicate by summary text
+      seen = MapSet.new(Enum.map(keyword_results, fn line -> String.trim(line) end))
+      additional = Enum.reject(broad_results, fn line -> MapSet.member?(seen, String.trim(line)) end)
+      (keyword_results ++ Enum.take(additional, 10))
+    end)
   rescue
     e ->
       Logger.warning("[investigate] fetch_prior_evidence_by_keywords failed: #{Exception.message(e)}")
       []
+  end
+
+  defp fetch_broad_evidence(store, keywords) do
+    # Search ALL evidence summaries across ALL investigations for term overlap
+    all_ev_query = "SELECT ?ev ?summary WHERE { ?ev vaos:summary ?summary }"
+    case MiosaKnowledge.sparql(store, all_ev_query) do
+      {:ok, results} when is_list(results) ->
+        kw_set = MapSet.new(keywords)
+        results
+        |> Enum.filter(fn r ->
+          summary = Map.get(r, "summary", "") |> to_string() |> String.downcase()
+          summary_words = String.split(summary, ~r/\s+/, trim: true) |> MapSet.new()
+          overlap = MapSet.intersection(kw_set, summary_words) |> MapSet.size()
+          overlap >= 2  # At least 2 keyword matches
+        end)
+        |> Enum.map(fn r ->
+          summary = Map.get(r, "summary", "")
+          ev_id = Map.get(r, "ev", "")
+          "  - #{summary} (id: #{ev_id})"
+        end)
+      _ -> []
+    end
+  rescue
+    _ -> []
   end
 
   # -- Multi-source literature search: Semantic Scholar + OpenAlex + alphaXiv --
