@@ -5,20 +5,20 @@
 [![OTP](https://img.shields.io/badge/OTP-27+-green.svg)](https://www.erlang.org)
 [![Version](https://img.shields.io/badge/Version-0.3.0-orange.svg)](#)
 
-Elixir/OTP agent that classifies every input into a 5-tuple signal before routing it to a tiered LLM provider. 18 providers across 3 compute tiers (elite/specialist/utility). 12 channel adapters. 39 built-in tools. 4 swarm collaboration patterns. Runs locally with optional multi-tenant platform mode. Depends on two sibling libraries: `vaos_ledger` (epistemic governance) and `vaos_knowledge` (triple store).
+Elixir/OTP agent that classifies every input into a 5-tuple signal before routing it to a tiered LLM provider. 18 providers across 3 compute tiers (elite/specialist/utility). 12 channel adapters. 42 built-in tools. 4 swarm collaboration patterns. Runs locally with optional multi-tenant platform mode. Depends on two sibling libraries: `vaos_ledger` (epistemic governance) and `vaos_knowledge` (triple store).
 
 ```
 Codebase (measured)
 ------------------------------------------------------------
-Elixir/OTP (lib/)          90,838 lines   414 modules
+Elixir/OTP (lib/)          92,731 lines   418 modules
 Desktop (desktop/)         ~36,000 lines  Tauri 2 + SvelteKit 2 + Svelte 5
 Rust TUI (priv/rust/tui/)  20,382 lines   Terminal interface, SSE client
-Tests (test/)              33,976 lines   3,210 test definitions, 145 files
+Tests (test/)              34,065 lines   3,210 test definitions, 147 files
 Go sidecars (priv/go/)        858 lines   Tokenizer, git helper, sysmon
 Tauri backend (desktop/
-  src-tauri/src/)              606 lines   Rust backend for desktop app
+  src-tauri/src/)              603 lines   Rust backend for desktop app
 ------------------------------------------------------------
-Total                     ~182,000 lines
+Total                     ~185,000 lines
 ```
 
 ## Table of Contents
@@ -105,7 +105,7 @@ Ollama tiers are detected dynamically at boot by scanning installed models, sort
               goldrush-compiled Erlang bytecode
        |            |            |            |
    Agent Loop   Orchestrator   Swarm+PACT   Intelligence
-   (tier route)  (32 agents)   (4 patterns)  (5 modules)
+   (tier route)  (32 agents)   (4 patterns)  (8 modules)
        |            |            |
               Shared Infrastructure
    Context Builder (token-budgeted, 4-tier priority)
@@ -213,7 +213,7 @@ OptimalSystemAgent.Supervisor (rest_for_one)
 
 ## Tools
 
-39 built-in tools registered in `Tools.Registry.load_builtin_tools/0`:
+42 built-in tools registered in `Tools.Registry.load_builtin_tools/0`:
 
 | Category | Tools |
 |----------|-------|
@@ -228,7 +228,7 @@ OptimalSystemAgent.Supervisor (rest_for_one)
 | Notebook | `notebook_edit` |
 | Session | `session_search`, `budget_status`, `wallet_ops` |
 
-The `investigate` tool is notable: it runs multi-step autonomous research (file search, content analysis, code navigation) and returns a synthesized report. Registered in the goldrush-compiled `:osa_tool_dispatcher` module alongside all other tools.
+The `investigate` tool (1,862 lines) is notable: it runs full epistemic research with adversarial dual-prompt architecture. Three parallel literature searches (Semantic Scholar + OpenAlex + alphaXiv) feed FOR and AGAINST researchers. Citation verification checks every claim against actual paper abstracts. Evidence hierarchy scoring weights by publication type and citation count. Results are persisted to an AIEQ-Core epistemic ledger with Bayesian belief tracking. See `vaos_ledger` for the underlying defense stack.
 
 MCP tools discovered at runtime from `~/.osa/mcp.json` are available alongside built-in tools.
 
@@ -345,7 +345,7 @@ Structured memory system in `vault/` (12 modules):
 
 ## Known Limitations
 
-- **Test suite does not compile.** `test/agent/loop_unit_test.exs` fails with `cannot escape #Reference<...>` in an `@injection_patterns` module attribute. Additionally, `Exqlite.Error: no such table: signals` indicates missing SQLite3 migrations. The 3,210 test definitions cannot be run to completion as of version 0.3.0.
+- **Test suite does not compile.** `test/agent/loop_unit_test.exs` fails with `cannot escape #Reference<...>` in an `@injection_patterns` module attribute. Additionally, `Exqlite.Error: no such table: signals` indicates missing SQLite3 migrations. The 3,210 test definitions cannot be run to completion as of the current version.
 
 - **gRPC client is stubbed** (`vas_swarm/grpc_client.ex:368`). The `call_grpc/3` function returns `{:ok, %{error: "gRPC client not fully implemented"}}`. Connection logic (`connect_with_backoff`) attempts a real `gun.open` + HTTP/2 connection, but all RPC methods (`request_token`, `submit_telemetry`, `submit_routing_log`, `confirm_audit`) hit the mock. There is an HTTP fallback for token requests and a further fallback to random offline tokens.
 
@@ -508,7 +508,7 @@ Available immediately -- no restart required.
 
 ## Testing
 
-The test suite contains 3,210 test definitions across 145 files (33,976 lines). As of version 0.3.0, the suite does not compile to completion due to a module attribute escaping error in `test/agent/loop_unit_test.exs` and missing SQLite3 migrations.
+The test suite contains 3,210 test definitions across 147 files (34,065 lines). The suite does not compile to completion due to a module attribute escaping error in `test/agent/loop_unit_test.exs` and missing SQLite3 migrations.
 
 ```
 $ mix test
@@ -523,7 +523,7 @@ Individual test modules can be run in isolation where they do not depend on the 
 
 ```
 lib/
-  optimal_system_agent/          Main codebase (414 modules across 44 subdirectories)
+  optimal_system_agent/          Main codebase (418 modules across 44 subdirectories)
     agent/                       Core agent: loop, context, memory, compactor, cost_tracker
     agents/                      32 named agent definitions (31 specialists + 1 orchestrator)
     channels/                    12 channel adapters + HTTP routes (37 route modules)
@@ -535,7 +535,7 @@ lib/
     store/                       Ecto + SQLite3 persistence
     supervisors/                 4 subsystem supervisors
     swarm/                       4 patterns, PACT framework, orchestrator, mailbox
-    tools/                       39 built-in tools, registry (goldrush-compiled)
+    tools/                       42 built-in tools, registry (goldrush-compiled)
     vault/                       12 modules: fact store, observer, context profiles
     ...                          + 30 more subdirectories (sandbox, platform, fleet, etc.)
   miosa/                         2 files: memory_store.ex (1,182 lines), shims.ex
@@ -543,8 +543,8 @@ lib/
   mix/tasks/                     4 mix tasks: osa.chat, osa.sandbox.setup, osa.serve, osa.setup
 
 desktop/                         Tauri 2 + SvelteKit 2 + Svelte 5 desktop app
-  src/                           78 Svelte components, 40 TypeScript files
-  src-tauri/                     Rust backend (606 lines)
+  src/                           78 Svelte components, 39 TypeScript files
+  src-tauri/                     Rust backend (603 lines)
 
 priv/
   rust/tui/                      Rust TUI client (20,382 lines)
