@@ -444,19 +444,24 @@ defmodule OptimalSystemAgent.Intelligence.ProactiveMonitor do
   # Scanner: Follow-up Reminders
   # ---------------------------------------------------------------------------
 
-  @reminder_patterns [
-    ~r/\bremind\s+me\b/i,
-    ~r/\bfollow[- ]?up\b/i,
-    ~r/\blater\b/i,
-    ~r/\btomorrow\b/i,
-    ~r/\bnext\s+week\b/i,
-    ~r/\bdon'?t\s+forget\b/i,
-    ~r/\bcheck\s+back\b/i
+  @reminder_pattern_sources [
+    {~S"\bremind\s+me\b", "i"},
+    {~S"\bfollow[- ]?up\b", "i"},
+    {~S"\blater\b", "i"},
+    {~S"\btomorrow\b", "i"},
+    {~S"\bnext\s+week\b", "i"},
+    {~S"\bdon'?t\s+forget\b", "i"},
+    {~S"\bcheck\s+back\b", "i"}
   ]
+
+  defp compiled_reminder_patterns do
+    Enum.map(@reminder_pattern_sources, fn {src, opts} -> Regex.compile!(src, opts) end)
+  end
 
   defp scan_follow_up_reminders do
     memory_content = safe_recall()
     now = DateTime.utc_now()
+    reminder_regexes = compiled_reminder_patterns()
 
     memory_content
     |> String.split("\n")
@@ -464,7 +469,7 @@ defmodule OptimalSystemAgent.Intelligence.ProactiveMonitor do
       trimmed = String.trim(line)
 
       if String.length(trimmed) > 5 and
-           Enum.any?(@reminder_patterns, &Regex.match?(&1, trimmed)) do
+           Enum.any?(reminder_regexes, &Regex.match?(&1, trimmed)) do
         preview = String.slice(trimmed, 0, 100)
 
         [

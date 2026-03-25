@@ -12,11 +12,12 @@ defmodule OptimalSystemAgent.Agent.Strategies.Reflection do
 
   @default_max_rounds 3
 
-  @no_issues_patterns [
-    ~r/no issues found/i,
-    ~r/no significant (issues|problems|flaws)/i,
-    ~r/response is (excellent|perfect|complete|thorough)/i,
-    ~r/nothing (to|that needs to be) (improve|fix|change|address)/i
+  # Stored as {source, opts} tuples — compiled at runtime (Elixir 1.18+ Reference escape).
+  @no_issues_pattern_sources [
+    {~S"no issues found", "i"},
+    {~S"no significant (issues|problems|flaws)", "i"},
+    {~S"response is (excellent|perfect|complete|thorough)", "i"},
+    {~S"nothing (to|that needs to be) (improve|fix|change|address)", "i"}
   ]
 
   # ── Behaviour Callbacks ──────────────────────────────────────────
@@ -161,6 +162,7 @@ defmodule OptimalSystemAgent.Agent.Strategies.Reflection do
   def substantive_critique?(nil), do: false
 
   def substantive_critique?(text) when is_binary(text) do
-    not Enum.any?(@no_issues_patterns, &Regex.match?(&1, text))
+    patterns = Enum.map(@no_issues_pattern_sources, fn {src, opts} -> Regex.compile!(src, opts) end)
+    not Enum.any?(patterns, &Regex.match?(&1, text))
   end
 end

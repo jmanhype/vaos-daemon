@@ -34,32 +34,27 @@ defmodule OptimalSystemAgent.Agent.Explorer do
                    service repository middleware hook plugin api database table
                    migration config dependency package)
 
-  # Patterns that indicate casual/skip messages
-  @casual_patterns [
-    ~r/^(hi|hey|hello|sup|yo|howdy|greetings|good\s+(morning|afternoon|evening))\b/i,
-    ~r/^(thanks|thank you|thx|ty|cheers|awesome|perfect|great|nice|cool|ok|okay|k|sure|yep|yeah|yes|no|nope)\b/i,
-    ~r/^(bye|goodbye|see ya|later|cya|gotta go)\b/i
+  # Pattern source strings — compiled at runtime to avoid Elixir 1.18+ Reference escape issue
+  @casual_pattern_sources [
+    {~S"^(hi|hey|hello|sup|yo|howdy|greetings|good\s+(morning|afternoon|evening))\b", "i"},
+    {~S"^(thanks|thank you|thx|ty|cheers|awesome|perfect|great|nice|cool|ok|okay|k|sure|yep|yeah|yes|no|nope)\b", "i"},
+    {~S"^(bye|goodbye|see ya|later|cya|gotta go)\b", "i"}
   ]
 
-  # Patterns for memory operations (skip exploration)
-  @memory_patterns [
-    ~r/\b(remember|recall|save|forget|memorize|memo)\b.*\b(this|that|it)\b/i,
-    ~r/\bwhat do you (remember|know|recall)\b/i
+  @memory_pattern_sources [
+    {~S"\b(remember|recall|save|forget|memorize|memo)\b.*\b(this|that|it)\b", "i"},
+    {~S"\bwhat do you (remember|know|recall)\b", "i"}
   ]
 
-  # Patterns for pure questions (skip exploration)
-  @question_patterns [
-    ~r/^(what is|what are|what was|what were|explain|how does|how do|how is|how are|why does|why is|why do|tell me about|describe)\b/i
+  @question_pattern_sources [
+    {~S"^(what is|what are|what was|what were|explain|how does|how do|how is|how are|why does|why is|why do|tell me about|describe)\b", "i"}
   ]
 
-  # Pre-compiled combined pattern for code context words (avoids runtime regex compilation)
-  @code_context_pattern Regex.compile!(
-    "\\b(" <> Enum.map_join(@code_context, "|", &Regex.escape/1) <> ")\\b"
-  )
+  # Pre-compiled combined pattern for code context words
+  @code_context_pattern_source "\\b(" <> Enum.map_join(@code_context, "|", &Regex.escape/1) <> ")\\b"
 
-  # Patterns for pure shell commands (skip exploration)
-  @shell_patterns [
-    ~r/^(run|execute|start|stop|restart|kill)\s+(mix|npm|yarn|pnpm|bun|cargo|go|python|pip|docker|kubectl|make|rake)\b/i
+  @shell_pattern_sources [
+    {~S"^(run|execute|start|stop|restart|kill)\s+(mix|npm|yarn|pnpm|bun|cargo|go|python|pip|docker|kubectl|make|rake)\b", "i"}
   ]
 
   # Project config files that identify project type
@@ -102,19 +97,19 @@ defmodule OptimalSystemAgent.Agent.Explorer do
         false
 
       # Casual patterns
-      Enum.any?(@casual_patterns, &Regex.match?(&1, message)) ->
+      matches_any?(message, casual_patterns()) ->
         false
 
       # Memory operations
-      Enum.any?(@memory_patterns, &Regex.match?(&1, message)) ->
+      matches_any?(message, memory_patterns()) ->
         false
 
       # Pure shell commands
-      Enum.any?(@shell_patterns, &Regex.match?(&1, message)) ->
+      matches_any?(message, shell_patterns()) ->
         false
 
       # Pure questions without code context
-      Enum.any?(@question_patterns, &Regex.match?(&1, message)) and
+      matches_any?(message, question_patterns()) and
           not has_code_context?(message) ->
         false
 
@@ -243,6 +238,17 @@ defmodule OptimalSystemAgent.Agent.Explorer do
 
   # ── Private Helpers ────────────────────────────────────────────
 
+  # Compile pattern sources at runtime to avoid Elixir 1.18+ Reference escape issue
+  defp compile_patterns(sources) do
+    Enum.map(sources, fn {pattern, opts} -> Regex.compile!(pattern, opts) end)
+  end
+
+  defp casual_patterns, do: compile_patterns(@casual_pattern_sources)
+  defp memory_patterns, do: compile_patterns(@memory_pattern_sources)
+  defp shell_patterns, do: compile_patterns(@shell_pattern_sources)
+  defp question_patterns, do: compile_patterns(@question_pattern_sources)
+  defp matches_any?(text, patterns), do: Enum.any?(patterns, &Regex.match?(&1, text))
+
   defp has_action_intent?(message) do
     lower = String.downcase(message)
     has_verb = Enum.any?(@action_verbs, fn verb ->
@@ -252,7 +258,8 @@ defmodule OptimalSystemAgent.Agent.Explorer do
   end
 
   defp has_code_context?(message) do
-    Regex.match?(@code_context_pattern, String.downcase(message))
+    pattern = Regex.compile!(@code_context_pattern_source)
+    Regex.match?(pattern, String.downcase(message))
   end
 
   defp has_file_reference?(message) do

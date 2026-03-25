@@ -476,10 +476,13 @@ defmodule OptimalSystemAgent.Providers.OpenAICompat do
 
   # Extract <function name="..." parameters={...}></function> tags with proper
   # balanced-brace JSON parsing (fixes non-greedy regex failure on nested JSON).
-  @xml_fn_pattern ~r/<function\s+name="([^"\s{(]*).*?parameters=/s
+  @xml_fn_pattern_source {~S|<function\s+name="([^"\s{(]*).*?parameters=|, "s"}
 
   defp extract_xml_function_calls(content) do
-    @xml_fn_pattern
+    {src, opts} = @xml_fn_pattern_source
+    xml_fn_regex = Regex.compile!(src, opts)
+
+    xml_fn_regex
     |> Regex.scan(content, return: :index)
     |> Enum.flat_map(fn [{match_start, match_len}, {name_start, name_len}] ->
       name = binary_part(content, name_start, name_len)

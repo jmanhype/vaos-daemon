@@ -105,10 +105,13 @@ defmodule OptimalSystemAgent.Providers.ToolCallParsers do
   # ── Hermes / Qwen 2.5 ──────────────────────────────────────────────
   # Format: <tool_call>{"name": "...", "arguments": {...}}</tool_call>
 
-  @hermes_pattern ~r/<tool_call>\s*(\{.*?\})\s*<\/tool_call>/s
+  @hermes_pattern_source {~S|<tool_call>\s*(\{.*?\})\s*<\/tool_call>|, "s"}
 
   defp parse_hermes(content) do
-    @hermes_pattern
+    {src, opts} = @hermes_pattern_source
+    hermes_regex = Regex.compile!(src, opts)
+
+    hermes_regex
     |> Regex.scan(content)
     |> Enum.flat_map(fn [_full, json_str] ->
       case Jason.decode(json_str) do
@@ -288,15 +291,20 @@ defmodule OptimalSystemAgent.Providers.ToolCallParsers do
   # ── Qwen3-Coder ───────────────────────────────────────────────────
   # Format: <function=name><parameter=key>value</parameter>...</function>
 
-  @qwen3_fn_pattern ~r/<function=(\w+)>(.*?)<\/function>/s
-  @qwen3_param_pattern ~r/<parameter=(\w+)>(.*?)<\/parameter>/s
+  @qwen3_fn_pattern_source {~S|<function=(\w+)>(.*?)<\/function>|, "s"}
+  @qwen3_param_pattern_source {~S|<parameter=(\w+)>(.*?)<\/parameter>|, "s"}
 
   defp parse_qwen3_coder(content) do
-    @qwen3_fn_pattern
+    {fn_src, fn_opts} = @qwen3_fn_pattern_source
+    qwen3_fn_regex = Regex.compile!(fn_src, fn_opts)
+    {param_src, param_opts} = @qwen3_param_pattern_source
+    qwen3_param_regex = Regex.compile!(param_src, param_opts)
+
+    qwen3_fn_regex
     |> Regex.scan(content)
     |> Enum.map(fn [_full, name, body] ->
       args =
-        @qwen3_param_pattern
+        qwen3_param_regex
         |> Regex.scan(body)
         |> Enum.reduce(%{}, fn [_full, key, value], acc ->
           # Try to parse value as JSON for structured types, fall back to string

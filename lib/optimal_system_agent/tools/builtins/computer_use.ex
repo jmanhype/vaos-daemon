@@ -254,7 +254,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputerUse do
   end
 
   # Key combos must only contain safe characters: alphanumerics, modifiers, +, -, space
-  @key_combo_pattern ~r/\A[a-zA-Z0-9+\-_ ]+\z/
+  @key_combo_pattern_source {~S"\A[a-zA-Z0-9+\-_ ]+\z", ""}
 
   defp validate_key_combo(text) do
     cond do
@@ -264,7 +264,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputerUse do
       byte_size(text) > 100 ->
         {:error, "Key combo too long (max 100 chars)"}
 
-      not Regex.match?(@key_combo_pattern, text) ->
+      not key_combo_valid?(text) ->
         {:error,
          "Key combo contains invalid characters. Use alphanumerics, +, -, space only " <>
            "(e.g. \"cmd+c\", \"enter\")"}
@@ -272,6 +272,11 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputerUse do
       true ->
         :ok
     end
+  end
+
+  defp key_combo_valid?(text) do
+    {src, opts} = @key_combo_pattern_source
+    Regex.match?(Regex.compile!(src, opts), text)
   end
 
   # ---------------------------------------------------------------------------

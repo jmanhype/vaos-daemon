@@ -31,7 +31,7 @@ defmodule OptimalSystemAgent.Agent.Scratchpad do
 
   # Regex to match <think>...</think> blocks (including multiline).
   # Captures the inner content. Uses dotall via the `s` flag.
-  @think_pattern ~r/<think>(.*?)<\/think>/s
+  @think_pattern_source {~S"<think>(.*?)<\/think>", "s"}
 
   # ---------------------------------------------------------------------------
   # Public API
@@ -69,8 +69,11 @@ defmodule OptimalSystemAgent.Agent.Scratchpad do
   def extract(""), do: {"", []}
 
   def extract(text) when is_binary(text) do
+    {src, opts} = @think_pattern_source
+    think_regex = Regex.compile!(src, opts)
+
     thinking_parts =
-      @think_pattern
+      think_regex
       |> Regex.scan(text)
       |> Enum.flat_map(fn
         [_full, inner] when is_binary(inner) -> [String.trim(inner)]
@@ -80,7 +83,7 @@ defmodule OptimalSystemAgent.Agent.Scratchpad do
 
     clean_text =
       text
-      |> String.replace(@think_pattern, "")
+      |> String.replace(think_regex, "")
       |> String.replace(~r/\n{3,}/, "\n\n")
       |> String.trim()
 

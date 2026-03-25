@@ -13,35 +13,35 @@ defmodule OptimalSystemAgent.Vault.FactExtractor do
           pattern: String.t()
         }
 
-  @patterns [
+  @pattern_sources [
     # Decisions
-    {:decision, ~r/(?:decided|chose|agreed|picked|selected)\s+(?:to\s+)?(.{10,120})/i, 0.85},
-    {:decision, ~r/(?:going with|we(?:'ll| will) use|switching to)\s+(.{5,100})/i, 0.8},
+    {:decision, {~S"(?:decided|chose|agreed|picked|selected)\s+(?:to\s+)?(.{10,120})", "i"}, 0.85},
+    {:decision, {~S"(?:going with|we(?:'ll| will) use|switching to)\s+(.{5,100})", "i"}, 0.8},
 
     # Preferences
-    {:preference, ~r/(?:prefer|always use|never use|like to use)\s+(.{5,80})/i, 0.75},
-    {:preference, ~r/(?:style|convention|standard):\s*(.{5,100})/i, 0.7},
+    {:preference, {~S"(?:prefer|always use|never use|like to use)\s+(.{5,80})", "i"}, 0.75},
+    {:preference, {~S"(?:style|convention|standard):\s*(.{5,100})", "i"}, 0.7},
 
     # Facts / technical
-    {:fact, ~r/(?:runs on|built with|uses|powered by|requires)\s+(.{5,80})/i, 0.7},
-    {:fact, ~r/(?:version|v)\s*(\d+\.\d+(?:\.\d+)?)/i, 0.9},
-    {:fact, ~r/(?:port|listens? on)\s+(\d{2,5})/i, 0.85},
-    {:fact, ~r/(?:endpoint|url|api):\s*((?:https?:\/\/|\/)[^\s]{5,100})/i, 0.8},
+    {:fact, {~S"(?:runs on|built with|uses|powered by|requires)\s+(.{5,80})", "i"}, 0.7},
+    {:fact, {~S"(?:version|v)\s*(\d+\.\d+(?:\.\d+)?)", "i"}, 0.9},
+    {:fact, {~S"(?:port|listens? on)\s+(\d{2,5})", "i"}, 0.85},
+    {:fact, {~S"(?:endpoint|url|api):\s*((?:https?:\/\/|\/)[^\s]{5,100})", "i"}, 0.8},
 
     # Lessons
-    {:lesson, ~r/(?:learned|lesson|takeaway|insight):\s*(.{10,150})/i, 0.8},
-    {:lesson, ~r/(?:root cause|caused by|because of)\s+(.{10,120})/i, 0.75},
-    {:lesson, ~r/(?:fix(?:ed)? by|solved by|resolved by)\s+(.{10,120})/i, 0.75},
+    {:lesson, {~S"(?:learned|lesson|takeaway|insight):\s*(.{10,150})", "i"}, 0.8},
+    {:lesson, {~S"(?:root cause|caused by|because of)\s+(.{10,120})", "i"}, 0.75},
+    {:lesson, {~S"(?:fix(?:ed)? by|solved by|resolved by)\s+(.{10,120})", "i"}, 0.75},
 
     # Commitments
-    {:commitment, ~r/(?:promised|committed|will deliver|deadline)\s+(.{10,100})/i, 0.8},
+    {:commitment, {~S"(?:promised|committed|will deliver|deadline)\s+(.{10,100})", "i"}, 0.8},
     {:commitment,
-     ~r/(?:by|before|due)\s+((?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{4}-\d{2}-\d{2}).{0,50})/i,
+     {~S"(?:by|before|due)\s+((?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{4}-\d{2}-\d{2}).{0,50})", "i"},
      0.7},
 
     # Relationships
-    {:relationship, ~r/(?:owner|maintainer|lead|responsible):\s*(.{3,60})/i, 0.8},
-    {:relationship, ~r/(@\w+)\s+(?:is|works on|manages|owns)\s+(.{5,80})/i, 0.75}
+    {:relationship, {~S"(?:owner|maintainer|lead|responsible):\s*(.{3,60})", "i"}, 0.8},
+    {:relationship, {~S"(@\w+)\s+(?:is|works on|manages|owns)\s+(.{5,80})", "i"}, 0.75}
   ]
 
   @doc """
@@ -51,8 +51,10 @@ defmodule OptimalSystemAgent.Vault.FactExtractor do
   """
   @spec extract(String.t()) :: [fact()]
   def extract(content) when is_binary(content) do
-    @patterns
-    |> Enum.flat_map(fn {type, regex, confidence} ->
+    @pattern_sources
+    |> Enum.flat_map(fn {type, {src, opts}, confidence} ->
+      regex = Regex.compile!(src, opts)
+
       case Regex.run(regex, content) do
         [_match | captures] ->
           value = Enum.join(captures, " ") |> String.trim()

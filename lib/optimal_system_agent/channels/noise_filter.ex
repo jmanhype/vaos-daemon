@@ -27,28 +27,28 @@ defmodule OptimalSystemAgent.Channels.NoiseFilter do
   trigger full LLM invocations.
   """
 
-  @tier1_patterns [
+  @tier1_pattern_sources [
     # Single character (any)
-    ~r/^.$/u,
+    {~S"^.$", "u"},
     # Common single-char acknowledgments: k, y, n, K, Y, N
-    ~r/^[kynKYN]$/,
+    {~S"^[kynKYN]$", ""},
     # Confirmations (case-insensitive, whole string)
-    ~r/^(ok|okay|sure|yep|yeah|nope|got it|gotcha|alright|roger|copy that|ten four|affirmative|yes|no|nah|yup|aye|noted|i see|i know|understood)$/i,
+    {~S"^(ok|okay|sure|yep|yeah|nope|got it|gotcha|alright|roger|copy that|ten four|affirmative|yes|no|nah|yup|aye|noted|i see|i know|understood)$", "i"},
     # Thank-yous and reactions (greetings removed — users expect a chat response)
-    ~r/^(np|no problem|no worries|sounds good|makes sense|got it)$/i,
+    {~S"^(np|no problem|no worries|sounds good|makes sense|got it)$", "i"},
     # Filler / reaction words
-    ~r/^(lol|lmao|lmfao|haha|hehe|heh|hmm|meh|wow|omg|wtf|smh|rofl|brb|afk|gg|irl|imo|imho|fwiw|tl;?dr)$/i,
+    {~S"^(lol|lmao|lmfao|haha|hehe|heh|hmm|meh|wow|omg|wtf|smh|rofl|brb|afk|gg|irl|imo|imho|fwiw|tl;?dr)$", "i"},
     # Short words with trailing punctuation (ok!, yep., k!, etc.)
-    ~r/^[kynKYN][!?.]*$/,
-    ~r/^(ok|okay|sure|yep|yeah|yes|no|hi|hey)[!?.]*$/i,
+    {~S"^[kynKYN][!?.]*$", ""},
+    {~S"^(ok|okay|sure|yep|yeah|yes|no|hi|hey)[!?.]*$", "i"},
     # Emoji-only (covers most emoji Unicode ranges)
-    ~r/^[\x{1F000}-\x{1FFFF}\x{2600}-\x{27FF}\x{FE00}-\x{FE0F}\x{1F900}-\x{1F9FF}\x{231A}-\x{23FF}\x{25A0}-\x{25FF}\x{2700}-\x{27BF}\s]+$/u,
+    {~S"^[\x{1F000}-\x{1FFFF}\x{2600}-\x{27FF}\x{FE00}-\x{FE0F}\x{1F900}-\x{1F9FF}\x{231A}-\x{23FF}\x{25A0}-\x{25FF}\x{2700}-\x{27BF}\s]+$", "u"},
     # Ellipsis or trailing dots only
-    ~r/^\.{2,}$/,
+    {~S"^\.{2,}$", ""},
     # Single or repeated punctuation only
-    ~r/^[!?,;:\-_~*^@#%&+=|<>\/\\`'"]{1,5}$/,
+    {~S(^[!?,;:\-_~*^@#%&+=|<>\/\\`'"]{1,5}$), ""},
     # Just whitespace/newlines (after trim, should not happen but guard it)
-    ~r/^\s+$/
+    {~S"^\s+$", ""}
   ]
 
   @doc """
@@ -176,8 +176,12 @@ defmodule OptimalSystemAgent.Channels.NoiseFilter do
 
   # --- Private ---
 
+  defp compiled_tier1_patterns do
+    Enum.map(@tier1_pattern_sources, fn {src, opts} -> Regex.compile!(src, opts) end)
+  end
+
   defp tier1_match?(input) do
-    Enum.any?(@tier1_patterns, &Regex.match?(&1, input))
+    Enum.any?(compiled_tier1_patterns(), &Regex.match?(&1, input))
   end
 
   # Returns a brief, natural acknowledgment for noise messages.

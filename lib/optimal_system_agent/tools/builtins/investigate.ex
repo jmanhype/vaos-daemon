@@ -58,44 +58,44 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
   @grounded_threshold 0.4
 
   # Word-boundary patterns to avoid false positives on common words like "cell", "nature", "science"
-  @high_quality_patterns [
-    ~r/\bnature\b(?!\s+of\b)/i,
-    ~r/(?<!\bcomputer\s)(?<!\bdata\s)\bscience\b(?!\s+of\b|\s+fiction\b)/i,
-    ~r/\blancet\b/i,
-    ~r/\bbmj\b/i,
-    ~r/\bnejm\b/i,
-    ~r/\bcochrane\b/i,
-    ~r/\bjama\b/i,
-    ~r/\bplos\b/i,
-    ~r/\bcell\s+(press|reports|research|biology|metabolism|host|systems|stem|chemical)\b/i,
-    ~r/\bannual\s+review/i,
-    ~r/\bpnas\b/i,
-    ~r/\bwiley\b/i,
-    ~r/\bspringer\b/i,
-    ~r/\belsevier\b/i,
-    ~r/\boxford\s+(university|academic|press)/i,
-    ~r/\bcambridge\s+(university|press)/i,
-    ~r/\bieee\b/i,
-    ~r/\bacm\b/i,
-    ~r/\bamerican\s+medical/i,
-    ~r/\bamerican\s+psychological/i,
-    ~r/\bbritish\s+medical/i,
-    ~r/\bworld\s+health/i
+  @high_quality_pattern_sources [
+    {~S"\bnature\b(?!\s+of\b)", "i"},
+    {~S"(?<!\bcomputer\s)(?<!\bdata\s)\bscience\b(?!\s+of\b|\s+fiction\b)", "i"},
+    {~S"\blancet\b", "i"},
+    {~S"\bbmj\b", "i"},
+    {~S"\bnejm\b", "i"},
+    {~S"\bcochrane\b", "i"},
+    {~S"\bjama\b", "i"},
+    {~S"\bplos\b", "i"},
+    {~S"\bcell\s+(press|reports|research|biology|metabolism|host|systems|stem|chemical)\b", "i"},
+    {~S"\bannual\s+review", "i"},
+    {~S"\bpnas\b", "i"},
+    {~S"\bwiley\b", "i"},
+    {~S"\bspringer\b", "i"},
+    {~S"\belsevier\b", "i"},
+    {~S"\boxford\s+(university|academic|press)", "i"},
+    {~S"\bcambridge\s+(university|press)", "i"},
+    {~S"\bieee\b", "i"},
+    {~S"\bacm\b", "i"},
+    {~S"\bamerican\s+medical", "i"},
+    {~S"\bamerican\s+psychological", "i"},
+    {~S"\bbritish\s+medical", "i"},
+    {~S"\bworld\s+health", "i"}
   ]
 
-  @low_quality_patterns [
-    ~r/journal.of.alternative/i,
-    ~r/complementary.*medicine/i,
-    ~r/integrative.*medicine/i,
-    ~r/homeopath/i,
-    ~r/naturopath/i,
-    ~r/ayurved/i,
-    ~r/traditional.*medicine/i,
-    ~r/holistic/i,
-    ~r/journal.*healing/i,
-    ~r/explore.*journal/i,
-    ~r/frontier.*alternative/i,
-    ~r/evidence.based.complementary/i
+  @low_quality_pattern_sources [
+    {~S"journal.of.alternative", "i"},
+    {~S"complementary.*medicine", "i"},
+    {~S"integrative.*medicine", "i"},
+    {~S"homeopath", "i"},
+    {~S"naturopath", "i"},
+    {~S"ayurved", "i"},
+    {~S"traditional.*medicine", "i"},
+    {~S"holistic", "i"},
+    {~S"journal.*healing", "i"},
+    {~S"explore.*journal", "i"},
+    {~S"frontier.*alternative", "i"},
+    {~S"evidence.based.complementary", "i"}
   ]
 
   @impl true
@@ -786,6 +786,14 @@ Known failure patterns to avoid:
   # Only grounded (high-quality) evidence can determine the verdict.
   # Belief (low-quality) evidence provides context but cannot flip direction.
 
+  defp compiled_high_quality_patterns do
+    Enum.map(@high_quality_pattern_sources, fn {src, opts} -> Regex.compile!(src, opts) end)
+  end
+
+  defp compiled_low_quality_patterns do
+    Enum.map(@low_quality_pattern_sources, fn {src, opts} -> Regex.compile!(src, opts) end)
+  end
+
   defp score_source_quality(paper) do
     title = (paper["title"] || "") |> String.downcase()
     source = (paper["source"] || "") |> String.downcase()
@@ -800,7 +808,7 @@ Known failure patterns to avoid:
     # 2. Publisher/journal quality — low-quality check MUST come first
     # to prevent review-type boost from laundering garbage journals
     all_text = "#{title} #{source} #{abstract}"
-    is_low_quality = Enum.any?(@low_quality_patterns, &Regex.match?(&1, all_text))
+    is_low_quality = Enum.any?(compiled_low_quality_patterns(), &Regex.match?(&1, all_text))
 
     # 3. Publication type boost — only if NOT from a low-quality source
     # A "systematic review" in a CAM journal is not the same as one in Cochrane
@@ -809,7 +817,7 @@ Known failure patterns to avoid:
     publisher_score = cond do
       is_low_quality -> 0.05  # Low-quality journals always score low, review or not
       is_review_type -> 0.8   # Reviews from non-garbage sources get grounded
-      Enum.any?(@high_quality_patterns, &Regex.match?(&1, all_text)) -> 0.8
+      Enum.any?(compiled_high_quality_patterns(), &Regex.match?(&1, all_text)) -> 0.8
       true -> 0.3
     end
 

@@ -32,84 +32,88 @@ defmodule OptimalSystemAgent.Security.ShellPolicy do
   # ── Blocked regex patterns ────────────────────────────────────────────────
   # Superset: scheduler/shell_execute patterns (20) UNION hooks.ex patterns (11).
   # Comments mark the origin of each pattern added beyond the scheduler set.
-  @blocked_patterns [
+  @blocked_pattern_sources [
     # ── Privilege escalation ─────────────────────────────────────────────
     # General rm-to-root (scheduler/shell_execute)
-    ~r/\brm\s+(-[a-zA-Z]*\s+)*\//,
-    ~r/\bsudo\b/,
-    ~r/\bdd\b/,
-    ~r/\bmkfs\b/,
+    {~S"\brm\s+(-[a-zA-Z]*\s+)*/", ""},
+    {~S"\bsudo\b", ""},
+    {~S"\bdd\b", ""},
+    {~S"\bmkfs\b", ""},
     # Specific "rm -rf /" form (hooks.ex — already subsumed by the pattern
     # above, but kept explicitly for defence-in-depth clarity)
-    ~r/rm\s+-rf\s+\//,
+    {~S"rm\s+-rf\s+/", ""},
     # dd with input file specified (hooks.ex — more targeted than bare \bdd\b)
-    ~r/dd\s+if=/,
+    {~S"dd\s+if=", ""},
     # Fork bomb (hooks.ex) — match with optional whitespace around braces
-    ~r/:\(\)\s*\{.*\|.*&\s*\}\s*;\s*:/,
+    {~S":\(\)\s*\{.*\|.*&\s*\}\s*;\s*:", ""},
 
     # ── Output redirection to system paths ───────────────────────────────
-    ~r/>\s*\/etc\//,
-    ~r/>\s*~\/\.ssh\//,
-    ~r/>\s*\/boot\//,
-    ~r/>\s*\/usr\//,
+    {~S">\s*/etc/", ""},
+    {~S">\s*~/\.ssh/", ""},
+    {~S">\s*/boot/", ""},
+    {~S">\s*/usr/", ""},
     # Raw device writes (hooks.ex)
-    ~r/>\s*\/dev\/sd/,
+    {~S">\s*/dev/sd", ""},
 
     # ── SQL destructive statements (hooks.ex) ────────────────────────────
-    ~r/DROP\s+TABLE/i,
-    ~r/DROP\s+DATABASE/i,
+    {~S"DROP\s+TABLE", "i"},
+    {~S"DROP\s+DATABASE", "i"},
 
     # ── Shell injection / subshell ────────────────────────────────────────
-    ~r/`[^`]*`/,
-    ~r/\$\([^)]*\)/,
-    ~r/\$\{[^}]*\}/,
+    {~S"`[^`]*`", ""},
+    {~S"\$\([^)]*\)", ""},
+    {~S"\$\{[^}]*\}", ""},
 
     # ── Chained blocked commands ──────────────────────────────────────────
-    ~r/;\s*(rm|sudo|dd|mkfs|shutdown)/,
-    ~r/\|\s*(rm|sudo|dd|mkfs|shutdown)/,
-    ~r/&&\s*(rm|sudo|dd|mkfs|shutdown)/,
-    ~r/\|\|\s*(rm|sudo|dd|mkfs|shutdown)/,
+    {~S";\s*(rm|sudo|dd|mkfs|shutdown)", ""},
+    {~S"\|\s*(rm|sudo|dd|mkfs|shutdown)", ""},
+    {~S"&&\s*(rm|sudo|dd|mkfs|shutdown)", ""},
+    {~S"\|\|\s*(rm|sudo|dd|mkfs|shutdown)", ""},
 
     # ── Piping remote content into a shell (hooks.ex) ────────────────────
-    ~r/curl.*\|\s*sh/,
-    ~r/wget.*\|\s*sh/,
+    {~S"curl.*\|\s*sh", ""},
+    {~S"wget.*\|\s*sh", ""},
 
     # ── Absolute path invocations ─────────────────────────────────────────
-    ~r/\/bin\/(rm|dd|mkfs)/,
-    ~r/\/usr\/bin\/(sudo|pkill|killall)/,
+    {~S"/bin/(rm|dd|mkfs)", ""},
+    {~S"/usr/bin/(sudo|pkill|killall)", ""},
 
     # ── Dangerous permission / ownership changes ──────────────────────────
     # More general pattern from scheduler (covers any leading octal digits)
-    ~r/\bchmod\s+[0-7]*777\b/,
+    {~S"\bchmod\s+[0-7]*777\b", ""},
     # Simpler hooks.ex variant (already subsumed, kept for defence-in-depth)
-    ~r/chmod\s+777/,
-    ~r/\bchown\s+root\b/,
+    {~S"chmod\s+777", ""},
+    {~S"\bchown\s+root\b", ""},
 
     # ── Sensitive file reads ──────────────────────────────────────────────
-    ~r/\b(cat|less|more|head|tail|strings|xxd)\s+.*\/etc\/(shadow|passwd|sudoers)/,
-    ~r/\b(cat|less|more|head|tail|strings|xxd)\s+.*\.ssh\/(id_rsa|id_ed25519|id_ecdsa|id_dsa)/,
-    ~r/\b(cat|less|more|head|tail|strings|xxd)\s+.*\.env\b/,
+    {~S"\b(cat|less|more|head|tail|strings|xxd)\s+.*/etc/(shadow|passwd|sudoers)", ""},
+    {~S"\b(cat|less|more|head|tail|strings|xxd)\s+.*\.ssh/(id_rsa|id_ed25519|id_ecdsa|id_dsa)", ""},
+    {~S"\b(cat|less|more|head|tail|strings|xxd)\s+.*\.env\b", ""},
 
     # ── Path traversal ────────────────────────────────────────────────────
-    ~r/\.\.\//,
+    {~S"\.\./", ""},
 
     # ── curl / wget writing to file ───────────────────────────────────────
-    ~r/\bcurl\b.*\s(-o\s|--output\s)/,
-    ~r/\bcurl\b.*\s-[a-zA-Z]*o\s/,
-    ~r/\bwget\b.*\s(-O\s|--output-document\s)/,
-    ~r/\bwget\b.*\s-[a-zA-Z]*O\s/,
+    {~S"\bcurl\b.*\s(-o\s|--output\s)", ""},
+    {~S"\bcurl\b.*\s-[a-zA-Z]*o\s", ""},
+    {~S"\bwget\b.*\s(-O\s|--output-document\s)", ""},
+    {~S"\bwget\b.*\s-[a-zA-Z]*O\s", ""},
 
     # ── Destructive git operations ─────────────────────────────────────
-    ~r/\bgit\s+push\s+.*--force\b/,
-    ~r/\bgit\s+push\s+-f\b/,
-    ~r/\bgit\s+reset\s+--hard\b/,
-    ~r/\bgit\s+clean\s+-[a-zA-Z]*f/,
-    ~r/\bgit\s+checkout\s+--\s*\./,
-    ~r/\bgit\s+branch\s+-D\b/,
-    ~r/\bgit\s+.*--no-verify\b/
+    {~S"\bgit\s+push\s+.*--force\b", ""},
+    {~S"\bgit\s+push\s+-f\b", ""},
+    {~S"\bgit\s+reset\s+--hard\b", ""},
+    {~S"\bgit\s+clean\s+-[a-zA-Z]*f", ""},
+    {~S"\bgit\s+checkout\s+--\s*\.", ""},
+    {~S"\bgit\s+branch\s+-D\b", ""},
+    {~S"\bgit\s+.*--no-verify\b", ""}
   ]
 
   @max_output_bytes 100_000
+
+  defp compiled_blocked_patterns do
+    Enum.map(@blocked_pattern_sources, fn {src, opts} -> Regex.compile!(src, opts) end)
+  end
 
   # ── Public API ────────────────────────────────────────────────────────────
 
@@ -139,7 +143,7 @@ defmodule OptimalSystemAgent.Security.ShellPolicy do
       blocked_segment != nil ->
         {:error, "Command contains blocked command: #{String.trim(blocked_segment)}"}
 
-      Enum.any?(@blocked_patterns, &Regex.match?(&1, command)) ->
+      Enum.any?(compiled_blocked_patterns(), &Regex.match?(&1, command)) ->
         {:error, "Command contains blocked pattern"}
 
       true ->

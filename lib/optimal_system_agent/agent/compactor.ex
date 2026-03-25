@@ -71,7 +71,7 @@ defmodule OptimalSystemAgent.Agent.Compactor do
   @warm_zone_end 50
 
   # Acknowledgment patterns — these get compressed first
-  @ack_patterns ~r/\A\s*(ok|okay|sure|thanks|thank you|got it|yes|no|yep|nope|k|kk|alright|cool|nice|great|perfect|noted|ack|roger|👍|👌)\s*[\.\!\?]?\s*\z/iu
+  @ack_pattern_source {~S"\A\s*(ok|okay|sure|thanks|thank you|got it|yes|no|yep|nope|k|kk|alright|cool|nice|great|perfect|noted|ack|roger|👍|👌)\s*[\.\!\?]?\s*\z", "iu"}
 
   # ---------------------------------------------------------------------------
   # GenServer state
@@ -449,8 +449,9 @@ defmodule OptimalSystemAgent.Agent.Compactor do
     length_bonus = min(String.length(content) / 500, 0.3)
 
     # Acknowledgment penalty
+    {ack_src, ack_opts} = @ack_pattern_source
     ack_penalty =
-      if Regex.match?(@ack_patterns, content), do: -0.5, else: 0.0
+      if Regex.match?(Regex.compile!(ack_src, ack_opts), content), do: -0.5, else: 0.0
 
     max(base + tool_bonus + tool_result_bonus + length_bonus + ack_penalty, 0.1)
   end

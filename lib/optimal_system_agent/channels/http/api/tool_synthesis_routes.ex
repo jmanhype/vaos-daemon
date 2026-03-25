@@ -15,7 +15,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.ToolSynthesisRoutes do
 
   alias OptimalSystemAgent.Tools.Synthesizer
 
-  @name_regex ~r/^[a-z][a-z0-9_-]*$/
+  @name_regex_source {~S"^[a-z][a-z0-9_-]*$", ""}
 
   plug :match
 
@@ -39,7 +39,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.ToolSynthesisRoutes do
       not (is_binary(name) and name != "") ->
         json_error(conn, 400, "missing_name", "Field 'name' (kebab-case string) is required")
 
-      not Regex.match?(@name_regex, name) ->
+      not valid_tool_name?(name) ->
         json_error(
           conn,
           400,
@@ -140,6 +140,11 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.ToolSynthesisRoutes do
         Logger.error("[ToolSynthesisRoutes] Delete failed for '#{tool_name}': #{inspect(reason)}")
         json_error(conn, 500, "delete_failed", to_string(reason))
     end
+  end
+
+  defp valid_tool_name?(name) do
+    {src, opts} = @name_regex_source
+    Regex.match?(Regex.compile!(src, opts), name)
   end
 
   # ── Catch-all ──────────────────────────────────────────────────────────────

@@ -74,50 +74,38 @@ defmodule OptimalSystemAgent.Agent.Loop.Guardrails do
 
   def response_contains_prompt_leak?(_), do: false
 
-  @injection_patterns [
-    ~r/what\s+(is|are|was)\s+(your\s+)?(system\s+prompt|instructions?|rules?|configuration|directives?)/i,
-    ~r/what\s+(is|are|was)\s+the\s+(system\s+prompt|instructions?|configuration|directives?)/i,
-    ~r/(show(\s+me)?|print|display|reveal|repeat|output|tell\s+me|give\s+me|say|recite|state|list|read)\s+(your\s+)?(system\s+prompt|instructions?|full\s+prompt|prompt|initial\s+prompt|configuration)/i,
-    # "tell me your system prompt word for word" and inverted variants
-    ~r/tell\s+me\s+.{0,30}(system\s+prompt|instructions?|rules?|prompt)\s*(word\s+for\s+word|verbatim|exactly|literally)?/i,
-    ~r/(word\s+for\s+word|verbatim|character\s+for\s+character).{0,40}(prompt|instructions?|told|rules?)/i,
-    # "ignore all instructions" without requiring previous/prior/above
-    ~r/ignore\s+all\s+(instructions?|rules?|guidelines?|context|constraints?)/i,
-    ~r/ignore\s+(all\s+)?(previous|prior|above)\s+(instructions?|prompt|context|rules?)/i,
-    ~r/repeat\s+everything\s+(above|before|prior)/i,
-    ~r/what\s+(were\s+)?(you\s+)?(told|instructed|programmed|trained|configured)\s+to/i,
-    # DAN / jailbreak persona adoption
-    ~r/(jailbreak|do\s+anything\s+now|developer\s+mode|prompt\s+injection)/i,
-    ~r/\byou\s+(are|were|become|act\s+as)\s+DAN\b/i,
-    ~r/\bDAN\s+(mode|protocol|activated|enabled)\b/i,
-    # "pretend/act as if you have no restrictions"
-    ~r/(pretend|act\s+as\s+if|imagine|behave\s+as\s+if)\s+.{0,40}(no\s+restrictions?|no\s+guidelines?|no\s+rules?|unrestricted|without\s+limits?|uncensored)/i,
-    # "output everything above/before this"
-    ~r/(output|print|repeat|copy|write\s+out)\s+(everything|all\s+text|all\s+content)\s+(above|before|prior)/i,
-    ~r/disregard\s+(your\s+)?(previous\s+)?(instructions?|guidelines?|rules?)/i,
-    ~r/forget\s+(everything|all)\s+(you\s+)?(were\s+)?(told|instructed|programmed)/i,
-    ~r/system\s+prompt.*word\s+for\s+word/i,
-    ~r/verbatim.*(prompt|instructions?)/i,
-    ~r/(prompt|instructions?).*verbatim/i,
-    ~r/copy\s+(and\s+)?(paste|output)\s+(your\s+)?(prompt|instructions?)/i,
-    # "override/bypass/circumvent your instructions/restrictions"
-    ~r/(override|bypass|circumvent|disable)\s+.{0,30}(instructions?|restrictions?|guidelines?|safety\s+filter)/i
+  # Pattern sources stored as {string, opts} tuples — compiled at runtime
+  # to avoid Elixir 1.18+ Reference escape issue with compiled regexes in module attrs.
+  @injection_pattern_sources [
+    {~S"what\s+(is|are|was)\s+(your\s+)?(system\s+prompt|instructions?|rules?|configuration|directives?)", "i"},
+    {~S"what\s+(is|are|was)\s+the\s+(system\s+prompt|instructions?|configuration|directives?)", "i"},
+    {~S"(show(\s+me)?|print|display|reveal|repeat|output|tell\s+me|give\s+me|say|recite|state|list|read)\s+(your\s+)?(system\s+prompt|instructions?|full\s+prompt|prompt|initial\s+prompt|configuration)", "i"},
+    {~S"tell\s+me\s+.{0,30}(system\s+prompt|instructions?|rules?|prompt)\s*(word\s+for\s+word|verbatim|exactly|literally)?", "i"},
+    {~S"(word\s+for\s+word|verbatim|character\s+for\s+character).{0,40}(prompt|instructions?|told|rules?)", "i"},
+    {~S"ignore\s+all\s+(instructions?|rules?|guidelines?|context|constraints?)", "i"},
+    {~S"ignore\s+(all\s+)?(previous|prior|above)\s+(instructions?|prompt|context|rules?)", "i"},
+    {~S"repeat\s+everything\s+(above|before|prior)", "i"},
+    {~S"what\s+(were\s+)?(you\s+)?(told|instructed|programmed|trained|configured)\s+to", "i"},
+    {~S"(jailbreak|do\s+anything\s+now|developer\s+mode|prompt\s+injection)", "i"},
+    {~S"\byou\s+(are|were|become|act\s+as)\s+DAN\b", "i"},
+    {~S"\bDAN\s+(mode|protocol|activated|enabled)\b", "i"},
+    {~S"(pretend|act\s+as\s+if|imagine|behave\s+as\s+if)\s+.{0,40}(no\s+restrictions?|no\s+guidelines?|no\s+rules?|unrestricted|without\s+limits?|uncensored)", "i"},
+    {~S"(output|print|repeat|copy|write\s+out)\s+(everything|all\s+text|all\s+content)\s+(above|before|prior)", "i"},
+    {~S"disregard\s+(your\s+)?(previous\s+)?(instructions?|guidelines?|rules?)", "i"},
+    {~S"forget\s+(everything|all)\s+(you\s+)?(were\s+)?(told|instructed|programmed)", "i"},
+    {~S"system\s+prompt.*word\s+for\s+word", "i"},
+    {~S"verbatim.*(prompt|instructions?)", "i"},
+    {~S"(prompt|instructions?).*verbatim", "i"},
+    {~S"copy\s+(and\s+)?(paste|output)\s+(your\s+)?(prompt|instructions?)", "i"},
+    {~S"(override|bypass|circumvent|disable)\s+.{0,30}(instructions?|restrictions?|guidelines?|safety\s+filter)", "i"}
   ]
 
-  # Tier 3 — structural boundary markers that signal injected prompt sections.
-  # Anchored to line-starts ((?:^|\n)) so they fire on injected headers,
-  # not incidental mid-sentence occurrences.
-  @structural_injection_patterns [
-    # Role headers on their own line: SYSTEM:, ASSISTANT:, USER:
-    ~r/(?:^|\n)\s*(?:system|assistant|user)\s*:/i,
-    # Markdown instruction resets: ### New Instructions, ## Override, etc.
-    ~r/(?:^|\n)\s*\#{1,6}\s*(?:new\s+instructions?|override|ignore\s+above|reset|updated?\s+rules?)/i,
-    # XML-like prompt boundary tags: <system>, </instructions>, <prompt>, etc.
-    ~r/<\/?\s*(?:system|instructions?|prompt|context|rules?)\s*>/i,
-    # Bracket/chevron-delimited role tags: [SYSTEM], [INST], [/INST], <<SYS>>
-    ~r/(?:\[|<<)\s*(?:SYSTEM|INST|SYS|ASSISTANT|USER)\s*(?:\]|>>)/,
-    # Horizontal-rule followed by "instructions": ---\nNew instructions below
-    ~r/(?:^|\n)-{3,}\s*\n\s*(?:new\s+)?instructions?/i
+  @structural_pattern_sources [
+    {~S"(?:^|\n)\s*(?:system|assistant|user)\s*:", "i"},
+    {~S"(?:^|\n)\s*\#{1,6}\s*(?:new\s+instructions?|override|ignore\s+above|reset|updated?\s+rules?)", "i"},
+    {~S"<\/?\s*(?:system|instructions?|prompt|context|rules?)\s*>", "i"},
+    {~S"(?:\[|<<)\s*(?:SYSTEM|INST|SYS|ASSISTANT|USER)\s*(?:\]|>>)", ""},
+    {~S"(?:^|\n)-{3,}\s*\n\s*(?:new\s+)?instructions?", "i"}
   ]
 
   @doc """
@@ -128,8 +116,11 @@ defmodule OptimalSystemAgent.Agent.Loop.Guardrails do
   def prompt_injection?(message) when is_binary(message) do
     trimmed = String.trim(message)
 
+    injection = compiled_injection_patterns()
+    structural = compiled_structural_patterns()
+
     # Tier 1 — raw regex (fast path, < 1ms)
-    if Enum.any?(@injection_patterns, &Regex.match?(&1, trimmed)) do
+    if Enum.any?(injection, &Regex.match?(&1, trimmed)) do
       true
     else
       # Tier 2 — regex on normalized input (catches Unicode obfuscation)
@@ -137,13 +128,13 @@ defmodule OptimalSystemAgent.Agent.Loop.Guardrails do
 
       tier2 =
         trimmed != normalized and
-          Enum.any?(@injection_patterns, &Regex.match?(&1, normalized))
+          Enum.any?(injection, &Regex.match?(&1, normalized))
 
       if tier2 do
         true
       else
         # Tier 3 — structural boundary analysis
-        Enum.any?(@structural_injection_patterns, &Regex.match?(&1, trimmed))
+        Enum.any?(structural, &Regex.match?(&1, trimmed))
       end
     end
   end
@@ -153,28 +144,30 @@ defmodule OptimalSystemAgent.Agent.Loop.Guardrails do
   # Detect when a local model describes intent ("Let me check...") instead of
   # calling tools. Returns true if the response looks like narrated intent
   # rather than a final answer.
-  @intent_patterns [
-    ~r/\blet me (check|read|look|examine|create|write|edit|search|find|open|run|list|inspect)\b/i,
-    ~r/\bi('ll| will) (check|read|look|create|write|edit|search|find|open|run|list|inspect)\b/i,
-    ~r/\bi('m going to|am going to) /i,
-    ~r/\bfirst,? i (need|want) to /i,
-    ~r/\blet's start by /i,
-    ~r/\bnow (i'll|let me|i will|i need to) /i,
-    ~r/\bi (need|want) to (check|read|look|examine|create|write|edit|search|find|open|run|list)\b/i
+  # Stored as {source, opts} tuples — compiled at runtime (Elixir 1.18+ Reference escape).
+  @intent_pattern_sources [
+    {~S"\blet me (check|read|look|examine|create|write|edit|search|find|open|run|list|inspect)\b", "i"},
+    {~S"\bi('ll| will) (check|read|look|create|write|edit|search|find|open|run|list|inspect)\b", "i"},
+    {~S"\bi('m going to|am going to) ", "i"},
+    {~S"\bfirst,? i (need|want) to ", "i"},
+    {~S"\blet's start by ", "i"},
+    {~S"\bnow (i'll|let me|i will|i need to) ", "i"},
+    {~S"\bi (need|want) to (check|read|look|examine|create|write|edit|search|find|open|run|list)\b", "i"}
   ]
 
   # Matches a code block with 5+ lines of actual code — indicates model wrote code
   # in its response text instead of calling file_write or file_edit.
   # Must have a language identifier (```python, ```typescript, etc.) to avoid
   # false positives on directory trees, command output, and plain text blocks.
-  @code_block_pattern ~r/```(?:python|typescript|javascript|elixir|go|rust|java|ruby|bash|sh|sql|css|html|jsx|tsx|yaml|toml|json|c|cpp|swift|kotlin|scala|haskell|lua|perl|php|r|dart|zig|nim|svelte)\n(?:.*\n){5,}?```/
+  # Stored as {source, opts} — compiled at runtime (Elixir 1.18+ Reference escape).
+  @code_block_pattern_source {~S"```(?:python|typescript|javascript|elixir|go|rust|java|ruby|bash|sh|sql|css|html|jsx|tsx|yaml|toml|json|c|cpp|swift|kotlin|scala|haskell|lua|perl|php|r|dart|zig|nim|svelte)\n(?:.*\n){5,}?```", ""}
 
   @doc "Returns true if the content describes narrated intent rather than a final answer."
   def wants_to_continue?(nil), do: false
   def wants_to_continue?(content) when byte_size(content) < 20, do: false
 
   def wants_to_continue?(content) do
-    Enum.any?(@intent_patterns, &Regex.match?(&1, content))
+    Enum.any?(compiled_intent_patterns(), &Regex.match?(&1, content))
   end
 
   @doc "Returns true when model embeds a substantial code block instead of calling file_write/file_edit."
@@ -182,7 +175,7 @@ defmodule OptimalSystemAgent.Agent.Loop.Guardrails do
   def code_in_text?(content) when byte_size(content) < 50, do: false
 
   def code_in_text?(content) do
-    Regex.match?(@code_block_pattern, content)
+    Regex.match?(compiled_code_block_pattern(), content)
   end
 
   @doc """
@@ -198,13 +191,16 @@ defmodule OptimalSystemAgent.Agent.Loop.Guardrails do
   end
 
   # Detect when a task involves code changes — triggers the explore-first directive.
-  @coding_action_patterns ~r/\b(fix|change|update|refactor|add|implement|create|modify|edit|write|build|rewrite|delete|remove|rename)\b/i
-  @coding_context_patterns ~r/\b(function|method|module|file|code|script|class|endpoint|handler|component|route|controller|service|model|schema|migration|test|spec|bug|error|feature)\b/i
+  # Stored as {source, opts} — compiled at runtime (Elixir 1.18+ Reference escape).
+  @coding_action_pattern_source {~S"\b(fix|change|update|refactor|add|implement|create|modify|edit|write|build|rewrite|delete|remove|rename)\b", "i"}
+  @coding_context_pattern_source {~S"\b(function|method|module|file|code|script|class|endpoint|handler|component|route|controller|service|model|schema|migration|test|spec|bug|error|feature)\b", "i"}
 
   @doc "Returns true when the message describes a task involving code changes."
   def complex_coding_task?(message) when is_binary(message) do
-    Regex.match?(@coding_action_patterns, message) and
-      Regex.match?(@coding_context_patterns, message)
+    {action_src, action_opts} = @coding_action_pattern_source
+    {context_src, context_opts} = @coding_context_pattern_source
+    Regex.match?(Regex.compile!(action_src, action_opts), message) and
+      Regex.match?(Regex.compile!(context_src, context_opts), message)
   end
 
   def complex_coding_task?(_), do: false
@@ -259,6 +255,19 @@ defmodule OptimalSystemAgent.Agent.Loop.Guardrails do
   #   2. Fold fullwidth ASCII (U+FF01–U+FF5E) to standard ASCII (U+0021–U+007E)
   #   3. Collapse common Cyrillic/Greek homoglyphs to ASCII equivalents
   #   4. Lowercase
+  defp compile_sources(sources) do
+    Enum.map(sources, fn {pattern, opts} -> Regex.compile!(pattern, opts) end)
+  end
+
+  defp compiled_injection_patterns, do: compile_sources(@injection_pattern_sources)
+  defp compiled_structural_patterns, do: compile_sources(@structural_pattern_sources)
+  defp compiled_intent_patterns, do: compile_sources(@intent_pattern_sources)
+
+  defp compiled_code_block_pattern do
+    {src, opts} = @code_block_pattern_source
+    Regex.compile!(src, opts)
+  end
+
   defp normalize_for_injection_check(input) when is_binary(input) do
     input
     # Step 1: strip zero-width / invisible codepoints
