@@ -153,7 +153,14 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     :inets.start()
     :ssl.start()
 
-    OptimalSystemAgent.Tools.Builtins.AlphaXivClient.start_link()
+    # Start alphaXiv MCP — trap exit to prevent crash propagation on auth failure
+    try do
+      OptimalSystemAgent.Tools.Builtins.AlphaXivClient.start_link()
+    catch
+      :exit, reason ->
+        Logger.warning("[investigate] alphaXiv MCP unavailable: #{inspect(reason)}")
+        {:error, :alphaxiv_unavailable}
+    end
 
     # 1. Start the real epistemic ledger GenServer
     ensure_ledger_started()
