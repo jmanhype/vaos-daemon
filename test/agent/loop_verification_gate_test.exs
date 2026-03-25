@@ -1,4 +1,4 @@
-defmodule OptimalSystemAgent.Agent.LoopVerificationGateTest do
+defmodule Daemon.Agent.LoopVerificationGateTest do
   @moduledoc """
   Unit tests for the verification gate logic in Loop.
 
@@ -12,7 +12,7 @@ defmodule OptimalSystemAgent.Agent.LoopVerificationGateTest do
   """
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Agent.Loop
+  alias Daemon.Agent.Loop
 
   # Build a minimal state-like map for needs_verification_gate?/1
   defp gate_state(iteration, messages) do

@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Tools.Builtins.CodeSandboxTest do
+defmodule Daemon.Tools.Builtins.CodeSandboxTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Tools.Builtins.CodeSandbox
+  alias Daemon.Tools.Builtins.CodeSandbox
 
   # ---------------------------------------------------------------------------
   # Behaviour callbacks

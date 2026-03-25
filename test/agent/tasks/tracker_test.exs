@@ -1,8 +1,8 @@
-defmodule OptimalSystemAgent.Agent.Tasks.TrackerTest do
+defmodule Daemon.Agent.Tasks.TrackerTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Agent.Tasks
-  alias OptimalSystemAgent.Agent.Tasks.Tracker
+  alias Daemon.Agent.Tasks
+  alias Daemon.Agent.Tasks.Tracker
 
   # ── Helpers ──────────────────────────────────────────────────────
 
@@ -21,7 +21,7 @@ defmodule OptimalSystemAgent.Agent.Tasks.TrackerTest do
     id = "test_tracker_#{System.unique_integer([:positive, :monotonic])}"
 
     on_exit(fn ->
-      base = System.get_env("OSA_HOME") || Path.expand("~/.osa")
+      base = System.get_env("DAEMON_HOME") || Path.expand("~/.daemon")
       dir = Path.join([base, "sessions", id])
       File.rm_rf(dir)
     end)
@@ -301,7 +301,7 @@ defmodule OptimalSystemAgent.Agent.Tasks.TrackerTest do
 
       on_exit(fn ->
         if Process.alive?(pid2), do: GenServer.stop(pid2)
-        base = System.get_env("OSA_HOME") || Path.expand("~/.osa")
+        base = System.get_env("DAEMON_HOME") || Path.expand("~/.daemon")
         path = Path.join([base, "sessions", sid, "tasks.json"])
         File.rm(path)
       end)

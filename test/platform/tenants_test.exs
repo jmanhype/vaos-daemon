@@ -1,8 +1,8 @@
-defmodule OptimalSystemAgent.Platform.TenantsTest do
+defmodule Daemon.Platform.TenantsTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Platform.Schemas.{Tenant, TenantMember, TenantInvite}
-  alias OptimalSystemAgent.Platform.Tenants
+  alias Daemon.Platform.Schemas.{Tenant, TenantMember, TenantInvite}
+  alias Daemon.Platform.Tenants
 
   # ---------------------------------------------------------------------------
   # Tenant schema changeset (pure — no DB)

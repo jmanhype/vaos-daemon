@@ -1,13 +1,13 @@
-defmodule OptimalSystemAgent.Channels.HTTP.AuthTest do
+defmodule Daemon.Channels.HTTP.AuthTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Channels.HTTP.Auth
+  alias Daemon.Channels.HTTP.Auth
 
   @test_secret "test-secret-deterministic"
 
   setup do
-    Application.put_env(:optimal_system_agent, :shared_secret, @test_secret)
-    on_exit(fn -> Application.delete_env(:optimal_system_agent, :shared_secret) end)
+    Application.put_env(:daemon, :shared_secret, @test_secret)
+    on_exit(fn -> Application.delete_env(:daemon, :shared_secret) end)
     :ok
   end
 

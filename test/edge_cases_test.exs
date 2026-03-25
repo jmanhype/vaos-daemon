@@ -1,4 +1,4 @@
-defmodule OptimalSystemAgent.EdgeCasesTest do
+defmodule Daemon.EdgeCasesTest do
   @moduledoc """
   Brutal edge case tests covering every new tool and infrastructure change.
 
@@ -19,18 +19,18 @@ defmodule OptimalSystemAgent.EdgeCasesTest do
 
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Tools.Builtins.FileRead
-  alias OptimalSystemAgent.Tools.Builtins.ShellExecute
-  alias OptimalSystemAgent.Tools.Builtins.Diff
-  alias OptimalSystemAgent.Tools.Builtins.NotebookEdit
-  alias OptimalSystemAgent.Tools.Builtins.CodeSandbox
-  alias OptimalSystemAgent.Tools.Builtins.ComputerUse
-  alias OptimalSystemAgent.Tools.Builtins.Browser
-  alias OptimalSystemAgent.Tools.Registry
-  alias OptimalSystemAgent.Events.Event
-  alias OptimalSystemAgent.Agent.Hooks
-  alias OptimalSystemAgent.Agent.Scratchpad
-  alias OptimalSystemAgent.Security.ShellPolicy
+  alias Daemon.Tools.Builtins.FileRead
+  alias Daemon.Tools.Builtins.ShellExecute
+  alias Daemon.Tools.Builtins.Diff
+  alias Daemon.Tools.Builtins.NotebookEdit
+  alias Daemon.Tools.Builtins.CodeSandbox
+  alias Daemon.Tools.Builtins.ComputerUse
+  alias Daemon.Tools.Builtins.Browser
+  alias Daemon.Tools.Registry
+  alias Daemon.Events.Event
+  alias Daemon.Agent.Hooks
+  alias Daemon.Agent.Scratchpad
+  alias Daemon.Security.ShellPolicy
 
   # ---------------------------------------------------------------------------
   # Helpers

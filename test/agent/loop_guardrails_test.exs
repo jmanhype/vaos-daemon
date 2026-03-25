@@ -1,4 +1,4 @@
-defmodule OptimalSystemAgent.Agent.Loop.GuardrailsTest do
+defmodule Daemon.Agent.Loop.GuardrailsTest do
   @moduledoc """
   Unit tests for the Guardrails module — the application-layer security guardrail
   that blocks system prompt extraction attempts and other prompt injection vectors.
@@ -21,7 +21,7 @@ defmodule OptimalSystemAgent.Agent.Loop.GuardrailsTest do
 
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Agent.Loop.Guardrails
+  alias Daemon.Agent.Loop.Guardrails
 
   # ---------------------------------------------------------------------------
   # prompt_extraction_refusal/0

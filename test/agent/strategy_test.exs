@@ -1,8 +1,8 @@
-defmodule OptimalSystemAgent.Agent.StrategyTest do
+defmodule Daemon.Agent.StrategyTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Agent.Strategy
-  alias OptimalSystemAgent.Agent.Strategies.{ReAct, ChainOfThought, TreeOfThoughts, Reflection, MCTS}
+  alias Daemon.Agent.Strategy
+  alias Daemon.Agent.Strategies.{ReAct, ChainOfThought, TreeOfThoughts, Reflection, MCTS}
 
   # ── Strategy.all/0 ───────────────────────────────────────────────
 
@@ -448,7 +448,7 @@ defmodule OptimalSystemAgent.Agent.StrategyTest do
   # ── MCTS.Simulation ─────────────────────────────────────────────
 
   describe "MCTS.Simulation" do
-    alias OptimalSystemAgent.Agent.Strategies.MCTS.{Simulation, Tree}
+    alias Daemon.Agent.Strategies.MCTS.{Simulation, Tree}
 
     test "heuristic_score returns 0 for empty reasoning" do
       assert Simulation.heuristic_score(%{reasoning: []}) == 0.0
@@ -515,7 +515,7 @@ defmodule OptimalSystemAgent.Agent.StrategyTest do
   # ── MCTS.Tree ───────────────────────────────────────────────────
 
   describe "MCTS.Tree" do
-    alias OptimalSystemAgent.Agent.Strategies.MCTS.Tree
+    alias Daemon.Agent.Strategies.MCTS.Tree
 
     test "new creates tree with root node" do
       {tree, root_id} = Tree.new(%{task: "test"})

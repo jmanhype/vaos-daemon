@@ -1,8 +1,8 @@
-defmodule OptimalSystemAgent.Agent.OrchestratorTest do
+defmodule Daemon.Agent.OrchestratorTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Agent.Orchestrator
-  alias OptimalSystemAgent.Agent.Orchestrator.{Complexity, StateMachine}
+  alias Daemon.Agent.Orchestrator
+  alias Daemon.Agent.Orchestrator.{Complexity, StateMachine}
 
   # ---------------------------------------------------------------------------
   # Complexity.quick_score/1  (pure, no LLM — fast unit tests)

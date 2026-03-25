@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Agent.AppraiserTest do
+defmodule Daemon.Agent.AppraiserTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Agent.Appraiser
+  alias Daemon.Agent.Appraiser
 
   describe "estimate/2" do
     test "returns correct structure" do

@@ -1,4 +1,4 @@
-defmodule OptimalSystemAgent.Channels.HTTP.API.CommandPaletteTest do
+defmodule Daemon.Channels.HTTP.API.CommandPaletteTest do
   @moduledoc """
   Tests for the fuzzy command palette: GET /commands?q=term
 
@@ -9,8 +9,8 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.CommandPaletteTest do
   use ExUnit.Case, async: false
   use Plug.Test
 
-  alias OptimalSystemAgent.Channels.HTTP.API.ToolRoutes
-  alias OptimalSystemAgent.Tools.Registry
+  alias Daemon.Channels.HTTP.API.ToolRoutes
+  alias Daemon.Tools.Registry
 
   @opts ToolRoutes.init([])
   @suffix System.unique_integer([:positive]) |> Integer.to_string()

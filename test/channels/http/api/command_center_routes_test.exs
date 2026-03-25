@@ -1,8 +1,8 @@
-defmodule OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutesTest do
+defmodule Daemon.Channels.HTTP.API.CommandCenterRoutesTest do
   use ExUnit.Case, async: false
   use Plug.Test
 
-  alias OptimalSystemAgent.Channels.HTTP.API.CommandCenterRoutes
+  alias Daemon.Channels.HTTP.API.CommandCenterRoutes
 
   @opts CommandCenterRoutes.init([])
 

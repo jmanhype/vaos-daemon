@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Integration.ConversationTest do
+defmodule Daemon.Integration.ConversationTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Agent.{Context, Compactor, Tasks}
+  alias Daemon.Agent.{Context, Compactor, Tasks}
 
   # ---------------------------------------------------------------------------
   # Context builder — token budgeting

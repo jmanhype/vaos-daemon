@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/install.sh — One-line installer for OSA Agent.
+# scripts/install.sh — One-line installer for Daemon Agent.
 #
 # Usage:
 #   macOS/Linux: curl -fsSL https://raw.githubusercontent.com/Miosa-osa/OptimalSystemAgent/main/scripts/install.sh | bash
@@ -15,7 +15,7 @@
 #   3. Installs native build dependencies for Rust TUI
 #   4. Builds the Rust TUI
 #   5. Fetches Elixir dependencies & compiles
-#   6. Installs `osa` and `osagent` to ~/.local/bin
+#   6. Installs `osa` and `daemon` to ~/.local/bin
 #   7. Sets up PATH if needed
 
 set -euo pipefail
@@ -51,11 +51,11 @@ warn()  { echo -e "${YELLOW}⚠${RESET} $*"; }
 fail()  { echo -e "${RED}✗${RESET} $*"; exit 1; }
 
 # ── Config ─────────────────────────────────────────────────────────
-OSA_DIR="${HOME}/.osa"
+Daemon_DIR="${HOME}/.osa"
 INSTALL_DIR="${HOME}/.local/bin"
-REPO_URL="${OSA_REPO_URL:-https://github.com/Miosa-osa/OptimalSystemAgent.git}"
-BRANCH="${OSA_BRANCH:-main}"
-AGENT_DIR="${OSA_DIR}/agent"
+REPO_URL="${Daemon_REPO_URL:-https://github.com/Miosa-osa/OptimalSystemAgent.git}"
+BRANCH="${Daemon_BRANCH:-main}"
+AGENT_DIR="${Daemon_DIR}/agent"
 
 # Minimum required versions
 MIN_ELIXIR_MAJOR=1
@@ -64,7 +64,7 @@ MIN_OTP_MAJOR=26
 
 # ── Banner ─────────────────────────────────────────────────────────
 echo ""
-echo -e "${BOLD}  ◈ OSA Agent — Installer${RESET}"
+echo -e "${BOLD}  ◈ Daemon Agent — Installer${RESET}"
 echo -e "${DIM}  Your OS, Supercharged${RESET}"
 echo ""
 
@@ -336,7 +336,7 @@ check_cmd erl    || fail "Erlang installation failed. Install OTP 26+ manually."
 check_elixir_version || fail "Elixir version too old. Need 1.17+, have: $(elixir --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
 
 # ── Clone or update repo ──────────────────────────────────────────
-mkdir -p "$OSA_DIR"
+mkdir -p "$Daemon_DIR"
 
 if [ -d "$AGENT_DIR/.git" ]; then
   info "Updating existing installation..."
@@ -345,7 +345,7 @@ if [ -d "$AGENT_DIR/.git" ]; then
 elif [ -d "$AGENT_DIR" ]; then
   info "Using existing directory: $AGENT_DIR"
 else
-  info "Cloning OSA Agent..."
+  info "Cloning Daemon Agent..."
   git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$AGENT_DIR" 2>&1 | tail -2
   ok "Cloned to $AGENT_DIR"
 fi
@@ -357,7 +357,7 @@ if [ -f "$(dirname "$SCRIPT_SELF")/../mix.exs" ] 2>/dev/null; then
   info "Running from local checkout: $AGENT_DIR"
 fi
 
-echo "$AGENT_DIR" > "$OSA_DIR/project_root"
+echo "$AGENT_DIR" > "$Daemon_DIR/project_root"
 
 # ── Install native build dependencies ────────────────────────────
 # Required by Rust TUI crates:
@@ -426,11 +426,11 @@ if [ ! -d "$TUI_DIR" ]; then
 fi
 
 info "Building TUI (this takes ~60s on first run)..."
-BUILD_LOG="/tmp/osa-tui-build.log"
+BUILD_LOG="/tmp/daemon-tui-build.log"
 if (cd "$TUI_DIR" && cargo build --release 2>&1 | tee "$BUILD_LOG" | grep -E "Compiling|Finished|error" | tail -10); then
   : # success path
 fi
-if [ ! -f "$TUI_DIR/target/release/osagent" ]; then
+if [ ! -f "$TUI_DIR/target/release/daemon" ]; then
   echo ""
   warn "TUI build failed. Last 20 lines of build output:"
   tail -20 "$BUILD_LOG" 2>/dev/null | sed 's/^/    /'
@@ -453,9 +453,9 @@ mkdir -p "$INSTALL_DIR"
 chmod +x "$AGENT_DIR/bin/osa"
 
 ln -sf "$AGENT_DIR/bin/osa" "$INSTALL_DIR/osa"
-ln -sf "$AGENT_DIR/bin/osa" "$INSTALL_DIR/osagent"
+ln -sf "$AGENT_DIR/bin/osa" "$INSTALL_DIR/daemon"
 ok "Linked osa     → $INSTALL_DIR/osa"
-ok "Linked osagent → $INSTALL_DIR/osagent"
+ok "Linked daemon → $INSTALL_DIR/daemon"
 
 # ── Ensure PATH ───────────────────────────────────────────────────
 path_updated=false
@@ -477,7 +477,7 @@ if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
     : # Already present
   else
     echo "" >> "$SHELL_RC"
-    echo "# OSA Agent" >> "$SHELL_RC"
+    echo "# Daemon Agent" >> "$SHELL_RC"
     echo "$EXPORT_LINE" >> "$SHELL_RC"
     path_updated=true
     ok "Added ~/.local/bin to PATH in $SHELL_RC"
@@ -487,39 +487,39 @@ if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
   if [ "$SHELL_NAME" = "bash" ] && [ -f "$HOME/.profile" ]; then
     if ! grep -qF '.local/bin' "$HOME/.profile" 2>/dev/null; then
       echo "" >> "$HOME/.profile"
-      echo "# OSA Agent" >> "$HOME/.profile"
+      echo "# Daemon Agent" >> "$HOME/.profile"
       echo "$EXPORT_LINE" >> "$HOME/.profile"
     fi
   fi
 fi
 
 # ── Create default config if needed ───────────────────────────────
-mkdir -p "$OSA_DIR/logs"
+mkdir -p "$Daemon_DIR/logs"
 
-if [ ! -f "$OSA_DIR/.env" ]; then
-  cat > "$OSA_DIR/.env" <<'ENVEOF'
-# OSA Agent Configuration
+if [ ! -f "$Daemon_DIR/.env" ]; then
+  cat > "$Daemon_DIR/.env" <<'ENVEOF'
+# Daemon Agent Configuration
 # Uncomment and set your API key for cloud providers:
 # ANTHROPIC_API_KEY=sk-ant-...
 # OPENAI_API_KEY=sk-...
 # GROQ_API_KEY=gsk_...
 
 # Default: Ollama (local, no API key needed)
-# OSA_DEFAULT_PROVIDER=ollama
-# OSA_PORT=8089
+# Daemon_DEFAULT_PROVIDER=ollama
+# Daemon_PORT=8089
 ENVEOF
-  ok "Created config template → $OSA_DIR/.env"
+  ok "Created config template → $Daemon_DIR/.env"
 fi
 
 # ── Success ────────────────────────────────────────────────────────
 echo ""
-echo -e "${GREEN}${BOLD}  ◈ OSA Agent installed successfully!${RESET}"
+echo -e "${GREEN}${BOLD}  ◈ Daemon Agent installed successfully!${RESET}"
 echo ""
 echo -e "  ${DIM}Locations:${RESET}"
 echo -e "    Agent:    $AGENT_DIR"
-echo -e "    Commands: $INSTALL_DIR/osa, $INSTALL_DIR/osagent"
-echo -e "    Config:   $OSA_DIR/.env"
-echo -e "    Logs:     $OSA_DIR/logs/"
+echo -e "    Commands: $INSTALL_DIR/osa, $INSTALL_DIR/daemon"
+echo -e "    Config:   $Daemon_DIR/.env"
+echo -e "    Logs:     $Daemon_DIR/logs/"
 echo ""
 
 if [ "$path_updated" = true ]; then
@@ -529,7 +529,7 @@ if [ "$path_updated" = true ]; then
 fi
 
 echo -e "  ${DIM}Quick start:${RESET}"
-echo -e "    ${BOLD}osa${RESET}             Start backend + TUI (same as osagent)"
+echo -e "    ${BOLD}osa${RESET}             Start backend + TUI (same as daemon)"
 echo -e "    ${BOLD}osa update${RESET}      Pull latest + recompile"
 echo -e "    ${BOLD}osa setup${RESET}       Interactive setup wizard"
 echo -e "    ${DIM}Default: Ollama (local, no key needed)${RESET}"

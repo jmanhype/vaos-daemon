@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Agent.Memory.InjectorTest do
+defmodule Daemon.Agent.Memory.InjectorTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Agent.Memory.{Taxonomy, Injector}
+  alias Daemon.Agent.Memory.{Taxonomy, Injector}
 
   # ── Helpers ──────────────────────────────────────────────────────────
 

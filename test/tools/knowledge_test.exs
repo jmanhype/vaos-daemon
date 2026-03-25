@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Tools.Builtins.KnowledgeTest do
+defmodule Daemon.Tools.Builtins.KnowledgeTest do
   use ExUnit.Case
 
-  alias OptimalSystemAgent.Tools.Builtins.Knowledge
+  alias Daemon.Tools.Builtins.Knowledge
 
   # ---------------------------------------------------------------------------
   # Each test gets a fresh knowledge store to avoid state bleed.

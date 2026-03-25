@@ -1,9 +1,9 @@
-defmodule OptimalSystemAgent.Bridge.PubSubTest do
+defmodule Daemon.Bridge.PubSubTest do
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Bridge.PubSub
+  alias Daemon.Bridge.PubSub
 
-  @pubsub OptimalSystemAgent.PubSub
+  @pubsub Daemon.PubSub
 
   # Ensure PubSub is running — it may already be started by the application.
   setup_all do
@@ -11,7 +11,7 @@ defmodule OptimalSystemAgent.Bridge.PubSubTest do
 
     # The application supervisor may have already started PubSub.
     # Only start it if it's not already running.
-    unless Process.whereis(OptimalSystemAgent.PubSub) do
+    unless Process.whereis(Daemon.PubSub) do
       start_supervised!({Phoenix.PubSub, name: @pubsub})
     end
 
@@ -26,21 +26,21 @@ defmodule OptimalSystemAgent.Bridge.PubSubTest do
 
   defp simulate_broadcast(event) do
     # Tier 1: Firehose
-    Phoenix.PubSub.broadcast(@pubsub, "osa:events", {:osa_event, event})
+    Phoenix.PubSub.broadcast(@pubsub, "osa:events", {:daemon_event, event})
 
     # Tier 2: Session
     if session_id = Map.get(event, :session_id) do
-      Phoenix.PubSub.broadcast(@pubsub, "osa:session:#{session_id}", {:osa_event, event})
+      Phoenix.PubSub.broadcast(@pubsub, "osa:session:#{session_id}", {:daemon_event, event})
     end
 
     # Tier 3: Type
     if type = Map.get(event, :type) do
-      Phoenix.PubSub.broadcast(@pubsub, "osa:type:#{type}", {:osa_event, event})
+      Phoenix.PubSub.broadcast(@pubsub, "osa:type:#{type}", {:daemon_event, event})
     end
 
     # Tier 4: TUI output
     if Map.get(event, :type) in @tui_event_types do
-      Phoenix.PubSub.broadcast(@pubsub, "osa:tui:output", {:osa_event, event})
+      Phoenix.PubSub.broadcast(@pubsub, "osa:tui:output", {:daemon_event, event})
     end
   end
 
@@ -75,7 +75,7 @@ defmodule OptimalSystemAgent.Bridge.PubSubTest do
       PubSub.subscribe_firehose()
       event = %{type: :some_event, payload: "hello"}
       simulate_broadcast(event)
-      assert_receive {:osa_event, ^event}, 500
+      assert_receive {:daemon_event, ^event}, 500
     end
   end
 
@@ -88,14 +88,14 @@ defmodule OptimalSystemAgent.Bridge.PubSubTest do
       PubSub.subscribe_session("sess-1")
       event = %{type: :agent_response, session_id: "sess-1"}
       simulate_broadcast(event)
-      assert_receive {:osa_event, ^event}, 500
+      assert_receive {:daemon_event, ^event}, 500
     end
 
     test "event without session_id is NOT delivered to session subscribers" do
       PubSub.subscribe_session("sess-2")
       event = %{type: :agent_response}
       simulate_broadcast(event)
-      refute_receive {:osa_event, _}, 100
+      refute_receive {:daemon_event, _}, 100
     end
   end
 
@@ -108,14 +108,14 @@ defmodule OptimalSystemAgent.Bridge.PubSubTest do
       PubSub.subscribe_type(:llm_response)
       event = %{type: :llm_response, text: "hi"}
       simulate_broadcast(event)
-      assert_receive {:osa_event, ^event}, 500
+      assert_receive {:daemon_event, ^event}, 500
     end
 
     test "event with different type is NOT delivered to type subscribers" do
       PubSub.subscribe_type(:tool_result)
       event = %{type: :agent_started}
       simulate_broadcast(event)
-      refute_receive {:osa_event, _}, 100
+      refute_receive {:daemon_event, _}, 100
     end
   end
 
@@ -129,7 +129,7 @@ defmodule OptimalSystemAgent.Bridge.PubSubTest do
       Enum.each(@tui_event_types, fn t ->
         event = %{type: t, text: "payload"}
         simulate_broadcast(event)
-        assert_receive {:osa_event, ^event}, 500,
+        assert_receive {:daemon_event, ^event}, 500,
           "Expected TUI event for type #{t}"
       end)
     end
@@ -138,7 +138,7 @@ defmodule OptimalSystemAgent.Bridge.PubSubTest do
       PubSub.subscribe_tui_output()
       event = %{type: :agent_started, session_id: "x"}
       simulate_broadcast(event)
-      refute_receive {:osa_event, _}, 100
+      refute_receive {:daemon_event, _}, 100
     end
   end
 end

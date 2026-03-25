@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Agent.Memory.TaxonomyTest do
+defmodule Daemon.Agent.Memory.TaxonomyTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Agent.Memory.Taxonomy
+  alias Daemon.Agent.Memory.Taxonomy
 
   # ── new/2 ────────────────────────────────────────────────────────────
 

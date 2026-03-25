@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Tools.Builtins.FileReadTest do
+defmodule Daemon.Tools.Builtins.FileReadTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Tools.Builtins.FileRead
+  alias Daemon.Tools.Builtins.FileRead
 
   # ---------------------------------------------------------------------------
   # Blocked sensitive paths

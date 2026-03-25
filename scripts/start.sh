@@ -9,10 +9,10 @@ if [ -f .env ]; then
 fi
 
 # Check Ollama if using local provider
-if [ "${OSA_DEFAULT_PROVIDER:-ollama}" = "ollama" ]; then
+if [ "${Daemon_DEFAULT_PROVIDER:-ollama}" = "ollama" ]; then
   ollama list > /dev/null 2>&1 || {
     echo "Ollama not running. Start it with: ollama serve"
-    echo "Or set OSA_DEFAULT_PROVIDER=anthropic to use cloud LLM."
+    echo "Or set Daemon_DEFAULT_PROVIDER=anthropic to use cloud LLM."
     exit 1
   }
 fi

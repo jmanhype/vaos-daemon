@@ -1,8 +1,8 @@
-defmodule OptimalSystemAgent.Channels.HTTP.API.SkillsMarketplaceRoutesTest do
+defmodule Daemon.Channels.HTTP.API.SkillsMarketplaceRoutesTest do
   use ExUnit.Case, async: true
   use Plug.Test
 
-  alias OptimalSystemAgent.Channels.HTTP.API.SkillsMarketplaceRoutes
+  alias Daemon.Channels.HTTP.API.SkillsMarketplaceRoutes
 
   @opts SkillsMarketplaceRoutes.init([])
 

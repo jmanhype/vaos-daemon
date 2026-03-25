@@ -1,8 +1,8 @@
 defmodule Mix.Tasks.Osa.Setup do
   @moduledoc """
-  Interactive setup wizard for OptimalSystemAgent.
+  Interactive setup wizard for Daemon.
 
-  Creates ~/.osa/ directory structure, configures provider and API keys,
+  Creates ~/.daemon/ directory structure, configures provider and API keys,
   and writes all bootstrap files.
 
   Usage: mix osa.setup
@@ -13,6 +13,6 @@ defmodule Mix.Tasks.Osa.Setup do
 
   @impl true
   def run(_args) do
-    OptimalSystemAgent.Onboarding.run_setup_mode()
+    Daemon.Onboarding.run_setup_mode()
   end
 end

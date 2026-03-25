@@ -1,8 +1,8 @@
-defmodule OptimalSystemAgent.Integration.MemoryTest do
+defmodule Daemon.Integration.MemoryTest do
   # Memory tests share the GenServer process — no async
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Agent.Memory
+  alias Daemon.Agent.Memory
 
   # ---------------------------------------------------------------------------
   # Session management
@@ -17,7 +17,7 @@ defmodule OptimalSystemAgent.Integration.MemoryTest do
 
       # Also delete SQLite rows for test session prefixes (they persist across test runs)
       import Ecto.Query
-      alias OptimalSystemAgent.Store.{Repo, Message}
+      alias Daemon.Store.{Repo, Message}
       test_prefixes = ~w[test-roundtrip- test-order- test-timestamp- test-list- test-resume-]
       Enum.each(test_prefixes, fn prefix ->
         from(m in Message, where: like(m.session_id, ^"#{prefix}%")) |> Repo.delete_all()
@@ -408,12 +408,12 @@ defmodule OptimalSystemAgent.Integration.MemoryTest do
   # ---------------------------------------------------------------------------
 
   defp cleanup_session(session_id) do
-    path = Path.expand("~/.osa/sessions/#{session_id}.jsonl")
+    path = Path.expand("~/.daemon/sessions/#{session_id}.jsonl")
     File.rm(path)
   end
 
   defp cleanup_sessions_with_prefix(prefix) do
-    sessions_dir = Path.expand("~/.osa/sessions")
+    sessions_dir = Path.expand("~/.daemon/sessions")
 
     if File.exists?(sessions_dir) do
       case File.ls(sessions_dir) do

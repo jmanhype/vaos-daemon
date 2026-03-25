@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Sandbox.WasmTest do
+defmodule Daemon.Sandbox.WasmTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Sandbox.Wasm
+  alias Daemon.Sandbox.Wasm
 
   describe "available?/0" do
     test "returns boolean" do

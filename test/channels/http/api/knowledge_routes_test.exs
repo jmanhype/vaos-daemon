@@ -1,8 +1,8 @@
-defmodule OptimalSystemAgent.Channels.HTTP.API.KnowledgeRoutesTest do
+defmodule Daemon.Channels.HTTP.API.KnowledgeRoutesTest do
   use ExUnit.Case, async: false
   use Plug.Test
 
-  alias OptimalSystemAgent.Channels.HTTP.API.KnowledgeRoutes
+  alias Daemon.Channels.HTTP.API.KnowledgeRoutes
 
   @opts KnowledgeRoutes.init([])
 

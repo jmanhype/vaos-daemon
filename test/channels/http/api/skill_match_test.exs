@@ -1,4 +1,4 @@
-defmodule OptimalSystemAgent.Channels.HTTP.API.SkillMatchTest do
+defmodule Daemon.Channels.HTTP.API.SkillMatchTest do
   @moduledoc """
   Tests for the POST /skills/match endpoint (dry-run skill matching).
 
@@ -9,8 +9,8 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.SkillMatchTest do
   use ExUnit.Case, async: false
   use Plug.Test
 
-  alias OptimalSystemAgent.Channels.HTTP.API.ToolRoutes
-  alias OptimalSystemAgent.Tools.Registry
+  alias Daemon.Channels.HTTP.API.ToolRoutes
+  alias Daemon.Tools.Registry
 
   @opts ToolRoutes.init([])
   @suffix System.unique_integer([:positive]) |> Integer.to_string()

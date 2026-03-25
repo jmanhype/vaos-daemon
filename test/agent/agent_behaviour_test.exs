@@ -1,34 +1,34 @@
-defmodule OptimalSystemAgent.Agent.AgentBehaviourTest do
+defmodule Daemon.Agent.AgentBehaviourTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Agent.Roster
+  alias Daemon.Agent.Roster
 
   @all_agent_modules [
-    OptimalSystemAgent.Agents.MasterOrchestrator,
-    OptimalSystemAgent.Agents.Architect,
-    OptimalSystemAgent.Agents.Dragon,
-    OptimalSystemAgent.Agents.Nova,
-    OptimalSystemAgent.Agents.BackendGo,
-    OptimalSystemAgent.Agents.FrontendReact,
-    OptimalSystemAgent.Agents.FrontendSvelte,
-    OptimalSystemAgent.Agents.Database,
-    OptimalSystemAgent.Agents.SecurityAuditor,
-    OptimalSystemAgent.Agents.RedTeam,
-    OptimalSystemAgent.Agents.Debugger,
-    OptimalSystemAgent.Agents.TestAutomator,
-    OptimalSystemAgent.Agents.CodeReviewer,
-    OptimalSystemAgent.Agents.PerformanceOptimizer,
-    OptimalSystemAgent.Agents.Devops,
-    OptimalSystemAgent.Agents.ApiDesigner,
-    OptimalSystemAgent.Agents.Refactorer,
-    OptimalSystemAgent.Agents.Explorer,
-    OptimalSystemAgent.Agents.Formatter,
-    OptimalSystemAgent.Agents.DocWriter,
-    OptimalSystemAgent.Agents.DependencyAnalyzer,
-    OptimalSystemAgent.Agents.TypescriptExpert,
-    OptimalSystemAgent.Agents.TailwindExpert,
-    OptimalSystemAgent.Agents.GoConcurrency,
-    OptimalSystemAgent.Agents.OrmExpert
+    Daemon.Agents.MasterOrchestrator,
+    Daemon.Agents.Architect,
+    Daemon.Agents.Dragon,
+    Daemon.Agents.Nova,
+    Daemon.Agents.BackendGo,
+    Daemon.Agents.FrontendReact,
+    Daemon.Agents.FrontendSvelte,
+    Daemon.Agents.Database,
+    Daemon.Agents.SecurityAuditor,
+    Daemon.Agents.RedTeam,
+    Daemon.Agents.Debugger,
+    Daemon.Agents.TestAutomator,
+    Daemon.Agents.CodeReviewer,
+    Daemon.Agents.PerformanceOptimizer,
+    Daemon.Agents.Devops,
+    Daemon.Agents.ApiDesigner,
+    Daemon.Agents.Refactorer,
+    Daemon.Agents.Explorer,
+    Daemon.Agents.Formatter,
+    Daemon.Agents.DocWriter,
+    Daemon.Agents.DependencyAnalyzer,
+    Daemon.Agents.TypescriptExpert,
+    Daemon.Agents.TailwindExpert,
+    Daemon.Agents.GoConcurrency,
+    Daemon.Agents.OrmExpert
   ]
 
   describe "all agent modules implement AgentBehaviour" do

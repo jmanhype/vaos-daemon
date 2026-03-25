@@ -1,8 +1,8 @@
-defmodule OptimalSystemAgent.Governance.ApprovalsTest do
+defmodule Daemon.Governance.ApprovalsTest do
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Governance.Approvals
-  alias OptimalSystemAgent.Store.Repo
+  alias Daemon.Governance.Approvals
+  alias Daemon.Store.Repo
 
   setup do
     Repo.delete_all(Approvals)

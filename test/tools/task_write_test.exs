@@ -1,8 +1,8 @@
-defmodule OptimalSystemAgent.Tools.Builtins.TaskWriteTest do
+defmodule Daemon.Tools.Builtins.TaskWriteTest do
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Tools.Builtins.TaskWrite
-  alias OptimalSystemAgent.Agent.Tasks
+  alias Daemon.Tools.Builtins.TaskWrite
+  alias Daemon.Agent.Tasks
 
   @session "test-task-write-#{:rand.uniform(100_000)}"
 

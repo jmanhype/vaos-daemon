@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Agent.Orchestrator.ComplexityScalerTest do
+defmodule Daemon.Agent.Orchestrator.ComplexityScalerTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Agent.Orchestrator.ComplexityScaler
+  alias Daemon.Agent.Orchestrator.ComplexityScaler
 
   # ── optimal_agent_count/3 ─────────────────────────────────────────
 

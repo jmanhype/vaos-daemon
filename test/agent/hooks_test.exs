@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Agent.HooksTest do
+defmodule Daemon.Agent.HooksTest do
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Agent.Hooks
+  alias Daemon.Agent.Hooks
 
   setup do
     case Process.whereis(Hooks) do

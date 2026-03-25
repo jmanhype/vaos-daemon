@@ -1,4 +1,4 @@
-defmodule OptimalSystemAgent.Agent.CostTrackerTest do
+defmodule Daemon.Agent.CostTrackerTest do
   use ExUnit.Case, async: false
 
   describe "calc_cost/3 (via module attribute)" do

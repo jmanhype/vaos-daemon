@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Agent.Scheduler.CronPresetsTest do
+defmodule Daemon.Agent.Scheduler.CronPresetsTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Agent.Scheduler.CronPresets
+  alias Daemon.Agent.Scheduler.CronPresets
 
   describe "list_presets/0" do
     test "returns 8 presets" do

@@ -1,8 +1,8 @@
-defmodule OptimalSystemAgent.Channels.HTTP.API.SignalRoutesTest do
+defmodule Daemon.Channels.HTTP.API.SignalRoutesTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Signal.Persistence
-  alias OptimalSystemAgent.Channels.HTTP.API.SignalRoutes
+  alias Daemon.Signal.Persistence
+  alias Daemon.Channels.HTTP.API.SignalRoutes
 
   @signal_attrs %{
     channel: "http",

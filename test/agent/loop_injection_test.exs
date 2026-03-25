@@ -1,4 +1,4 @@
-defmodule OptimalSystemAgent.Agent.LoopInjectionTest do
+defmodule Daemon.Agent.LoopInjectionTest do
   @moduledoc """
   Unit tests for pure private helper functions defined in Agent.Loop.
 

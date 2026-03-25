@@ -1,4 +1,4 @@
-defmodule OptimalSystemAgent.Events.FailureModesTest do
+defmodule Daemon.Events.FailureModesTest do
   use ExUnit.Case, async: true
 
   alias MiosaSignal.Event

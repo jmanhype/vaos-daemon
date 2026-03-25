@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.MCTS.NodeTest do
+defmodule Daemon.MCTS.NodeTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.MCTS.Node
+  alias Daemon.MCTS.Node
 
   # ---------------------------------------------------------------------------
   # UCB1 selection

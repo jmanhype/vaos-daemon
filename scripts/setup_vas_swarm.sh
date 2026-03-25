@@ -1,19 +1,19 @@
 #!/bin/bash
 # VAS-Swarm Setup Script
-# Run this to configure VAS-Swarm integration for OSA
+# Run this to configure VAS-Swarm integration for Daemon
 
 set -e
 
 echo "=== VAS-Swarm Setup Script ==="
 echo ""
 
-# Check if we're in the OSA/VAS-Swarm directory
+# Check if we're in the Daemon/VAS-Swarm directory
 if [ ! -f "mix.exs" ]; then
-    echo "Error: mix.exs not found. Please run this script from the OSA/VAS-Swarm root directory."
+    echo "Error: mix.exs not found. Please run this script from the Daemon/VAS-Swarm root directory."
     exit 1
 fi
 
-echo "✓ Found OSA/VAS-Swarm directory"
+echo "✓ Found Daemon/VAS-Swarm directory"
 
 # Check if VAS-Swarm is already configured
 if grep -q "vas_swarm_enabled: true" config/config.exs 2>/dev/null; then
@@ -46,16 +46,16 @@ cat >> config/config.exs << 'EOF'
 # VAS-Swarm Integration Configuration
 import Config
 
-config :optimal_system_agent,
+config :daemon,
   vas_swarm_enabled: true
 
 # Go Kernel gRPC endpoint
 # The Kernel issues JWT tokens and receives telemetry/routing logs
-config :optimal_system_agent,
+config :daemon,
   vas_kernel_url: "grpc://localhost:50051"
 
 # AMQP connection for telemetry and commands
-config :optimal_system_agent,
+config :daemon,
   amqp_url: "amqp://guest:guest@localhost:5672"
 
 EOF
@@ -159,7 +159,7 @@ echo "Next steps:"
 echo "  1. Review config/config.exs to customize settings"
 echo "  2. Start the Go Kernel service (if not already running)"
 echo "  3. Start RabbitMQ (if using AMQP)"
-echo "  4. Start OSA: bin/osa or mix osa.serve"
+echo "  4. Start Daemon: bin/osa or mix osa.serve"
 echo ""
 echo "Documentation:"
 echo "  - Integration guide: README-VAS-SWARM.md"

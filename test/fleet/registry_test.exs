@@ -1,8 +1,8 @@
-defmodule OptimalSystemAgent.Fleet.RegistryTest do
+defmodule Daemon.Fleet.RegistryTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Fleet.Registry, as: FleetRegistry
-  alias OptimalSystemAgent.Fleet.Sentinel
+  alias Daemon.Fleet.Registry, as: FleetRegistry
+  alias Daemon.Fleet.Sentinel
 
   # Each test starts its own isolated supervision tree so tests don't conflict
   setup do
@@ -16,7 +16,7 @@ defmodule OptimalSystemAgent.Fleet.RegistryTest do
     # We test via the named FleetRegistry GenServer, so we need the real
     # supervision tree. Start the full Fleet.Supervisor.
     # But since other tests may also start it, we use start_supervised.
-    start_supervised!({OptimalSystemAgent.Fleet.Supervisor, []})
+    start_supervised!({Daemon.Fleet.Supervisor, []})
 
     :ok
   end

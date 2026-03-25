@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Tools.Builtins.ShellExecuteTest do
+defmodule Daemon.Tools.Builtins.ShellExecuteTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Tools.Builtins.ShellExecute
+  alias Daemon.Tools.Builtins.ShellExecute
 
   # ---------------------------------------------------------------------------
   # Helpers
@@ -268,8 +268,8 @@ defmodule OptimalSystemAgent.Tools.Builtins.ShellExecuteTest do
   describe "timeout enforcement" do
     @tag timeout: 120_000
     test "command that exceeds 30s is killed" do
-      System.put_env("OSA_SHELL_TIMEOUT_MS", "30000")
-      on_exit(fn -> System.delete_env("OSA_SHELL_TIMEOUT_MS") end)
+      System.put_env("DAEMON_SHELL_TIMEOUT_MS", "30000")
+      on_exit(fn -> System.delete_env("DAEMON_SHELL_TIMEOUT_MS") end)
       assert {:error, msg} = exec("sleep 35")
       assert msg =~ "timed out"
       assert msg =~ "30"
@@ -318,13 +318,13 @@ defmodule OptimalSystemAgent.Tools.Builtins.ShellExecuteTest do
   # ---------------------------------------------------------------------------
 
   describe "working directory restriction" do
-    test "cd outside ~/.osa/ is blocked" do
+    test "cd outside ~/.daemon/ is blocked" do
       assert {:error, msg} = exec("cd /tmp && ls")
       assert msg =~ "cd outside"
     end
 
-    test "cd within ~/.osa/ is allowed" do
-      assert :ok = validate_cd("cd ~/.osa/workspace && ls")
+    test "cd within ~/.daemon/ is allowed" do
+      assert :ok = validate_cd("cd ~/.daemon/workspace && ls")
     end
   end
 

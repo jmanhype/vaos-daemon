@@ -1,16 +1,16 @@
-defmodule OptimalSystemAgent.Agent.SkillEvolutionTest do
+defmodule Daemon.Agent.SkillEvolutionTest do
   use ExUnit.Case, async: false
   use Plug.Test
 
-  alias OptimalSystemAgent.Agent.SkillEvolution
-  alias OptimalSystemAgent.Channels.HTTP.API.SkillEvolutionRoutes
+  alias Daemon.Agent.SkillEvolution
+  alias Daemon.Channels.HTTP.API.SkillEvolutionRoutes
 
   @opts SkillEvolutionRoutes.init([])
 
   setup do
     on_exit(fn ->
       # Clean up any evolved skills created during tests
-      evolved_dir = Path.expand("~/.osa/skills/evolved")
+      evolved_dir = Path.expand("~/.daemon/skills/evolved")
 
       if File.dir?(evolved_dir) do
         evolved_dir
@@ -85,7 +85,7 @@ defmodule OptimalSystemAgent.Agent.SkillEvolutionTest do
 
   describe "skill file writing" do
     test "evolved dir is created if it doesn't exist" do
-      evolved_dir = Path.expand("~/.osa/skills/evolved")
+      evolved_dir = Path.expand("~/.daemon/skills/evolved")
       # trigger_evolution is async — call private via direct file writing test
       # Just verify the dir can be created
       File.mkdir_p!(evolved_dir)
@@ -93,7 +93,7 @@ defmodule OptimalSystemAgent.Agent.SkillEvolutionTest do
     end
 
     test "list_evolved_skills includes manually created evolved skill" do
-      evolved_dir = Path.expand("~/.osa/skills/evolved")
+      evolved_dir = Path.expand("~/.daemon/skills/evolved")
       skill_dir = Path.join(evolved_dir, "evolved-test-manual")
       File.mkdir_p!(skill_dir)
 

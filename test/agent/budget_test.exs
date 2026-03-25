@@ -1,4 +1,4 @@
-defmodule OptimalSystemAgent.Agent.BudgetTest do
+defmodule Daemon.Agent.BudgetTest do
   use ExUnit.Case, async: true
 
   alias MiosaBudget.Budget

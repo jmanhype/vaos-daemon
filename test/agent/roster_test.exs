@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Agent.RosterTest do
+defmodule Daemon.Agent.RosterTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Agent.Roster
+  alias Daemon.Agent.Roster
 
   # ---------------------------------------------------------------------------
   # all/0

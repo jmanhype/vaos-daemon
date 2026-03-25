@@ -1,8 +1,8 @@
-defmodule OptimalSystemAgent.Platform.OsInstancesTest do
+defmodule Daemon.Platform.OsInstancesTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Platform.Schemas.{OsInstance, OsInstanceMember}
-  alias OptimalSystemAgent.Platform.OsInstances
+  alias Daemon.Platform.Schemas.{OsInstance, OsInstanceMember}
+  alias Daemon.Platform.OsInstances
 
   @tenant_id Ecto.UUID.generate()
   @owner_id Ecto.UUID.generate()

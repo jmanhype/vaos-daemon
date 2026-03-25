@@ -1,4 +1,4 @@
-defmodule OptimalSystemAgent.Test.MockProvider do
+defmodule Daemon.Test.MockProvider do
   @moduledoc """
   Deterministic LLM provider for E2E tests.
 
@@ -10,9 +10,9 @@ defmodule OptimalSystemAgent.Test.MockProvider do
   To use:
     1. In setup, call `MockProvider.reset/0` to clear any prior state.
     2. Configure the application to use the :mock provider atom:
-         Application.put_env(:optimal_system_agent, :default_provider, :mock)
+         Application.put_env(:daemon, :default_provider, :mock)
     3. Register the module under the :mock atom so the registry resolves it:
-         Application.put_env(:optimal_system_agent, :mock_provider_module, __MODULE__)
+         Application.put_env(:daemon, :mock_provider_module, __MODULE__)
   """
 
   @behaviour MiosaProviders.Behaviour

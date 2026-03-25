@@ -1,4 +1,4 @@
-defmodule OptimalSystemAgent.Agent.DebateTest do
+defmodule Daemon.Agent.DebateTest do
   @moduledoc """
   Tests for the multi-agent debate orchestration module.
 
@@ -7,8 +7,8 @@ defmodule OptimalSystemAgent.Agent.DebateTest do
   """
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Agent.Debate
-  alias OptimalSystemAgent.Channels.HTTP.API.DebateRoutes
+  alias Daemon.Agent.Debate
+  alias Daemon.Channels.HTTP.API.DebateRoutes
 
   # ── Module contract ───────────────────────────────────────────────────
 
@@ -40,14 +40,14 @@ defmodule OptimalSystemAgent.Agent.DebateTest do
   describe "return map shape" do
     setup do
       # Use mock provider so tests are hermetic — no real API calls
-      prev = Application.get_env(:optimal_system_agent, :default_provider)
-      Application.put_env(:optimal_system_agent, :default_provider, :mock)
+      prev = Application.get_env(:daemon, :default_provider)
+      Application.put_env(:daemon, :default_provider, :mock)
 
       on_exit(fn ->
         if prev do
-          Application.put_env(:optimal_system_agent, :default_provider, prev)
+          Application.put_env(:daemon, :default_provider, prev)
         else
-          Application.delete_env(:optimal_system_agent, :default_provider)
+          Application.delete_env(:daemon, :default_provider)
         end
       end)
 

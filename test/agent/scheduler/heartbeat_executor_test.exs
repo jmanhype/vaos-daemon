@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Agent.Scheduler.HeartbeatExecutorTest do
+defmodule Daemon.Agent.Scheduler.HeartbeatExecutorTest do
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Agent.Scheduler.HeartbeatExecutor
+  alias Daemon.Agent.Scheduler.HeartbeatExecutor
 
   defp start_executor do
     name = :"hb_exec_test_#{:erlang.unique_integer([:positive])}"

@@ -1,8 +1,8 @@
-defmodule OptimalSystemAgent.Channels.HTTP.FleetAPITest do
+defmodule Daemon.Channels.HTTP.FleetAPITest do
   use ExUnit.Case, async: false
   use Plug.Test
 
-  alias OptimalSystemAgent.Channels.HTTP.API
+  alias Daemon.Channels.HTTP.API
 
   @opts API.init([])
 
@@ -11,8 +11,8 @@ defmodule OptimalSystemAgent.Channels.HTTP.FleetAPITest do
   setup_all do
     # Ensure Fleet subsystem is running (AgentRegistry + SentinelPool + Registry).
     # Use the supervisor so the tree is properly managed and doesn't propagate exits.
-    unless Process.whereis(OptimalSystemAgent.Fleet.Supervisor) do
-      {:ok, _} = OptimalSystemAgent.Fleet.Supervisor.start_link([])
+    unless Process.whereis(Daemon.Fleet.Supervisor) do
+      {:ok, _} = Daemon.Fleet.Supervisor.start_link([])
     end
 
     :ok
@@ -23,13 +23,13 @@ defmodule OptimalSystemAgent.Channels.HTTP.FleetAPITest do
     Process.flag(:trap_exit, true)
 
     # Disable auth so we can hit routes without JWT
-    original_auth = Application.get_env(:optimal_system_agent, :require_auth)
-    Application.put_env(:optimal_system_agent, :require_auth, false)
+    original_auth = Application.get_env(:daemon, :require_auth)
+    Application.put_env(:daemon, :require_auth, false)
 
     on_exit(fn ->
       if original_auth,
-        do: Application.put_env(:optimal_system_agent, :require_auth, original_auth),
-        else: Application.delete_env(:optimal_system_agent, :require_auth)
+        do: Application.put_env(:daemon, :require_auth, original_auth),
+        else: Application.delete_env(:daemon, :require_auth)
     end)
 
     :ok
@@ -107,7 +107,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.FleetAPITest do
       json_post("/fleet/register", %{agent_id: agent_id})
 
       # Enqueue a task for this agent
-      OptimalSystemAgent.Agent.Tasks.enqueue_sync(
+      Daemon.Agent.Tasks.enqueue_sync(
         task_id,
         agent_id,
         %{instruction: "run diagnostics"}
@@ -138,7 +138,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.FleetAPITest do
 
       json_post("/fleet/register", %{agent_id: agent_id})
 
-      OptimalSystemAgent.Agent.Tasks.enqueue_sync(
+      Daemon.Agent.Tasks.enqueue_sync(
         task_id,
         agent_id,
         %{instruction: "check status"}

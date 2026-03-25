@@ -1,4 +1,4 @@
-defmodule OptimalSystemAgent.Channels.HTTP.API.WorkspaceRoutesTest do
+defmodule Daemon.Channels.HTTP.API.WorkspaceRoutesTest do
   @moduledoc """
   Tests for GET /workspace (WorkspaceRoutes).
 
@@ -9,7 +9,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.API.WorkspaceRoutesTest do
   use ExUnit.Case, async: true
   use Plug.Test
 
-  alias OptimalSystemAgent.Channels.HTTP.API.WorkspaceRoutes
+  alias Daemon.Channels.HTTP.API.WorkspaceRoutes
 
   @opts WorkspaceRoutes.init([])
 

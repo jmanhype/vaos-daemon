@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.RecipesTest do
+defmodule Daemon.RecipesTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Recipes.Recipe
+  alias Daemon.Recipes.Recipe
 
   # ---------------------------------------------------------------------------
   # Module smoke tests
@@ -193,13 +193,13 @@ defmodule OptimalSystemAgent.RecipesTest do
 
   describe "recipe command via Commands.execute/2" do
     test "/recipe with no arg lists available recipes" do
-      result = OptimalSystemAgent.Commands.execute("recipe", "test-session")
+      result = Daemon.Commands.execute("recipe", "test-session")
       assert {:command, output} = result
       assert output =~ "recipe"
     end
 
     test "/recipe code-review returns {:new_session_prompt, _}" do
-      result = OptimalSystemAgent.Commands.execute("recipe code-review", "test-session")
+      result = Daemon.Commands.execute("recipe code-review", "test-session")
       assert {:new_session_prompt, prompt} = result
       assert is_binary(prompt)
       assert prompt =~ "Code Review"
@@ -207,14 +207,14 @@ defmodule OptimalSystemAgent.RecipesTest do
     end
 
     test "/recipe nonexistent returns {:command, error}" do
-      result = OptimalSystemAgent.Commands.execute("recipe zzz-no-such", "test-session")
+      result = Daemon.Commands.execute("recipe zzz-no-such", "test-session")
       assert {:command, output} = result
       assert output =~ "✗"
     end
 
     test "new_session_prompt prompt is compact (under 200 chars)" do
       {:new_session_prompt, prompt} =
-        OptimalSystemAgent.Commands.execute("recipe code-review", "test-session")
+        Daemon.Commands.execute("recipe code-review", "test-session")
 
       assert String.length(prompt) < 200,
              "Prompt too long (#{String.length(prompt)} chars): #{prompt}"

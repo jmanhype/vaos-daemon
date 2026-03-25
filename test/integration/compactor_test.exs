@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Integration.CompactorTest do
+defmodule Daemon.Integration.CompactorTest do
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Agent.Compactor
+  alias Daemon.Agent.Compactor
 
   # ---------------------------------------------------------------------------
   # Token estimation — strings

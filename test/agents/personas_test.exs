@@ -1,13 +1,13 @@
-defmodule OptimalSystemAgent.Agents.PersonasTest do
+defmodule Daemon.Agents.PersonasTest do
   use ExUnit.Case, async: true
 
   @persona_modules [
-    OptimalSystemAgent.Agents.Researcher,
-    OptimalSystemAgent.Agents.Writer,
-    OptimalSystemAgent.Agents.Reviewer,
-    OptimalSystemAgent.Agents.Coder,
-    OptimalSystemAgent.Agents.Tester,
-    OptimalSystemAgent.Agents.QaLead
+    Daemon.Agents.Researcher,
+    Daemon.Agents.Writer,
+    Daemon.Agents.Reviewer,
+    Daemon.Agents.Coder,
+    Daemon.Agents.Tester,
+    Daemon.Agents.QaLead
   ]
 
   @valid_tiers [:elite, :specialist, :utility]
@@ -72,48 +72,48 @@ defmodule OptimalSystemAgent.Agents.PersonasTest do
 
   describe "role/0 -- per-persona expectations" do
     test "Researcher role is :researcher" do
-      assert OptimalSystemAgent.Agents.Researcher.role() == :researcher
+      assert Daemon.Agents.Researcher.role() == :researcher
     end
 
     test "Writer role is :writer" do
-      assert OptimalSystemAgent.Agents.Writer.role() == :writer
+      assert Daemon.Agents.Writer.role() == :writer
     end
 
     test "Reviewer role is :reviewer" do
-      assert OptimalSystemAgent.Agents.Reviewer.role() == :reviewer
+      assert Daemon.Agents.Reviewer.role() == :reviewer
     end
 
     test "Coder role is :coder" do
-      assert OptimalSystemAgent.Agents.Coder.role() == :coder
+      assert Daemon.Agents.Coder.role() == :coder
     end
 
     test "Tester role is :tester" do
-      assert OptimalSystemAgent.Agents.Tester.role() == :tester
+      assert Daemon.Agents.Tester.role() == :tester
     end
 
     test "QaLead role is :qa" do
-      assert OptimalSystemAgent.Agents.QaLead.role() == :qa
+      assert Daemon.Agents.QaLead.role() == :qa
     end
   end
 
   describe "triggers/0 -- keyword presence" do
     test "Researcher has research keyword in triggers" do
-      triggers = OptimalSystemAgent.Agents.Researcher.triggers()
+      triggers = Daemon.Agents.Researcher.triggers()
       assert Enum.any?(triggers, fn t -> String.contains?(t, "research") end)
     end
 
     test "Writer has write keyword in triggers" do
-      triggers = OptimalSystemAgent.Agents.Writer.triggers()
+      triggers = Daemon.Agents.Writer.triggers()
       assert Enum.any?(triggers, fn t -> String.contains?(t, "write") end)
     end
 
     test "Reviewer has review keyword in triggers" do
-      triggers = OptimalSystemAgent.Agents.Reviewer.triggers()
+      triggers = Daemon.Agents.Reviewer.triggers()
       assert Enum.any?(triggers, fn t -> String.contains?(t, "review") end)
     end
 
     test "Tester has test keyword in triggers" do
-      triggers = OptimalSystemAgent.Agents.Tester.triggers()
+      triggers = Daemon.Agents.Tester.triggers()
       assert Enum.any?(triggers, fn t -> String.contains?(t, "test") end)
     end
   end

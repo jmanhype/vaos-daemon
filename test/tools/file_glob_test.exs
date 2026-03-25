@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Tools.Builtins.FileGlobTest do
+defmodule Daemon.Tools.Builtins.FileGlobTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Tools.Builtins.FileGlob
+  alias Daemon.Tools.Builtins.FileGlob
 
   # ── Pattern matching ─────────────────────────────────────────────
 

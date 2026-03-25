@@ -1,4 +1,4 @@
-defmodule OptimalSystemAgent.Integration.AgentPipelineTest do
+defmodule Daemon.Integration.AgentPipelineTest do
   @moduledoc """
   Integration STRESS TESTS that call a REAL LLM (Ollama) to verify the full
   agent pipeline end-to-end. These burn real tokens and test real inference.
@@ -21,9 +21,9 @@ defmodule OptimalSystemAgent.Integration.AgentPipelineTest do
   @moduletag timeout: 300_000
 
   alias MiosaProviders.Ollama
-  alias OptimalSystemAgent.Agent.Orchestrator.{Complexity, ComplexityScaler, AgentRunner}
-  alias OptimalSystemAgent.Agent.Orchestrator.SubTask
-  alias OptimalSystemAgent.Agent.{Roster, Tier}
+  alias Daemon.Agent.Orchestrator.{Complexity, ComplexityScaler, AgentRunner}
+  alias Daemon.Agent.Orchestrator.SubTask
+  alias Daemon.Agent.{Roster, Tier}
 
   # ── Setup ────────────────────────────────────────────────────────────
 
@@ -33,10 +33,10 @@ defmodule OptimalSystemAgent.Integration.AgentPipelineTest do
 
     model =
       System.get_env("OLLAMA_MODEL") ||
-        Application.get_env(:optimal_system_agent, :ollama_model, "qwen3:8b")
+        Application.get_env(:daemon, :ollama_model, "qwen3:8b")
 
-    Application.put_env(:optimal_system_agent, :ollama_model, model)
-    Application.put_env(:optimal_system_agent, :default_provider, :ollama)
+    Application.put_env(:daemon, :ollama_model, model)
+    Application.put_env(:daemon, :default_provider, :ollama)
 
     case Ollama.list_models() do
       {:ok, models} ->

@@ -1,10 +1,10 @@
-defmodule OptimalSystemAgent.Agent.IntrospectionTest do
+defmodule Daemon.Agent.IntrospectionTest do
   use ExUnit.Case, async: false
-  alias OptimalSystemAgent.Agent.Introspection
+  alias Daemon.Agent.Introspection
 
   setup do
-    case Process.whereis(OptimalSystemAgent.SessionRegistry) do
-      nil -> start_supervised!({Registry, keys: :unique, name: OptimalSystemAgent.SessionRegistry})
+    case Process.whereis(Daemon.SessionRegistry) do
+      nil -> start_supervised!({Registry, keys: :unique, name: Daemon.SessionRegistry})
       _pid -> :ok
     end
     :ok

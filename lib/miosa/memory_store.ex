@@ -5,11 +5,11 @@ defmodule MiosaMemory.Store do
   ## Three Memory Stores
 
   1. **Session Memory** (JSONL per session)
-     `~/.osa/sessions/{session_id}.jsonl`
+     `~/.daemon/sessions/{session_id}.jsonl`
      Append-only conversation history. Load by session ID for continuity.
 
   2. **Long-term Memory** (MEMORY.md)
-     `~/.osa/MEMORY.md`
+     `~/.daemon/MEMORY.md`
      Consolidated insights, decisions, preferences.
      Structured with categories and timestamps, searchable by keyword and category.
 
@@ -29,21 +29,21 @@ defmodule MiosaMemory.Store do
   """
   use GenServer
   require Logger
-  alias OptimalSystemAgent.Agent.Memory.SQLiteBridge
+  alias Daemon.Agent.Memory.SQLiteBridge
 
   # Resolve at runtime to avoid baking in compile-host paths (/Users/runner/.osa)
   defp sessions_dir do
-    Application.get_env(:optimal_system_agent, :sessions_dir, "~/.osa/sessions")
+    Application.get_env(:daemon, :sessions_dir, "~/.daemon/sessions")
     |> Path.expand()
   end
 
   defp osa_dir do
-    Application.get_env(:optimal_system_agent, :bootstrap_dir, "~/.osa")
+    Application.get_env(:daemon, :bootstrap_dir, "~/.daemon")
     |> Path.expand()
   end
 
-  @index_table :osa_memory_index
-  @entry_table :osa_memory_entries
+  @index_table :daemon_memory_index
+  @entry_table :daemon_memory_entries
 
   # Common English stop words to exclude from keyword extraction
   @stop_words MapSet.new(~w(
@@ -141,7 +141,7 @@ defmodule MiosaMemory.Store do
   Archive old low-importance memories.
 
   Moves entries older than `max_age_days` with importance below 0.7
-  to `~/.osa/archive/MEMORY-{date}.md`. Rebuilds the index afterward.
+  to `~/.daemon/archive/MEMORY-{date}.md`. Rebuilds the index afterward.
 
   Returns `{:ok, archived_count}` or `{:error, reason}`.
   """
@@ -349,8 +349,8 @@ defmodule MiosaMemory.Store do
   end
 
   defp try_semantic_search(message, _max_tokens) do
-    if Application.get_env(:optimal_system_agent, :python_sidecar_enabled, false) do
-      alias OptimalSystemAgent.Python.Embeddings
+    if Application.get_env(:daemon, :python_sidecar_enabled, false) do
+      alias Daemon.Python.Embeddings
 
       if Embeddings.available?() do
         case Embeddings.search(message, top_k: 10) do
@@ -1079,8 +1079,8 @@ defmodule MiosaMemory.Store do
 
   defp reindex_memory_to_sidecar do
     # Index all memory entries to Python sidecar for semantic search
-    if Application.get_env(:optimal_system_agent, :python_sidecar_enabled, false) do
-      alias OptimalSystemAgent.Python.Embeddings
+    if Application.get_env(:daemon, :python_sidecar_enabled, false) do
+      alias Daemon.Python.Embeddings
 
       try do
         # Load all memory entries from ETS

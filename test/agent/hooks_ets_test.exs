@@ -1,9 +1,9 @@
-defmodule OptimalSystemAgent.Agent.HooksETSTest do
+defmodule Daemon.Agent.HooksETSTest do
   @moduledoc """
   Tests for the ETS-based hook execution architecture.
 
   Verifies that:
-    1. Hooks are stored in ETS table :osa_hooks
+    1. Hooks are stored in ETS table :daemon_hooks
     2. Registration writes to ETS via GenServer
     3. Execution reads from ETS in the caller's process (no GenServer call)
     4. Hook chain runs correctly (passthrough, blocking, crash isolation)
@@ -11,7 +11,7 @@ defmodule OptimalSystemAgent.Agent.HooksETSTest do
   """
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Agent.Hooks
+  alias Daemon.Agent.Hooks
 
   setup do
     case Process.whereis(Hooks) do
@@ -22,7 +22,7 @@ defmodule OptimalSystemAgent.Agent.HooksETSTest do
 
   # ── ETS Table Existence ─────────────────────────────────────────
 
-  describe "ETS table :osa_hooks" do
+  describe "ETS table :daemon_hooks" do
     @tag :hooks_ets
     test "ETS table exists and is accessible", %{available: available} do
       if not available, do: flunk("Hooks GenServer not running")
@@ -300,8 +300,8 @@ defmodule OptimalSystemAgent.Agent.HooksETSTest do
       sid = "test-session-track-#{:erlang.unique_integer([:positive])}"
 
       # Ensure ETS table exists
-      if :ets.whereis(:osa_files_read) == :undefined do
-        :ets.new(:osa_files_read, [:named_table, :public, :set])
+      if :ets.whereis(:daemon_files_read) == :undefined do
+        :ets.new(:daemon_files_read, [:named_table, :public, :set])
       end
 
       payload = %{
@@ -315,7 +315,7 @@ defmodule OptimalSystemAgent.Agent.HooksETSTest do
       {:ok, _updated} = Hooks.run(:post_tool_use, payload)
 
       # The file path must be recorded in ETS
-      assert [{_, true}] = :ets.lookup(:osa_files_read, {sid, "/tmp/some_file.ex"}),
+      assert [{_, true}] = :ets.lookup(:daemon_files_read, {sid, "/tmp/some_file.ex"}),
              "track_files_read should record the path when result is a success string"
     end
 
@@ -325,8 +325,8 @@ defmodule OptimalSystemAgent.Agent.HooksETSTest do
 
       sid = "test-session-track-err-#{:erlang.unique_integer([:positive])}"
 
-      if :ets.whereis(:osa_files_read) == :undefined do
-        :ets.new(:osa_files_read, [:named_table, :public, :set])
+      if :ets.whereis(:daemon_files_read) == :undefined do
+        :ets.new(:daemon_files_read, [:named_table, :public, :set])
       end
 
       payload = %{
@@ -338,7 +338,7 @@ defmodule OptimalSystemAgent.Agent.HooksETSTest do
 
       {:ok, _updated} = Hooks.run(:post_tool_use, payload)
 
-      assert [] = :ets.lookup(:osa_files_read, {sid, "/tmp/missing.ex"}),
+      assert [] = :ets.lookup(:daemon_files_read, {sid, "/tmp/missing.ex"}),
              "track_files_read must not record paths on error results"
     end
 
@@ -348,8 +348,8 @@ defmodule OptimalSystemAgent.Agent.HooksETSTest do
 
       sid = "test-session-track-block-#{:erlang.unique_integer([:positive])}"
 
-      if :ets.whereis(:osa_files_read) == :undefined do
-        :ets.new(:osa_files_read, [:named_table, :public, :set])
+      if :ets.whereis(:daemon_files_read) == :undefined do
+        :ets.new(:daemon_files_read, [:named_table, :public, :set])
       end
 
       payload = %{
@@ -361,7 +361,7 @@ defmodule OptimalSystemAgent.Agent.HooksETSTest do
 
       {:ok, _updated} = Hooks.run(:post_tool_use, payload)
 
-      assert [] = :ets.lookup(:osa_files_read, {sid, "/tmp/blocked.ex"}),
+      assert [] = :ets.lookup(:daemon_files_read, {sid, "/tmp/blocked.ex"}),
              "track_files_read must not record paths on blocked results"
     end
   end

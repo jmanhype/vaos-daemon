@@ -1,8 +1,8 @@
-defmodule OptimalSystemAgent.Channels.HTTP.API.DashboardRoutesTest do
+defmodule Daemon.Channels.HTTP.API.DashboardRoutesTest do
   use ExUnit.Case, async: false
   use Plug.Test
 
-  alias OptimalSystemAgent.Channels.HTTP.API.DashboardRoutes
+  alias Daemon.Channels.HTTP.API.DashboardRoutes
 
   @opts DashboardRoutes.init([])
 

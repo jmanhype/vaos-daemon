@@ -1,17 +1,17 @@
-defmodule OptimalSystemAgent.Agent.LoopTest do
+defmodule Daemon.Agent.LoopTest do
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Agent.Loop
+  alias Daemon.Agent.Loop
 
   # ---------------------------------------------------------------------------
   # Setup — ensure SessionRegistry is running
   # ---------------------------------------------------------------------------
 
   setup do
-    case Process.whereis(OptimalSystemAgent.SessionRegistry) do
+    case Process.whereis(Daemon.SessionRegistry) do
       nil ->
         start_supervised!(
-          {Registry, keys: :unique, name: OptimalSystemAgent.SessionRegistry}
+          {Registry, keys: :unique, name: Daemon.SessionRegistry}
         )
 
       _pid ->
@@ -81,7 +81,7 @@ defmodule OptimalSystemAgent.Agent.LoopTest do
         id: String.to_atom(session_id)
       )
 
-      assert [{_pid, _}] = Registry.lookup(OptimalSystemAgent.SessionRegistry, session_id)
+      assert [{_pid, _}] = Registry.lookup(Daemon.SessionRegistry, session_id)
     end
   end
 

@@ -1,12 +1,12 @@
-defmodule OptimalSystemAgent.Tools.RegistrySkillEventsTest do
+defmodule Daemon.Tools.RegistrySkillEventsTest do
   @moduledoc """
   Tests that active_skills_context/1 emits :skills_triggered bus events
   and that match_skill_triggers/1 correctly filters by trigger keywords.
   """
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Tools.Registry
-  alias OptimalSystemAgent.Events.Bus
+  alias Daemon.Tools.Registry
+  alias Daemon.Events.Bus
 
   @suffix System.unique_integer([:positive]) |> Integer.to_string()
 

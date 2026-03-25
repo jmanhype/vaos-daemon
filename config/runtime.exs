@@ -26,7 +26,7 @@ end
 # ── .env file loading ──────────────────────────────────────────────────
 # Load .env from project root OR ~/.osa/.env (project root takes priority).
 # Only sets vars that aren't already in the environment (explicit env wins).
-# Skipped in test env so OSA_HTTP_PORT / DATABASE_URL from .env don't
+# Skipped in test env so DAEMON_HTTP_PORT / DATABASE_URL from .env don't
 # override test.exs config (port 0, platform_enabled: false).
 if config_env() != :test do
   for env_path <- [Path.expand(".env"), Path.expand("~/.osa/.env")] do
@@ -77,7 +77,7 @@ provider_map = %{
 
 default_provider =
   cond do
-    env = System.get_env("OSA_DEFAULT_PROVIDER") -> Map.get(provider_map, env, :ollama)
+    env = System.get_env("DAEMON_DEFAULT_PROVIDER") -> Map.get(provider_map, env, :ollama)
     System.get_env("ANTHROPIC_API_KEY") -> :anthropic
     System.get_env("OPENAI_API_KEY") -> :openai
     System.get_env("GROQ_API_KEY") -> :groq
@@ -86,7 +86,7 @@ default_provider =
     true -> :ollama
   end
 
-config :optimal_system_agent,
+config :daemon,
   # LLM Providers — API keys
   anthropic_api_key: System.get_env("ANTHROPIC_API_KEY"),
   anthropic_url: System.get_env("ANTHROPIC_BASE_URL") || "https://api.anthropic.com/v1",
@@ -113,7 +113,7 @@ config :optimal_system_agent,
   lmstudio_api_key: System.get_env("LMSTUDIO_API_KEY"),
   llamacpp_api_key: System.get_env("LLAMACPP_API_KEY"),
 
-  # LLM Providers — model overrides (per-provider, takes precedence over OSA_MODEL)
+  # LLM Providers — model overrides (per-provider, takes precedence over DAEMON_MODEL)
   google_model: System.get_env("GOOGLE_MODEL"),
   deepseek_model: System.get_env("DEEPSEEK_MODEL"),
   mistral_model: System.get_env("MISTRAL_MODEL"),
@@ -156,10 +156,10 @@ config :optimal_system_agent,
 
   # Provider selection
   default_provider: default_provider,
-  # Default model — resolved from OSA_MODEL env, or provider-specific env var.
+  # Default model — resolved from DAEMON_MODEL env, or provider-specific env var.
   # Falls back to OLLAMA_MODEL only when the active provider is actually ollama.
   default_model: (
-    System.get_env("OSA_MODEL") ||
+    System.get_env("DAEMON_MODEL") ||
       case default_provider do
         :ollama -> System.get_env("OLLAMA_MODEL") || "qwen2.5:7b"
         :groq -> System.get_env("GROQ_MODEL")
@@ -182,49 +182,49 @@ config :optimal_system_agent,
 
   # HTTP channel
   shared_secret:
-    System.get_env("OSA_SHARED_SECRET") ||
-      (if System.get_env("OSA_REQUIRE_AUTH") == "true" do
-         raise "OSA_SHARED_SECRET must be set when OSA_REQUIRE_AUTH=true"
+    System.get_env("DAEMON_SHARED_SECRET") ||
+      (if System.get_env("DAEMON_REQUIRE_AUTH") == "true" do
+         raise "DAEMON_SHARED_SECRET must be set when DAEMON_REQUIRE_AUTH=true"
        else
          # Don't override test.exs or config.exs secrets; nil means dev mode (open access)
-         Application.get_env(:optimal_system_agent, :shared_secret)
+         Application.get_env(:daemon, :shared_secret)
        end),
-  require_auth: System.get_env("OSA_REQUIRE_AUTH", "false") == "true",
+  require_auth: System.get_env("DAEMON_REQUIRE_AUTH", "false") == "true",
 
   # Budget limits (USD)
-  daily_budget_usd: parse_float.(System.get_env("OSA_DAILY_BUDGET_USD"), 50.0),
-  monthly_budget_usd: parse_float.(System.get_env("OSA_MONTHLY_BUDGET_USD"), 500.0),
-  per_call_limit_usd: parse_float.(System.get_env("OSA_PER_CALL_LIMIT_USD"), 5.0),
+  daily_budget_usd: parse_float.(System.get_env("DAEMON_DAILY_BUDGET_USD"), 50.0),
+  monthly_budget_usd: parse_float.(System.get_env("DAEMON_MONTHLY_BUDGET_USD"), 500.0),
+  per_call_limit_usd: parse_float.(System.get_env("DAEMON_PER_CALL_LIMIT_USD"), 5.0),
 
   # Treasury — keys match Treasury GenServer expectations
-  treasury_enabled: System.get_env("OSA_TREASURY_ENABLED") == "true",
-  computer_use_enabled: System.get_env("OSA_COMPUTER_USE_ENABLED") == "true",
-  treasury_auto_debit: System.get_env("OSA_TREASURY_AUTO_DEBIT") != "false",
-  treasury_daily_limit: parse_float.(System.get_env("OSA_TREASURY_DAILY_LIMIT"), 250.0),
-  treasury_max_single: parse_float.(System.get_env("OSA_TREASURY_MAX_SINGLE"), 50.0),
+  treasury_enabled: System.get_env("DAEMON_TREASURY_ENABLED") == "true",
+  computer_use_enabled: System.get_env("DAEMON_COMPUTER_USE_ENABLED") == "true",
+  treasury_auto_debit: System.get_env("DAEMON_TREASURY_AUTO_DEBIT") != "false",
+  treasury_daily_limit: parse_float.(System.get_env("DAEMON_TREASURY_DAILY_LIMIT"), 250.0),
+  treasury_max_single: parse_float.(System.get_env("DAEMON_TREASURY_MAX_SINGLE"), 50.0),
 
   # Fleet management
-  fleet_enabled: System.get_env("OSA_FLEET_ENABLED") == "true",
+  fleet_enabled: System.get_env("DAEMON_FLEET_ENABLED") == "true",
 
   # Wallet integration
-  wallet_enabled: System.get_env("OSA_WALLET_ENABLED") == "true",
-  wallet_provider: System.get_env("OSA_WALLET_PROVIDER") || "mock",
-  wallet_address: System.get_env("OSA_WALLET_ADDRESS"),
-  wallet_rpc_url: System.get_env("OSA_WALLET_RPC_URL"),
+  wallet_enabled: System.get_env("DAEMON_WALLET_ENABLED") == "true",
+  wallet_provider: System.get_env("DAEMON_WALLET_PROVIDER") || "mock",
+  wallet_address: System.get_env("DAEMON_WALLET_ADDRESS"),
+  wallet_rpc_url: System.get_env("DAEMON_WALLET_RPC_URL"),
 
   # Sprites.dev sandbox
   sprites_token: System.get_env("SPRITES_TOKEN"),
   sprites_api_url: System.get_env("SPRITES_API_URL") || "https://api.sprites.dev",
 
   # OTA updates
-  update_enabled: System.get_env("OSA_UPDATE_ENABLED") == "true",
-  update_url: System.get_env("OSA_UPDATE_URL"),
-  update_interval: parse_int.(System.get_env("OSA_UPDATE_INTERVAL"), 86_400_000),
+  update_enabled: System.get_env("DAEMON_UPDATE_ENABLED") == "true",
+  update_url: System.get_env("DAEMON_UPDATE_URL"),
+  update_interval: parse_int.(System.get_env("DAEMON_UPDATE_INTERVAL"), 86_400_000),
 
   # Provider failover chain — auto-detected from configured API keys.
-  # Override with comma-separated list: OSA_FALLBACK_CHAIN=anthropic,openai,ollama
+  # Override with comma-separated list: DAEMON_FALLBACK_CHAIN=anthropic,openai,ollama
   fallback_chain: (
-    case System.get_env("OSA_FALLBACK_CHAIN") do
+    case System.get_env("DAEMON_FALLBACK_CHAIN") do
       nil ->
         candidates = [
           {:anthropic, System.get_env("ANTHROPIC_API_KEY")},
@@ -283,19 +283,19 @@ config :optimal_system_agent,
     end
   ),
 
-  # Plan mode (opt-in via OSA_PLAN_MODE=true)
-  plan_mode_enabled: System.get_env("OSA_PLAN_MODE") == "true",
+  # Plan mode (opt-in via DAEMON_PLAN_MODE=true)
+  plan_mode_enabled: System.get_env("DAEMON_PLAN_MODE") == "true",
 
   # Extended thinking
-  thinking_enabled: System.get_env("OSA_THINKING_ENABLED") == "true",
-  thinking_budget_tokens: parse_int.(System.get_env("OSA_THINKING_BUDGET"), 5_000),
+  thinking_enabled: System.get_env("DAEMON_THINKING_ENABLED") == "true",
+  thinking_budget_tokens: parse_int.(System.get_env("DAEMON_THINKING_BUDGET"), 5_000),
 
   # Quiet hours for heartbeat
-  quiet_hours: System.get_env("OSA_QUIET_HOURS"),
+  quiet_hours: System.get_env("DAEMON_QUIET_HOURS"),
 
   # Default working directory for the agent (e.g. a project you want OSA to work on).
-  # Set OSA_WORKING_DIR=~/Desktop/BOS to point OSA at the BOS codebase by default.
-  working_dir: (case System.get_env("OSA_WORKING_DIR") do
+  # Set DAEMON_WORKING_DIR=~/Desktop/BOS to point OSA at the BOS codebase by default.
+  working_dir: (case System.get_env("DAEMON_WORKING_DIR") do
     nil -> nil
     path -> Path.expand(path)
   end)
@@ -309,21 +309,21 @@ config :optimal_system_agent,
 database_url = System.get_env("DATABASE_URL")
 
 if database_url do
-  config :optimal_system_agent, OptimalSystemAgent.Platform.Repo,
+  config :daemon, Daemon.Platform.Repo,
     url: database_url,
     pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10")
 
-  config :optimal_system_agent, ecto_repos: [OptimalSystemAgent.Store.Repo, OptimalSystemAgent.Platform.Repo]
+  config :daemon, ecto_repos: [Daemon.Store.Repo, Daemon.Platform.Repo]
 end
 
-config :optimal_system_agent,
+config :daemon,
   jwt_secret: System.get_env("JWT_SECRET"),
   amqp_url: System.get_env("AMQP_URL"),
   platform_enabled: database_url != nil
 
 # ── Production (Film Studio Chrome Automation) ────────────────────────
-# Set OSA_PRODUCTION_ENABLED=true to start the Chrome automation subsystem:
+# Set DAEMON_PRODUCTION_ENABLED=true to start the Chrome automation subsystem:
 # ChromeSlot (1 concurrent Chrome user), FlowRateLimiter (submission cooldowns),
 # ChromeHealth (periodic Chrome/OSA.app health checks).
-config :optimal_system_agent,
-  production_enabled: System.get_env("OSA_PRODUCTION_ENABLED") == "true"
+config :daemon,
+  production_enabled: System.get_env("DAEMON_PRODUCTION_ENABLED") == "true"

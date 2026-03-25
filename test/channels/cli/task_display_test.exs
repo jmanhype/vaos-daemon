@@ -1,8 +1,8 @@
-defmodule OptimalSystemAgent.Channels.CLI.TaskDisplayTest do
+defmodule Daemon.Channels.CLI.TaskDisplayTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Agent.Tasks.Tracker.Task
-  alias OptimalSystemAgent.Channels.CLI.TaskDisplay
+  alias Daemon.Agent.Tasks.Tracker.Task
+  alias Daemon.Channels.CLI.TaskDisplay
 
   # ── Helpers ──────────────────────────────────────────────────────
 

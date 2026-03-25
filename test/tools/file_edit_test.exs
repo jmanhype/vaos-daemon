@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Tools.Builtins.FileEditTest do
+defmodule Daemon.Tools.Builtins.FileEditTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Tools.Builtins.FileEdit
+  alias Daemon.Tools.Builtins.FileEdit
 
   # ── Unique replacement (happy path) ──────────────────────────────
 
@@ -124,7 +124,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.FileEditTest do
       assert msg =~ "Access denied"
     end
 
-    test "editing ~/.bashrc is blocked (dotfile outside ~/.osa/)" do
+    test "editing ~/.bashrc is blocked (dotfile outside ~/.daemon/)" do
       assert {:error, msg} = FileEdit.execute(%{"path" => "~/.bashrc", "old_string" => "x", "new_string" => "y"})
       assert msg =~ "Access denied"
     end

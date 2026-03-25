@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.MCTS.IndexerTest do
+defmodule Daemon.MCTS.IndexerTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.MCTS.Indexer
+  alias Daemon.MCTS.Indexer
 
   @test_dir System.tmp_dir!() |> Path.join("osa_mcts_test_#{System.unique_integer([:positive])}")
 

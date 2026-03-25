@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Tools.Builtins.BrowserTest do
+defmodule Daemon.Tools.Builtins.BrowserTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Tools.Builtins.Browser
+  alias Daemon.Tools.Builtins.Browser
 
   # ---------------------------------------------------------------------------
   # Tool metadata
@@ -83,12 +83,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.BrowserTest do
     setup do
       # Force fallback mode by caching playwright as unavailable
       :persistent_term.put(
-        {OptimalSystemAgent.Tools.Builtins.Browser, :playwright_available},
+        {Daemon.Tools.Builtins.Browser, :playwright_available},
         false
       )
 
       on_exit(fn ->
-        :persistent_term.erase({OptimalSystemAgent.Tools.Builtins.Browser, :playwright_available})
+        :persistent_term.erase({Daemon.Tools.Builtins.Browser, :playwright_available})
       end)
     end
 

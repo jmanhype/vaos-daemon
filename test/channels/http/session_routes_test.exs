@@ -1,8 +1,8 @@
-defmodule OptimalSystemAgent.Channels.HTTP.SessionRoutesTest do
+defmodule Daemon.Channels.HTTP.SessionRoutesTest do
   use ExUnit.Case, async: false
   use Plug.Test
 
-  alias OptimalSystemAgent.Channels.HTTP.API.SessionRoutes
+  alias Daemon.Channels.HTTP.API.SessionRoutes
 
   @opts SessionRoutes.init([])
 
@@ -12,13 +12,13 @@ defmodule OptimalSystemAgent.Channels.HTTP.SessionRoutesTest do
     # Disable auth so the assign(:user_id) is populated by the API layer;
     # SessionRoutes itself reads conn.assigns[:user_id] with a default fallback,
     # so we just ensure the env is set consistently.
-    original_auth = Application.get_env(:optimal_system_agent, :require_auth)
-    Application.put_env(:optimal_system_agent, :require_auth, false)
+    original_auth = Application.get_env(:daemon, :require_auth)
+    Application.put_env(:daemon, :require_auth, false)
 
     on_exit(fn ->
       if original_auth,
-        do: Application.put_env(:optimal_system_agent, :require_auth, original_auth),
-        else: Application.delete_env(:optimal_system_agent, :require_auth)
+        do: Application.put_env(:daemon, :require_auth, original_auth),
+        else: Application.delete_env(:daemon, :require_auth)
     end)
 
     :ok
@@ -269,7 +269,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.SessionRoutesTest do
 
       inserted =
         try do
-          :ets.insert(:osa_pending_questions, {ref_str, %{
+          :ets.insert(:daemon_pending_questions, {ref_str, %{
             session_id: session_id,
             question: "Which option do you prefer?",
             options: ["A", "B"],
@@ -292,7 +292,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.SessionRoutesTest do
         assert is_binary(q["asked_at"])
 
         try do
-          :ets.delete(:osa_pending_questions, ref_str)
+          :ets.delete(:daemon_pending_questions, ref_str)
         rescue
           ArgumentError -> :ok
         end
@@ -308,7 +308,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.SessionRoutesTest do
       ref_str = "ref-cross-#{System.unique_integer([:positive])}"
 
       try do
-        :ets.insert(:osa_pending_questions, {ref_str, %{
+        :ets.insert(:daemon_pending_questions, {ref_str, %{
           session_id: session_a,
           question: "For session A only",
           options: [],
@@ -319,7 +319,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.SessionRoutesTest do
         body = decode_body(conn)
         assert body["count"] == 0
 
-        :ets.delete(:osa_pending_questions, ref_str)
+        :ets.delete(:daemon_pending_questions, ref_str)
       rescue
         ArgumentError -> :ok
       end

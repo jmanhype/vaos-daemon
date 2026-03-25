@@ -1,4 +1,4 @@
-defmodule OptimalSystemAgent.Agent.ContextTest do
+defmodule Daemon.Agent.ContextTest do
   @moduledoc """
   Unit tests for the two-tier context builder (Agent.Context).
 
@@ -13,7 +13,7 @@ defmodule OptimalSystemAgent.Agent.ContextTest do
   """
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Agent.Context
+  alias Daemon.Agent.Context
 
   # ---------------------------------------------------------------------------
   # Minimal valid state fixture
@@ -84,17 +84,17 @@ defmodule OptimalSystemAgent.Agent.ContextTest do
 
   describe "build/1 — provider-specific system message format" do
     test "non-anthropic provider produces a string content system message" do
-      Application.put_env(:optimal_system_agent, :default_provider, :ollama)
+      Application.put_env(:daemon, :default_provider, :ollama)
       state = base_state()
       %{messages: [system_msg | _]} = Context.build(state)
       # Non-anthropic: content is a binary string (concatenated)
       assert is_binary(Map.get(system_msg, :content))
     after
-      Application.delete_env(:optimal_system_agent, :default_provider)
+      Application.delete_env(:daemon, :default_provider)
     end
 
     test "anthropic provider produces list content with cache_control block" do
-      Application.put_env(:optimal_system_agent, :default_provider, :anthropic)
+      Application.put_env(:daemon, :default_provider, :anthropic)
       state = base_state()
       %{messages: [system_msg | _]} = Context.build(state)
 
@@ -107,7 +107,7 @@ defmodule OptimalSystemAgent.Agent.ContextTest do
       assert Map.has_key?(static_block, :cache_control)
       assert Map.get(static_block.cache_control, :type) == "ephemeral"
     after
-      Application.delete_env(:optimal_system_agent, :default_provider)
+      Application.delete_env(:daemon, :default_provider)
     end
   end
 

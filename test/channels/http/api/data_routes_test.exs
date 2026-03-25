@@ -1,8 +1,8 @@
-defmodule OptimalSystemAgent.Channels.HTTP.API.DataRoutesTest do
+defmodule Daemon.Channels.HTTP.API.DataRoutesTest do
   use ExUnit.Case, async: false
   use Plug.Test
 
-  alias OptimalSystemAgent.Channels.HTTP.API.DataRoutes
+  alias Daemon.Channels.HTTP.API.DataRoutes
 
   @opts DataRoutes.init([])
 

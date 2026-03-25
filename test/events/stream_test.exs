@@ -1,12 +1,12 @@
-defmodule OptimalSystemAgent.Events.StreamTest do
+defmodule Daemon.Events.StreamTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Events.Stream
-  alias OptimalSystemAgent.Events.Event
+  alias Daemon.Events.Stream
+  alias Daemon.Events.Event
 
   # Start the registry once for this test module
   setup_all do
-    case Registry.start_link(keys: :unique, name: OptimalSystemAgent.EventStreamRegistry) do
+    case Registry.start_link(keys: :unique, name: Daemon.EventStreamRegistry) do
       {:ok, _pid} -> :ok
       {:error, {:already_started, _pid}} -> :ok
     end
@@ -41,7 +41,7 @@ defmodule OptimalSystemAgent.Events.StreamTest do
 
   describe "start/stop lifecycle" do
     test "start_link registers the stream", %{sid: sid} do
-      [{pid, _}] = Registry.lookup(OptimalSystemAgent.EventStreamRegistry, sid)
+      [{pid, _}] = Registry.lookup(Daemon.EventStreamRegistry, sid)
       assert is_pid(pid)
     end
 

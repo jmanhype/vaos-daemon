@@ -6,7 +6,7 @@ export OSA_PRODUCTION_ENABLED=true
 
 # Start IEx with the production brief
 elixir -e "
-Application.put_env(:optimal_system_agent, :production_enabled, true)
+Application.put_env(:daemon, :production_enabled, true)
 
 # Append ebin paths
 Code.append_path('_build/dev/lib/optimal_system_agent/ebin')
@@ -17,7 +17,7 @@ Code.append_path('_build/dev/lib/bandit/ebin')
 Code.append_path('_build/dev/lib/plug/ebin')
 
 # Start the application
-{:ok, _pid} = Application.ensure_all_started(:optimal_system_agent)
+{:ok, _pid} = Application.ensure_all_started(:daemon)
 
 # Give it a moment to start
 Process.sleep(2000)

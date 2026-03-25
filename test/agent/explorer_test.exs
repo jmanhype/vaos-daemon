@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Agent.ExplorerTest do
+defmodule Daemon.Agent.ExplorerTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Agent.Explorer
+  alias Daemon.Agent.Explorer
 
   # ── should_explore?/2 ────────────────────────────────────────
 

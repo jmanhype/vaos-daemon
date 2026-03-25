@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Tools.Builtins.FileWriteTest do
+defmodule Daemon.Tools.Builtins.FileWriteTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Tools.Builtins.FileWrite
+  alias Daemon.Tools.Builtins.FileWrite
 
   # ---------------------------------------------------------------------------
   # Blocked system paths
@@ -42,7 +42,7 @@ defmodule OptimalSystemAgent.Tools.Builtins.FileWriteTest do
   end
 
   # ---------------------------------------------------------------------------
-  # Blocked dotfiles outside ~/.osa/
+  # Blocked dotfiles outside ~/.daemon/
   # ---------------------------------------------------------------------------
 
   describe "blocked dotfiles" do
@@ -74,8 +74,8 @@ defmodule OptimalSystemAgent.Tools.Builtins.FileWriteTest do
   # ---------------------------------------------------------------------------
 
   describe "allowed paths" do
-    test "writing to ~/.osa/ is allowed" do
-      path = Path.expand("~/.osa/workspace/test_write_#{:rand.uniform(100_000)}.txt")
+    test "writing to ~/.daemon/ is allowed" do
+      path = Path.expand("~/.daemon/workspace/test_write_#{:rand.uniform(100_000)}.txt")
 
       try do
         assert {:ok, msg} = FileWrite.execute(%{"path" => path, "content" => "hello"})

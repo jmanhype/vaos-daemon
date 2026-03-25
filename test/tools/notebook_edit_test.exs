@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Tools.Builtins.NotebookEditTest do
+defmodule Daemon.Tools.Builtins.NotebookEditTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Tools.Builtins.NotebookEdit
+  alias Daemon.Tools.Builtins.NotebookEdit
 
   @sample_notebook %{
     "nbformat" => 4,

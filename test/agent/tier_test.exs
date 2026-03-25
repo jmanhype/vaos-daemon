@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Agent.TierTest do
+defmodule Daemon.Agent.TierTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Agent.Tier
+  alias Daemon.Agent.Tier
 
   # ── max_agents/1 ──────────────────────────────────────────────────
 

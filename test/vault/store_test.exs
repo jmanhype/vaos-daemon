@@ -1,12 +1,12 @@
-defmodule OptimalSystemAgent.Vault.StoreTest do
+defmodule Daemon.Vault.StoreTest do
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Vault.Store
+  alias Daemon.Vault.Store
 
   setup do
     tmp = System.tmp_dir!() |> Path.join("vault_test_#{System.unique_integer([:positive])}")
     File.mkdir_p!(tmp)
-    Application.put_env(:optimal_system_agent, :config_dir, tmp)
+    Application.put_env(:daemon, :config_dir, tmp)
     on_exit(fn -> File.rm_rf!(tmp) end)
     %{tmp: tmp}
   end

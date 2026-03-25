@@ -2,7 +2,7 @@ defmodule MiosaProviders.OllamaTest do
   use ExUnit.Case, async: true
 
   alias MiosaProviders.Ollama
-  alias OptimalSystemAgent.Utils.Text
+  alias Daemon.Utils.Text
 
   # ---------------------------------------------------------------------------
   # model_supports_tools?/1
@@ -385,21 +385,21 @@ defmodule MiosaProviders.OllamaTest do
   describe "auto_detect_model/0" do
     test "returns :ok when no Ollama server is running" do
       # Point at a port that's not listening — should not raise or crash
-      Application.put_env(:optimal_system_agent, :ollama_url, "http://localhost:1")
+      Application.put_env(:daemon, :ollama_url, "http://localhost:1")
 
       result = Ollama.auto_detect_model()
       assert result == :ok
     after
-      Application.delete_env(:optimal_system_agent, :ollama_url)
+      Application.delete_env(:daemon, :ollama_url)
     end
 
     test "returns :ok when explicit model is configured (skips detection)" do
-      Application.put_env(:optimal_system_agent, :default_model, "llama3.1:70b")
+      Application.put_env(:daemon, :default_model, "llama3.1:70b")
 
       result = Ollama.auto_detect_model()
       assert result == :ok
     after
-      Application.delete_env(:optimal_system_agent, :default_model)
+      Application.delete_env(:daemon, :default_model)
     end
   end
 

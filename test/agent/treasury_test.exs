@@ -1,4 +1,4 @@
-defmodule OptimalSystemAgent.Agent.TreasuryTest do
+defmodule Daemon.Agent.TreasuryTest do
   use ExUnit.Case, async: true
 
   alias MiosaBudget.Treasury

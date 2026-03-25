@@ -1,33 +1,33 @@
-defmodule OptimalSystemAgent.Channels.HTTP.IntegrityTest do
+defmodule Daemon.Channels.HTTP.IntegrityTest do
   use ExUnit.Case, async: false
   use Plug.Test
 
-  alias OptimalSystemAgent.Channels.HTTP.Integrity
+  alias Daemon.Channels.HTTP.Integrity
 
   @secret "test-secret-key"
 
   setup do
     # Ensure we have a clean nonce table
-    case :ets.whereis(:osa_integrity_nonces) do
+    case :ets.whereis(:daemon_integrity_nonces) do
       :undefined -> :ok
-      _ -> :ets.delete_all_objects(:osa_integrity_nonces)
+      _ -> :ets.delete_all_objects(:daemon_integrity_nonces)
     end
 
     # Set require_auth and shared_secret for tests
-    original_auth = Application.get_env(:optimal_system_agent, :require_auth)
-    original_secret = Application.get_env(:optimal_system_agent, :shared_secret)
+    original_auth = Application.get_env(:daemon, :require_auth)
+    original_secret = Application.get_env(:daemon, :shared_secret)
 
-    Application.put_env(:optimal_system_agent, :require_auth, true)
-    Application.put_env(:optimal_system_agent, :shared_secret, @secret)
+    Application.put_env(:daemon, :require_auth, true)
+    Application.put_env(:daemon, :shared_secret, @secret)
 
     on_exit(fn ->
       if original_auth,
-        do: Application.put_env(:optimal_system_agent, :require_auth, original_auth),
-        else: Application.delete_env(:optimal_system_agent, :require_auth)
+        do: Application.put_env(:daemon, :require_auth, original_auth),
+        else: Application.delete_env(:daemon, :require_auth)
 
       if original_secret,
-        do: Application.put_env(:optimal_system_agent, :shared_secret, original_secret),
-        else: Application.delete_env(:optimal_system_agent, :shared_secret)
+        do: Application.put_env(:daemon, :shared_secret, original_secret),
+        else: Application.delete_env(:daemon, :shared_secret)
     end)
 
     :ok
@@ -127,7 +127,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.IntegrityTest do
     end
 
     test "disabled when require_auth is false" do
-      Application.put_env(:optimal_system_agent, :require_auth, false)
+      Application.put_env(:daemon, :require_auth, false)
       body = ~s({"input": "hello"})
       # No signature headers at all
       conn =

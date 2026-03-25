@@ -3,7 +3,7 @@ defmodule OSA.SDK do
   Public facade for the OSA SDK.
 
   The entry point for external Elixir applications to embed the full OSA
-  agent runtime. All functions delegate to internal `OptimalSystemAgent.SDK.*`
+  agent runtime. All functions delegate to internal `Daemon.SDK.*`
   modules.
 
   ## Quick Start
@@ -22,7 +22,7 @@ defmodule OSA.SDK do
 
   Add to your supervision tree for a standalone OSA runtime:
 
-      config = %OptimalSystemAgent.SDK.Config{
+      config = %Daemon.SDK.Config{
         provider: :anthropic,
         model: "claude-sonnet-4-6",
         permission: :accept_edits,
@@ -30,7 +30,7 @@ defmodule OSA.SDK do
       }
 
       children = [
-        {OptimalSystemAgent.SDK.Supervisor, config}
+        {Daemon.SDK.Supervisor, config}
       ]
 
   ## Custom Tools
@@ -61,215 +61,215 @@ defmodule OSA.SDK do
   @doc """
   Send a message through the full OSA agent pipeline.
 
-  See `OptimalSystemAgent.SDK.query/2` for full documentation.
+  See `Daemon.SDK.query/2` for full documentation.
   """
-  defdelegate query(message, opts \\ []), to: OptimalSystemAgent.SDK
+  defdelegate query(message, opts \\ []), to: Daemon.SDK
 
   @doc """
   Launch a multi-agent swarm on a task.
 
-  See `OptimalSystemAgent.SDK.launch_swarm/2` for full documentation.
+  See `Daemon.SDK.launch_swarm/2` for full documentation.
   """
-  defdelegate launch_swarm(task, opts \\ []), to: OptimalSystemAgent.SDK
+  defdelegate launch_swarm(task, opts \\ []), to: Daemon.SDK
 
   @doc """
   Execute an approved plan from a previous query that returned :plan.
 
-  See `OptimalSystemAgent.SDK.execute_plan/3` for full documentation.
+  See `Daemon.SDK.execute_plan/3` for full documentation.
   """
-  defdelegate execute_plan(session_id, message, opts \\ []), to: OptimalSystemAgent.SDK
+  defdelegate execute_plan(session_id, message, opts \\ []), to: Daemon.SDK
 
   # ── Tool Registration ────────────────────────────────────────────
 
   @doc """
   Define a custom tool via closure.
 
-  See `OptimalSystemAgent.SDK.Tool.define/4` for full documentation.
+  See `Daemon.SDK.Tool.define/4` for full documentation.
   """
   defdelegate define_tool(name, description, parameters, handler),
-    to: OptimalSystemAgent.SDK.Tool,
+    to: Daemon.SDK.Tool,
     as: :define
 
   @doc "Remove a previously defined SDK tool."
-  defdelegate undefine_tool(name), to: OptimalSystemAgent.SDK.Tool, as: :undefine
+  defdelegate undefine_tool(name), to: Daemon.SDK.Tool, as: :undefine
 
   # ── Agent Registration ───────────────────────────────────────────
 
   @doc """
   Define a custom agent at runtime.
 
-  See `OptimalSystemAgent.SDK.Agent.define/2` for full documentation.
+  See `Daemon.SDK.Agent.define/2` for full documentation.
   """
   defdelegate define_agent(name, definition),
-    to: OptimalSystemAgent.SDK.Agent,
+    to: Daemon.SDK.Agent,
     as: :define
 
   @doc "Remove a previously defined SDK agent."
-  defdelegate undefine_agent(name), to: OptimalSystemAgent.SDK.Agent, as: :undefine
+  defdelegate undefine_agent(name), to: Daemon.SDK.Agent, as: :undefine
 
   # ── Hook Registration ────────────────────────────────────────────
 
   @doc """
   Register a hook for an agent lifecycle event.
 
-  See `OptimalSystemAgent.SDK.Hook.register/4` for full documentation.
+  See `Daemon.SDK.Hook.register/4` for full documentation.
   """
   defdelegate register_hook(event, name, handler, opts \\ []),
-    to: OptimalSystemAgent.SDK.Hook,
+    to: Daemon.SDK.Hook,
     as: :register
 
   @doc "List all registered hooks."
-  defdelegate list_hooks(), to: OptimalSystemAgent.SDK.Hook, as: :list
+  defdelegate list_hooks(), to: Daemon.SDK.Hook, as: :list
 
   @doc "Get hook execution metrics."
-  defdelegate hook_metrics(), to: OptimalSystemAgent.SDK.Hook, as: :metrics
+  defdelegate hook_metrics(), to: Daemon.SDK.Hook, as: :metrics
 
   @doc "Run a hook pipeline synchronously."
-  defdelegate run_hook(event, payload), to: OptimalSystemAgent.SDK.Hook, as: :run
+  defdelegate run_hook(event, payload), to: Daemon.SDK.Hook, as: :run
 
   @doc "Run a hook pipeline asynchronously (fire-and-forget)."
-  defdelegate run_hook_async(event, payload), to: OptimalSystemAgent.SDK.Hook, as: :run_async
+  defdelegate run_hook_async(event, payload), to: Daemon.SDK.Hook, as: :run_async
 
   # ── Session Management ───────────────────────────────────────────
 
   @doc "Create a new agent session."
-  defdelegate create_session(opts \\ []), to: OptimalSystemAgent.SDK.Session, as: :create
+  defdelegate create_session(opts \\ []), to: Daemon.SDK.Session, as: :create
 
   @doc "Resume an existing session."
   defdelegate resume_session(session_id, opts \\ []),
-    to: OptimalSystemAgent.SDK.Session,
+    to: Daemon.SDK.Session,
     as: :resume
 
   @doc "Close a session."
-  defdelegate close_session(session_id), to: OptimalSystemAgent.SDK.Session, as: :close
+  defdelegate close_session(session_id), to: Daemon.SDK.Session, as: :close
 
   @doc "List active sessions."
-  defdelegate list_sessions(), to: OptimalSystemAgent.SDK.Session, as: :list
+  defdelegate list_sessions(), to: Daemon.SDK.Session, as: :list
 
   @doc "Get messages for a session."
-  defdelegate get_messages(session_id), to: OptimalSystemAgent.SDK.Session, as: :get_messages
+  defdelegate get_messages(session_id), to: Daemon.SDK.Session, as: :get_messages
 
   @doc "Check if a session is alive."
-  defdelegate session_alive?(session_id), to: OptimalSystemAgent.SDK.Session, as: :alive?
+  defdelegate session_alive?(session_id), to: Daemon.SDK.Session, as: :alive?
 
   # ── Memory ───────────────────────────────────────────────────────
 
   @doc "Recall all persistent memories."
-  defdelegate recall(), to: OptimalSystemAgent.SDK.Memory
+  defdelegate recall(), to: Daemon.SDK.Memory
 
   @doc "Recall memories relevant to a query within token budget."
-  defdelegate recall_relevant(message, max_tokens \\ 2000), to: OptimalSystemAgent.SDK.Memory
+  defdelegate recall_relevant(message, max_tokens \\ 2000), to: Daemon.SDK.Memory
 
   @doc "Save an insight to persistent memory."
-  defdelegate remember(content, category \\ "general"), to: OptimalSystemAgent.SDK.Memory
+  defdelegate remember(content, category \\ "general"), to: Daemon.SDK.Memory
 
   @doc "Search memories by keyword."
-  defdelegate search_memory(query, opts \\ []), to: OptimalSystemAgent.SDK.Memory, as: :search
+  defdelegate search_memory(query, opts \\ []), to: Daemon.SDK.Memory, as: :search
 
   @doc "Load a session's message history."
-  defdelegate load_session(session_id), to: OptimalSystemAgent.SDK.Memory
+  defdelegate load_session(session_id), to: Daemon.SDK.Memory
 
   @doc "Get memory statistics."
-  defdelegate memory_stats(), to: OptimalSystemAgent.SDK.Memory, as: :stats
+  defdelegate memory_stats(), to: Daemon.SDK.Memory, as: :stats
 
   @doc "Append a message entry to a session's persistent history."
-  defdelegate append_message(session_id, entry), to: OptimalSystemAgent.SDK.Memory, as: :append
+  defdelegate append_message(session_id, entry), to: Daemon.SDK.Memory, as: :append
 
   @doc "Resume a session from persistent history (checks existence)."
-  defdelegate resume_memory_session(session_id), to: OptimalSystemAgent.SDK.Memory, as: :resume_session
+  defdelegate resume_memory_session(session_id), to: Daemon.SDK.Memory, as: :resume_session
 
   @doc "Get per-session stats (token totals, message counts)."
-  defdelegate session_stats(session_id), to: OptimalSystemAgent.SDK.Memory
+  defdelegate session_stats(session_id), to: Daemon.SDK.Memory
 
   # ── Budget ───────────────────────────────────────────────────────
 
   @doc "Check if current spending is within budget limits."
-  defdelegate check_budget(), to: OptimalSystemAgent.SDK.Budget, as: :check
+  defdelegate check_budget(), to: Daemon.SDK.Budget, as: :check
 
   @doc "Get full budget status: limits, spent, remaining, reset times."
-  defdelegate budget_status(), to: OptimalSystemAgent.SDK.Budget, as: :status
+  defdelegate budget_status(), to: Daemon.SDK.Budget, as: :status
 
   @doc "Record an API cost entry."
   defdelegate record_cost(provider, model, tokens_in, tokens_out, session_id),
-    to: OptimalSystemAgent.SDK.Budget
+    to: Daemon.SDK.Budget
 
   @doc "Calculate USD cost for token counts (pure function)."
   defdelegate calculate_cost(provider, tokens_in, tokens_out),
-    to: OptimalSystemAgent.SDK.Budget
+    to: Daemon.SDK.Budget
 
   @doc "Set daily budget limit in USD."
-  defdelegate set_daily_limit(usd), to: OptimalSystemAgent.SDK.Budget
+  defdelegate set_daily_limit(usd), to: Daemon.SDK.Budget
 
   @doc "Set monthly budget limit in USD."
-  defdelegate set_monthly_limit(usd), to: OptimalSystemAgent.SDK.Budget
+  defdelegate set_monthly_limit(usd), to: Daemon.SDK.Budget
 
   # ── Tiers & Models ──────────────────────────────────────────────
 
   @doc "Get model name for a tier on a given provider."
-  defdelegate model_for(tier, provider), to: OptimalSystemAgent.SDK.Tier
+  defdelegate model_for(tier, provider), to: Daemon.SDK.Tier
 
   @doc "Get model for a named agent (tier-based routing)."
-  defdelegate model_for_agent(agent_name), to: OptimalSystemAgent.SDK.Tier
+  defdelegate model_for_agent(agent_name), to: Daemon.SDK.Tier
 
   @doc "Get token budget breakdown for a tier."
-  defdelegate budget_for(tier), to: OptimalSystemAgent.SDK.Tier
+  defdelegate budget_for(tier), to: Daemon.SDK.Tier
 
   @doc "Get all tier configurations."
-  defdelegate all_tiers(), to: OptimalSystemAgent.SDK.Tier, as: :all
+  defdelegate all_tiers(), to: Daemon.SDK.Tier, as: :all
 
   @doc "List all supported LLM providers."
-  defdelegate supported_providers(), to: OptimalSystemAgent.SDK.Tier
+  defdelegate supported_providers(), to: Daemon.SDK.Tier
 
   @doc "Map complexity score (1-10) to tier."
-  defdelegate tier_for_complexity(complexity), to: OptimalSystemAgent.SDK.Tier
+  defdelegate tier_for_complexity(complexity), to: Daemon.SDK.Tier
 
   @doc "Get full tier info (budget, temperature, max_iterations, max_agents)."
-  defdelegate tier_info(tier), to: OptimalSystemAgent.SDK.Tier
+  defdelegate tier_info(tier), to: Daemon.SDK.Tier
 
   @doc "Max response tokens for a tier."
-  defdelegate max_response_tokens(tier), to: OptimalSystemAgent.SDK.Tier
+  defdelegate max_response_tokens(tier), to: Daemon.SDK.Tier
 
   @doc "Temperature setting for a tier."
-  defdelegate temperature(tier), to: OptimalSystemAgent.SDK.Tier
+  defdelegate temperature(tier), to: Daemon.SDK.Tier
 
   @doc "Max concurrent agents for a tier."
-  defdelegate max_agents(tier), to: OptimalSystemAgent.SDK.Tier
+  defdelegate max_agents(tier), to: Daemon.SDK.Tier
 
   @doc "Max loop iterations for a tier."
-  defdelegate max_iterations(tier), to: OptimalSystemAgent.SDK.Tier
+  defdelegate max_iterations(tier), to: Daemon.SDK.Tier
 
   # ── Commands ─────────────────────────────────────────────────────
 
   @doc "Execute a slash command programmatically."
   defdelegate execute_command(input, session_id \\ "sdk"),
-    to: OptimalSystemAgent.SDK.Command,
+    to: Daemon.SDK.Command,
     as: :execute
 
   @doc "List all registered commands."
-  defdelegate list_commands(), to: OptimalSystemAgent.SDK.Command, as: :list
+  defdelegate list_commands(), to: Daemon.SDK.Command, as: :list
 
   @doc "Register a custom slash command at runtime."
-  defdelegate register_command(name, description, template), to: OptimalSystemAgent.SDK.Command, as: :register
+  defdelegate register_command(name, description, template), to: Daemon.SDK.Command, as: :register
 
   # ── MCP ──────────────────────────────────────────────────────────
 
   @doc "List all configured MCP servers."
-  defdelegate list_mcp_servers(), to: OptimalSystemAgent.SDK.MCP, as: :list_servers
+  defdelegate list_mcp_servers(), to: Daemon.SDK.MCP, as: :list_servers
 
   @doc "List all MCP-provided tools registered in Tools.Registry."
-  defdelegate list_mcp_tools(), to: OptimalSystemAgent.SDK.MCP, as: :list_tools
+  defdelegate list_mcp_tools(), to: Daemon.SDK.MCP, as: :list_tools
 
   @doc "Reload MCP server configs from disk."
-  defdelegate reload_mcp_servers(), to: OptimalSystemAgent.SDK.MCP, as: :reload_servers
+  defdelegate reload_mcp_servers(), to: Daemon.SDK.MCP, as: :reload_servers
 
   # ── Convenience ──────────────────────────────────────────────────
 
   @doc "Alias for the Config struct module."
-  def config, do: OptimalSystemAgent.SDK.Config
+  def config, do: Daemon.SDK.Config
 
   @doc "Alias for the Message struct module."
-  def message, do: OptimalSystemAgent.SDK.Message
+  def message, do: Daemon.SDK.Message
 
   @doc "Alias for the Permission module."
-  def permission, do: OptimalSystemAgent.SDK.Permission
+  def permission, do: Daemon.SDK.Permission
 end

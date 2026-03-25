@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Agent.HooksMetricsTest do
+defmodule Daemon.Agent.HooksMetricsTest do
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Agent.Hooks
+  alias Daemon.Agent.Hooks
 
   # These tests verify the ETS-based metrics (replacing the old GenServer.cast path)
 

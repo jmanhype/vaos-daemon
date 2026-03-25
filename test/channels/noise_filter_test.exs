@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Channels.NoiseFilterTest do
+defmodule Daemon.Channels.NoiseFilterTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Channels.NoiseFilter
+  alias Daemon.Channels.NoiseFilter
 
   # ---------------------------------------------------------------------------
   # check/2 — Tier 1 (regex, no signal weight)

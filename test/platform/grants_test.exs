@@ -1,8 +1,8 @@
-defmodule OptimalSystemAgent.Platform.GrantsTest do
+defmodule Daemon.Platform.GrantsTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Platform.Schemas.Grant
-  alias OptimalSystemAgent.Platform.Grants
+  alias Daemon.Platform.Schemas.Grant
+  alias Daemon.Platform.Grants
 
   # Shared UUIDs used across tests
   @source_id Ecto.UUID.generate()

@@ -1,8 +1,8 @@
-defmodule OptimalSystemAgent.Channels.HTTP.API.OrchestrationRoutesTest do
+defmodule Daemon.Channels.HTTP.API.OrchestrationRoutesTest do
   use ExUnit.Case, async: false
   use Plug.Test
 
-  alias OptimalSystemAgent.Channels.HTTP.API.OrchestrationRoutes
+  alias Daemon.Channels.HTTP.API.OrchestrationRoutes
 
   @opts OrchestrationRoutes.init([])
 

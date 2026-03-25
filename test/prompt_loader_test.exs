@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.PromptLoaderTest do
+defmodule Daemon.PromptLoaderTest do
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.PromptLoader
+  alias Daemon.PromptLoader
 
   # ---------------------------------------------------------------------------
   # get/1 — reading cached prompts

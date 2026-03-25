@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Tools.SchemaValidationTest do
+defmodule Daemon.Tools.SchemaValidationTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Tools.Registry
+  alias Daemon.Tools.Registry
 
   # ---------------------------------------------------------------------------
   # Test tool module with a strict JSON Schema
@@ -139,19 +139,19 @@ defmodule OptimalSystemAgent.Tools.SchemaValidationTest do
 
   describe "safety/0 callback" do
     test "should return :read_only for FileRead" do
-      assert OptimalSystemAgent.Tools.Builtins.FileRead.safety() == :read_only
+      assert Daemon.Tools.Builtins.FileRead.safety() == :read_only
     end
 
     test "should return :write_safe for FileWrite" do
-      assert OptimalSystemAgent.Tools.Builtins.FileWrite.safety() == :write_safe
+      assert Daemon.Tools.Builtins.FileWrite.safety() == :write_safe
     end
 
     test "should return :terminal for ShellExecute" do
-      assert OptimalSystemAgent.Tools.Builtins.ShellExecute.safety() == :terminal
+      assert Daemon.Tools.Builtins.ShellExecute.safety() == :terminal
     end
 
     test "should return :write_destructive for Git" do
-      assert OptimalSystemAgent.Tools.Builtins.Git.safety() == :write_destructive
+      assert Daemon.Tools.Builtins.Git.safety() == :write_destructive
     end
 
     test "should return :read_only for FakeTool" do
@@ -165,18 +165,18 @@ defmodule OptimalSystemAgent.Tools.SchemaValidationTest do
 
   describe "validate_arguments/2 with real tool modules" do
     test "should validate file_read args correctly" do
-      mod = OptimalSystemAgent.Tools.Builtins.FileRead
+      mod = Daemon.Tools.Builtins.FileRead
       assert :ok = Registry.validate_arguments(mod, %{"path" => "/tmp/test.txt"})
     end
 
     test "should reject file_read with missing path" do
-      mod = OptimalSystemAgent.Tools.Builtins.FileRead
+      mod = Daemon.Tools.Builtins.FileRead
       assert {:error, msg} = Registry.validate_arguments(mod, %{})
       assert msg =~ "validation failed"
     end
 
     test "should reject shell_execute with wrong type for command" do
-      mod = OptimalSystemAgent.Tools.Builtins.ShellExecute
+      mod = Daemon.Tools.Builtins.ShellExecute
       assert {:error, msg} = Registry.validate_arguments(mod, %{"command" => 42})
       assert msg =~ "validation failed"
     end

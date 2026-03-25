@@ -1,4 +1,4 @@
-defmodule OptimalSystemAgent.Agent.LoopUnitTest do
+defmodule Daemon.Agent.LoopUnitTest do
   @moduledoc """
   Unit tests for Loop internals that don't require a running GenServer.
   Tests prompt injection detection and tool output truncation logic.

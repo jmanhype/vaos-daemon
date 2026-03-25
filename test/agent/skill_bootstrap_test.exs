@@ -1,9 +1,9 @@
-defmodule OptimalSystemAgent.Agent.SkillBootstrapTest do
+defmodule Daemon.Agent.SkillBootstrapTest do
   use ExUnit.Case, async: false
   use Plug.Test
 
-  alias OptimalSystemAgent.Agent.SkillBootstrap
-  alias OptimalSystemAgent.Channels.HTTP.API.SkillBootstrapRoutes
+  alias Daemon.Agent.SkillBootstrap
+  alias Daemon.Channels.HTTP.API.SkillBootstrapRoutes
 
   @opts SkillBootstrapRoutes.init([])
 
@@ -12,7 +12,7 @@ defmodule OptimalSystemAgent.Agent.SkillBootstrapTest do
     on_exit(fn ->
       ~w(test-bootstrap-skill test-skill-abc)
       |> Enum.each(fn name ->
-        dir = Path.expand("~/.osa/skills/#{name}")
+        dir = Path.expand("~/.daemon/skills/#{name}")
         File.rm_rf(dir)
       end)
     end)
@@ -62,7 +62,7 @@ defmodule OptimalSystemAgent.Agent.SkillBootstrapTest do
       }
 
       result = SkillBootstrap.create_and_run(params)
-      skill_path = Path.expand("~/.osa/skills/test-bootstrap-skill/SKILL.md")
+      skill_path = Path.expand("~/.daemon/skills/test-bootstrap-skill/SKILL.md")
 
       # Accept either success or session-start failure (no Supervisor in test env)
       assert match?({:ok, _}, result) or match?({:error, _}, result)
@@ -79,7 +79,7 @@ defmodule OptimalSystemAgent.Agent.SkillBootstrapTest do
       }
 
       SkillBootstrap.create_and_run(params)
-      skill_path = Path.expand("~/.osa/skills/test-bootstrap-skill/SKILL.md")
+      skill_path = Path.expand("~/.daemon/skills/test-bootstrap-skill/SKILL.md")
 
       if File.exists?(skill_path) do
         content = File.read!(skill_path)
@@ -98,7 +98,7 @@ defmodule OptimalSystemAgent.Agent.SkillBootstrapTest do
       }
 
       SkillBootstrap.create_and_run(params)
-      skill_path = Path.expand("~/.osa/skills/test-bootstrap-skill/SKILL.md")
+      skill_path = Path.expand("~/.daemon/skills/test-bootstrap-skill/SKILL.md")
 
       if File.exists?(skill_path) do
         content = File.read!(skill_path)

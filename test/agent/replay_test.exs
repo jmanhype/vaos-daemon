@@ -1,9 +1,9 @@
-defmodule OptimalSystemAgent.Agent.ReplayTest do
+defmodule Daemon.Agent.ReplayTest do
   use ExUnit.Case, async: false
   use Plug.Test
 
-  alias OptimalSystemAgent.Agent.Replay
-  alias OptimalSystemAgent.Channels.HTTP.API.SessionRoutes
+  alias Daemon.Agent.Replay
+  alias Daemon.Channels.HTTP.API.SessionRoutes
 
   @opts SessionRoutes.init([])
 

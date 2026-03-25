@@ -1,4 +1,4 @@
-defmodule OptimalSystemAgent.Agent.CompactorTest do
+defmodule Daemon.Agent.CompactorTest do
   @moduledoc """
   Unit tests for the intelligent sliding-window context compactor.
 
@@ -18,7 +18,7 @@ defmodule OptimalSystemAgent.Agent.CompactorTest do
   """
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Agent.Compactor
+  alias Daemon.Agent.Compactor
 
   # ---------------------------------------------------------------------------
   # Helpers
@@ -188,8 +188,8 @@ defmodule OptimalSystemAgent.Agent.CompactorTest do
       # Force above threshold by setting a tiny max_context_tokens temporarily.
       # The exact step reached depends on conversation size and token counts,
       # but the result must always be a valid message list.
-      Application.put_env(:optimal_system_agent, :max_context_tokens, 100)
-      Application.put_env(:optimal_system_agent, :compaction_warn, 0.0)
+      Application.put_env(:daemon, :max_context_tokens, 100)
+      Application.put_env(:daemon, :compaction_warn, 0.0)
 
       tool_msg = %{
         role: "assistant",
@@ -203,8 +203,8 @@ defmodule OptimalSystemAgent.Agent.CompactorTest do
       assert is_list(result)
       assert length(result) > 0
     after
-      Application.delete_env(:optimal_system_agent, :max_context_tokens)
-      Application.delete_env(:optimal_system_agent, :compaction_warn)
+      Application.delete_env(:daemon, :max_context_tokens)
+      Application.delete_env(:daemon, :compaction_warn)
     end
 
     test "strip_tool_args replaces argument content with placeholder" do
@@ -215,10 +215,10 @@ defmodule OptimalSystemAgent.Agent.CompactorTest do
       # Sizing: long_args ~260 tokens, 5 pairs * 20 words ~= 200 tokens, overhead ~55
       # → total ~515 tokens.  With max=800, target=0.6*800=480.  515>480 → step 1 fires.
       # After stripping args: ~255 tokens < 480 → pipeline stops at step 1.
-      Application.put_env(:optimal_system_agent, :max_context_tokens, 800)
-      Application.put_env(:optimal_system_agent, :compaction_warn, 0.0)
-      Application.put_env(:optimal_system_agent, :compaction_aggressive, 0.0)
-      Application.put_env(:optimal_system_agent, :compaction_emergency, 1.1)
+      Application.put_env(:daemon, :max_context_tokens, 800)
+      Application.put_env(:daemon, :compaction_warn, 0.0)
+      Application.put_env(:daemon, :compaction_aggressive, 0.0)
+      Application.put_env(:daemon, :compaction_emergency, 1.1)
 
       long_args = String.duplicate("argument data ", 200)
       tool_msg = %{
@@ -242,15 +242,15 @@ defmodule OptimalSystemAgent.Agent.CompactorTest do
       assert Map.get(call, :arguments) == "[args stripped]",
         "Expected tool call args to be replaced with '[args stripped]'"
     after
-      Application.delete_env(:optimal_system_agent, :max_context_tokens)
-      Application.delete_env(:optimal_system_agent, :compaction_warn)
-      Application.delete_env(:optimal_system_agent, :compaction_aggressive)
-      Application.delete_env(:optimal_system_agent, :compaction_emergency)
+      Application.delete_env(:daemon, :max_context_tokens)
+      Application.delete_env(:daemon, :compaction_warn)
+      Application.delete_env(:daemon, :compaction_aggressive)
+      Application.delete_env(:daemon, :compaction_emergency)
     end
 
     test "preserves hot zone messages (last 20) during pipeline" do
-      Application.put_env(:optimal_system_agent, :max_context_tokens, 500)
-      Application.put_env(:optimal_system_agent, :compaction_warn, 0.0)
+      Application.put_env(:daemon, :max_context_tokens, 500)
+      Application.put_env(:daemon, :compaction_warn, 0.0)
 
       # Build a conversation larger than the hot zone
       messages = build_conversation(15, 5)  # 30 messages
@@ -261,8 +261,8 @@ defmodule OptimalSystemAgent.Agent.CompactorTest do
       # The last message should be present in the result
       assert Enum.any?(result, fn msg -> Map.get(msg, :content) == last_content end)
     after
-      Application.delete_env(:optimal_system_agent, :max_context_tokens)
-      Application.delete_env(:optimal_system_agent, :compaction_warn)
+      Application.delete_env(:daemon, :max_context_tokens)
+      Application.delete_env(:daemon, :compaction_warn)
     end
   end
 
@@ -286,8 +286,8 @@ defmodule OptimalSystemAgent.Agent.CompactorTest do
     test "messages with tool_calls survive compression better than plain messages" do
       # Not directly testable without triggering compaction, but we verify
       # that the pipeline completes without error on mixed message types.
-      Application.put_env(:optimal_system_agent, :max_context_tokens, 300)
-      Application.put_env(:optimal_system_agent, :compaction_warn, 0.0)
+      Application.put_env(:daemon, :max_context_tokens, 300)
+      Application.put_env(:daemon, :compaction_warn, 0.0)
 
       tool_msg = %{
         role: "assistant",
@@ -303,8 +303,8 @@ defmodule OptimalSystemAgent.Agent.CompactorTest do
       assert is_list(result)
       assert length(result) > 0
     after
-      Application.delete_env(:optimal_system_agent, :max_context_tokens)
-      Application.delete_env(:optimal_system_agent, :compaction_warn)
+      Application.delete_env(:daemon, :max_context_tokens)
+      Application.delete_env(:daemon, :compaction_warn)
     end
   end
 
@@ -356,9 +356,9 @@ defmodule OptimalSystemAgent.Agent.CompactorTest do
 
   describe "system message isolation" do
     test "system messages are never discarded by compaction" do
-      Application.put_env(:optimal_system_agent, :max_context_tokens, 200)
-      Application.put_env(:optimal_system_agent, :compaction_warn, 0.0)
-      Application.put_env(:optimal_system_agent, :compaction_emergency, 0.0)
+      Application.put_env(:daemon, :max_context_tokens, 200)
+      Application.put_env(:daemon, :compaction_warn, 0.0)
+      Application.put_env(:daemon, :compaction_emergency, 0.0)
 
       system_msg = %{role: "system", content: "CRITICAL SYSTEM CONTEXT: never remove this"}
       messages = [system_msg] ++ build_conversation(15, 5)
@@ -377,9 +377,9 @@ defmodule OptimalSystemAgent.Agent.CompactorTest do
       assert has_system_content,
         "System messages should be preserved or replaced with a context notice"
     after
-      Application.delete_env(:optimal_system_agent, :max_context_tokens)
-      Application.delete_env(:optimal_system_agent, :compaction_warn)
-      Application.delete_env(:optimal_system_agent, :compaction_emergency)
+      Application.delete_env(:daemon, :max_context_tokens)
+      Application.delete_env(:daemon, :compaction_warn)
+      Application.delete_env(:daemon, :compaction_emergency)
     end
   end
 end

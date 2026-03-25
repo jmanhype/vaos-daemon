@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.System.UpdaterTest do
+defmodule Daemon.System.UpdaterTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.System.Updater
+  alias Daemon.System.Updater
 
   describe "module" do
     test "defines expected struct fields" do

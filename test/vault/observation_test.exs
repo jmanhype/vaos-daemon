@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Vault.ObservationTest do
+defmodule Daemon.Vault.ObservationTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Vault.Observation
+  alias Daemon.Vault.Observation
 
   describe "new/2" do
     test "creates observation with defaults" do

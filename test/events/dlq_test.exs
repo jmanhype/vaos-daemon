@@ -1,19 +1,19 @@
-defmodule OptimalSystemAgent.Events.DLQTest do
+defmodule Daemon.Events.DLQTest do
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Events.DLQ
+  alias Daemon.Events.DLQ
 
   # Helper to force an entry to be retry-eligible by setting next_retry_at to the past
   defp force_ready_for_retry do
     past = System.monotonic_time(:millisecond) - 10_000
-    [{id, entry}] = :ets.tab2list(:osa_dlq)
-    :ets.insert(:osa_dlq, {id, %{entry | next_retry_at: past}})
+    [{id, entry}] = :ets.tab2list(:daemon_dlq)
+    :ets.insert(:daemon_dlq, {id, %{entry | next_retry_at: past}})
   end
 
   defp force_ready_for_retry_with_retries(retries) do
     past = System.monotonic_time(:millisecond) - 10_000
-    [{id, entry}] = :ets.tab2list(:osa_dlq)
-    :ets.insert(:osa_dlq, {id, %{entry | next_retry_at: past, retries: retries}})
+    [{id, entry}] = :ets.tab2list(:daemon_dlq)
+    :ets.insert(:daemon_dlq, {id, %{entry | next_retry_at: past, retries: retries}})
   end
 
   setup do
@@ -26,7 +26,7 @@ defmodule OptimalSystemAgent.Events.DLQTest do
 
       _pid ->
         try do
-          :ets.delete_all_objects(:osa_dlq)
+          :ets.delete_all_objects(:daemon_dlq)
         rescue
           ArgumentError -> :ok
         end

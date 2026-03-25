@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Agent.Tasks.QueueTest do
+defmodule Daemon.Agent.Tasks.QueueTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Agent.Tasks
+  alias Daemon.Agent.Tasks
 
   # ---------------------------------------------------------------------------
   # Helpers

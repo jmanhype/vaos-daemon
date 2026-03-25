@@ -1,4 +1,4 @@
-defmodule OptimalSystemAgent.Agent.Orchestrator.SwarmModeTest do
+defmodule Daemon.Agent.Orchestrator.SwarmModeTest do
   use ExUnit.Case, async: false
 
   @moduledoc """
@@ -9,7 +9,7 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.SwarmModeTest do
   describe "AgentPool DynamicSupervisor" do
     @tag :swarm
     test "max_children is set to 10" do
-      pool = OptimalSystemAgent.Agent.Orchestrator.SwarmMode.AgentPool
+      pool = Daemon.Agent.Orchestrator.SwarmMode.AgentPool
 
       case Process.whereis(pool) do
         nil ->
@@ -58,7 +58,7 @@ defmodule OptimalSystemAgent.Agent.Orchestrator.SwarmModeTest do
 
     @tag :swarm
     test "AgentPool uses :one_for_one strategy" do
-      pool = OptimalSystemAgent.Agent.Orchestrator.SwarmMode.AgentPool
+      pool = Daemon.Agent.Orchestrator.SwarmMode.AgentPool
 
       case Process.whereis(pool) do
         nil ->

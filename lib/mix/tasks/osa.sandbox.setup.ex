@@ -8,7 +8,7 @@ defmodule Mix.Tasks.Osa.Sandbox.Setup do
 
   1. Checks that Docker is installed and the daemon is running
   2. Builds (or rebuilds) the `osa-sandbox:latest` image from `sandbox/Dockerfile`
-  3. Creates `~/.osa/workspace` on the host if it does not exist
+  3. Creates `~/.daemon/workspace` on the host if it does not exist
   4. Runs a smoke test to confirm the image works correctly
   5. Prints a summary with next steps
 
@@ -27,10 +27,10 @@ defmodule Mix.Tasks.Osa.Sandbox.Setup do
   After setup completes, enable the sandbox in one of two ways:
 
       # Environment variable (recommended for production)
-      export OSA_SANDBOX_ENABLED=true
+      export DAEMON_SANDBOX_ENABLED=true
 
       # Or in config/dev.exs
-      config :optimal_system_agent, sandbox_enabled: true
+      config :daemon, sandbox_enabled: true
 
   ## Security model
 
@@ -146,7 +146,7 @@ defmodule Mix.Tasks.Osa.Sandbox.Setup do
     Mix.shell().info("")
     Mix.shell().info("Step 3/4 — Creating workspace directory...")
 
-    workspace = Path.expand("~/.osa/workspace")
+    workspace = Path.expand("~/.daemon/workspace")
 
     case File.mkdir_p(workspace) do
       :ok ->
@@ -168,7 +168,7 @@ defmodule Mix.Tasks.Osa.Sandbox.Setup do
     Mix.shell().info("")
     Mix.shell().info("Step 4/4 — Running smoke test...")
 
-    workspace = Path.expand("~/.osa/workspace")
+    workspace = Path.expand("~/.daemon/workspace")
 
     smoke_args = [
       "run",
@@ -218,13 +218,13 @@ defmodule Mix.Tasks.Osa.Sandbox.Setup do
     Mix.shell().info("Setup complete!")
     Mix.shell().info("")
     Mix.shell().info("To enable the sandbox:")
-    Mix.shell().info("  export OSA_SANDBOX_ENABLED=true")
+    Mix.shell().info("  export DAEMON_SANDBOX_ENABLED=true")
     Mix.shell().info("")
     Mix.shell().info("Or in config/dev.exs:")
-    Mix.shell().info("  config :optimal_system_agent, sandbox_enabled: true")
+    Mix.shell().info("  config :daemon, sandbox_enabled: true")
     Mix.shell().info("")
     Mix.shell().info("Image:     #{image}")
-    Mix.shell().info("Workspace: #{Path.expand("~/.osa/workspace")}")
+    Mix.shell().info("Workspace: #{Path.expand("~/.daemon/workspace")}")
     Mix.shell().info("")
     Mix.shell().info("Run `mix osa.sandbox.setup --help` for more options.")
   end

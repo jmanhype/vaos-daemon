@@ -1,13 +1,13 @@
-defmodule OptimalSystemAgent.Vault.FactStoreTest do
+defmodule Daemon.Vault.FactStoreTest do
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Vault.FactStore
+  alias Daemon.Vault.FactStore
 
   setup do
     # Clear the ETS table between tests to get clean state.
     # The FactStore GenServer is already started by the application supervisor.
     try do
-      :ets.delete_all_objects(:osa_vault_facts)
+      :ets.delete_all_objects(:daemon_vault_facts)
     rescue
       ArgumentError -> :ok
     end

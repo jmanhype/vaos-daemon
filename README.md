@@ -124,7 +124,7 @@ Ollama tiers are detected dynamically at boot by scanning installed models, sort
 Top-level strategy is `:rest_for_one` -- a crash in Infrastructure tears down Sessions, AgentServices, and Extensions above it.
 
 ```
-OptimalSystemAgent.Supervisor (rest_for_one)
+Daemon.Supervisor (rest_for_one)
 |
 +-- Platform.Repo (PostgreSQL, conditional on platform_enabled config)
 |
@@ -359,7 +359,7 @@ Structured memory system in `vault/` (12 modules):
 
 - **CostTracker depends on SQLite3 migrations.** `agent/cost_tracker.ex` uses raw SQL (`INSERT ... ON CONFLICT DO UPDATE SET`) against `cost_events` and `agent_budgets` tables. These tables require Ecto migrations that may not have been run -- the `no such table: signals` error in tests suggests migration state issues.
 
-- **Homebrew tap may not exist.** The README previously referenced `brew tap miosa-osa/tap` and `brew install osagent`. This tap has not been verified to exist on the public Homebrew registry.
+- **Homebrew tap may not exist.** The README previously referenced `brew tap miosa-osa/tap` and `brew install daemon`. This tap has not been verified to exist on the public Homebrew registry.
 
 ## Setup
 
@@ -523,7 +523,7 @@ Individual test modules can be run in isolation where they do not depend on the 
 
 ```
 lib/
-  optimal_system_agent/          Main codebase (418 modules across 44 subdirectories)
+  daemon/          Main codebase (418 modules across 44 subdirectories)
     agent/                       Core agent: loop, context, memory, compactor, cost_tracker
     agents/                      32 named agent definitions (31 specialists + 1 orchestrator)
     channels/                    12 channel adapters + HTTP routes (37 route modules)

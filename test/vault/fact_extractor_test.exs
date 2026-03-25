@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Vault.FactExtractorTest do
+defmodule Daemon.Vault.FactExtractorTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Vault.FactExtractor
+  alias Daemon.Vault.FactExtractor
 
   describe "extract/1" do
     test "extracts decision facts" do

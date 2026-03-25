@@ -1,8 +1,8 @@
-defmodule OptimalSystemAgent.Agent.TreasuryAlertsTest do
+defmodule Daemon.Agent.TreasuryAlertsTest do
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Agent.Treasury
-  alias OptimalSystemAgent.Events.Bus
+  alias Daemon.Agent.Treasury
+  alias Daemon.Events.Bus
 
   setup do
     # Subscribe to system events so we can catch budget alerts

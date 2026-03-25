@@ -1,8 +1,8 @@
-defmodule OptimalSystemAgent.Agent.ProactiveModeTest do
+defmodule Daemon.Agent.ProactiveModeTest do
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Agent.ProactiveMode
-  alias OptimalSystemAgent.Events.Bus
+  alias Daemon.Agent.ProactiveMode
+  alias Daemon.Events.Bus
 
   setup do
     ProactiveMode.disable()

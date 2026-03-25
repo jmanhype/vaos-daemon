@@ -1,8 +1,8 @@
-defmodule OptimalSystemAgent.Tools.CacheTest do
+defmodule Daemon.Tools.CacheTest do
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Tools.Cache
-  alias OptimalSystemAgent.Tools.CachedExecutor
+  alias Daemon.Tools.Cache
+  alias Daemon.Tools.CachedExecutor
 
   setup do
     # Start cache if not running

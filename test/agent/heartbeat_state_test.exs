@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Agent.HeartbeatStateTest do
+defmodule Daemon.Agent.HeartbeatStateTest do
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Agent.HeartbeatState
+  alias Daemon.Agent.HeartbeatState
 
   # Each test gets its own named instance with a temp state file.
   # We do NOT stop the global (application-supervised) instance —

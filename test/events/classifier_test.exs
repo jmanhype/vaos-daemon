@@ -1,8 +1,8 @@
-defmodule OptimalSystemAgent.Events.ClassifierTest do
+defmodule Daemon.Events.ClassifierTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Events.Event
-  alias OptimalSystemAgent.Events.Classifier
+  alias Daemon.Events.Event
+  alias Daemon.Events.Classifier
 
   describe "classify/1" do
     test "returns all five dimensions" do

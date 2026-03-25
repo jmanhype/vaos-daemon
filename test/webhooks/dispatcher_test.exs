@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Webhooks.DispatcherTest do
+defmodule Daemon.Webhooks.DispatcherTest do
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Webhooks.Dispatcher
+  alias Daemon.Webhooks.Dispatcher
 
   # ── valid_url?/1 ──────────────────────────────────────────────────────
 

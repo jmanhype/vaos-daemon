@@ -1,26 +1,26 @@
-defmodule OptimalSystemAgent.Channels.HTTP.AuthRoutesTest do
+defmodule Daemon.Channels.HTTP.AuthRoutesTest do
   use ExUnit.Case, async: false
   use Plug.Test
 
-  alias OptimalSystemAgent.Channels.HTTP.API.AuthRoutes
-  alias OptimalSystemAgent.Channels.HTTP.Auth
+  alias Daemon.Channels.HTTP.API.AuthRoutes
+  alias Daemon.Channels.HTTP.Auth
 
   @opts AuthRoutes.init([])
 
   # ── Helpers ──────────────────────────────────────────────────────────
 
   setup do
-    original_auth = Application.get_env(:optimal_system_agent, :require_auth)
-    original_secret = Application.get_env(:optimal_system_agent, :shared_secret)
+    original_auth = Application.get_env(:daemon, :require_auth)
+    original_secret = Application.get_env(:daemon, :shared_secret)
 
     on_exit(fn ->
       if original_auth,
-        do: Application.put_env(:optimal_system_agent, :require_auth, original_auth),
-        else: Application.delete_env(:optimal_system_agent, :require_auth)
+        do: Application.put_env(:daemon, :require_auth, original_auth),
+        else: Application.delete_env(:daemon, :require_auth)
 
       if original_secret,
-        do: Application.put_env(:optimal_system_agent, :shared_secret, original_secret),
-        else: Application.delete_env(:optimal_system_agent, :shared_secret)
+        do: Application.put_env(:daemon, :shared_secret, original_secret),
+        else: Application.delete_env(:daemon, :shared_secret)
     end)
 
     :ok
@@ -57,8 +57,8 @@ defmodule OptimalSystemAgent.Channels.HTTP.AuthRoutesTest do
 
   describe "POST /login in dev mode (no shared secret)" do
     setup do
-      Application.delete_env(:optimal_system_agent, :require_auth)
-      Application.delete_env(:optimal_system_agent, :shared_secret)
+      Application.delete_env(:daemon, :require_auth)
+      Application.delete_env(:daemon, :shared_secret)
       :ok
     end
 
@@ -95,8 +95,8 @@ defmodule OptimalSystemAgent.Channels.HTTP.AuthRoutesTest do
 
   describe "POST /login with shared_secret configured" do
     setup do
-      Application.put_env(:optimal_system_agent, :shared_secret, "my-test-secret")
-      Application.put_env(:optimal_system_agent, :require_auth, true)
+      Application.put_env(:daemon, :shared_secret, "my-test-secret")
+      Application.put_env(:daemon, :require_auth, true)
       :ok
     end
 

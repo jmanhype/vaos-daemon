@@ -1,4 +1,4 @@
-defmodule OptimalSystemAgent.MixProject do
+defmodule Daemon.MixProject do
   use Mix.Project
 
   @version "VERSION" |> File.read!() |> String.trim()
@@ -6,7 +6,7 @@ defmodule OptimalSystemAgent.MixProject do
 
   def project do
     [
-      app: :optimal_system_agent,
+      app: :daemon,
       version: @version,
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
@@ -14,7 +14,7 @@ defmodule OptimalSystemAgent.MixProject do
       deps: deps(),
       aliases: aliases(),
       releases: releases(),
-      name: "OptimalSystemAgent",
+      name: "Daemon",
       description: "Signal Theory-optimized proactive AI agent. Run locally. Elixir/OTP.",
       source_url: @source_url,
       docs: docs(),
@@ -28,7 +28,7 @@ defmodule OptimalSystemAgent.MixProject do
   def application do
     [
       extra_applications: [:logger, :crypto, :inets, :ssl],
-      mod: {OptimalSystemAgent.Application, []}
+      mod: {Daemon.Application, []}
     ]
   end
 
@@ -98,7 +98,7 @@ defmodule OptimalSystemAgent.MixProject do
   defp aliases do
     [
       setup: ["deps.get", "ecto.setup", "compile"],
-      chat: ["run --no-halt -e 'OptimalSystemAgent.Channels.CLI.start()'"],
+      chat: ["run --no-halt -e 'Daemon.Channels.CLI.start()'"],
       "ecto.setup": ["ecto.create", "ecto.migrate"],
       "ecto.reset": ["ecto.drop", "ecto.setup"]
     ]
@@ -106,10 +106,10 @@ defmodule OptimalSystemAgent.MixProject do
 
   defp releases do
     [
-      osagent: [
+      daemon: [
         include_executables_for: [:unix],
         applications: [runtime_tools: :permanent],
-        steps: [:assemble, &copy_go_tokenizer/1, &copy_osagent_wrapper/1],
+        steps: [:assemble, &copy_go_tokenizer/1, &copy_daemon_wrapper/1],
         rel_templates_path: "rel"
       ]
     ]
@@ -118,13 +118,13 @@ defmodule OptimalSystemAgent.MixProject do
   # Copy the pre-built Go tokenizer binary into the release's priv directory.
   # The binary must be compiled before `mix release` (CI does this in a prior step).
   defp copy_go_tokenizer(release) do
-    src = Path.join(["priv", "go", "tokenizer", "osa-tokenizer"])
+    src = Path.join(["priv", "go", "tokenizer", "daemon-tokenizer"])
 
     dst_dir =
       Path.join([
         release.path,
         "lib",
-        "optimal_system_agent-#{@version}",
+        "daemon-#{@version}",
         "priv",
         "go",
         "tokenizer"
@@ -132,19 +132,19 @@ defmodule OptimalSystemAgent.MixProject do
 
     if File.exists?(src) do
       File.mkdir_p!(dst_dir)
-      File.cp!(src, Path.join(dst_dir, "osa-tokenizer"))
+      File.cp!(src, Path.join(dst_dir, "daemon-tokenizer"))
     end
 
     release
   end
 
-  # Install the `osagent` CLI wrapper alongside the release binary.
-  # Renames the generated release script (bin/osagent → bin/osagent_release)
+  # Install the `daemon` CLI wrapper alongside the release binary.
+  # Renames the generated release script (bin/daemon → bin/daemon_release)
   # and copies in our wrapper that dispatches subcommands via `eval`.
-  defp copy_osagent_wrapper(release) do
+  defp copy_daemon_wrapper(release) do
     bin_dir = Path.join(release.path, "bin")
-    release_bin = Path.join(bin_dir, "osagent")
-    renamed_bin = Path.join(bin_dir, "osagent_release")
+    release_bin = Path.join(bin_dir, "daemon")
+    renamed_bin = Path.join(bin_dir, "daemon_release")
 
     # Rename the release's own boot script
     if File.exists?(release_bin) do
@@ -152,27 +152,27 @@ defmodule OptimalSystemAgent.MixProject do
     end
 
     # Write our wrapper
-    wrapper = Path.join(bin_dir, "osagent")
-    File.write!(wrapper, osagent_wrapper_script())
+    wrapper = Path.join(bin_dir, "daemon")
+    File.write!(wrapper, daemon_wrapper_script())
     File.chmod!(wrapper, 0o755)
 
     release
   end
 
-  defp osagent_wrapper_script do
+  defp daemon_wrapper_script do
     ~S"""
     #!/bin/sh
-    # osagent — CLI wrapper for the OTP release.
+    # daemon — CLI wrapper for the OTP release.
     #
     # Usage:
-    #   osagent              interactive chat (default)
-    #   osagent setup        configure provider + API keys
-    #   osagent version      print version
-    #   osagent serve        headless HTTP API mode
+    #   daemon              interactive chat (default)
+    #   daemon setup        configure provider + API keys
+    #   daemon version      print version
+    #   daemon serve        headless HTTP API mode
 
     set -e
 
-    # Resolve symlinks (Homebrew symlinks bin/osagent → libexec/bin/osagent)
+    # Resolve symlinks (Homebrew symlinks bin/daemon → libexec/bin/daemon)
     SCRIPT="$0"
     while [ -L "$SCRIPT" ]; do
       DIR=$(cd "$(dirname "$SCRIPT")" && pwd)
@@ -180,23 +180,23 @@ defmodule OptimalSystemAgent.MixProject do
       case "$SCRIPT" in /*) ;; *) SCRIPT="$DIR/$SCRIPT" ;; esac
     done
     SELF=$(cd "$(dirname "$SCRIPT")" && pwd)
-    RELEASE_BIN="$SELF/osagent_release"
+    RELEASE_BIN="$SELF/daemon_release"
 
     case "${1:-chat}" in
       version)
-        exec "$RELEASE_BIN" eval "OptimalSystemAgent.CLI.version()"
+        exec "$RELEASE_BIN" eval "Daemon.CLI.version()"
         ;;
       setup)
-        exec "$RELEASE_BIN" eval "OptimalSystemAgent.CLI.setup()"
+        exec "$RELEASE_BIN" eval "Daemon.CLI.setup()"
         ;;
       serve)
-        exec "$RELEASE_BIN" eval "OptimalSystemAgent.CLI.serve()"
+        exec "$RELEASE_BIN" eval "Daemon.CLI.serve()"
         ;;
       doctor)
-        exec "$RELEASE_BIN" eval "OptimalSystemAgent.CLI.doctor()"
+        exec "$RELEASE_BIN" eval "Daemon.CLI.doctor()"
         ;;
       chat|*)
-        exec "$RELEASE_BIN" eval "OptimalSystemAgent.CLI.chat()"
+        exec "$RELEASE_BIN" eval "Daemon.CLI.chat()"
         ;;
     esac
     """

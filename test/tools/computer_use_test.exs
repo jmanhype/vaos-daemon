@@ -1,8 +1,8 @@
-defmodule OptimalSystemAgent.Tools.Builtins.ComputerUseTest do
+defmodule Daemon.Tools.Builtins.ComputerUseTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Tools.Builtins.ComputerUse
-  alias OptimalSystemAgent.Tools.Builtins.ComputerUse.Adapters.MacOS, as: MacOSAdapter
+  alias Daemon.Tools.Builtins.ComputerUse
+  alias Daemon.Tools.Builtins.ComputerUse.Adapters.MacOS, as: MacOSAdapter
 
   # ---------------------------------------------------------------------------
   # Tool metadata
@@ -52,41 +52,41 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputerUseTest do
   describe "available?/0" do
     test "returns false by default" do
       # Ensure the config is not set (default state)
-      original = Application.get_env(:optimal_system_agent, :computer_use_enabled)
-      Application.delete_env(:optimal_system_agent, :computer_use_enabled)
+      original = Application.get_env(:daemon, :computer_use_enabled)
+      Application.delete_env(:daemon, :computer_use_enabled)
 
       assert ComputerUse.available?() == false
 
       # Restore
       if original != nil do
-        Application.put_env(:optimal_system_agent, :computer_use_enabled, original)
+        Application.put_env(:daemon, :computer_use_enabled, original)
       end
     end
 
     test "returns true when config flag is true" do
-      original = Application.get_env(:optimal_system_agent, :computer_use_enabled)
-      Application.put_env(:optimal_system_agent, :computer_use_enabled, true)
+      original = Application.get_env(:daemon, :computer_use_enabled)
+      Application.put_env(:daemon, :computer_use_enabled, true)
 
       assert ComputerUse.available?() == true
 
       # Restore
-      Application.delete_env(:optimal_system_agent, :computer_use_enabled)
+      Application.delete_env(:daemon, :computer_use_enabled)
 
       if original != nil do
-        Application.put_env(:optimal_system_agent, :computer_use_enabled, original)
+        Application.put_env(:daemon, :computer_use_enabled, original)
       end
     end
 
     test "returns false when config flag is false" do
-      Application.put_env(:optimal_system_agent, :computer_use_enabled, false)
+      Application.put_env(:daemon, :computer_use_enabled, false)
       assert ComputerUse.available?() == false
-      Application.delete_env(:optimal_system_agent, :computer_use_enabled)
+      Application.delete_env(:daemon, :computer_use_enabled)
     end
 
     test "returns false when config flag is a truthy non-boolean" do
-      Application.put_env(:optimal_system_agent, :computer_use_enabled, "yes")
+      Application.put_env(:daemon, :computer_use_enabled, "yes")
       assert ComputerUse.available?() == false
-      Application.delete_env(:optimal_system_agent, :computer_use_enabled)
+      Application.delete_env(:daemon, :computer_use_enabled)
     end
   end
 

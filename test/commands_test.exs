@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.CommandsTest do
+defmodule Daemon.CommandsTest do
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Commands
+  alias Daemon.Commands
 
   # ---------------------------------------------------------------------------
   # Module smoke tests

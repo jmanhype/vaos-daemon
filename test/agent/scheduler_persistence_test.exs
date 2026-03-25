@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Agent.Scheduler.SQLiteStoreTest do
+defmodule Daemon.Agent.Scheduler.SQLiteStoreTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Agent.Scheduler.SQLiteStore
+  alias Daemon.Agent.Scheduler.SQLiteStore
 
   @sample_job %{
     "id" => "job-test-#{:rand.uniform(100_000)}",
@@ -13,7 +13,7 @@ defmodule OptimalSystemAgent.Agent.Scheduler.SQLiteStoreTest do
 
   describe "SQLiteStore module" do
     test "module is defined" do
-      assert Code.ensure_loaded?(OptimalSystemAgent.Agent.Scheduler.SQLiteStore)
+      assert Code.ensure_loaded?(Daemon.Agent.Scheduler.SQLiteStore)
     end
 
     test "init/0 is exported" do

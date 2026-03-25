@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.CommandsDuplicateKeyTest do
+defmodule Daemon.CommandsDuplicateKeyTest do
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Commands
+  alias Daemon.Commands
 
   describe "command key uniqueness" do
     test "no two commands share the same key" do

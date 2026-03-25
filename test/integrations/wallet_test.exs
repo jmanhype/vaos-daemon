@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Integrations.WalletTest do
+defmodule Daemon.Integrations.WalletTest do
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Integrations.Wallet.Mock
+  alias Daemon.Integrations.Wallet.Mock
 
   setup do
     # Start the mock agent for each test

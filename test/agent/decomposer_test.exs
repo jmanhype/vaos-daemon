@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Agent.Orchestrator.DecomposerTest do
+defmodule Daemon.Agent.Orchestrator.DecomposerTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Agent.Orchestrator.Decomposer
+  alias Daemon.Agent.Orchestrator.Decomposer
 
   # ── should_decompose?/1 ───────────────────────────────────────────
 

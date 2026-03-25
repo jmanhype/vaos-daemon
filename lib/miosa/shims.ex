@@ -1,7 +1,7 @@
 # Miosa* shim modules
 #
 # The extracted miosa_* packages do not exist as path deps in this repository.
-# Instead, the actual implementations live inside OptimalSystemAgent itself.
+# Instead, the actual implementations live inside Daemon itself.
 # These shim modules alias the real implementations so that:
 #   1. Code that calls MiosaXxx.Foo.bar() compiles and dispatches correctly.
 #   2. OSA modules that declare @behaviour MiosaXxx.Behaviour compile.
@@ -19,7 +19,7 @@ defmodule MiosaTools.Behaviour do
   Behaviour contract for OSA tools.
 
   Any module that implements this behaviour becomes a registered tool in
-  `OptimalSystemAgent.Tools.Registry`.
+  `Daemon.Tools.Registry`.
   """
 
   @callback name() :: String.t()
@@ -43,16 +43,16 @@ end
 # ---------------------------------------------------------------------------
 
 defmodule MiosaLLM.HealthChecker do
-  @moduledoc "Shim — delegates to OptimalSystemAgent.Providers.HealthChecker."
+  @moduledoc "Shim — delegates to Daemon.Providers.HealthChecker."
 
-  defdelegate start_link(opts \\ []), to: OptimalSystemAgent.Providers.HealthChecker
-  defdelegate child_spec(opts), to: OptimalSystemAgent.Providers.HealthChecker
-  defdelegate record_success(provider), to: OptimalSystemAgent.Providers.HealthChecker
-  defdelegate record_failure(provider, reason), to: OptimalSystemAgent.Providers.HealthChecker
+  defdelegate start_link(opts \\ []), to: Daemon.Providers.HealthChecker
+  defdelegate child_spec(opts), to: Daemon.Providers.HealthChecker
+  defdelegate record_success(provider), to: Daemon.Providers.HealthChecker
+  defdelegate record_failure(provider, reason), to: Daemon.Providers.HealthChecker
   defdelegate record_rate_limited(provider, retry_after_seconds \\ nil),
-    to: OptimalSystemAgent.Providers.HealthChecker
-  defdelegate is_available?(provider), to: OptimalSystemAgent.Providers.HealthChecker
-  defdelegate state(), to: OptimalSystemAgent.Providers.HealthChecker
+    to: Daemon.Providers.HealthChecker
+  defdelegate is_available?(provider), to: Daemon.Providers.HealthChecker
+  defdelegate state(), to: Daemon.Providers.HealthChecker
 end
 
 # ---------------------------------------------------------------------------
@@ -60,39 +60,39 @@ end
 # ---------------------------------------------------------------------------
 
 defmodule MiosaProviders.Registry do
-  @moduledoc "Shim — delegates to OptimalSystemAgent.Providers.Registry."
+  @moduledoc "Shim — delegates to Daemon.Providers.Registry."
 
-  defdelegate start_link(opts \\ []), to: OptimalSystemAgent.Providers.Registry
-  defdelegate child_spec(opts), to: OptimalSystemAgent.Providers.Registry
-  defdelegate chat(messages, opts \\ []), to: OptimalSystemAgent.Providers.Registry
+  defdelegate start_link(opts \\ []), to: Daemon.Providers.Registry
+  defdelegate child_spec(opts), to: Daemon.Providers.Registry
+  defdelegate chat(messages, opts \\ []), to: Daemon.Providers.Registry
   defdelegate chat_stream(messages, callback, opts \\ []),
-    to: OptimalSystemAgent.Providers.Registry
+    to: Daemon.Providers.Registry
   defdelegate chat_with_fallback(messages, chain, opts \\ []),
-    to: OptimalSystemAgent.Providers.Registry
-  defdelegate list_providers(), to: OptimalSystemAgent.Providers.Registry
-  defdelegate provider_info(provider), to: OptimalSystemAgent.Providers.Registry
-  defdelegate context_window(model), to: OptimalSystemAgent.Providers.Registry
-  defdelegate provider_configured?(provider), to: OptimalSystemAgent.Providers.Registry
-  defdelegate register_provider(name, module), to: OptimalSystemAgent.Providers.Registry
+    to: Daemon.Providers.Registry
+  defdelegate list_providers(), to: Daemon.Providers.Registry
+  defdelegate provider_info(provider), to: Daemon.Providers.Registry
+  defdelegate context_window(model), to: Daemon.Providers.Registry
+  defdelegate provider_configured?(provider), to: Daemon.Providers.Registry
+  defdelegate register_provider(name, module), to: Daemon.Providers.Registry
 end
 
 defmodule MiosaProviders.Ollama do
-  @moduledoc "Shim — delegates to OptimalSystemAgent.Providers.Ollama."
+  @moduledoc "Shim — delegates to Daemon.Providers.Ollama."
 
-  defdelegate auto_detect_model(), to: OptimalSystemAgent.Providers.Ollama
-  defdelegate reachable?(), to: OptimalSystemAgent.Providers.Ollama
-  defdelegate list_models(url \\ nil), to: OptimalSystemAgent.Providers.Ollama
-  defdelegate model_supports_tools?(model_name), to: OptimalSystemAgent.Providers.Ollama
-  defdelegate thinking_model?(model_name), to: OptimalSystemAgent.Providers.Ollama
-  defdelegate chat(messages, opts \\ []), to: OptimalSystemAgent.Providers.Ollama
+  defdelegate auto_detect_model(), to: Daemon.Providers.Ollama
+  defdelegate reachable?(), to: Daemon.Providers.Ollama
+  defdelegate list_models(url \\ nil), to: Daemon.Providers.Ollama
+  defdelegate model_supports_tools?(model_name), to: Daemon.Providers.Ollama
+  defdelegate thinking_model?(model_name), to: Daemon.Providers.Ollama
+  defdelegate chat(messages, opts \\ []), to: Daemon.Providers.Ollama
   defdelegate chat_stream(messages, callback, opts \\ []),
-    to: OptimalSystemAgent.Providers.Ollama
-  defdelegate pick_best_model(models), to: OptimalSystemAgent.Providers.Ollama
-  defdelegate name(), to: OptimalSystemAgent.Providers.Ollama
-  defdelegate default_model(), to: OptimalSystemAgent.Providers.Ollama
-  defdelegate available_models(), to: OptimalSystemAgent.Providers.Ollama
-  defdelegate split_ndjson(data), to: OptimalSystemAgent.Providers.Ollama
-  defdelegate process_ndjson_line(line, callback, acc), to: OptimalSystemAgent.Providers.Ollama
+    to: Daemon.Providers.Ollama
+  defdelegate pick_best_model(models), to: Daemon.Providers.Ollama
+  defdelegate name(), to: Daemon.Providers.Ollama
+  defdelegate default_model(), to: Daemon.Providers.Ollama
+  defdelegate available_models(), to: Daemon.Providers.Ollama
+  defdelegate split_ndjson(data), to: Daemon.Providers.Ollama
+  defdelegate process_ndjson_line(line, callback, acc), to: Daemon.Providers.Ollama
 end
 
 # ---------------------------------------------------------------------------
@@ -100,7 +100,7 @@ end
 # ---------------------------------------------------------------------------
 
 defmodule MiosaSignal.Event do
-  @moduledoc "Shim — re-exports OptimalSystemAgent.Events.Event struct and delegates."
+  @moduledoc "Shim — re-exports Daemon.Events.Event struct and delegates."
 
   # Re-export the struct so that %MiosaSignal.Event{} pattern matches compile.
   defstruct [
@@ -113,53 +113,53 @@ defmodule MiosaSignal.Event do
     extensions: %{}
   ]
 
-  @type t :: OptimalSystemAgent.Events.Event.t()
+  @type t :: Daemon.Events.Event.t()
 
-  defdelegate new(type, source), to: OptimalSystemAgent.Events.Event
-  defdelegate new(type, source, data), to: OptimalSystemAgent.Events.Event
-  defdelegate new(type, source, data, opts), to: OptimalSystemAgent.Events.Event
-  defdelegate child(parent, type, source), to: OptimalSystemAgent.Events.Event
-  defdelegate child(parent, type, source, data), to: OptimalSystemAgent.Events.Event
-  defdelegate child(parent, type, source, data, opts), to: OptimalSystemAgent.Events.Event
-  defdelegate to_map(event), to: OptimalSystemAgent.Events.Event
-  defdelegate to_cloud_event(event), to: OptimalSystemAgent.Events.Event
+  defdelegate new(type, source), to: Daemon.Events.Event
+  defdelegate new(type, source, data), to: Daemon.Events.Event
+  defdelegate new(type, source, data, opts), to: Daemon.Events.Event
+  defdelegate child(parent, type, source), to: Daemon.Events.Event
+  defdelegate child(parent, type, source, data), to: Daemon.Events.Event
+  defdelegate child(parent, type, source, data, opts), to: Daemon.Events.Event
+  defdelegate to_map(event), to: Daemon.Events.Event
+  defdelegate to_cloud_event(event), to: Daemon.Events.Event
 end
 
 defmodule MiosaSignal.CloudEvent do
-  @moduledoc "Shim — re-exports OptimalSystemAgent.Protocol.CloudEvent struct and delegates."
+  @moduledoc "Shim — re-exports Daemon.Protocol.CloudEvent struct and delegates."
 
   defstruct [
     :specversion, :type, :source, :subject, :id, :time,
     :datacontenttype, :data
   ]
 
-  @type t :: OptimalSystemAgent.Protocol.CloudEvent.t()
+  @type t :: Daemon.Protocol.CloudEvent.t()
 
-  defdelegate new(attrs), to: OptimalSystemAgent.Protocol.CloudEvent
-  defdelegate encode(event), to: OptimalSystemAgent.Protocol.CloudEvent
-  defdelegate decode(json), to: OptimalSystemAgent.Protocol.CloudEvent
-  defdelegate from_bus_event(event_map), to: OptimalSystemAgent.Protocol.CloudEvent
-  defdelegate to_bus_event(event), to: OptimalSystemAgent.Protocol.CloudEvent
+  defdelegate new(attrs), to: Daemon.Protocol.CloudEvent
+  defdelegate encode(event), to: Daemon.Protocol.CloudEvent
+  defdelegate decode(json), to: Daemon.Protocol.CloudEvent
+  defdelegate from_bus_event(event_map), to: Daemon.Protocol.CloudEvent
+  defdelegate to_bus_event(event), to: Daemon.Protocol.CloudEvent
 end
 
 defmodule MiosaSignal.Classifier do
-  @moduledoc "Shim — delegates to OptimalSystemAgent.Events.Classifier."
+  @moduledoc "Shim — delegates to Daemon.Events.Classifier."
 
-  @type classification :: OptimalSystemAgent.Events.Classifier.classification()
+  @type classification :: Daemon.Events.Classifier.classification()
 
-  defdelegate classify(event), to: OptimalSystemAgent.Events.Classifier
-  defdelegate auto_classify(event), to: OptimalSystemAgent.Events.Classifier
-  defdelegate sn_ratio(event), to: OptimalSystemAgent.Events.Classifier
-  defdelegate infer_mode(event), to: OptimalSystemAgent.Events.Classifier
-  defdelegate infer_genre(event), to: OptimalSystemAgent.Events.Classifier
-  defdelegate infer_type(event), to: OptimalSystemAgent.Events.Classifier
-  defdelegate infer_format(event), to: OptimalSystemAgent.Events.Classifier
-  defdelegate infer_structure(event), to: OptimalSystemAgent.Events.Classifier
-  defdelegate dimension_score(event), to: OptimalSystemAgent.Events.Classifier
-  defdelegate data_score(event), to: OptimalSystemAgent.Events.Classifier
-  defdelegate type_score(event), to: OptimalSystemAgent.Events.Classifier
-  defdelegate context_score(event), to: OptimalSystemAgent.Events.Classifier
-  defdelegate code_like?(str), to: OptimalSystemAgent.Events.Classifier
+  defdelegate classify(event), to: Daemon.Events.Classifier
+  defdelegate auto_classify(event), to: Daemon.Events.Classifier
+  defdelegate sn_ratio(event), to: Daemon.Events.Classifier
+  defdelegate infer_mode(event), to: Daemon.Events.Classifier
+  defdelegate infer_genre(event), to: Daemon.Events.Classifier
+  defdelegate infer_type(event), to: Daemon.Events.Classifier
+  defdelegate infer_format(event), to: Daemon.Events.Classifier
+  defdelegate infer_structure(event), to: Daemon.Events.Classifier
+  defdelegate dimension_score(event), to: Daemon.Events.Classifier
+  defdelegate data_score(event), to: Daemon.Events.Classifier
+  defdelegate type_score(event), to: Daemon.Events.Classifier
+  defdelegate context_score(event), to: Daemon.Events.Classifier
+  defdelegate code_like?(str), to: Daemon.Events.Classifier
 end
 
 defmodule MiosaSignal.MessageClassifier do
@@ -213,12 +213,12 @@ defmodule MiosaSignal.MessageClassifier do
 end
 
 defmodule MiosaSignal.FailureModes do
-  @moduledoc "Shim — delegates to OptimalSystemAgent.Events.FailureModes."
+  @moduledoc "Shim — delegates to Daemon.Events.FailureModes."
 
-  @type failure_mode :: OptimalSystemAgent.Events.FailureModes.failure_mode()
+  @type failure_mode :: Daemon.Events.FailureModes.failure_mode()
 
-  defdelegate detect(event), to: OptimalSystemAgent.Events.FailureModes
-  defdelegate check(event, mode), to: OptimalSystemAgent.Events.FailureModes
+  defdelegate detect(event), to: Daemon.Events.FailureModes
+  defdelegate check(event, mode), to: Daemon.Events.FailureModes
 end
 
 # ---------------------------------------------------------------------------
@@ -234,10 +234,10 @@ defmodule MiosaMemory.Emitter do
 end
 
 defmodule MiosaMemory.Cortex do
-  @moduledoc "Shim — delegates to OptimalSystemAgent.Agent.Cortex (the actual GenServer)."
-  # Note: OptimalSystemAgent.Agent.Cortex itself delegates here, creating a loop.
+  @moduledoc "Shim — delegates to Daemon.Agent.Cortex (the actual GenServer)."
+  # Note: Daemon.Agent.Cortex itself delegates here, creating a loop.
   # We break the loop by implementing a minimal stub that the supervisor can start.
-  # The real Cortex work is done in OptimalSystemAgent.Agent.Cortex.
+  # The real Cortex work is done in Daemon.Agent.Cortex.
 
   use GenServer
 
@@ -287,98 +287,98 @@ end
 
 defmodule MiosaMemory.Episodic do
   @moduledoc """
-  Shim — delegates to OptimalSystemAgent.Agent.Memory.Episodic (the real GenServer).
+  Shim — delegates to Daemon.Agent.Memory.Episodic (the real GenServer).
 
   This shim exists so callers using the MiosaMemory.Episodic namespace compile
   and route to the actual ETS-backed implementation.
   """
 
   def start_link(opts \\ []),
-    do: OptimalSystemAgent.Agent.Memory.Episodic.start_link(opts)
+    do: Daemon.Agent.Memory.Episodic.start_link(opts)
 
   def child_spec(opts),
-    do: OptimalSystemAgent.Agent.Memory.Episodic.child_spec(opts)
+    do: Daemon.Agent.Memory.Episodic.child_spec(opts)
 
   def record(event_type, data, session_id),
-    do: OptimalSystemAgent.Agent.Memory.Episodic.record(event_type, data, session_id)
+    do: Daemon.Agent.Memory.Episodic.record(event_type, data, session_id)
 
   def recall(query, opts \\ []),
-    do: OptimalSystemAgent.Agent.Memory.Episodic.recall(query, opts)
+    do: Daemon.Agent.Memory.Episodic.recall(query, opts)
 
   def recent(session_id, limit \\ 20),
-    do: OptimalSystemAgent.Agent.Memory.Episodic.recent(session_id, limit)
+    do: Daemon.Agent.Memory.Episodic.recent(session_id, limit)
 
   def stats,
-    do: OptimalSystemAgent.Agent.Memory.Episodic.stats()
+    do: Daemon.Agent.Memory.Episodic.stats()
 
   def clear_session(session_id),
-    do: OptimalSystemAgent.Agent.Memory.Episodic.clear_session(session_id)
+    do: Daemon.Agent.Memory.Episodic.clear_session(session_id)
 
   def temporal_decay(timestamp, half_life_hours),
-    do: OptimalSystemAgent.Agent.Memory.Episodic.temporal_decay(timestamp, half_life_hours)
+    do: Daemon.Agent.Memory.Episodic.temporal_decay(timestamp, half_life_hours)
 end
 
 defmodule MiosaMemory.Injector do
-  @moduledoc "Shim — delegates to OptimalSystemAgent.Agent.Memory.Injector."
+  @moduledoc "Shim — delegates to Daemon.Agent.Memory.Injector."
 
   @type injection_context :: map()
 
   defdelegate inject_relevant(entries, context),
-    to: OptimalSystemAgent.Agent.Memory.Injector
-  defdelegate format_for_prompt(entries), to: OptimalSystemAgent.Agent.Memory.Injector
+    to: Daemon.Agent.Memory.Injector
+  defdelegate format_for_prompt(entries), to: Daemon.Agent.Memory.Injector
 end
 
 defmodule MiosaMemory.Taxonomy do
-  @moduledoc "Shim — delegates to OptimalSystemAgent.Agent.Memory.Taxonomy."
+  @moduledoc "Shim — delegates to Daemon.Agent.Memory.Taxonomy."
 
   @type t :: map()
   @type category :: String.t()
   @type scope :: String.t()
 
-  defdelegate new(content, opts \\ []), to: OptimalSystemAgent.Agent.Memory.Taxonomy
-  defdelegate categorize(content), to: OptimalSystemAgent.Agent.Memory.Taxonomy
-  defdelegate filter_by(entries, filters), to: OptimalSystemAgent.Agent.Memory.Taxonomy
-  defdelegate categories(), to: OptimalSystemAgent.Agent.Memory.Taxonomy
-  defdelegate scopes(), to: OptimalSystemAgent.Agent.Memory.Taxonomy
-  defdelegate touch(entry), to: OptimalSystemAgent.Agent.Memory.Taxonomy
-  defdelegate valid_category?(cat), to: OptimalSystemAgent.Agent.Memory.Taxonomy
-  defdelegate valid_scope?(scope), to: OptimalSystemAgent.Agent.Memory.Taxonomy
+  defdelegate new(content, opts \\ []), to: Daemon.Agent.Memory.Taxonomy
+  defdelegate categorize(content), to: Daemon.Agent.Memory.Taxonomy
+  defdelegate filter_by(entries, filters), to: Daemon.Agent.Memory.Taxonomy
+  defdelegate categories(), to: Daemon.Agent.Memory.Taxonomy
+  defdelegate scopes(), to: Daemon.Agent.Memory.Taxonomy
+  defdelegate touch(entry), to: Daemon.Agent.Memory.Taxonomy
+  defdelegate valid_category?(cat), to: Daemon.Agent.Memory.Taxonomy
+  defdelegate valid_scope?(scope), to: Daemon.Agent.Memory.Taxonomy
 end
 
 defmodule MiosaMemory.Learning do
   @moduledoc """
-  Shim — delegates to OptimalSystemAgent.Agent.Learning (the real GenServer).
+  Shim — delegates to Daemon.Agent.Learning (the real GenServer).
 
   This shim exists so callers using the MiosaMemory.Learning namespace compile
   and route to the actual ETS-backed implementation.
   """
 
   def start_link(opts \\ []),
-    do: OptimalSystemAgent.Agent.Learning.start_link(opts)
+    do: Daemon.Agent.Learning.start_link(opts)
 
   def child_spec(opts),
-    do: OptimalSystemAgent.Agent.Learning.child_spec(opts)
+    do: Daemon.Agent.Learning.child_spec(opts)
 
   def observe(interaction),
-    do: OptimalSystemAgent.Agent.Learning.observe(interaction)
+    do: Daemon.Agent.Learning.observe(interaction)
 
   def correction(what_was_wrong, what_is_right),
-    do: OptimalSystemAgent.Agent.Learning.correction(what_was_wrong, what_is_right)
+    do: Daemon.Agent.Learning.correction(what_was_wrong, what_is_right)
 
   def error(tool_name, error_message, context),
-    do: OptimalSystemAgent.Agent.Learning.error(tool_name, error_message, context)
+    do: Daemon.Agent.Learning.error(tool_name, error_message, context)
 
   def metrics,
-    do: OptimalSystemAgent.Agent.Learning.metrics()
+    do: Daemon.Agent.Learning.metrics()
 
   def patterns,
-    do: OptimalSystemAgent.Agent.Learning.patterns()
+    do: Daemon.Agent.Learning.patterns()
 
   def solutions,
-    do: OptimalSystemAgent.Agent.Learning.solutions()
+    do: Daemon.Agent.Learning.solutions()
 
   def consolidate,
-    do: OptimalSystemAgent.Agent.Learning.consolidate()
+    do: Daemon.Agent.Learning.consolidate()
 end
 
 defmodule MiosaMemory.Parser do
@@ -502,8 +502,8 @@ defmodule MiosaBudget.Budget do
     state = %{
       daily_spent: 0.0,
       monthly_spent: 0.0,
-      daily_limit: Application.get_env(:optimal_system_agent, :daily_budget_usd, @daily_default_usd),
-      monthly_limit: Application.get_env(:optimal_system_agent, :monthly_budget_usd, @monthly_default_usd),
+      daily_limit: Application.get_env(:daemon, :daily_budget_usd, @daily_default_usd),
+      monthly_limit: Application.get_env(:daemon, :monthly_budget_usd, @monthly_default_usd),
       entries: [],
       daily_reset_at: tomorrow_midnight(),
       monthly_reset_at: next_month_midnight()
@@ -1009,35 +1009,35 @@ defmodule MiosaTools.Pipeline do
 end
 
 defmodule MiosaProviders.OpenAICompat do
-  @moduledoc "Shim — delegates to OptimalSystemAgent.Providers.OpenAICompat."
+  @moduledoc "Shim — delegates to Daemon.Providers.OpenAICompat."
 
-  defdelegate parse_tool_calls(msg), to: OptimalSystemAgent.Providers.OpenAICompat
-  defdelegate parse_tool_calls(msg, model), to: OptimalSystemAgent.Providers.OpenAICompat
-  defdelegate parse_tool_calls_from_content(content), to: OptimalSystemAgent.Providers.OpenAICompat
-  defdelegate format_messages(messages), to: OptimalSystemAgent.Providers.OpenAICompat
-  defdelegate normalize_tool_name(name), to: OptimalSystemAgent.Providers.OpenAICompat
-  defdelegate chat(messages, opts \\ []), to: OptimalSystemAgent.Providers.OpenAICompat
-  defdelegate chat_stream(messages, callback, opts \\ []), to: OptimalSystemAgent.Providers.OpenAICompat
-  defdelegate format_tools(tools), to: OptimalSystemAgent.Providers.OpenAICompat
+  defdelegate parse_tool_calls(msg), to: Daemon.Providers.OpenAICompat
+  defdelegate parse_tool_calls(msg, model), to: Daemon.Providers.OpenAICompat
+  defdelegate parse_tool_calls_from_content(content), to: Daemon.Providers.OpenAICompat
+  defdelegate format_messages(messages), to: Daemon.Providers.OpenAICompat
+  defdelegate normalize_tool_name(name), to: Daemon.Providers.OpenAICompat
+  defdelegate chat(messages, opts \\ []), to: Daemon.Providers.OpenAICompat
+  defdelegate chat_stream(messages, callback, opts \\ []), to: Daemon.Providers.OpenAICompat
+  defdelegate format_tools(tools), to: Daemon.Providers.OpenAICompat
 end
 
 defmodule MiosaProviders.Anthropic do
-  @moduledoc "Shim — delegates to OptimalSystemAgent.Providers.Anthropic."
+  @moduledoc "Shim — delegates to Daemon.Providers.Anthropic."
 
-  defdelegate chat(messages, opts \\ []), to: OptimalSystemAgent.Providers.Anthropic
-  defdelegate chat_stream(messages, callback, opts \\ []), to: OptimalSystemAgent.Providers.Anthropic
-  defdelegate format_messages(messages), to: OptimalSystemAgent.Providers.Anthropic
+  defdelegate chat(messages, opts \\ []), to: Daemon.Providers.Anthropic
+  defdelegate chat_stream(messages, callback, opts \\ []), to: Daemon.Providers.Anthropic
+  defdelegate format_messages(messages), to: Daemon.Providers.Anthropic
   def format_messages_with_thinking(messages),
-    do: OptimalSystemAgent.Providers.Anthropic.format_messages(messages)
-  defdelegate extract_thinking(response), to: OptimalSystemAgent.Providers.Anthropic
-  defdelegate extract_usage(response), to: OptimalSystemAgent.Providers.Anthropic
-  defdelegate maybe_add_thinking(body, thinking), to: OptimalSystemAgent.Providers.Anthropic
-  defdelegate build_headers(api_key, thinking), to: OptimalSystemAgent.Providers.Anthropic
-  defdelegate available_models(), to: OptimalSystemAgent.Providers.Anthropic
-  defdelegate default_model(), to: OptimalSystemAgent.Providers.Anthropic
+    do: Daemon.Providers.Anthropic.format_messages(messages)
+  defdelegate extract_thinking(response), to: Daemon.Providers.Anthropic
+  defdelegate extract_usage(response), to: Daemon.Providers.Anthropic
+  defdelegate maybe_add_thinking(body, thinking), to: Daemon.Providers.Anthropic
+  defdelegate build_headers(api_key, thinking), to: Daemon.Providers.Anthropic
+  defdelegate available_models(), to: Daemon.Providers.Anthropic
+  defdelegate default_model(), to: Daemon.Providers.Anthropic
 end
 
 defmodule MiosaProviders.Behaviour do
-  @moduledoc "Shim — re-exports OptimalSystemAgent.Providers.Behaviour."
-  defdelegate __using__(opts), to: OptimalSystemAgent.Providers.Behaviour
+  @moduledoc "Shim — re-exports Daemon.Providers.Behaviour."
+  defdelegate __using__(opts), to: Daemon.Providers.Behaviour
 end

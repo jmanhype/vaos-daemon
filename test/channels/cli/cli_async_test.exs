@@ -1,4 +1,4 @@
-defmodule OptimalSystemAgent.Channels.CLI.AsyncTest do
+defmodule Daemon.Channels.CLI.AsyncTest do
   use ExUnit.Case, async: true
 
   # ── ETS Active Request Lifecycle ─────────────────────────────────

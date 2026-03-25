@@ -1,11 +1,11 @@
-defmodule OptimalSystemAgent.Channels.HTTP.RateLimiterTest do
+defmodule Daemon.Channels.HTTP.RateLimiterTest do
   use ExUnit.Case, async: false
   use Plug.Test
 
-  alias OptimalSystemAgent.Channels.HTTP.RateLimiter
+  alias Daemon.Channels.HTTP.RateLimiter
 
   @opts RateLimiter.init([])
-  @table :osa_rate_limits
+  @table :daemon_rate_limits
 
   # ── Helpers ──────────────────────────────────────────────────────────
 

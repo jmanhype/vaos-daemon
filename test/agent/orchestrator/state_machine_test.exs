@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Agent.Orchestrator.StateMachineTest do
+defmodule Daemon.Agent.Orchestrator.StateMachineTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Agent.Orchestrator.StateMachine
+  alias Daemon.Agent.Orchestrator.StateMachine
 
   # ── Construction ───────────────────────────────────────────────────
 

@@ -1,8 +1,8 @@
-defmodule OptimalSystemAgent.Agents.HierarchyTest do
+defmodule Daemon.Agents.HierarchyTest do
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Agents.Hierarchy
-  alias OptimalSystemAgent.Store.Repo
+  alias Daemon.Agents.Hierarchy
+  alias Daemon.Store.Repo
 
   setup do
     Repo.delete_all(Hierarchy)

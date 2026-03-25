@@ -1,8 +1,8 @@
-defmodule OptimalSystemAgent.Channels.HTTP.API.ProviderSwapTest do
+defmodule Daemon.Channels.HTTP.API.ProviderSwapTest do
   use ExUnit.Case, async: false
   use Plug.Test
 
-  alias OptimalSystemAgent.Channels.HTTP.API.SessionRoutes
+  alias Daemon.Channels.HTTP.API.SessionRoutes
 
   @opts SessionRoutes.init([])
 

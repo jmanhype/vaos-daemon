@@ -1,8 +1,8 @@
-defmodule OptimalSystemAgent.Channels.HTTP.API.SchedulerRoutesTest do
+defmodule Daemon.Channels.HTTP.API.SchedulerRoutesTest do
   use ExUnit.Case, async: false
   use Plug.Test
 
-  alias OptimalSystemAgent.Channels.HTTP.API.SchedulerRoutes
+  alias Daemon.Channels.HTTP.API.SchedulerRoutes
 
   @opts SchedulerRoutes.init([])
 

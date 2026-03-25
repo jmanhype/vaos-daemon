@@ -1,22 +1,22 @@
-defmodule OptimalSystemAgent.Platform.AuthTest do
+defmodule Daemon.Platform.AuthTest do
   # async: false because tests mutate application env (jwt_secret) and the HTTP
   # Auth module reads it at call time. Running async risks cross-test secret
   # mismatch when other test files also mutate :shared_secret.
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Channels.HTTP.Auth
+  alias Daemon.Channels.HTTP.Auth
 
   # Pin a deterministic secret for the entire module so generate/verify use the
   # same key regardless of what other test files set in application env.
   setup do
-    original = Application.get_env(:optimal_system_agent, :jwt_secret)
-    Application.put_env(:optimal_system_agent, :jwt_secret, "test-secret-for-platform-auth-tests")
+    original = Application.get_env(:daemon, :jwt_secret)
+    Application.put_env(:daemon, :jwt_secret, "test-secret-for-platform-auth-tests")
 
     on_exit(fn ->
       if original do
-        Application.put_env(:optimal_system_agent, :jwt_secret, original)
+        Application.put_env(:daemon, :jwt_secret, original)
       else
-        Application.delete_env(:optimal_system_agent, :jwt_secret)
+        Application.delete_env(:daemon, :jwt_secret)
       end
     end)
 
@@ -154,7 +154,7 @@ defmodule OptimalSystemAgent.Platform.AuthTest do
     test "returns error for expired token" do
       # The setup callback pins jwt_secret, so we can build a validly-signed but
       # expired token using the same secret the module will read during verify.
-      secret = Application.fetch_env!(:optimal_system_agent, :jwt_secret)
+      secret = Application.fetch_env!(:daemon, :jwt_secret)
       past_exp = System.system_time(:second) - 1
       claims = build_claims(%{"exp" => past_exp})
 

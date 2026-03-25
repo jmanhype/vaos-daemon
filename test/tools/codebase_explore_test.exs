@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Tools.Builtins.CodebaseExploreTest do
+defmodule Daemon.Tools.Builtins.CodebaseExploreTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Tools.Builtins.CodebaseExplore
+  alias Daemon.Tools.Builtins.CodebaseExplore
 
   describe "name/0" do
     test "returns codebase_explore" do

@@ -1,4 +1,4 @@
-defmodule OptimalSystemAgent.Agent.OrchestratorSkillInheritanceTest do
+defmodule Daemon.Agent.OrchestratorSkillInheritanceTest do
   @moduledoc """
   Tests for inherited_skills propagation through the Orchestrator SubTask struct
   and the skill-injection logic in AgentRunner.
@@ -8,8 +8,8 @@ defmodule OptimalSystemAgent.Agent.OrchestratorSkillInheritanceTest do
   """
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Agent.Orchestrator.SubTask
-  alias OptimalSystemAgent.Tools.Registry
+  alias Daemon.Agent.Orchestrator.SubTask
+  alias Daemon.Tools.Registry
 
   @suffix System.unique_integer([:positive]) |> Integer.to_string()
 

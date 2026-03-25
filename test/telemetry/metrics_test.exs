@@ -1,8 +1,8 @@
-defmodule OptimalSystemAgent.Telemetry.MetricsTest do
+defmodule Daemon.Telemetry.MetricsTest do
   # Metrics shares a named GenServer and ETS table — no async
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Telemetry.Metrics
+  alias Daemon.Telemetry.Metrics
 
   setup_all do
     # Start Metrics if it isn't already running (e.g. when using mix test --no-start)

@@ -1,28 +1,28 @@
-defmodule OptimalSystemAgent.Channels.HTTP.ModelsAuthTest do
+defmodule Daemon.Channels.HTTP.ModelsAuthTest do
   @moduledoc "Tests that /models works with stale/expired tokens when require_auth=false."
   use ExUnit.Case, async: false
   import Plug.Test
   import Plug.Conn
 
-  alias OptimalSystemAgent.Channels.HTTP.API
-  alias OptimalSystemAgent.Channels.HTTP.Auth
+  alias Daemon.Channels.HTTP.API
+  alias Daemon.Channels.HTTP.Auth
 
   @test_secret "test-secret-models-auth"
 
   setup do
-    original_auth = Application.get_env(:optimal_system_agent, :require_auth)
-    original_secret = Application.get_env(:optimal_system_agent, :shared_secret)
+    original_auth = Application.get_env(:daemon, :require_auth)
+    original_secret = Application.get_env(:daemon, :shared_secret)
 
-    Application.put_env(:optimal_system_agent, :shared_secret, @test_secret)
+    Application.put_env(:daemon, :shared_secret, @test_secret)
 
     on_exit(fn ->
       if original_auth,
-        do: Application.put_env(:optimal_system_agent, :require_auth, original_auth),
-        else: Application.delete_env(:optimal_system_agent, :require_auth)
+        do: Application.put_env(:daemon, :require_auth, original_auth),
+        else: Application.delete_env(:daemon, :require_auth)
 
       if original_secret,
-        do: Application.put_env(:optimal_system_agent, :shared_secret, original_secret),
-        else: Application.delete_env(:optimal_system_agent, :shared_secret)
+        do: Application.put_env(:daemon, :shared_secret, original_secret),
+        else: Application.delete_env(:daemon, :shared_secret)
     end)
 
     :ok
@@ -64,7 +64,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.ModelsAuthTest do
 
   describe "GET /models with require_auth=false" do
     setup do
-      Application.put_env(:optimal_system_agent, :require_auth, false)
+      Application.put_env(:daemon, :require_auth, false)
       :ok
     end
 
@@ -109,7 +109,7 @@ defmodule OptimalSystemAgent.Channels.HTTP.ModelsAuthTest do
 
   describe "GET /models with require_auth=true" do
     setup do
-      Application.put_env(:optimal_system_agent, :require_auth, true)
+      Application.put_env(:daemon, :require_auth, true)
       :ok
     end
 

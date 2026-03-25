@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Sandbox.RegistryTest do
+defmodule Daemon.Sandbox.RegistryTest do
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Sandbox.Registry
+  alias Daemon.Sandbox.Registry
 
   setup do
     # Start the Registry for each test

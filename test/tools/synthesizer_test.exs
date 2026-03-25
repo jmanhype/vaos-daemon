@@ -1,17 +1,17 @@
-defmodule OptimalSystemAgent.Tools.SynthesizerTest do
+defmodule Daemon.Tools.SynthesizerTest do
   @moduledoc """
   Tests for the Zero-Shot Tool Synthesizer (GenServer + HTTP routes).
 
   Uses async: false because:
-  - Tests write to the filesystem (~/.osa/tools/)
+  - Tests write to the filesystem (~/.daemon/tools/)
   - Tests call Code.eval_string which modifies the BEAM module table
   - HTTP route tests use Plug.Test which is stateless but synthesis state is shared
   """
   use ExUnit.Case, async: false
   use Plug.Test
 
-  alias OptimalSystemAgent.Tools.Synthesizer
-  alias OptimalSystemAgent.Channels.HTTP.API.ToolSynthesisRoutes
+  alias Daemon.Tools.Synthesizer
+  alias Daemon.Channels.HTTP.API.ToolSynthesisRoutes
 
   @opts ToolSynthesisRoutes.init([])
 
@@ -40,7 +40,7 @@ defmodule OptimalSystemAgent.Tools.SynthesizerTest do
   end
 
   defp tools_dir do
-    base = Application.get_env(:optimal_system_agent, :osa_home, "~/.osa")
+    base = Application.get_env(:daemon, :daemon_home, "~/.daemon")
     Path.join(Path.expand(base), "tools")
   end
 
@@ -95,7 +95,7 @@ defmodule OptimalSystemAgent.Tools.SynthesizerTest do
       case Synthesizer.synthesize(name, spec) do
         {:ok, module_name} ->
           assert is_binary(module_name)
-          assert String.contains?(module_name, "OptimalSystemAgent.Tools.Generated.")
+          assert String.contains?(module_name, "Daemon.Tools.Generated.")
           File.rm(Path.join(tools_dir(), "#{name}.ex"))
 
         {:error, _} ->
@@ -113,8 +113,8 @@ defmodule OptimalSystemAgent.Tools.SynthesizerTest do
           path = Path.join(tools_dir(), "#{name}.ex")
           content = File.read!(path)
           camel = Macro.camelize(name)
-          assert String.contains?(content, "defmodule OptimalSystemAgent.Tools.Generated.#{camel}")
-          assert module_name == "OptimalSystemAgent.Tools.Generated.#{camel}"
+          assert String.contains?(content, "defmodule Daemon.Tools.Generated.#{camel}")
+          assert module_name == "Daemon.Tools.Generated.#{camel}"
           File.rm(path)
 
         {:error, _} ->

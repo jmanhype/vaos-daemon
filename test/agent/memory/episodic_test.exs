@@ -1,9 +1,9 @@
-defmodule OptimalSystemAgent.Agent.Memory.EpisodicTest do
+defmodule Daemon.Agent.Memory.EpisodicTest do
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Agent.Memory.Episodic
+  alias Daemon.Agent.Memory.Episodic
 
-  @table :osa_episodic_memory
+  @table :daemon_episodic_memory
 
   setup do
     # Start the Episodic GenServer if not running

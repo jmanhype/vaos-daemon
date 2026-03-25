@@ -1,4 +1,4 @@
-defmodule OptimalSystemAgent.Agent.ScratchpadTest do
+defmodule Daemon.Agent.ScratchpadTest do
   @moduledoc """
   Tests for provider-agnostic scratchpad/thinking support.
 
@@ -11,7 +11,7 @@ defmodule OptimalSystemAgent.Agent.ScratchpadTest do
   """
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Agent.Scratchpad
+  alias Daemon.Agent.Scratchpad
 
   # ---------------------------------------------------------------------------
   # inject?/1 — provider-based injection decision
@@ -19,45 +19,45 @@ defmodule OptimalSystemAgent.Agent.ScratchpadTest do
 
   describe "inject?/1" do
     test "returns true for :ollama" do
-      Application.put_env(:optimal_system_agent, :scratchpad_enabled, true)
+      Application.put_env(:daemon, :scratchpad_enabled, true)
       assert Scratchpad.inject?(:ollama)
     end
 
     test "returns true for :openai" do
-      Application.put_env(:optimal_system_agent, :scratchpad_enabled, true)
+      Application.put_env(:daemon, :scratchpad_enabled, true)
       assert Scratchpad.inject?(:openai)
     end
 
     test "returns true for :groq" do
-      Application.put_env(:optimal_system_agent, :scratchpad_enabled, true)
+      Application.put_env(:daemon, :scratchpad_enabled, true)
       assert Scratchpad.inject?(:groq)
     end
 
     test "returns true for :openrouter" do
-      Application.put_env(:optimal_system_agent, :scratchpad_enabled, true)
+      Application.put_env(:daemon, :scratchpad_enabled, true)
       assert Scratchpad.inject?(:openrouter)
     end
 
     test "returns false for :anthropic (uses native extended thinking)" do
-      Application.put_env(:optimal_system_agent, :scratchpad_enabled, true)
+      Application.put_env(:daemon, :scratchpad_enabled, true)
       refute Scratchpad.inject?(:anthropic)
     end
 
     test "returns false when scratchpad_enabled is false" do
-      Application.put_env(:optimal_system_agent, :scratchpad_enabled, false)
+      Application.put_env(:daemon, :scratchpad_enabled, false)
       refute Scratchpad.inject?(:ollama)
       refute Scratchpad.inject?(:openai)
       # Restore default
-      Application.put_env(:optimal_system_agent, :scratchpad_enabled, true)
+      Application.put_env(:daemon, :scratchpad_enabled, true)
     end
 
     test "returns true for nil provider (non-Anthropic fallback)" do
-      Application.put_env(:optimal_system_agent, :scratchpad_enabled, true)
+      Application.put_env(:daemon, :scratchpad_enabled, true)
       assert Scratchpad.inject?(nil)
     end
 
     test "defaults to enabled when config is not set" do
-      Application.delete_env(:optimal_system_agent, :scratchpad_enabled)
+      Application.delete_env(:daemon, :scratchpad_enabled)
       assert Scratchpad.inject?(:ollama)
     end
   end
@@ -255,14 +255,14 @@ defmodule OptimalSystemAgent.Agent.ScratchpadTest do
 
   describe "provider-based context injection" do
     test "Anthropic provider should NOT get scratchpad instruction injected" do
-      Application.put_env(:optimal_system_agent, :scratchpad_enabled, true)
+      Application.put_env(:daemon, :scratchpad_enabled, true)
 
       # Anthropic uses native extended thinking
       refute Scratchpad.inject?(:anthropic)
     end
 
     test "Ollama provider SHOULD get scratchpad instruction injected" do
-      Application.put_env(:optimal_system_agent, :scratchpad_enabled, true)
+      Application.put_env(:daemon, :scratchpad_enabled, true)
 
       assert Scratchpad.inject?(:ollama)
       instruction = Scratchpad.instruction()
@@ -270,13 +270,13 @@ defmodule OptimalSystemAgent.Agent.ScratchpadTest do
     end
 
     test "OpenAI provider SHOULD get scratchpad instruction injected" do
-      Application.put_env(:optimal_system_agent, :scratchpad_enabled, true)
+      Application.put_env(:daemon, :scratchpad_enabled, true)
 
       assert Scratchpad.inject?(:openai)
     end
 
     test "Google provider SHOULD get scratchpad instruction injected" do
-      Application.put_env(:optimal_system_agent, :scratchpad_enabled, true)
+      Application.put_env(:daemon, :scratchpad_enabled, true)
 
       assert Scratchpad.inject?(:google)
     end

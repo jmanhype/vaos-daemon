@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Events.EventTest do
+defmodule Daemon.Events.EventTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Events.Event
+  alias Daemon.Events.Event
 
   describe "new/4" do
     test "creates event with all required fields" do

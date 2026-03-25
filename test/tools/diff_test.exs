@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Tools.Builtins.DiffTest do
+defmodule Daemon.Tools.Builtins.DiffTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Tools.Builtins.Diff
+  alias Daemon.Tools.Builtins.Diff
 
   # ---------------------------------------------------------------------------
   # Tool metadata

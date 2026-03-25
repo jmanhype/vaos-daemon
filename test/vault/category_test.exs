@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Vault.CategoryTest do
+defmodule Daemon.Vault.CategoryTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Vault.Category
+  alias Daemon.Vault.Category
 
   @all_categories [:fact, :decision, :lesson, :preference, :commitment, :relationship, :project, :observation]
 

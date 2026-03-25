@@ -1,9 +1,9 @@
-defmodule OptimalSystemAgent.Agent.HealthTrackerTest do
+defmodule Daemon.Agent.HealthTrackerTest do
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Agent.HealthTracker
+  alias Daemon.Agent.HealthTracker
 
-  @table :osa_agent_health
+  @table :daemon_agent_health
 
   setup do
     # Ensure a clean ETS table for each test.

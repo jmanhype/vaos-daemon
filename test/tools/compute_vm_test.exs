@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Tools.Builtins.ComputeVmTest do
+defmodule Daemon.Tools.Builtins.ComputeVmTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Tools.Builtins.ComputeVm
+  alias Daemon.Tools.Builtins.ComputeVm
 
   # ── Behaviour callbacks ─────────────────────────────────────────────
 
@@ -166,12 +166,12 @@ defmodule OptimalSystemAgent.Tools.Builtins.ComputeVmTest do
     end
   end
 
-  # ── Integration tests (require MIOSA_COMPUTE_URL to be set) ─────────
+  # ── Integration tests (require MIDAEMON_COMPUTE_URL to be set) ─────────
 
   @tag :integration
   describe "integration — full lifecycle" do
     setup do
-      if is_nil(System.get_env("MIOSA_COMPUTE_URL")) do
+      if is_nil(System.get_env("MIDAEMON_COMPUTE_URL")) do
         {:ok, skip: true}
       else
         :ok

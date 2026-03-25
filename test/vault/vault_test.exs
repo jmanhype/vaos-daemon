@@ -1,20 +1,20 @@
-defmodule OptimalSystemAgent.VaultTest do
+defmodule Daemon.VaultTest do
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Vault
-  alias OptimalSystemAgent.Vault.{Store, FactStore}
+  alias Daemon.Vault
+  alias Daemon.Vault.{Store, FactStore}
 
   setup do
     tmp = System.tmp_dir!() |> Path.join("vault_int_test_#{System.unique_integer([:positive])}")
     File.mkdir_p!(tmp)
-    Application.put_env(:optimal_system_agent, :config_dir, tmp)
+    Application.put_env(:daemon, :config_dir, tmp)
 
     # Initialize vault directories
     Store.init()
 
     # Clear ETS facts from any prior test
     try do
-      :ets.delete_all_objects(:osa_vault_facts)
+      :ets.delete_all_objects(:daemon_vault_facts)
     rescue
       ArgumentError -> :ok
     end

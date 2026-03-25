@@ -1,4 +1,4 @@
-defmodule OptimalSystemAgent.E2E.SmokeTest do
+defmodule Daemon.E2E.SmokeTest do
   @moduledoc """
   E2E smoke test: session lifecycle + agent loop round-trip + persistence.
 
@@ -11,11 +11,11 @@ defmodule OptimalSystemAgent.E2E.SmokeTest do
   import Plug.Test
   import Plug.Conn
 
-  alias OptimalSystemAgent.Agent.Loop
-  alias OptimalSystemAgent.Agent.Memory
-  alias OptimalSystemAgent.SDK.Session
-  alias OptimalSystemAgent.Channels.HTTP.API.SessionRoutes
-  alias OptimalSystemAgent.Test.MockProvider
+  alias Daemon.Agent.Loop
+  alias Daemon.Agent.Memory
+  alias Daemon.SDK.Session
+  alias Daemon.Channels.HTTP.API.SessionRoutes
+  alias Daemon.Test.MockProvider
 
   @router_opts SessionRoutes.init([])
 
@@ -23,24 +23,24 @@ defmodule OptimalSystemAgent.E2E.SmokeTest do
 
   setup do
     # Swap in the mock provider so no network calls are made.
-    original_provider = Application.get_env(:optimal_system_agent, :default_provider)
-    Application.put_env(:optimal_system_agent, :default_provider, :mock)
+    original_provider = Application.get_env(:daemon, :default_provider)
+    Application.put_env(:daemon, :default_provider, :mock)
 
     # Disable auth so the session routes work without a JWT.
-    original_auth = Application.get_env(:optimal_system_agent, :require_auth)
-    Application.put_env(:optimal_system_agent, :require_auth, false)
+    original_auth = Application.get_env(:daemon, :require_auth)
+    Application.put_env(:daemon, :require_auth, false)
 
     # Ensure the SessionRegistry is running (it starts with the application
     # supervisor but may be absent if the test process started standalone).
-    if Process.whereis(OptimalSystemAgent.SessionRegistry) == nil do
-      start_supervised!({Registry, keys: :unique, name: OptimalSystemAgent.SessionRegistry})
+    if Process.whereis(Daemon.SessionRegistry) == nil do
+      start_supervised!({Registry, keys: :unique, name: Daemon.SessionRegistry})
     end
 
     # Ensure the Channels.Supervisor (DynamicSupervisor) that backs Session.create/1
     # is running.
-    if Process.whereis(OptimalSystemAgent.Channels.Supervisor) == nil do
+    if Process.whereis(Daemon.Channels.Supervisor) == nil do
       start_supervised!(
-        {DynamicSupervisor, name: OptimalSystemAgent.Channels.Supervisor, strategy: :one_for_one}
+        {DynamicSupervisor, name: Daemon.Channels.Supervisor, strategy: :one_for_one}
       )
     end
 
@@ -50,16 +50,16 @@ defmodule OptimalSystemAgent.E2E.SmokeTest do
     on_exit(fn ->
       # Restore original provider setting.
       if original_provider do
-        Application.put_env(:optimal_system_agent, :default_provider, original_provider)
+        Application.put_env(:daemon, :default_provider, original_provider)
       else
-        Application.delete_env(:optimal_system_agent, :default_provider)
+        Application.delete_env(:daemon, :default_provider)
       end
 
       # Restore auth setting.
       if original_auth do
-        Application.put_env(:optimal_system_agent, :require_auth, original_auth)
+        Application.put_env(:daemon, :require_auth, original_auth)
       else
-        Application.delete_env(:optimal_system_agent, :require_auth)
+        Application.delete_env(:daemon, :require_auth)
       end
     end)
 

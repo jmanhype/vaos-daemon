@@ -1,8 +1,8 @@
-defmodule OptimalSystemAgent.Agent.Orchestrator.AgentRunnerTest do
+defmodule Daemon.Agent.Orchestrator.AgentRunnerTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Agent.Orchestrator.AgentRunner
-  alias OptimalSystemAgent.Agent.Orchestrator.SubTask
+  alias Daemon.Agent.Orchestrator.AgentRunner
+  alias Daemon.Agent.Orchestrator.SubTask
 
   # ── resolve_agent_tier/1 ─────────────────────────────────────────────
 

@@ -1,13 +1,13 @@
-defmodule OptimalSystemAgent.Agent.SessionRecoveryTest do
+defmodule Daemon.Agent.SessionRecoveryTest do
   @moduledoc """
   Tests for DynamicSupervisor-based session management and
   checkpoint/restore crash recovery in Agent.Loop.
   """
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Agent.Loop
+  alias Daemon.Agent.Loop
 
-  @checkpoint_dir Path.expand("~/.osa/checkpoints")
+  @checkpoint_dir Path.expand("~/.daemon/checkpoints")
 
   # ---------------------------------------------------------------------------
   # Setup — ensure SessionRegistry and SessionSupervisor are running
@@ -15,10 +15,10 @@ defmodule OptimalSystemAgent.Agent.SessionRecoveryTest do
 
   setup do
     # SessionRegistry
-    case Process.whereis(OptimalSystemAgent.SessionRegistry) do
+    case Process.whereis(Daemon.SessionRegistry) do
       nil ->
         start_supervised!(
-          {Registry, keys: :unique, name: OptimalSystemAgent.SessionRegistry}
+          {Registry, keys: :unique, name: Daemon.SessionRegistry}
         )
 
       _pid ->
@@ -26,10 +26,10 @@ defmodule OptimalSystemAgent.Agent.SessionRecoveryTest do
     end
 
     # SessionSupervisor (DynamicSupervisor)
-    case Process.whereis(OptimalSystemAgent.SessionSupervisor) do
+    case Process.whereis(Daemon.SessionSupervisor) do
       nil ->
         start_supervised!(
-          {DynamicSupervisor, name: OptimalSystemAgent.SessionSupervisor, strategy: :one_for_one}
+          {DynamicSupervisor, name: Daemon.SessionSupervisor, strategy: :one_for_one}
         )
 
       _pid ->
@@ -38,7 +38,7 @@ defmodule OptimalSystemAgent.Agent.SessionRecoveryTest do
 
     # Ensure cancel flags ETS table exists
     try do
-      :ets.new(:osa_cancel_flags, [:named_table, :public, :set])
+      :ets.new(:daemon_cancel_flags, [:named_table, :public, :set])
     rescue
       ArgumentError -> :ok
     end
@@ -68,17 +68,17 @@ defmodule OptimalSystemAgent.Agent.SessionRecoveryTest do
 
       {:ok, pid} =
         DynamicSupervisor.start_child(
-          OptimalSystemAgent.SessionSupervisor,
+          Daemon.SessionSupervisor,
           {Loop, session_id: session_id, channel: :test}
         )
 
       assert Process.alive?(pid)
 
       # Verify it's registered in SessionRegistry
-      assert [{^pid, _}] = Registry.lookup(OptimalSystemAgent.SessionRegistry, session_id)
+      assert [{^pid, _}] = Registry.lookup(Daemon.SessionRegistry, session_id)
 
       # Verify it's a child of the DynamicSupervisor
-      children = DynamicSupervisor.which_children(OptimalSystemAgent.SessionSupervisor)
+      children = DynamicSupervisor.which_children(Daemon.SessionSupervisor)
       pids = Enum.map(children, fn {_, pid, _, _} -> pid end)
       assert pid in pids
 
@@ -162,7 +162,7 @@ defmodule OptimalSystemAgent.Agent.SessionRecoveryTest do
       # Start a new Loop — it should restore from the checkpoint
       {:ok, pid} =
         DynamicSupervisor.start_child(
-          OptimalSystemAgent.SessionSupervisor,
+          Daemon.SessionSupervisor,
           {Loop, session_id: session_id, channel: :test}
         )
 
@@ -220,7 +220,7 @@ defmodule OptimalSystemAgent.Agent.SessionRecoveryTest do
 
       {:ok, pid} =
         DynamicSupervisor.start_child(
-          OptimalSystemAgent.SessionSupervisor,
+          Daemon.SessionSupervisor,
           {Loop, session_id: session_id, channel: :test}
         )
 
@@ -234,7 +234,7 @@ defmodule OptimalSystemAgent.Agent.SessionRecoveryTest do
 
       # Should NOT be restarted (transient restart = no restart on :normal)
       Process.sleep(100)
-      assert Registry.lookup(OptimalSystemAgent.SessionRegistry, session_id) == []
+      assert Registry.lookup(Daemon.SessionRegistry, session_id) == []
     end
 
     test "normal exit clears checkpoint" do
@@ -256,7 +256,7 @@ defmodule OptimalSystemAgent.Agent.SessionRecoveryTest do
       # Start and stop normally
       {:ok, pid} =
         DynamicSupervisor.start_child(
-          OptimalSystemAgent.SessionSupervisor,
+          Daemon.SessionSupervisor,
           {Loop, session_id: session_id, channel: :test}
         )
 

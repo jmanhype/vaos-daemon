@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Tools.Builtins.FileGrepTest do
+defmodule Daemon.Tools.Builtins.FileGrepTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Tools.Builtins.FileGrep
+  alias Daemon.Tools.Builtins.FileGrep
 
   # ── Regex pattern match ──────────────────────────────────────────
 

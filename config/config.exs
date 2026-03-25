@@ -1,6 +1,6 @@
 import Config
 
-config :optimal_system_agent,
+config :daemon,
   # Default LLM provider: :ollama (local) or :anthropic (cloud) or :openai
   default_provider: :ollama,
 
@@ -65,9 +65,9 @@ config :optimal_system_agent,
   # ---------------------------------------------------------------------------
   # Sandbox — Docker container isolation for skill execution
   # ---------------------------------------------------------------------------
-  # Master switch. Set OSA_SANDBOX_ENABLED=true in your environment to enable.
+  # Master switch. Set DAEMON_SANDBOX_ENABLED=true in your environment to enable.
   # The sandbox is opt-in; all existing behaviour is preserved when disabled.
-  sandbox_enabled: System.get_env("OSA_SANDBOX_ENABLED", "false") == "true",
+  sandbox_enabled: System.get_env("DAEMON_SANDBOX_ENABLED", "false") == "true",
 
   # Execution backend: :docker (OS-level isolation) or :beam (process-only)
   sandbox_mode: :docker,
@@ -148,19 +148,19 @@ config :optimal_system_agent,
   # ---------------------------------------------------------------------------
   # Python Sidecar — semantic memory search via local embeddings
   # ---------------------------------------------------------------------------
-  # Set OSA_PYTHON_SIDECAR=true to enable. Requires sentence-transformers.
+  # Set DAEMON_PYTHON_SIDECAR=true to enable. Requires sentence-transformers.
   # When disabled, memory search falls back to keyword-based retrieval.
-  python_sidecar_enabled: System.get_env("OSA_PYTHON_SIDECAR", "false") == "true",
+  python_sidecar_enabled: System.get_env("DAEMON_PYTHON_SIDECAR", "false") == "true",
   python_sidecar_model: "all-MiniLM-L6-v2",
   python_sidecar_timeout: 30_000,
-  python_path: System.get_env("OSA_PYTHON_PATH", "python3"),
+  python_path: System.get_env("DAEMON_PYTHON_PATH", "python3"),
 
   # ---------------------------------------------------------------------------
   # Go Tokenizer — accurate BPE token counting
   # ---------------------------------------------------------------------------
-  # Set OSA_GO_TOKENIZER=true to enable. Requires pre-built Go binary.
+  # Set DAEMON_GO_TOKENIZER=true to enable. Requires pre-built Go binary.
   # When disabled or binary missing, falls back to word-count heuristic.
-  go_tokenizer_enabled: System.get_env("OSA_GO_TOKENIZER", "false") == "true",
+  go_tokenizer_enabled: System.get_env("DAEMON_GO_TOKENIZER", "false") == "true",
   go_tokenizer_encoding: "cl100k_base",
 
   # ---------------------------------------------------------------------------
@@ -188,7 +188,7 @@ config :optimal_system_agent,
   vault_context_max_chars: 3000
 
 # Database — SQLite3
-config :optimal_system_agent, OptimalSystemAgent.Store.Repo,
+config :daemon, Daemon.Store.Repo,
   database: Path.expand("~/.osa/osa.db"),
   pool_size: 5,
   journal_mode: :wal,
@@ -197,17 +197,17 @@ config :optimal_system_agent, OptimalSystemAgent.Store.Repo,
   # databases it is a no-op (already locked to the creation-time encoding).
   custom_pragmas: [encoding: "'UTF-8'", busy_timeout: 5000]
 
-config :optimal_system_agent, ecto_repos: [OptimalSystemAgent.Store.Repo]
+config :daemon, ecto_repos: [Daemon.Store.Repo]
 
-config :miosa_budget, event_emitter: OptimalSystemAgent.BudgetEmitter
+config :miosa_budget, event_emitter: Daemon.BudgetEmitter
 
 config :miosa_memory,
   osa_dir: Path.expand("~/.osa"),
   sessions_dir: Path.expand("~/.osa/sessions"),
   learning_dir: Path.expand("~/.osa/learning"),
-  event_emitter: OptimalSystemAgent.MemoryEmitter,
-  secondary_store: OptimalSystemAgent.Agent.Memory.SQLiteBridge,
-  cortex_provider: OptimalSystemAgent.Agent.CortexProvider
+  event_emitter: Daemon.MemoryEmitter,
+  secondary_store: Daemon.Agent.Memory.SQLiteBridge,
+  cortex_provider: Daemon.Agent.CortexProvider
 
 config :logger,
   level: :warning

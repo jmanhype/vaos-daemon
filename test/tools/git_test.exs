@@ -1,7 +1,7 @@
-defmodule OptimalSystemAgent.Tools.Builtins.GitTest do
+defmodule Daemon.Tools.Builtins.GitTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Tools.Builtins.Git
+  alias Daemon.Tools.Builtins.Git
 
   # ---------------------------------------------------------------------------
   # Helpers
@@ -14,11 +14,11 @@ defmodule OptimalSystemAgent.Tools.Builtins.GitTest do
     File.mkdir_p!(base)
 
     # Allow this path during the test
-    existing = Application.get_env(:optimal_system_agent, :allowed_read_paths, ["~", "/tmp"])
-    Application.put_env(:optimal_system_agent, :allowed_read_paths, [base | existing])
+    existing = Application.get_env(:daemon, :allowed_read_paths, ["~", "/tmp"])
+    Application.put_env(:daemon, :allowed_read_paths, [base | existing])
 
     on_exit(fn ->
-      Application.put_env(:optimal_system_agent, :allowed_read_paths, existing)
+      Application.put_env(:daemon, :allowed_read_paths, existing)
       File.rm_rf!(base)
     end)
 

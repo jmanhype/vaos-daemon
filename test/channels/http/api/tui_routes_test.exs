@@ -1,8 +1,8 @@
-defmodule OptimalSystemAgent.Channels.HTTP.API.TuiRoutesTest do
+defmodule Daemon.Channels.HTTP.API.TuiRoutesTest do
   use ExUnit.Case, async: false
   use Plug.Test
 
-  alias OptimalSystemAgent.Channels.HTTP.API.TuiRoutes
+  alias Daemon.Channels.HTTP.API.TuiRoutes
 
   @opts TuiRoutes.init([])
 
