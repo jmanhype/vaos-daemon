@@ -156,12 +156,10 @@ OptimalSystemAgent.Supervisor (rest_for_one)
 +-- Supervisors.AgentServices (one_for_one)
 |   +-- Agent.Memory             3-store architecture + episodic JSONL
 |   +-- Agent.HeartbeatState     Session heartbeat tracking
-|   +-- Agent.Workflow           Workflow state machine
+|   +-- Agent.Tasks              Task management (replaced TaskQueue + TaskTracker)
 |   +-- MiosaBudget.Budget       Token budget management
-|   +-- Agent.TaskQueue          Task queuing + prioritization
 |   +-- Agent.Orchestrator       Multi-agent spawning + synthesis
 |   +-- Agent.Progress           Real-time progress reporting
-|   +-- Agent.TaskTracker        Task lifecycle tracking
 |   +-- Agent.Hooks              Priority-ordered middleware pipeline
 |   +-- Agent.Learning           Pattern learning system
 |   +-- MiosaKnowledge.Store     vaos_knowledge triple store bridge
@@ -171,16 +169,22 @@ OptimalSystemAgent.Supervisor (rest_for_one)
 |   +-- Agent.Compactor          3-zone context compression
 |   +-- Agent.Cortex             Context aggregation delegate
 |   +-- Agent.ProactiveMode      Autonomous proactive actions
+|   +-- Webhooks.Dispatcher      Outbound webhook delivery
+|   +-- Signal.Persistence       Signal classification persistence
 |
 +-- Supervisors.Extensions (one_for_one)
 |   +-- Treasury                 Token treasury (opt-in)
-|   +-- Intelligence.Supervisor  5 communication modules
+|   +-- Orchestrator.Mailbox     Inter-agent message routing
+|   +-- Orchestrator.SwarmMode   Swarm coordination state
+|   +-- Swarm.DynamicSupervisor  DynamicSupervisor for swarm workers
 |   +-- Fleet.Supervisor         Multi-instance fleet (opt-in)
-|   +-- Sidecar.Manager          Go/Python sidecar lifecycle
+|   +-- Go.Tokenizer             Go tokenizer sidecar (opt-in)
+|   +-- Python.Supervisor        Python sidecar (opt-in)
+|   +-- Go.Git                   Go git helper sidecar (opt-in)
+|   +-- Go.Sysmon               Go system monitor sidecar (opt-in)
+|   +-- WhatsAppWeb              WhatsApp Web sidecar (opt-in)
 |   +-- Sandbox.Supervisor       Docker + Wasm + Sprites.dev (opt-in)
 |   +-- Wallet                   Payment integration (opt-in)
-|   +-- System.Updater           OTA update checker (opt-in)
-|   +-- Platform.AMQP            RabbitMQ publisher (opt-in)
 |
 +-- Channels.Starter             Deferred channel boot
 +-- Bandit HTTP                  REST API on port 8089
