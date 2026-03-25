@@ -237,15 +237,22 @@ defmodule OptimalSystemAgent.VasSwarm.GrpcClient do
          ) do
       {:ok, %{status: 200, body: resp}} ->
         token = if is_map(resp), do: resp["token"] || resp["jwt"], else: nil
-        {:reply, {:ok, token || "http-fallback-token"}, state}
+        if token do
+          Logger.info("[GrpcClient] Got JWT from Kernel HTTP API (expires: #{resp["expires_at"]})")
+          {:reply, {:ok, token}, state}
+        else
+          Logger.warning("[GrpcClient] Kernel returned 200 but no token in response")
+          {:reply, {:error, :no_token_in_response}, state}
+        end
 
-      {:ok, %{status: status}} ->
-        Logger.warning("[GrpcClient] HTTP token request returned #{status}")
-        {:reply, {:ok, "http-fallback-token-#{:rand.uniform(999999)}"}, state}
+      {:ok, %{status: status, body: body}} ->
+        error_msg = if is_map(body), do: body["error"] || "unknown", else: "status #{status}"
+        Logger.warning("[GrpcClient] Kernel HTTP token request failed: #{error_msg}")
+        {:reply, {:error, {:kernel_error, error_msg}}, state}
 
       {:error, reason} ->
-        Logger.warning("[GrpcClient] HTTP fallback failed: #{inspect(reason)}")
-        {:reply, {:ok, "offline-token-#{:rand.uniform(999999)}"}, state}
+        Logger.warning("[GrpcClient] Kernel HTTP unreachable: #{inspect(reason)}")
+        {:reply, {:error, {:kernel_unreachable, reason}}, state}
     end
   end
 
@@ -269,7 +276,20 @@ defmodule OptimalSystemAgent.VasSwarm.GrpcClient do
   end
 
   def handle_call({:submit_telemetry, telemetry}, _from, %{connected: false} = state) do
-    {:reply, {:error, :not_connected}, state}
+    # HTTP fallback for telemetry is fire-and-forget
+    kernel_http = System.get_env("VAOS_KERNEL_HTTP_URL") || "http://localhost:8080"
+    Task.start(fn ->
+      try do
+        Req.post("#{kernel_http}/api/telemetry",
+          body: Jason.encode!(telemetry),
+          headers: [{"content-type", "application/json"}],
+          receive_timeout: 3_000
+        )
+      rescue
+        _ -> :ok
+      end
+    end)
+    {:reply, {:ok, :submitted}, state}
   end
 
   def handle_call({:submit_telemetry, telemetry}, _from, %{stub: stub} = state) do
@@ -288,7 +308,19 @@ defmodule OptimalSystemAgent.VasSwarm.GrpcClient do
   end
 
   def handle_call({:submit_routing_log, routing}, _from, %{connected: false} = state) do
-    {:reply, {:error, :not_connected}, state}
+    kernel_http = System.get_env("VAOS_KERNEL_HTTP_URL") || "http://localhost:8080"
+    Task.start(fn ->
+      try do
+        Req.post("#{kernel_http}/api/routing",
+          body: Jason.encode!(routing),
+          headers: [{"content-type", "application/json"}],
+          receive_timeout: 3_000
+        )
+      rescue
+        _ -> :ok
+      end
+    end)
+    {:reply, {:ok, %{correlation_id: "http-#{:rand.uniform(999999)}"}}, state}
   end
 
   def handle_call({:submit_routing_log, routing}, _from, %{stub: stub} = state) do
