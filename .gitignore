@@ -57,3 +57,39 @@ TODO.md
 docs/archive/agent-dispatch/
 docs/archive/competitors/
 docs/agent-dispatch/
+
+# Agent-generated analytics debris (never commit)
+posthog_*.json
+ph_query_*.json
+fetch_traffic*.json
+fetch_traffic*.sh
+payload.json
+analyze_traffic*.py
+parse_traffic*.py
+parse_posthog*.py
+parse_march*.py
+parse_latest*.py
+parse_current*.py
+debug_traffic.py
+save_traffic_data.py
+fetch_pricing_traffic.py
+fetch_traffic.py
+
+# Node artifacts (should never be in an Elixir repo)
+node_modules/
+package.json
+package-lock.json
+
+# One-off scripts dumped in root
+produce_signal_film.exs
+query_language.exs
+start_signal_production*.exs
+
+# Agent completion reports
+agent-*-completion.md
+COMPLETION-SUMMARY.md
+CLI_TOOL_NOTES.md
+CORE-IMPLEMENTATION.md
+VAS-SWARM-IMPLEMENTATION.md
+VAOS_CRO_*.md
+VAOS_Traffic_*.md

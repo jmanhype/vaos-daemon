@@ -1,1 +1,0 @@
-{"query":{"kind":"HogQLQuery","query":"SELECT event, count() as views, uniqExact(distinct_id) as uniq FROM events WHERE timestamp > now() - toIntervalHour(24) GROUP BY event ORDER BY views DESC LIMIT 10"}}

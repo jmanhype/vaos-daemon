@@ -1,6 +1,0 @@
-{
-  "query": {
-    "kind": "HogQLQuery",
-    "query": "SELECT event, count() as views FROM events WHERE timestamp > now() - toIntervalDay(1) GROUP BY event ORDER BY views DESC"
-  }
-}

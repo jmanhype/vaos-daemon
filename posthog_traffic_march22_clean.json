@@ -1,9 +1,0 @@
-{
-    "cache_key": "cache_319864_466c61225cd35847dc94051ab0fb8c7addc0bec6668d6b0df0df2fec48ddb7fe",
-    "results": [
-        ["/", 4, 3],
-        ["/blog/non-human-identity-ai-agents", 3, 2]
-    ],
-    "columns": ["url", "views", "uniq"],
-    "types": [["url", "Nullable(String)"], ["views", "UInt64"], ["uniq", "UInt64"]]
-}

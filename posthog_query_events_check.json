@@ -1,6 +1,0 @@
-{
-  "query": {
-    "kind": "HogQLQuery",
-    "query": "SELECT event, properties, timestamp FROM events WHERE timestamp > now() - toIntervalHour(6) LIMIT 1"
-  }
-}

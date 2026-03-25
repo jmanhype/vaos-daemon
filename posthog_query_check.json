@@ -1,6 +1,0 @@
-{
-  "query": {
-    "kind": "HogQLQuery",
-    "query": "SELECT count() as total_events FROM events WHERE timestamp > now() - toIntervalDay(1)"
-  }
-}
