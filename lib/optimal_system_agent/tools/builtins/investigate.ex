@@ -153,14 +153,28 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     :inets.start()
     :ssl.start()
 
-    # Start alphaXiv MCP — trap exit to prevent crash propagation on auth failure
+    # Start alphaXiv MCP in an unlinked process — the MCP client crash-loops
+    # on auth failure (401) and sends EXIT to linked callers, killing the pipeline.
+    # Trap exits for the duration of the start, then restore.
+    old_trap = Process.flag(:trap_exit, true)
     try do
       OptimalSystemAgent.Tools.Builtins.AlphaXivClient.start_link()
+      # Drain any immediate EXIT from the MCP client crashing during handshake
+      receive do
+        {:EXIT, _pid, reason} ->
+          Logger.warning("[investigate] alphaXiv MCP crashed during init: #{inspect(reason)}")
+      after
+        2_000 -> :ok
+      end
     catch
       :exit, reason ->
         Logger.warning("[investigate] alphaXiv MCP unavailable: #{inspect(reason)}")
-        {:error, :alphaxiv_unavailable}
+    after
+      Process.flag(:trap_exit, old_trap)
     end
+
+    # 0. Create scorer cache ETS table upfront (owned by caller, visible to child tasks)
+    ensure_scorer_cache()
 
     # 1. Start the real epistemic ledger GenServer
     ensure_ledger_started()
@@ -271,20 +285,21 @@ Known failure patterns to avoid:
     ]
 
     model = Application.get_env(:optimal_system_agent, :utility_model)
-    llm_opts = [temperature: 0.1, max_tokens: 1500]
+    llm_opts = [temperature: 0.1, max_tokens: 8192]
     llm_opts = if model, do: Keyword.put(llm_opts, :model, model), else: llm_opts
 
-    llm_tasks = [
-      Task.async(fn -> Providers.chat(for_messages, llm_opts) end),
-      Task.async(fn -> Providers.chat(against_messages, llm_opts) end)
-    ]
-
-    [for_result, against_result] = Task.await_many(llm_tasks, 120_000)
+    # Run advocates sequentially — concurrent calls trigger rate limits on some
+    # providers (Zhipu/GLM), and reasoning models need generous timeouts.
+    for_result = Providers.chat(for_messages, llm_opts)
+    against_result = Providers.chat(against_messages, llm_opts)
 
     # 8. Parse both sides
     supporting = case for_result do
-      {:ok, %{content: response}} when is_binary(response) ->
+      {:ok, %{content: response}} when is_binary(response) and response != "" ->
         parse_adversarial_evidence(response)
+      {:ok, %{content: ""}} ->
+        Logger.warning("[investigate] FOR-side LLM returned empty content (reasoning model token exhaustion?)")
+        []
       {:error, reason} ->
         Logger.warning("[investigate] FOR-side LLM call failed: #{inspect(reason)}")
         try do
@@ -299,8 +314,11 @@ Known failure patterns to avoid:
     end
 
     opposing = case against_result do
-      {:ok, %{content: response}} when is_binary(response) ->
+      {:ok, %{content: response}} when is_binary(response) and response != "" ->
         parse_adversarial_evidence(response)
+      {:ok, %{content: ""}} ->
+        Logger.warning("[investigate] AGAINST-side LLM returned empty content (reasoning model token exhaustion?)")
+        []
       {:error, reason} ->
         Logger.warning("[investigate] AGAINST-side LLM call failed: #{inspect(reason)}")
         try do
@@ -737,7 +755,7 @@ Known failure patterns to avoid:
     messages = [%{role: "user", content: prompt}]
 
     model = Application.get_env(:optimal_system_agent, :utility_model)
-    verify_opts = [temperature: 0.0, max_tokens: 15]
+    verify_opts = [temperature: 0.0, max_tokens: 512]
     verify_opts = if model, do: Keyword.put(verify_opts, :model, model), else: verify_opts
 
     case Providers.chat(messages, verify_opts) do
@@ -1618,7 +1636,7 @@ Known failure patterns to avoid:
       # Build an LLM callback compatible with Pipeline
       llm_fn = fn prompt ->
         model = Application.get_env(:optimal_system_agent, :utility_model)
-        llm_opts = [temperature: 0.3, max_tokens: 2000]
+        llm_opts = [temperature: 0.3, max_tokens: 8192]
         llm_opts = if model, do: Keyword.put(llm_opts, :model, model), else: llm_opts
         messages = [%{role: "user", content: prompt}]
 
