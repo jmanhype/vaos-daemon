@@ -1082,6 +1082,76 @@ Known failure patterns to avoid:
   end
   defp format_citation_count(count), do: "#{count} citations"
 
+  # -- Code execution callback (Crucible or local fallback) ----------------
+
+  defp build_code_fn do
+    crucible_url = System.get_env("VAOS_CRUCIBLE_GRPC_URL")
+
+    if crucible_url do
+      # Production: use vas-crucible sandbox via HTTP proxy
+      fn code, opts ->
+        language = Keyword.get(opts, :language, "python")
+        kernel_http = System.get_env("VAOS_KERNEL_HTTP_URL") || "http://localhost:8080"
+
+        # Get JWT for sandbox auth
+        agent_id = "osa"
+        intent_hash = :crypto.hash(:sha256, code) |> Base.encode16(case: :lower) |> binary_part(0, 16)
+
+        jwt = case OptimalSystemAgent.VasSwarm.GrpcClient.request_token(agent_id, intent_hash, "execute") do
+          {:ok, token} -> token
+          _ -> nil
+        end
+
+        if jwt do
+          body = Jason.encode!(%{code: code, language: language, jwt: jwt})
+          case Req.post("#{crucible_url}/execute",
+                 body: body,
+                 headers: [{"content-type", "application/json"}],
+                 receive_timeout: 30_000) do
+            {:ok, %{status: 200, body: resp}} ->
+              {:ok, %{stdout: resp["stdout"] || "", stderr: resp["stderr"] || ""}}
+            {:ok, %{status: status, body: body}} ->
+              {:error, "Crucible returned #{status}: #{inspect(body)}"}
+            {:error, reason} ->
+              {:error, "Crucible unreachable: #{inspect(reason)}"}
+          end
+        else
+          {:error, "No JWT available for sandbox auth"}
+        end
+      end
+    else
+      # Local fallback: run Python in a restricted tmpdir (dev mode only)
+      fn code, opts ->
+        language = Keyword.get(opts, :language, "python")
+        if language != "python" do
+          {:error, "Local fallback only supports Python"}
+        else
+          work_dir = System.tmp_dir!() |> Path.join("crucible_#{:rand.uniform(999999)}")
+          File.mkdir_p!(work_dir)
+          script_path = Path.join(work_dir, "script.py")
+          File.write!(script_path, code)
+
+          try do
+            {output, exit_code} = System.cmd("python3", [script_path],
+              cd: work_dir,
+              stderr_to_stdout: true,
+              env: [{"PYTHONDONTWRITEBYTECODE", "1"}]
+            )
+            if exit_code == 0 do
+              {:ok, %{stdout: output, stderr: ""}}
+            else
+              {:ok, %{stdout: "", stderr: output}}
+            end
+          rescue
+            e -> {:error, "Local exec failed: #{Exception.message(e)}"}
+          after
+            File.rm_rf!(work_dir)
+          end
+        end
+      end
+    end
+  end
+
   # -- Format paper list for display -----------------------------------
 
   defp format_paper_list(all_papers) do
@@ -1739,7 +1809,7 @@ Known failure patterns to avoid:
         ""
       else
         # Run lightweight pipeline passes for each hypothesis (idea -> method -> literature)
-        # We skip code execution for now (no code_fn) to keep it safe
+        # Code execution via Crucible sandbox (or local fallback in dev)
         results =
           hypotheses
           |> Enum.take(3)
@@ -1748,6 +1818,7 @@ Known failure patterns to avoid:
               case Pipeline.run(
                      ledger: ensure_ledger_pid(),
                      llm_fn: llm_fn,
+                     code_fn: build_code_fn(),
                      input: hypothesis,
                      http_fn: http_fn,
                      max_iterations: 1,
