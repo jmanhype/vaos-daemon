@@ -3,8 +3,8 @@ defmodule Daemon.Production.Supervisor do
   Isolated supervisor for production infrastructure.
 
   Manages ChromeSlot, FlowRateLimiter, and ChromeHealth under a
-  `:one_for_one` strategy — each child is independent and can crash
-  without affecting the others or the main OSA supervisor tree.
+  :one_for_one strategy — each child is independent and can crash
+  without affecting the others or the main Daemon supervisor tree.
   """
   use Supervisor
 
@@ -19,6 +19,9 @@ defmodule Daemon.Production.Supervisor do
       Daemon.Production.FlowRateLimiter,
       Daemon.Production.ChromeHealth,
       Daemon.Production.FilmPipeline,
+      Daemon.Production.SoraPipeline,
+      Daemon.Production.KlingPipeline,
+      Daemon.Production.FilmProducer,
       Daemon.Production.XPublisher
     ]
 
