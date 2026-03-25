@@ -80,6 +80,7 @@ default_provider =
     System.get_env("OPENAI_API_KEY") -> :openai
     System.get_env("GROQ_API_KEY") -> :groq
     System.get_env("OPENROUTER_API_KEY") -> :openrouter
+    System.get_env("ZHIPU_API_KEY") -> :zhipu
     true -> :ollama
   end
 

@@ -60,8 +60,8 @@ defmodule OptimalSystemAgent.Providers.OpenAICompatProvider do
       default_model: "moonshot-v1-128k"
     },
     zhipu: %{
-      default_url: "https://open.bigmodel.cn/api/paas/v4",
-      default_model: "glm-4-plus"
+      default_url: "https://open.bigmodel.cn/api/coding/paas/v4",
+      default_model: "glm-4.7"
     },
     volcengine: %{
       default_url: "https://ark.cn-beijing.volces.com/api/v3",
