@@ -70,7 +70,9 @@ provider_map = %{
   "fireworks" => :fireworks, "deepseek" => :deepseek, "mistral" => :mistral,
   "cerebras" => :cerebras, "google" => :google, "cohere" => :cohere,
   "perplexity" => :perplexity, "xai" => :xai, "sambanova" => :sambanova,
-  "hyperbolic" => :hyperbolic, "lmstudio" => :lmstudio, "llamacpp" => :llamacpp
+  "hyperbolic" => :hyperbolic, "lmstudio" => :lmstudio, "llamacpp" => :llamacpp,
+  "zhipu" => :zhipu, "qwen" => :qwen, "moonshot" => :moonshot,
+  "baichuan" => :baichuan, "volcengine" => :volcengine
 }
 
 default_provider =

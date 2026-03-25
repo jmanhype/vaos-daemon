@@ -93,9 +93,10 @@ defmodule OptimalSystemAgent.Providers.OpenAICompatProvider do
 
     model =
       Keyword.get(opts, :model) ||
-        Application.get_env(:optimal_system_agent, :"#{provider}_model", config.default_model)
+        Application.get_env(:optimal_system_agent, :"#{provider}_model") ||
+        config.default_model
 
-    url = Application.get_env(:optimal_system_agent, :"#{provider}_url", config.default_url)
+    url = Application.get_env(:optimal_system_agent, :"#{provider}_url") || config.default_url
 
     opts =
       opts
@@ -120,9 +121,10 @@ defmodule OptimalSystemAgent.Providers.OpenAICompatProvider do
 
     model =
       Keyword.get(opts, :model) ||
-        Application.get_env(:optimal_system_agent, :"#{provider}_model", config.default_model)
+        Application.get_env(:optimal_system_agent, :"#{provider}_model") ||
+        config.default_model
 
-    url = Application.get_env(:optimal_system_agent, :"#{provider}_url", config.default_url)
+    url = Application.get_env(:optimal_system_agent, :"#{provider}_url") || config.default_url
 
     opts =
       opts

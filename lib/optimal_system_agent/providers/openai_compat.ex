@@ -644,19 +644,16 @@ defmodule OptimalSystemAgent.Providers.OpenAICompat do
   # o3/o3-mini/o4-mini support "low", "medium", "high" (default: medium).
   # For non-reasoning models this is a no-op.
   defp maybe_add_reasoning(body, model, opts) do
-    case Keyword.get(opts, :reasoning_effort) do
-      nil ->
-        if reasoning_model?(model) do
-          Map.put(body, :reasoning_effort, "medium")
-        else
-          body
-        end
-
-      effort when effort in ["low", "medium", "high"] ->
-        Map.put(body, :reasoning_effort, effort)
-
-      _ ->
-        body
+    # Only add reasoning_effort for models that support it (OpenAI o-series).
+    # GLM, Qwen, DeepSeek do their own reasoning but reject this parameter.
+    if supports_reasoning_effort?(model) do
+      case Keyword.get(opts, :reasoning_effort) do
+        nil -> Map.put(body, :reasoning_effort, "medium")
+        effort when effort in ["low", "medium", "high"] -> Map.put(body, :reasoning_effort, effort)
+        _ -> body
+      end
+    else
+      body
     end
   end
 
@@ -668,7 +665,18 @@ defmodule OptimalSystemAgent.Providers.OpenAICompat do
       String.starts_with?(name, "o4") or
       String.starts_with?(name, "o1") or
       name == "deepseek-reasoner" or
-      String.contains?(name, "kimi")
+      String.contains?(name, "kimi") or
+      String.contains?(name, "glm-4") or
+      String.contains?(name, "qwen3")
+  end
+
+  # Models that support OpenAI's reasoning_effort parameter.
+  # GLM and Qwen do reasoning internally but don't accept this param.
+  defp supports_reasoning_effort?(model) do
+    name = String.downcase(to_string(model))
+    String.starts_with?(name, "o3") or
+      String.starts_with?(name, "o4") or
+      String.starts_with?(name, "o1")
   end
 
   defp parse_usage(%{"usage" => %{"prompt_tokens" => inp, "completion_tokens" => out}}),

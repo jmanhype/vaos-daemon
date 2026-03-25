@@ -83,19 +83,23 @@ defmodule OptimalSystemAgent.Tools.Builtins.Investigate do
     {~S"\bworld\s+health", "i"}
   ]
 
-  @low_quality_pattern_sources [
+  # Low-quality JOURNAL/SOURCE patterns — matched ONLY against source/journal field.
+  # Do NOT add topic terms here (e.g. "homeopath") — they'll match every paper's
+  # title/abstract when investigating that topic, nuking all source quality scores.
+  @low_quality_journal_sources [
     {~S"journal.of.alternative", "i"},
     {~S"complementary.*medicine", "i"},
     {~S"integrative.*medicine", "i"},
-    {~S"homeopath", "i"},
-    {~S"naturopath", "i"},
-    {~S"ayurved", "i"},
     {~S"traditional.*medicine", "i"},
-    {~S"holistic", "i"},
+    {~S"holistic.*medicine", "i"},
     {~S"journal.*healing", "i"},
     {~S"explore.*journal", "i"},
     {~S"frontier.*alternative", "i"},
-    {~S"evidence.based.complementary", "i"}
+    {~S"evidence.based.complementary", "i"},
+    {~S"homeopath.*journal", "i"},
+    {~S"journal.*homeopath", "i"},
+    {~S"journal.*naturopath", "i"},
+    {~S"journal.*ayurved", "i"}
   ]
 
   @impl true
@@ -235,7 +239,13 @@ Known failure patterns to avoid:
       ""
     end
 
-    # 7. TWO ADVERSARIAL LLM CALLS (parallel)
+    # 7. TWO ADVERSARIAL LLM CALLS (sequential for rate-limit safety)
+    example_format = """
+    Example of correct format:
+    1. [SOURCED] (strength: 8) A meta-analysis of 12 RCTs found significant effects (p<0.05) with moderate effect sizes across multiple conditions. [Paper 3] specifically analyzed 500 patients and found a 23% improvement rate over placebo, suggesting robust clinical benefit.
+    2. [REASONING] (strength: 5) The mechanism of action is biologically plausible because...
+    """
+
     for_prompt = """
     You are a researcher who genuinely believes the following claim is TRUE.
     Using the papers provided and your knowledge, make the STRONGEST possible case.
@@ -245,14 +255,17 @@ Known failure patterns to avoid:
     #{papers_context}
     #{prior_text}
 
-    Present your 3-5 strongest arguments. For each:
-    - Cite a specific paper [Paper N] if one supports your point
-    - Rate the argument strength 1-10 honestly (even as an advocate, some arguments are stronger than others)
+    Present your 3-5 strongest arguments. For each argument:
+    - Write a FULL paragraph (2-4 sentences minimum) explaining the evidence
+    - Cite a specific paper as [Paper N] within your paragraph text
+    - Rate the argument strength 1-10
     - Tag as [SOURCED] if backed by a paper, [REASONING] if from your analysis
+    - Do NOT just write a title — write a substantive argument with evidence
 
-    Format:
-    1. [SOURCED/REASONING] (strength: N) Your argument here [Paper N if applicable]
-    2. ...
+    #{example_format}
+
+    Now write your arguments:
+    1. [SOURCED/REASONING] (strength: N) Your detailed argument here [Paper N if applicable]
     """
 
     against_prompt = """
@@ -264,14 +277,17 @@ Known failure patterns to avoid:
     #{papers_context}
     #{prior_text}
 
-    Present your 3-5 strongest counterarguments. For each:
-    - Cite a specific paper [Paper N] if one supports your point
-    - Rate the argument strength 1-10 honestly (even as an advocate, some arguments are stronger than others)
+    Present your 3-5 strongest counterarguments. For each argument:
+    - Write a FULL paragraph (2-4 sentences minimum) explaining the evidence
+    - Cite a specific paper as [Paper N] within your paragraph text
+    - Rate the argument strength 1-10
     - Tag as [SOURCED] if backed by a paper, [REASONING] if from your analysis
+    - Do NOT just write a title — write a substantive argument with evidence
 
-    Format:
-    1. [SOURCED/REASONING] (strength: N) Your counterargument here [Paper N if applicable]
-    2. ...
+    #{example_format}
+
+    Now write your counterarguments:
+    1. [SOURCED/REASONING] (strength: N) Your detailed counterargument here [Paper N if applicable]
     """
 
     for_messages = [
@@ -406,19 +422,35 @@ Known failure patterns to avoid:
     for_total = total_for_score
     against_total = total_against_score
 
-    # Direction uses ONLY grounded scores (AEC commitment gating)
-    # Key insight: when ONE side has zero grounded evidence, that's asymmetric search,
-    # not a real verdict. Settled science won't have papers titled "X doesn't work."
+    # Direction uses grounded scores first (AEC commitment gating).
+    # When grounded store is empty, falls back to belief-store consensus
+    # (prefixed with "belief_") to avoid always returning "insufficient".
     direction = cond do
-      grounded_for_score == 0 and grounded_against_score == 0 ->
-        "insufficient_grounded_evidence"
+      # Both stores have grounded evidence — use grounded scores
+      grounded_for_score > 0 and grounded_against_score > 0 ->
+        cond do
+          grounded_for_score > grounded_against_score * 1.3 -> "supporting"
+          grounded_against_score > grounded_for_score * 1.3 -> "opposing"
+          true -> "genuinely_contested"
+        end
+
+      # Asymmetric grounded evidence
       grounded_against_score == 0 and grounded_for_score > 0 ->
         "asymmetric_evidence_for"
       grounded_for_score == 0 and grounded_against_score > 0 ->
         "asymmetric_evidence_against"
-      grounded_for_score > grounded_against_score * 1.3 -> "supporting"
-      grounded_against_score > grounded_for_score * 1.3 -> "opposing"
-      true -> "genuinely_contested"
+
+      # No grounded evidence at all — fall back to belief store
+      # This prevents the system from being permanently stuck on "insufficient"
+      # when source quality thresholds filter out all papers
+      for_total == 0 and against_total == 0 ->
+        "insufficient_evidence"
+      against_total > for_total * 1.5 ->
+        "belief_consensus_against"
+      for_total > against_total * 1.5 ->
+        "belief_consensus_for"
+      true ->
+        "belief_contested"
     end
 
     # Rebind for downstream compatibility (classified versions are supersets)
@@ -755,11 +787,11 @@ Known failure patterns to avoid:
     messages = [%{role: "user", content: prompt}]
 
     model = Application.get_env(:optimal_system_agent, :utility_model)
-    verify_opts = [temperature: 0.0, max_tokens: 512]
+    verify_opts = [temperature: 0.0, max_tokens: 4096]
     verify_opts = if model, do: Keyword.put(verify_opts, :model, model), else: verify_opts
 
     case Providers.chat(messages, verify_opts) do
-      {:ok, %{content: response}} when is_binary(response) ->
+      {:ok, %{content: response}} when is_binary(response) and response != "" ->
         response_clean = String.trim(response) |> String.upcase()
 
         verification = cond do
@@ -777,7 +809,15 @@ Known failure patterns to avoid:
         end
 
         {verification, paper_type}
-      _ -> {:unverified, :other}
+      {:ok, %{content: ""}} ->
+        Logger.warning("[investigate] verify_citation: empty content (reasoning model token exhaustion)")
+        {:unverified, :other}
+      {:error, reason} ->
+        Logger.warning("[investigate] verify_citation failed: #{inspect(reason)}")
+        {:unverified, :other}
+      other ->
+        Logger.warning("[investigate] verify_citation unexpected: #{inspect(other) |> String.slice(0, 200)}")
+        {:unverified, :other}
     end
   end
 
@@ -815,8 +855,8 @@ Known failure patterns to avoid:
     Enum.map(@high_quality_pattern_sources, fn {src, opts} -> Regex.compile!(src, opts) end)
   end
 
-  defp compiled_low_quality_patterns do
-    Enum.map(@low_quality_pattern_sources, fn {src, opts} -> Regex.compile!(src, opts) end)
+  defp compiled_low_quality_journal_patterns do
+    Enum.map(@low_quality_journal_sources, fn {src, opts} -> Regex.compile!(src, opts) end)
   end
 
   defp score_source_quality(paper) do
@@ -831,14 +871,18 @@ Known failure patterns to avoid:
     citation_score = min(citation_score, 1.0)
 
     # 2. Publisher/journal quality — low-quality check MUST come first
-    # to prevent review-type boost from laundering garbage journals
-    all_text = "#{title} #{source} #{abstract}"
-    is_low_quality = Enum.any?(compiled_low_quality_patterns(), &Regex.match?(&1, all_text))
+    # to prevent review-type boost from laundering garbage journals.
+    # Only match journal patterns against SOURCE field — matching against title/abstract
+    # would nuke every paper when investigating topics like "homeopathy".
+    journal_text = "#{source}"
+    is_low_quality = Enum.any?(compiled_low_quality_journal_patterns(), &Regex.match?(&1, journal_text))
 
     # 3. Publication type boost — only if NOT from a low-quality source
     # A "systematic review" in a CAM journal is not the same as one in Cochrane
     is_review_type = not is_low_quality and is_review_or_meta_analysis?(title, pub_types)
 
+    # High-quality patterns match against full text (title + source + abstract)
+    all_text = "#{title} #{source} #{abstract}"
     publisher_score = cond do
       is_low_quality -> 0.05  # Low-quality journals always score low, review or not
       is_review_type -> 0.8   # Reviews from non-garbage sources get grounded
@@ -1204,16 +1248,17 @@ Known failure patterns to avoid:
     http_fn = literature_http_fn()
     {ss_queries, oa_queries} = build_search_queries(topic, keywords)
 
-    # SS gets fewer queries to avoid rate limiting (unauthenticated: ~1 req/s)
-    ss_tasks = Enum.map(ss_queries, fn {label, query, opts} ->
+    # SS: sequential with 1.5s delay — unauthenticated rate limit is ~1 req/s.
+    # Concurrent requests all hit 429 simultaneously and waste all retries.
+    ss_results = Enum.flat_map(Enum.with_index(ss_queries), fn {{label, query, opts}, idx} ->
+      if idx > 0, do: Process.sleep(1_500)
       search_opts = Keyword.merge([limit: 5], opts)
-      Task.async(fn ->
-        case Literature.search_semantic_scholar(query, http_fn, search_opts) do
-          {:ok, papers} -> {:"ss_#{label}", papers}
-          _ -> {:"ss_#{label}", []}
-        end
-      end)
+      case Literature.search_semantic_scholar(query, http_fn, search_opts) do
+        {:ok, papers} -> [{:"ss_#{label}", papers}]
+        _ -> [{:"ss_#{label}", []}]
+      end
     end)
+    ss_tasks = []  # No async tasks for SS
 
     # OA is more generous with rate limits — send all queries
     oa_tasks = Enum.map(oa_queries, fn {label, query, opts} ->
@@ -1239,7 +1284,8 @@ Known failure patterns to avoid:
       end
     end)
 
-    results = Task.await_many(ss_tasks ++ oa_tasks ++ [alphaxiv_task], 30_000)
+    async_results = Task.await_many(oa_tasks ++ [alphaxiv_task], 30_000)
+    results = ss_results ++ async_results
 
     # Collect source counts
     source_counts = Enum.reduce(results, %{}, fn {source, papers}, acc ->
@@ -1337,18 +1383,27 @@ Known failure patterns to avoid:
   end
 
   # Filter papers by topic-term overlap. Returns {relevant_papers, dropped_count}.
-  # Uses only distinctive terms (>= 5 chars, no stems) to avoid matching everything.
+  # Requires the MOST SPECIFIC term (longest word) to appear in title or abstract.
+  # This prevents generic words like "effectiveness" from matching unrelated papers
+  # (e.g. "Effectiveness of treatments for firework fears in dogs").
   defp filter_relevant(papers, topic, _keywords) do
-    # Extract distinctive terms from topic — skip short/generic words and stems
+    # Extract distinctive terms from topic — skip short/generic words
     distinctive_terms = topic
     |> String.downcase()
     |> String.replace(~r/[^a-z0-9\s\-]/, " ")
     |> String.split(~r/\s+/, trim: true)
     |> Enum.reject(&(&1 in @stop_words))
-    |> Enum.reject(&(String.length(&1) < 5))
+    |> Enum.reject(&(String.length(&1) < 4))
+
+    # Generic modifiers that appear across many domains — never use as primary filter term
+    generic_modifiers = ~w(effectiveness effective efficacy efficient analysis review evidence impact treatment treatments outcomes study studies comparison)
+
+    # Primary term: first non-generic term, or longest term as fallback
+    primary_term = Enum.find(distinctive_terms, fn t -> t not in generic_modifiers end) ||
+      Enum.max_by(distinctive_terms, &String.length/1, fn -> nil end)
 
     # If no distinctive terms found, skip filtering entirely
-    if distinctive_terms == [] do
+    if primary_term == nil do
       {papers, 0}
     else
       {relevant, dropped} = Enum.split_with(papers, fn paper ->
@@ -1362,10 +1417,8 @@ Known failure patterns to avoid:
         |> String.downcase()
         |> String.replace(~r/[^a-z0-9\s\-]/, " ")
 
-        # At least one distinctive topic term must appear in title or abstract
-        Enum.any?(distinctive_terms, fn term ->
-          String.contains?(paper_text, term)
-        end)
+        # Primary (most specific) term MUST appear in title or abstract
+        String.contains?(paper_text, primary_term)
       end)
 
       {relevant, length(dropped)}
