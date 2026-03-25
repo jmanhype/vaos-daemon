@@ -727,30 +727,21 @@ Known failure patterns to avoid:
       end
     end)
 
-    # Run LLM verification in batches of 3 to avoid rate limits
-    llm_verified = need_llm
-      |> Enum.chunk_every(3)
-      |> Enum.flat_map(fn batch ->
-        tasks = Enum.map(batch, fn ev ->
-          Task.async(fn ->
-            paper_num = extract_paper_ref(ev.summary)
-            paper = Map.get(paper_map, paper_num)
-            citation_count = paper["citation_count"] || paper["citationCount"] || 0
+    # Run LLM verification sequentially — reasoning models (GLM-4.7) are slow
+    # and rate-limited, concurrent calls all fail or timeout
+    llm_verified = Enum.map(need_llm, fn ev ->
+      paper_num = extract_paper_ref(ev.summary)
+      paper = Map.get(paper_map, paper_num)
+      citation_count = paper["citation_count"] || paper["citationCount"] || 0
 
-            case cached_verify(ev, paper) do
-              {verification, paper_type} ->
-                score = compute_evidence_score(verification, paper_type, citation_count)
-                verified = verification in [:verified, :partial]
-                verification_str = Atom.to_string(verification)
-                %{ev | verified: verified, verification: verification_str, paper_type: paper_type, citation_count: citation_count, score: score}
-            end
-          end)
-        end)
-        results = Task.await_many(tasks, 120_000)
-        # Small pause between batches to avoid rate limits
-        if length(need_llm) > 3, do: Process.sleep(1_000)
-        results
-      end)
+      case cached_verify(ev, paper) do
+        {verification, paper_type} ->
+          score = compute_evidence_score(verification, paper_type, citation_count)
+          verified = verification in [:verified, :partial]
+          verification_str = Atom.to_string(verification)
+          %{ev | verified: verified, verification: verification_str, paper_type: paper_type, citation_count: citation_count, score: score}
+      end
+    end)
 
     # Recombine in original order by matching on summary
     original_order = Enum.map(evidence_list, fn ev ->
