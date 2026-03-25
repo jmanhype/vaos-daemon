@@ -82,13 +82,13 @@ defmodule OptimalSystemAgent.MixProject do
       # {:rustler, "~> 0.37", optional: true}
 
       # Epistemic ledger — AIEQ claim tracking
-      {:vaos_ledger, path: "../Projects/vaos-ledger-build"},
+      {:vaos_ledger, path: "../vaos-ledger"},
 
       # AlphaXiv MCP client — BEAM-native MCP SDK
       {:anubis_mcp, "~> 1.0"},
 
       # Knowledge graph — triple store with SPARQL and OWL 2 RL reasoning
-      {:vaos_knowledge, path: "../Projects/vaos-knowledge"},
+      {:vaos_knowledge, path: "../vaos-knowledge"},
 
       # miosa_* packages are not standalone deps — their implementations live
       # in this repo. Shim modules in lib/miosa/ satisfy all call sites.
