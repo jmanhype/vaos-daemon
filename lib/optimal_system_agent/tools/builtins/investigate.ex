@@ -1090,7 +1090,11 @@ Known failure patterns to avoid:
     |> Enum.map(fn {p, i} ->
       citations = p["citation_count"] || p["citationCount"] || 0
       source = p["source"] || "unknown"
-      "  [Paper #{i}] #{p["title"]} (#{p["year"]}, #{citations} citations, via #{source})"
+      doi_suffix = case p["doi"] do
+        doi when is_binary(doi) and doi != "" -> " | https://doi.org/#{doi}"
+        _ -> ""
+      end
+      "  [Paper #{i}] #{p["title"]} (#{p["year"]}, #{citations} citations, via #{source})#{doi_suffix}"
     end)
     |> Enum.join("\n")
   end
@@ -1429,6 +1433,7 @@ Known failure patterns to avoid:
       "authors" => Enum.join(paper[:authors] || [], ", "),
       "paper_id" => to_string(paper[:paper_id] || ""),
       "url" => to_string(paper[:url] || ""),
+      "doi" => to_string(paper[:doi] || ""),
       "publicationTypes" => paper[:publication_types] || []
     }
   end
@@ -1466,6 +1471,7 @@ Known failure patterns to avoid:
       authors: paper["authors"] || [],
       paper_id: paper["paper_id"] || paper["paperId"] || "",
       url: paper["url"] || "",
+      doi: paper["doi"] || nil,
       publication_types: paper["publicationTypes"] || []
     }
   end
