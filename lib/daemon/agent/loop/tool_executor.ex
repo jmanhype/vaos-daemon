@@ -38,7 +38,7 @@ defmodule Daemon.Agent.Loop.ToolExecutor do
   def execute_tool_call(tool_call, state) do
     max_tool_output_bytes = Application.get_env(:daemon, :max_tool_output_bytes, 10_240)
     arg_hint = tool_call_hint(tool_call.arguments)
-    Bus.emit(:tool_call, %{name: tool_call.name, phase: :start, args: arg_hint, session_id: state.session_id, agent: state.session_id, iteration: state.iteration})
+    Bus.emit(:tool_call, %{name: tool_call.name, phase: :start, args: arg_hint, session_id: state.session_id, agent: state.session_id, iteration: state.iteration, tool_call_id: tool_call.id})
     start_time_tool = System.monotonic_time(:millisecond)
 
     # Run pre_tool_use hooks sync (security_check/spend_guard can block)
@@ -108,7 +108,7 @@ defmodule Daemon.Agent.Loop.ToolExecutor do
       end
 
     # Annotate result with reliability context from DecisionLedger
-    result_str = maybe_annotate_with_reliability(result_str, tool_call.name, arg_hint)
+    result_str = maybe_annotate_with_reliability(result_str, tool_call.name, arg_hint, state.session_id)
 
     # Run post_tool_use hooks async (cost tracker, telemetry, learning)
     post_payload = %{
@@ -135,7 +135,8 @@ defmodule Daemon.Agent.Loop.ToolExecutor do
       args: arg_hint,
       session_id: state.session_id,
       agent: state.session_id,
-      iteration: state.iteration
+      iteration: state.iteration,
+      tool_call_id: tool_call.id
     })
 
     Bus.emit(:tool_result, %{
@@ -145,7 +146,8 @@ defmodule Daemon.Agent.Loop.ToolExecutor do
       success: not (String.starts_with?(result_str, "Error:") or String.starts_with?(result_str, "Blocked:")),
       session_id: state.session_id,
       agent: state.session_id,
-      iteration: state.iteration
+      iteration: state.iteration,
+      tool_call_id: tool_call.id
     })
 
     # Build tool message — images get structured content blocks.
@@ -269,12 +271,39 @@ defmodule Daemon.Agent.Loop.ToolExecutor do
     end
   end
 
-  # Append a one-line reliability warning when a tool has low success rate.
-  # Only fires for tools with 5+ observations and <50% success. Never blocks.
-  defp maybe_annotate_with_reliability(result_str, tool_name, args_hint) do
+  # Closed-loop steering: annotate tool results with session-level and
+  # historical reliability data, plus next-tool suggestions when applicable.
+  # Three annotation levels (most urgent first, max ~240 chars total):
+  #   1. Session circuit breaker (3+ consecutive failures)
+  #   2. Historical reliability (<50% with n>=5)
+  #   3. Next-tool suggestion (only when problem detected AND strong pair data)
+  defp maybe_annotate_with_reliability(result_str, tool_name, args_hint, session_id) do
     context_type = Daemon.Intelligence.DecisionLedger.derive_context(tool_name, to_string(args_hint || ""))
     pattern_key = "#{tool_name}:#{context_type}"
 
+    annotations = []
+    annotations = check_session_circuit_breaker(annotations, session_id, pattern_key)
+    annotations = check_historical_reliability(annotations, pattern_key, context_type)
+    annotations = maybe_suggest_next(annotations, pattern_key)
+
+    format_annotations(result_str, annotations)
+  rescue
+    _ -> result_str
+  end
+
+  defp check_session_circuit_breaker(annotations, session_id, pattern_key) do
+    case Daemon.Intelligence.DecisionLedger.session_failures(session_id, pattern_key) do
+      %{consecutive: n} when n >= 3 ->
+        [{:session, "[session: #{n} consecutive failures — likely transient issue, try a different approach]"} | annotations]
+
+      _ ->
+        annotations
+    end
+  rescue
+    _ -> annotations
+  end
+
+  defp check_historical_reliability(annotations, pattern_key, context_type) do
     case :ets.lookup(:daemon_decision_ledger, pattern_key) do
       [{_, pattern}] ->
         total = pattern.success_count + pattern.failure_count
@@ -284,23 +313,47 @@ defmodule Daemon.Agent.Loop.ToolExecutor do
 
           cond do
             rate < 30 ->
-              result_str <> "\n[reliability: #{trunc(rate)}% success in #{context_type} (n=#{total}) — consider an alternative tool]"
+              [{:reliability, "[reliability: #{trunc(rate)}% success in #{context_type} (n=#{total}) — consider an alternative tool]"} | annotations]
 
             rate < 50 ->
-              result_str <> "\n[reliability: #{trunc(rate)}% success in #{context_type} (n=#{total}) — may be unreliable]"
+              [{:reliability, "[reliability: #{trunc(rate)}% success in #{context_type} (n=#{total}) — may be unreliable]"} | annotations]
 
             true ->
-              result_str
+              annotations
           end
         else
-          result_str
+          annotations
         end
 
       _ ->
-        result_str
+        annotations
     end
   rescue
-    _ -> result_str
+    _ -> annotations
+  end
+
+  # Only suggest next tool when a problem was already detected (annotations non-empty)
+  # AND strong pair data exists (n >= 5, rate >= 75%)
+  defp maybe_suggest_next([], _pattern_key), do: []
+
+  defp maybe_suggest_next(annotations, pattern_key) do
+    case Daemon.Intelligence.DecisionLedger.best_next_tools(pattern_key) do
+      [%{tool_context: next, success_rate: rate, n: n} | _] when n >= 5 and rate >= 75.0 ->
+        [{:suggestion, "[suggested next: #{next} (#{rate}% success, n=#{n})]"} | annotations]
+
+      _ ->
+        annotations
+    end
+  rescue
+    _ -> annotations
+  end
+
+  defp format_annotations(result_str, []), do: result_str
+
+  defp format_annotations(result_str, annotations) do
+    # Reverse to maintain priority order (most urgent first)
+    lines = annotations |> Enum.reverse() |> Enum.map(fn {_type, text} -> text end)
+    result_str <> "\n" <> Enum.join(lines, "\n")
   end
 
   # Async hooks — fire-and-forget for post-event hooks (post_tool_use).

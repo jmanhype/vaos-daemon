@@ -19,6 +19,7 @@ defmodule Daemon.Intelligence.DecisionLedger do
 
   @ets_table :daemon_decision_ledger
   @ets_pairs_table :daemon_decision_pairs
+  @ets_failures_table :daemon_session_failures
   @store_dir Path.expand("~/.daemon/intelligence")
   @jsonl_filename "decisions.jsonl"
   @max_patterns 500
@@ -114,6 +115,19 @@ defmodule Daemon.Intelligence.DecisionLedger do
       |> Enum.sort_by(& &1.success_rate, :desc)
     rescue
       ArgumentError -> []
+    end
+  end
+
+  @doc "Session-level failure stats for a tool pattern. Returns nil if no failures recorded."
+  @spec session_failures(String.t(), String.t()) :: map() | nil
+  def session_failures(session_id, pattern_key) do
+    try do
+      case :ets.lookup(failures_table_name(), {session_id, pattern_key}) do
+        [{_, stats}] -> stats
+        _ -> nil
+      end
+    rescue
+      ArgumentError -> nil
     end
   end
 
@@ -221,19 +235,21 @@ defmodule Daemon.Intelligence.DecisionLedger do
   def init(opts) do
     test_mode = Keyword.get(opts, :test_mode, false)
 
-    {table_name, pairs_name, store_dir} =
+    {table_name, pairs_name, failures_name, store_dir} =
       if test_mode do
         suffix = :crypto.strong_rand_bytes(4) |> Base.url_encode64(padding: false)
         table = :"daemon_decision_ledger_test_#{suffix}"
         pairs = :"daemon_decision_pairs_test_#{suffix}"
+        failures = :"daemon_session_failures_test_#{suffix}"
         dir = Path.join(System.tmp_dir!(), "decision_ledger_test_#{suffix}")
-        {table, pairs, dir}
+        {table, pairs, failures, dir}
       else
-        {@ets_table, @ets_pairs_table, @store_dir}
+        {@ets_table, @ets_pairs_table, @ets_failures_table, @store_dir}
       end
 
     :ets.new(table_name, [:set, :named_table, :public, read_concurrency: true])
     :ets.new(pairs_name, [:set, :named_table, :public, read_concurrency: true])
+    :ets.new(failures_name, [:set, :named_table, :public, read_concurrency: true])
     File.mkdir_p!(store_dir)
 
     jsonl_path = Path.join(store_dir, @jsonl_filename)
@@ -257,6 +273,7 @@ defmodule Daemon.Intelligence.DecisionLedger do
        sync_timer: sync_timer,
        ets_table: table_name,
        pairs_table: pairs_name,
+       failures_table: failures_name,
        test_mode: test_mode
      }}
   end
@@ -282,12 +299,15 @@ defmodule Daemon.Intelligence.DecisionLedger do
     last_iteration = prune_session_map(state.last_iteration, 50)
     pending_calls = prune_session_map(state.pending_calls, 50)
 
+    # Prune session failure entries older than 30 minutes
+    prune_stale_session_failures(state.failures_table)
+
     timer = Process.send_after(self(), :sync_to_knowledge, @sync_interval_ms)
     {:noreply, %{state | sync_timer: timer, last_iteration: last_iteration, pending_calls: pending_calls}}
   end
 
   def handle_info({:tool_call_start, payload}, state) do
-    key = {payload[:session_id] || "default", payload[:name]}
+    key = {payload[:session_id] || "default", payload[:tool_call_id] || payload[:name]}
 
     pending = Map.put(state.pending_calls, key, %{
       start_time: System.monotonic_time(:millisecond),
@@ -298,7 +318,7 @@ defmodule Daemon.Intelligence.DecisionLedger do
   end
 
   def handle_info({:tool_call_end, payload}, state) do
-    key = {payload[:session_id] || "default", payload[:name]}
+    key = {payload[:session_id] || "default", payload[:tool_call_id] || payload[:name]}
 
     pending =
       case Map.get(state.pending_calls, key) do
@@ -320,7 +340,7 @@ defmodule Daemon.Intelligence.DecisionLedger do
     if tool_name in @meta_tools do
       {:noreply, state}
     else
-      key = {payload[:session_id] || "default", tool_name}
+      key = {payload[:session_id] || "default", payload[:tool_call_id] || tool_name}
       pending_meta = Map.get(state.pending_calls, key, %{})
       args_hint = pending_meta[:args_hint] || payload[:args]
       duration_ms = pending_meta[:duration_ms] || payload[:duration_ms] || 0
@@ -328,13 +348,16 @@ defmodule Daemon.Intelligence.DecisionLedger do
 
       context_type = derive_context(tool_name, to_string(args_hint || ""))
       pattern_key = "#{tool_name}:#{context_type}"
+      session_id = payload[:session_id] || "default"
+      iteration = payload[:iteration] || 0
 
       # Update ETS pattern
       upsert_pattern(state.ets_table, pattern_key, tool_name, context_type, success, duration_ms, payload)
 
+      # Update session-level failure tracking
+      update_session_failures(state.failures_table, session_id, pattern_key, success)
+
       # Update pair tracking (iteration-aware sequence tracking)
-      session_id = payload[:session_id] || "default"
-      iteration = payload[:iteration] || 0
       state = track_pair(state, session_id, iteration, pattern_key, success)
 
       # Append to JSONL
@@ -470,6 +493,46 @@ defmodule Daemon.Intelligence.DecisionLedger do
     :ets.insert(table, {pattern_key, pattern})
   end
 
+  # ── Session failure tracking ──────────────────────────────────────────────
+
+  defp update_session_failures(table, session_id, pattern_key, success) do
+    ets_key = {session_id, pattern_key}
+    now = DateTime.utc_now()
+
+    existing =
+      case :ets.lookup(table, ets_key) do
+        [{_, stats}] -> stats
+        _ -> nil
+      end
+
+    stats =
+      if success do
+        # Reset consecutive on success, keep total_failures for session context
+        if existing do
+          %{existing | consecutive: 0}
+        else
+          # First observation is a success — no failure entry needed
+          nil
+        end
+      else
+        if existing do
+          %{existing |
+            consecutive: existing.consecutive + 1,
+            total_failures: existing.total_failures + 1,
+            last_failure_at: now
+          }
+        else
+          %{consecutive: 1, total_failures: 1, last_failure_at: now}
+        end
+      end
+
+    if stats do
+      :ets.insert(table, {ets_key, stats})
+    end
+  rescue
+    _ -> :ok
+  end
+
   # ── Pair (sequence) tracking — iteration-aware ──────────────────────────
   #
   # Tools within the same iteration run in parallel (Task.async_stream,
@@ -537,13 +600,15 @@ defmodule Daemon.Intelligence.DecisionLedger do
   end
 
   defp enforce_max_pairs(table) do
-    all = :ets.tab2list(table)
+    size = :ets.info(table, :size)
 
-    if length(all) > @max_pairs do
+    if size > @max_pairs do
+      all = :ets.tab2list(table)
+
       sorted =
         all
         |> Enum.sort_by(fn {_key, p} -> p.success_count + p.failure_count end)
-        |> Enum.take(length(all) - @max_pairs)
+        |> Enum.take(size - @max_pairs)
 
       for {key, _} <- sorted do
         :ets.delete(table, key)
@@ -742,14 +807,15 @@ defmodule Daemon.Intelligence.DecisionLedger do
   # ── Bounds enforcement ─────────────────────────────────────────────────────
 
   defp enforce_max_patterns(table) do
-    all = :ets.tab2list(table)
+    size = :ets.info(table, :size)
 
-    if length(all) > @max_patterns do
-      # Evict least-recently-observed entries
+    if size > @max_patterns do
+      all = :ets.tab2list(table)
+
       sorted =
         all
         |> Enum.sort_by(fn {_key, p} -> p.last_observed_at end, DateTime)
-        |> Enum.take(length(all) - @max_patterns)
+        |> Enum.take(size - @max_patterns)
 
       for {key, _} <- sorted do
         :ets.delete(table, key)
@@ -780,4 +846,19 @@ defmodule Daemon.Intelligence.DecisionLedger do
   # not through the public API which targets the production table.
   defp ets_table_name, do: @ets_table
   defp pairs_table_name, do: @ets_pairs_table
+  defp failures_table_name, do: @ets_failures_table
+
+  # Prune session failure entries older than 30 minutes
+  defp prune_stale_session_failures(table) do
+    cutoff = DateTime.add(DateTime.utc_now(), -30, :minute)
+
+    :ets.tab2list(table)
+    |> Enum.each(fn {key, stats} ->
+      if DateTime.compare(stats.last_failure_at, cutoff) == :lt do
+        :ets.delete(table, key)
+      end
+    end)
+  rescue
+    _ -> :ok
+  end
 end

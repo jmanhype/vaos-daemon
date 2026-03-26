@@ -478,6 +478,12 @@ defmodule Daemon.Agent.Hooks do
       ArgumentError -> :ok
     end
 
+    try do
+      :ets.match_delete(:daemon_session_failures, {{sid, :_}, :_})
+    rescue
+      ArgumentError -> :ok
+    end
+
     {:ok, payload}
   end
 

@@ -7,7 +7,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
   defp start_test_ledger do
     {:ok, pid} = DecisionLedger.start_link(test_mode: true)
     state = :sys.get_state(pid)
-    {pid, state.ets_table, state.pairs_table}
+    {pid, state.ets_table, state.pairs_table, state.failures_table}
   end
 
   defp simulate_outcome(pid, tool_name, args_hint, success, opts \\ []) do
@@ -34,22 +34,24 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
 
   describe "GenServer lifecycle" do
     test "starts successfully in test mode" do
-      {pid, _table, _pairs} = start_test_ledger()
+      {pid, _table, _pairs, _failures} = start_test_ledger()
       assert Process.alive?(pid)
       GenServer.stop(pid)
     end
 
     test "initial state has empty pending_calls and claim_cache" do
-      {pid, _table, _pairs} = start_test_ledger()
+      {pid, _table, _pairs, _failures} = start_test_ledger()
       state = :sys.get_state(pid)
       assert state.pending_calls == %{}
       assert state.claim_cache == %{}
       GenServer.stop(pid)
     end
 
-    test "ETS table is created" do
-      {pid, table, _pairs} = start_test_ledger()
+    test "ETS tables are created" do
+      {pid, table, pairs, failures} = start_test_ledger()
       assert :ets.info(table) != :undefined
+      assert :ets.info(pairs) != :undefined
+      assert :ets.info(failures) != :undefined
       GenServer.stop(pid)
     end
   end
@@ -114,7 +116,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
 
   describe "pattern tracking" do
     test "tool outcome creates pattern in ETS" do
-      {pid, table, _pairs} = start_test_ledger()
+      {pid, table, _pairs, _failures} = start_test_ledger()
 
       simulate_outcome(pid, "shell_execute", "git status", true)
 
@@ -131,7 +133,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
     end
 
     test "success increments success_count" do
-      {pid, table, _pairs} = start_test_ledger()
+      {pid, table, _pairs, _failures} = start_test_ledger()
 
       simulate_outcome(pid, "file_read", "lib/foo.ex", true)
       simulate_outcome(pid, "file_read", "lib/bar.ex", true)
@@ -145,7 +147,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
     end
 
     test "failure increments failure_count and adds to recent_errors" do
-      {pid, table, _pairs} = start_test_ledger()
+      {pid, table, _pairs, _failures} = start_test_ledger()
 
       simulate_outcome(pid, "web_fetch", "https://example.com", false,
         result: "Error: 429 rate limit")
@@ -160,7 +162,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
     end
 
     test "avg_duration_ms is computed correctly" do
-      {pid, table, _pairs} = start_test_ledger()
+      {pid, table, _pairs, _failures} = start_test_ledger()
 
       simulate_outcome(pid, "investigate", "topic", true, duration_ms: 100)
       simulate_outcome(pid, "investigate", "topic2", true, duration_ms: 200)
@@ -176,7 +178,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
 
   describe "meta tool filtering" do
     test "knowledge tool calls are not recorded" do
-      {pid, table, _pairs} = start_test_ledger()
+      {pid, table, _pairs, _failures} = start_test_ledger()
 
       simulate_outcome(pid, "knowledge", "some query", true)
       simulate_outcome(pid, "memory_recall", "something", true)
@@ -192,7 +194,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
 
   describe "buffer limits" do
     test "recent_errors capped at 3" do
-      {pid, table, _pairs} = start_test_ledger()
+      {pid, table, _pairs, _failures} = start_test_ledger()
 
       for i <- 1..5 do
         simulate_outcome(pid, "web_fetch", "https://example.com", false,
@@ -210,7 +212,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
 
   describe "context_block" do
     test "returns nil when no patterns exist" do
-      {pid, _table, _pairs} = start_test_ledger()
+      {pid, _table, _pairs, _failures} = start_test_ledger()
       # context_block reads from the module-level ETS, so we test the function directly
       # with the freshly started ledger that has no data
       # Since test_mode uses a different ETS name, we test the public function separately
@@ -219,7 +221,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
     end
 
     test "returns formatted text when patterns have 5+ observations" do
-      {pid, table, _pairs} = start_test_ledger()
+      {pid, table, _pairs, _failures} = start_test_ledger()
 
       for _ <- 1..6 do
         simulate_outcome(pid, "shell_execute", "git status", true)
@@ -238,7 +240,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
 
   describe "JSONL persistence" do
     test "writes to JSONL and reloads on init" do
-      {pid, _table, _pairs} = start_test_ledger()
+      {pid, _table, _pairs, _failures} = start_test_ledger()
       state = :sys.get_state(pid)
       jsonl_path = state.jsonl_path
 
@@ -276,7 +278,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
 
   describe "outcome correlation" do
     test "tool_call_start + tool_outcome flow records duration" do
-      {pid, table, _pairs} = start_test_ledger()
+      {pid, table, _pairs, _failures} = start_test_ledger()
 
       # Simulate the full event flow
       send(pid, {:tool_call_start, %{name: "shell_execute", args: "git log", session_id: "test"}})
@@ -308,7 +310,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
 
   describe "error handling" do
     test "handles unknown messages gracefully" do
-      {pid, _table, _pairs} = start_test_ledger()
+      {pid, _table, _pairs, _failures} = start_test_ledger()
 
       send(pid, :unknown_message)
       send(pid, {:random, "data"})
@@ -319,7 +321,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
     end
 
     test "handles malformed tool_outcome gracefully" do
-      {pid, _table, _pairs} = start_test_ledger()
+      {pid, _table, _pairs, _failures} = start_test_ledger()
 
       send(pid, {:tool_outcome, %{name: nil, success: true}})
       :timer.sleep(10)
@@ -333,7 +335,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
 
   describe "pair tracking (iteration-aware)" do
     test "single-tool iterations create pairs across iteration boundaries" do
-      {pid, _table, pairs} = start_test_ledger()
+      {pid, _table, pairs, _failures} = start_test_ledger()
 
       # Iteration 1: file_read (single tool — will be unambiguous predecessor)
       simulate_outcome(pid, "file_read", "lib/foo.ex", true, iteration: 1)
@@ -351,7 +353,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
     end
 
     test "parallel tools in same iteration do NOT create pairs between each other" do
-      {pid, _table, pairs} = start_test_ledger()
+      {pid, _table, pairs, _failures} = start_test_ledger()
 
       # Iteration 1: three tools run in parallel (same iteration number)
       simulate_outcome(pid, "file_read", "lib/a.ex", true, iteration: 1)
@@ -365,7 +367,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
     end
 
     test "multi-tool iteration does NOT create pairs as predecessor" do
-      {pid, _table, pairs} = start_test_ledger()
+      {pid, _table, pairs, _failures} = start_test_ledger()
 
       # Iteration 1: two parallel tools (ambiguous predecessor)
       simulate_outcome(pid, "file_read", "lib/a.ex", true, iteration: 1)
@@ -380,7 +382,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
     end
 
     test "tracks failure in pairs" do
-      {pid, _table, pairs} = start_test_ledger()
+      {pid, _table, pairs, _failures} = start_test_ledger()
 
       simulate_outcome(pid, "file_read", "lib/foo.ex", true, iteration: 1)
       simulate_outcome(pid, "file_edit", "lib/foo.ex", false,
@@ -394,7 +396,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
     end
 
     test "accumulates pair counts across repeated single-tool iterations" do
-      {pid, _table, pairs} = start_test_ledger()
+      {pid, _table, pairs, _failures} = start_test_ledger()
 
       # Simulate: single git tool per iteration, alternating iterations
       # iter 1: git status (single) — no predecessor
@@ -419,7 +421,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
     end
 
     test "different sessions don't create cross-session pairs" do
-      {pid, _table, pairs} = start_test_ledger()
+      {pid, _table, pairs, _failures} = start_test_ledger()
 
       # Session A: file_read at iteration 1
       simulate_outcome(pid, "file_read", "lib/a.ex", true, iteration: 1, session_id: "session_a")
@@ -434,7 +436,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
     end
 
     test "realistic parallel-then-sequential flow" do
-      {pid, _table, pairs} = start_test_ledger()
+      {pid, _table, pairs, _failures} = start_test_ledger()
 
       # Iteration 1: LLM reads 3 files in parallel (no pairs as predecessor)
       simulate_outcome(pid, "file_read", "lib/a.ex", true, iteration: 1)
@@ -461,6 +463,141 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
   describe "best_next_tools/1" do
     test "returns empty list when no pairs exist" do
       assert DecisionLedger.best_next_tools("shell_execute:git") == []
+    end
+  end
+
+  # ── tool_call_id disambiguation ─────────────────────────────────────
+
+  describe "tool_call_id disambiguation" do
+    test "parallel same-name tools with different tool_call_ids get separate pending entries" do
+      {pid, _table, _pairs, _failures} = start_test_ledger()
+
+      # Simulate 3 parallel file_read calls with unique tool_call_ids
+      send(pid, {:tool_call_start, %{name: "file_read", args: "lib/a.ex", session_id: "test", tool_call_id: "call_aaa"}})
+      send(pid, {:tool_call_start, %{name: "file_read", args: "lib/b.ex", session_id: "test", tool_call_id: "call_bbb"}})
+      send(pid, {:tool_call_start, %{name: "file_read", args: "lib/c.ex", session_id: "test", tool_call_id: "call_ccc"}})
+      :timer.sleep(10)
+
+      state = :sys.get_state(pid)
+      # All 3 should have distinct entries in pending_calls
+      assert map_size(state.pending_calls) == 3
+      assert Map.has_key?(state.pending_calls, {"test", "call_aaa"})
+      assert Map.has_key?(state.pending_calls, {"test", "call_bbb"})
+      assert Map.has_key?(state.pending_calls, {"test", "call_ccc"})
+
+      # Complete all 3
+      send(pid, {:tool_call_end, %{name: "file_read", duration_ms: 50, session_id: "test", tool_call_id: "call_aaa"}})
+      send(pid, {:tool_call_end, %{name: "file_read", duration_ms: 100, session_id: "test", tool_call_id: "call_bbb"}})
+      send(pid, {:tool_call_end, %{name: "file_read", duration_ms: 150, session_id: "test", tool_call_id: "call_ccc"}})
+      :timer.sleep(10)
+
+      # Each should have captured its own duration
+      state = :sys.get_state(pid)
+      assert state.pending_calls[{"test", "call_aaa"}].duration_ms == 50
+      assert state.pending_calls[{"test", "call_bbb"}].duration_ms == 100
+      assert state.pending_calls[{"test", "call_ccc"}].duration_ms == 150
+
+      GenServer.stop(pid)
+    end
+
+    test "tool_call_id fallback to name when absent" do
+      {pid, _table, _pairs, _failures} = start_test_ledger()
+
+      # Events without tool_call_id should fall back to name (backward compat)
+      send(pid, {:tool_call_start, %{name: "shell_execute", args: "git status", session_id: "test"}})
+      :timer.sleep(10)
+
+      state = :sys.get_state(pid)
+      assert Map.has_key?(state.pending_calls, {"test", "shell_execute"})
+
+      GenServer.stop(pid)
+    end
+  end
+
+  # ── Session failure tracking ────────────────────────────────────────
+
+  describe "session failure tracking" do
+    test "consecutive failures are tracked" do
+      {pid, _table, _pairs, failures} = start_test_ledger()
+
+      simulate_outcome(pid, "web_fetch", "https://example.com", false, result: "Error: 429")
+      simulate_outcome(pid, "web_fetch", "https://example.com", false, result: "Error: 429")
+      simulate_outcome(pid, "web_fetch", "https://example.com", false, result: "Error: 429")
+
+      [{_key, stats}] = :ets.tab2list(failures)
+      assert stats.consecutive == 3
+      assert stats.total_failures == 3
+
+      GenServer.stop(pid)
+    end
+
+    test "success resets consecutive but keeps total_failures" do
+      {pid, _table, _pairs, failures} = start_test_ledger()
+
+      simulate_outcome(pid, "web_fetch", "https://example.com", false, result: "Error: 429")
+      simulate_outcome(pid, "web_fetch", "https://example.com", false, result: "Error: 429")
+      # Now succeed
+      simulate_outcome(pid, "web_fetch", "https://example.com", true)
+
+      [{_key, stats}] = :ets.tab2list(failures)
+      assert stats.consecutive == 0
+      assert stats.total_failures == 2
+
+      GenServer.stop(pid)
+    end
+
+    test "first success does not create failure entry" do
+      {pid, _table, _pairs, failures} = start_test_ledger()
+
+      simulate_outcome(pid, "file_read", "lib/foo.ex", true)
+
+      assert :ets.tab2list(failures) == []
+
+      GenServer.stop(pid)
+    end
+
+    test "cross-session isolation" do
+      {pid, _table, _pairs, failures} = start_test_ledger()
+
+      # Session A has failures
+      simulate_outcome(pid, "web_fetch", "https://example.com", false,
+        session_id: "session_a", result: "Error: 429")
+      simulate_outcome(pid, "web_fetch", "https://example.com", false,
+        session_id: "session_a", result: "Error: 429")
+
+      # Session B has no failures for this tool
+      simulate_outcome(pid, "web_fetch", "https://example.com", true, session_id: "session_b")
+
+      # Session A should have 2 consecutive failures
+      case :ets.lookup(failures, {"session_a", "web_fetch:web"}) do
+        [{_, stats}] ->
+          assert stats.consecutive == 2
+          assert stats.total_failures == 2
+        _ ->
+          flunk("Expected failure entry for session_a")
+      end
+
+      # Session B should have no failure entries
+      assert :ets.lookup(failures, {"session_b", "web_fetch:web"}) == []
+
+      GenServer.stop(pid)
+    end
+
+    test "consecutive count resumes after reset" do
+      {pid, _table, _pairs, failures} = start_test_ledger()
+
+      # Fail, fail, succeed (reset), fail, fail
+      simulate_outcome(pid, "web_fetch", "https://example.com", false, result: "Error: 429")
+      simulate_outcome(pid, "web_fetch", "https://example.com", false, result: "Error: 429")
+      simulate_outcome(pid, "web_fetch", "https://example.com", true)
+      simulate_outcome(pid, "web_fetch", "https://example.com", false, result: "Error: 500")
+      simulate_outcome(pid, "web_fetch", "https://example.com", false, result: "Error: 500")
+
+      [{_key, stats}] = :ets.tab2list(failures)
+      assert stats.consecutive == 2
+      assert stats.total_failures == 4
+
+      GenServer.stop(pid)
     end
   end
 end
