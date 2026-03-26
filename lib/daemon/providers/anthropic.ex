@@ -51,7 +51,7 @@ defmodule Daemon.Providers.Anthropic do
     # ZAI proxy: use non-streaming call, simulate callbacks
     case chat(messages, opts) do
       {:ok, %{content: content, tool_calls: tool_calls} = response} ->
-        if is_binary(content) and content != "", do: callback.({:text, content})
+        if is_binary(content) and content != "", do: callback.({:text_delta, content})
         if is_list(tool_calls) do
           Enum.each(tool_calls, fn tc ->
             callback.({:tool_use_start, %{id: tc[:id] || tc["id"], name: tc[:name] || tc["name"]}})
@@ -59,11 +59,11 @@ defmodule Daemon.Providers.Anthropic do
             callback.(:tool_use_end)
           end)
         end
-        callback.(:done)
-        {:ok, response}
+        callback.({:done, response})
+        :ok
       {:ok, response} ->
-        callback.(:done)
-        {:ok, response}
+        callback.({:done, response})
+        :ok
       {:error, _} = err ->
         err
       other ->
