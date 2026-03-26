@@ -345,15 +345,11 @@ Structured memory system in `vault/` (12 modules):
 
 ## Known Limitations
 
-- **Signal classification cache not implemented.** The classifier moduledoc references "ETS-backed, 10-minute TTL" but `MiosaSignal.MessageClassifier` in `miosa/shims.ex` has no ETS caching. `classify_fast/2` directly calls `classify_deterministic/2` with no cache lookup or SHA256 key generation.
-
 - **Channels beyond CLI/HTTP/Telegram are untested in production.** 9 of 12 channel adapters (Discord, Slack, WhatsApp, Signal, Matrix, Email, QQ, DingTalk, Feishu) have code but no evidence of production deployment or integration testing.
 
 - **Path deps required.** `vaos_ledger` and `vaos_knowledge` must be cloned to `../vaos-ledger` and `../vaos-knowledge` respectively. Without them, compilation fails.
 
 - **Rustler removed for OTP 28.** Line 82 of `mix.exs`: `# {:rustler, "~> 0.37", optional: true}` with note "OTP 28: rustler removed -- nif.ex uses pure Elixir fallbacks." NIF-dependent features use Elixir implementations.
-
-- **CostTracker depends on SQLite3 migrations.** `agent/cost_tracker.ex` uses raw SQL (`INSERT ... ON CONFLICT DO UPDATE SET`) against `cost_events` and `agent_budgets` tables. These tables require Ecto migrations that may not have been run.
 
 - **Homebrew tap does not exist.** No `brew tap` or `brew install` is available. Install from source.
 
