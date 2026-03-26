@@ -41,7 +41,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
   alias Vaos.Ledger.Epistemic.Policy
   alias Vaos.Ledger.Research.Pipeline
   alias Vaos.Ledger.ML.CrashLearner
-  alias Daemon.Investigation.{Strategy, StrategyStore, SourceScoring}
+  alias Daemon.Investigation.{Strategy, StrategyStore, SourceScoring, PromptConfig, PromptFeedback}
 
   @ledger_path Path.join(System.user_home!(), ".openclaw/investigate_ledger.json")
   @ledger_name :investigate_ledger
@@ -147,6 +147,9 @@ defmodule Daemon.Tools.Builtins.Investigate do
       _ -> :ok
     end
 
+    # 1b. Load prompt templates (JSON config with fallback chain)
+    prompts = PromptConfig.load()
+
     # 2. Extract keywords for prior knowledge search
     keywords = extract_keywords(topic)
 
@@ -175,7 +178,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
     Logger.info("[investigate] Papers: #{length(all_papers)} total (#{inspect(source_counts)})")
 
     # 5. Format papers context for LLM prompts
-    papers_context = format_papers(all_papers)
+    papers_context = format_papers(all_papers, prompts)
 
     # 6. Prior evidence context (evidence only, no conclusions)
     prior_text = if prior_evidence == [] do
@@ -206,65 +209,37 @@ Known failure patterns to avoid:
     end
 
     # 7. TWO ADVERSARIAL LLM CALLS (sequential for rate-limit safety)
-    example_format = """
-    Example of correct format:
-    1. [SOURCED] (strength: 8) [Paper 3] reports improved accuracy on mathematical reasoning benchmarks using MCTS-guided search compared to baseline sampling (as stated in the abstract). The paper demonstrates this across multiple task types.
-    2. [REASONING] (strength: 5) The mechanism of action is biologically plausible because...
+    example_format = prompts["example_format"]
 
-    Important: Only claim what the paper's abstract explicitly states. Do not fabricate statistics or findings not present in the abstract text.
-    """
+    for_prompt = PromptConfig.render(prompts["advocate_user_template"],
+      position: "TRUE",
+      direction: "",
+      claim: topic,
+      papers_context: papers_context,
+      prior_text: prior_text,
+      arg_type: "arguments",
+      example_format: example_format,
+      arg_word: "argument"
+    )
 
-    for_prompt = """
-    You are a researcher who genuinely believes the following claim is TRUE.
-    Using the papers provided and your knowledge, make the STRONGEST possible case.
-
-    Claim: #{topic}
-
-    #{papers_context}
-    #{prior_text}
-
-    Present your 3-5 strongest arguments. For each argument:
-    - Write a FULL paragraph (2-4 sentences minimum) explaining the evidence
-    - Cite a specific paper as [Paper N] within your paragraph text
-    - Rate the argument strength 1-10
-    - Tag as [SOURCED] if backed by a paper, [REASONING] if from your analysis
-    - Do NOT just write a title — write a substantive argument with evidence
-
-    #{example_format}
-
-    Now write your arguments:
-    1. [SOURCED/REASONING] (strength: N) Your detailed argument here [Paper N if applicable]
-    """
-
-    against_prompt = """
-    You are a researcher who genuinely believes the following claim is FALSE.
-    Using the papers provided and your knowledge, make the STRONGEST possible case AGAINST it.
-
-    Claim: #{topic}
-
-    #{papers_context}
-    #{prior_text}
-
-    Present your 3-5 strongest counterarguments. For each argument:
-    - Write a FULL paragraph (2-4 sentences minimum) explaining the evidence
-    - Cite a specific paper as [Paper N] within your paragraph text
-    - Rate the argument strength 1-10
-    - Tag as [SOURCED] if backed by a paper, [REASONING] if from your analysis
-    - Do NOT just write a title — write a substantive argument with evidence
-
-    #{example_format}
-
-    Now write your counterarguments:
-    1. [SOURCED/REASONING] (strength: N) Your detailed counterargument here [Paper N if applicable]
-    """
+    against_prompt = PromptConfig.render(prompts["advocate_user_template"],
+      position: "FALSE",
+      direction: " AGAINST it",
+      claim: topic,
+      papers_context: papers_context,
+      prior_text: prior_text,
+      arg_type: "counterarguments",
+      example_format: example_format,
+      arg_word: "counterargument"
+    )
 
     for_messages = [
-      %{role: "system", content: "You are an intellectually honest researcher making the strongest case FOR a claim. Vary your strength ratings — not every argument is equally strong." <> pitfall_context},
+      %{role: "system", content: prompts["for_system"] <> pitfall_context},
       %{role: "user", content: for_prompt}
     ]
 
     against_messages = [
-      %{role: "system", content: "You are an intellectually honest researcher making the strongest case AGAINST a claim. Vary your strength ratings — not every argument is equally strong." <> pitfall_context},
+      %{role: "system", content: prompts["against_system"] <> pitfall_context},
       %{role: "user", content: against_prompt}
     ]
 
@@ -328,7 +303,7 @@ Known failure patterns to avoid:
 
       supporting == [] ->
         # Only AGAINST succeeded — verify what we have
-        verified_opposing = verify_citations(opposing, paper_map)
+        verified_opposing = verify_citations(opposing, paper_map, prompts)
         result = "## Investigation: #{topic}\n\n" <>
           "**Status: PARTIAL** -- Only the case AGAINST was analyzed (FOR advocate failed)\n" <>
           "**Cannot determine direction from one-sided analysis**\n\n" <>
@@ -338,7 +313,7 @@ Known failure patterns to avoid:
 
       opposing == [] ->
         # Only FOR succeeded — verify what we have
-        verified_supporting = verify_citations(supporting, paper_map)
+        verified_supporting = verify_citations(supporting, paper_map, prompts)
         result = "## Investigation: #{topic}\n\n" <>
           "**Status: PARTIAL** -- Only the case FOR was analyzed (AGAINST advocate failed)\n" <>
           "**Cannot determine direction from one-sided analysis**\n\n" <>
@@ -349,7 +324,7 @@ Known failure patterns to avoid:
       true ->
         # Both succeeded — full analysis with citation verification
         run_full_analysis(topic, supporting, opposing, all_papers, paper_map,
-                          source_counts, keywords, prior_evidence, store, depth, prior_strategy)
+                          source_counts, keywords, prior_evidence, store, depth, prior_strategy, prompts)
     end
   rescue
     e ->
@@ -360,10 +335,10 @@ Known failure patterns to avoid:
   # -- Full analysis (both sides succeeded) ------------------------------
 
   defp run_full_analysis(topic, supporting_raw, opposing_raw, all_papers, paper_map,
-                         source_counts, keywords, prior_evidence, store, depth, strategy) do
+                         source_counts, keywords, prior_evidence, store, depth, strategy, prompts) do
     # 9. CITATION VERIFICATION + PAPER TYPE CLASSIFICATION — the evidence quality step
-    verified_supporting = verify_citations(supporting_raw, paper_map)
-    verified_opposing = verify_citations(opposing_raw, paper_map)
+    verified_supporting = verify_citations(supporting_raw, paper_map, prompts)
+    verified_opposing = verify_citations(opposing_raw, paper_map, prompts)
 
     # 9.7 Re-score evidence with winning strategy's hierarchy weights
     verified_supporting = rescore_evidence(verified_supporting, strategy)
@@ -439,6 +414,27 @@ Known failure patterns to avoid:
       fn ev -> ev.verification == "no_citation" end)
     reasoning_against = Enum.count(verified_opposing,
       fn ev -> ev.verification == "no_citation" end)
+
+    # Record prompt feedback for the GEPA flywheel
+    sourced_evidence = Enum.filter(verified_supporting ++ verified_opposing,
+      fn ev -> ev.source_type == :sourced end)
+    total_sourced = length(sourced_evidence)
+    count_verified = Enum.count(sourced_evidence, fn ev -> ev.verification == "verified" end)
+    count_partial = Enum.count(sourced_evidence, fn ev -> ev.verification == "partial" end)
+    count_unverified_sourced = Enum.count(sourced_evidence, fn ev -> ev.verification == "unverified" end)
+
+    try do
+      prompt_hash = PromptConfig.prompt_hash(prompts)
+      PromptFeedback.record(prompt_hash, topic, %{
+        total_sourced: total_sourced,
+        verified: count_verified,
+        partial: count_partial,
+        unverified: count_unverified_sourced,
+        verification_rate: if(total_sourced > 0, do: count_verified / total_sourced, else: 0.0)
+      })
+    rescue
+      e -> Logger.warning("[investigate] Failed to record prompt feedback: #{Exception.message(e)}")
+    end
 
     # Count paper types across all evidence
     all_evidence = verified_supporting ++ verified_opposing
@@ -518,7 +514,8 @@ Known failure patterns to avoid:
       papers_detail: Enum.map(all_papers, fn p ->
         %{title: p["title"], year: p["year"],
           citations: p["citation_count"] || p["citationCount"] || 0,
-          source: p["source"] || "unknown"}
+          source: p["source"] || "unknown",
+          abstract: String.slice(to_string(p["abstract"] || ""), 0, 500)}
       end),
       investigation_id: topic_id,
       optimization: nil,
@@ -694,7 +691,7 @@ Known failure patterns to avoid:
 
   # -- Citation Verification + Paper Type Classification ------------------
 
-  defp verify_citations(evidence_list, paper_map) do
+  defp verify_citations(evidence_list, paper_map, prompts) do
     # Split into items that need LLM verification and those that don't
     {need_llm, no_llm} = Enum.split_with(evidence_list, fn ev ->
       case extract_paper_ref(ev.summary) do
@@ -718,7 +715,7 @@ Known failure patterns to avoid:
       paper = Map.get(paper_map, paper_num)
       citation_count = paper["citation_count"] || paper["citationCount"] || 0
 
-      case cached_verify(ev, paper) do
+      case cached_verify(ev, paper, prompts) do
         {verification, paper_type} ->
           score = compute_evidence_score(verification, paper_type, citation_count)
           verified = verification in [:verified, :partial]
@@ -742,22 +739,33 @@ Known failure patterns to avoid:
     end
   end
 
-  defp verify_single_citation(evidence, paper) do
+  defp verify_single_citation(evidence, paper, prompts) do
     abstract = Map.get(paper, "abstract", "") || ""
     title = Map.get(paper, "title", "") || ""
 
-    prompt = """
-    Paper title: #{title}
-    Paper abstract: #{String.slice(to_string(abstract), 0, 2000)}
+    prompt = case prompts["verify_prompt"] do
+      template when is_binary(template) ->
+        PromptConfig.render(template,
+          paper_title: title,
+          paper_abstract: String.slice(to_string(abstract), 0, 2000),
+          claim: evidence.summary
+        )
 
-    Claim: #{evidence.summary}
+      _ ->
+        # Fallback to inline (should not happen with proper config)
+        """
+        Paper title: #{title}
+        Paper abstract: #{String.slice(to_string(abstract), 0, 2000)}
 
-    Two questions:
-    1. Does this paper's abstract support the specific claim? VERIFIED / PARTIAL / UNVERIFIED
-    2. Paper type? REVIEW (systematic review/meta-analysis), TRIAL (RCT/experiment), STUDY (observational/single study), OTHER
+        Claim: #{evidence.summary}
 
-    Answer format: WORD WORD (e.g., VERIFIED REVIEW or UNVERIFIED STUDY)
-    """
+        Two questions:
+        1. Does this paper's abstract support the specific claim? VERIFIED / PARTIAL / UNVERIFIED
+        2. Paper type? REVIEW (systematic review/meta-analysis), TRIAL (RCT/experiment), STUDY (observational/single study), OTHER
+
+        Answer format: WORD WORD (e.g., VERIFIED REVIEW or UNVERIFIED STUDY)
+        """
+    end
 
     messages = [%{role: "user", content: prompt}]
 
@@ -868,8 +876,11 @@ Known failure patterns to avoid:
     end)
   end
 
-  defp format_papers([]), do: "No relevant papers found. Base your arguments on your training knowledge, but mark everything as [REASONING]."
-  defp format_papers(papers) do
+  defp format_papers([], prompts) do
+    prompts["no_papers_fallback"] ||
+      "No relevant papers found. Base your arguments on your training knowledge, but mark everything as [REASONING]."
+  end
+  defp format_papers(papers, prompts) do
     papers_text = papers
       |> Enum.with_index(1)
       |> Enum.map(fn {p, i} ->
@@ -880,11 +891,13 @@ Known failure patterns to avoid:
       end)
       |> Enum.join("\n\n")
 
-    "RELEVANT PAPERS FOUND:\n" <> papers_text <>
+    citation_instructions = prompts["citation_instructions"] ||
       "\n\nPapers are sorted by relevance. Citation counts are shown for each paper." <>
       "\nWhen citing papers, only claim what the abstract actually states. Do NOT infer findings beyond what is written." <>
       "\nIf a paper's abstract doesn't explicitly support your claim, use [REASONING] instead of citing it." <>
       "\nYou MUST cite specific papers by number [Paper N] when your arguments are based on them."
+
+    "RELEVANT PAPERS FOUND:\n" <> papers_text <> citation_instructions
   end
 
   # -- Adversarial evidence parsing ------------------------------------
@@ -1656,7 +1669,7 @@ Known failure patterns to avoid:
 
   # -- Cached citation verification (uses Scorer ETS table) -----------
 
-  defp cached_verify(evidence, paper) do
+  defp cached_verify(evidence, paper, prompts) do
     # Use the same ETS table as Vaos.Ledger.Experiment.Scorer for caching
     ensure_scorer_cache()
     cache_key = :erlang.phash2({evidence.summary, paper["title"]})
@@ -1667,7 +1680,7 @@ Known failure patterns to avoid:
         result
 
       [] ->
-        result = verify_single_citation(evidence, paper)
+        result = verify_single_citation(evidence, paper, prompts)
         :ets.insert(:scorer_cache, {{:verify, cache_key}, result})
         result
     end
