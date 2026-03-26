@@ -354,7 +354,7 @@ defmodule Daemon.VasSwarm.GrpcClient do
          ) do
       {:ok, %{status: 200, body: %{"confirmed" => true} = resp}} ->
         Logger.info("[GrpcClient] Audit confirmed via HTTP (audit_id: #{resp["audit_id"]})")
-        {:reply, {:ok, %{audit_id: resp["audit_id"], confirmed: true}}, state}
+        {:reply, {:ok, %{audit_id: resp["audit_id"], confirmed: true, signature: resp["signature"]}}, state}
 
       {:ok, %{status: status, body: resp_body}} ->
         error_msg = if is_map(resp_body), do: resp_body["error"] || "unknown", else: "status #{status}"
