@@ -163,7 +163,13 @@ defmodule MiosaSignal.Classifier do
 end
 
 defmodule MiosaSignal.MessageClassifier do
-  @moduledoc "Signal Theory message classification result struct + classifier."
+  @moduledoc """
+  Signal Theory message classification result struct + classifier.
+
+  `classify_fast/2` is backed by an ETS cache (`:daemon_signal_cache`)
+  that stores results keyed by the SHA-256 hash of the message.
+  Entries expire after 10 minutes.
+  """
 
   defstruct [
     :mode, :genre, :type, :format, :weight,
@@ -172,9 +178,54 @@ defmodule MiosaSignal.MessageClassifier do
 
   @type t :: %__MODULE__{}
 
-  @doc "Fast ETS-cached classification."
-  def classify_fast(message, channel) do
-    classify_deterministic(message, channel)
+  @cache_table :daemon_signal_cache
+  @ttl_ms :timer.minutes(10)
+
+  # -- ETS helpers (lazy init, no GenServer needed) ---------------------------
+
+  defp ensure_cache do
+    case :ets.whereis(@cache_table) do
+      :undefined ->
+        try do
+          :ets.new(@cache_table, [
+            :set, :public, :named_table,
+            read_concurrency: true
+          ])
+        rescue
+          ArgumentError -> @cache_table
+        end
+      _ref ->
+        @cache_table
+    end
+  end
+
+  defp cache_key(message), do: :crypto.hash(:sha256, message)
+
+  # -- Public API -------------------------------------------------------------
+
+  @doc "Fast ETS-cached classification (10-min TTL, keyed by SHA-256)."
+  def classify_fast(message, channel) when is_binary(message) do
+    ensure_cache()
+    key = cache_key(message)
+
+    case :ets.lookup(@cache_table, key) do
+      [{^key, result, inserted_at}] ->
+        if System.monotonic_time(:millisecond) - inserted_at < @ttl_ms do
+          result
+        else
+          classify_and_cache(key, message, channel)
+        end
+
+      [] ->
+        classify_and_cache(key, message, channel)
+    end
+  end
+  def classify_fast(message, channel), do: classify_deterministic(message, channel)
+
+  defp classify_and_cache(key, message, channel) do
+    result = classify_deterministic(message, channel)
+    :ets.insert(@cache_table, {key, result, System.monotonic_time(:millisecond)})
+    result
   end
 
   @doc "Deterministic pattern-matching classification (no LLM)."
@@ -203,7 +254,7 @@ defmodule MiosaSignal.MessageClassifier do
   end
   def classify_deterministic(_, _), do: {:error, :invalid_message}
 
-  @doc "Calculate signal weight (0.0 – 1.0) based on message characteristics."
+  @doc "Calculate signal weight (0.0 - 1.0) based on message characteristics."
   def calculate_weight(message) when is_binary(message) do
     len = String.length(message)
     base = min(len / 500.0, 1.0)

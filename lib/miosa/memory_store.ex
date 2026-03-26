@@ -385,7 +385,9 @@ defmodule MiosaMemory.Store do
       {:error, :disabled}
     end
   rescue
-    _ -> {:error, :exception}
+    e ->
+      Logger.warning("Semantic search failed: #{inspect(e)}")
+      {:error, :exception}
   end
 
   defp do_recall_relevant_keyword(message, max_tokens) do
@@ -405,7 +407,9 @@ defmodule MiosaMemory.Store do
               [] -> []
             end
           rescue
-            ArgumentError -> []
+            e in ArgumentError ->
+              Logger.warning("ETS index lookup failed for keyword #{inspect(keyword)}: #{inspect(e)}")
+              []
           end
         end)
         |> Enum.frequencies()
@@ -427,7 +431,9 @@ defmodule MiosaMemory.Store do
                   nil
               end
             rescue
-              ArgumentError -> nil
+              e in ArgumentError ->
+                Logger.warning("ETS entry lookup failed for #{inspect(entry_id)}: #{inspect(e)}")
+                nil
             end
           end)
           |> Enum.reject(&is_nil/1)
@@ -503,7 +509,9 @@ defmodule MiosaMemory.Store do
         |> Enum.sort_by(fn entry -> entry[:timestamp] || "" end, :desc)
         |> Enum.take(20)
       rescue
-        _ -> []
+        e ->
+          Logger.warning("Failed to fetch recent entries from ETS: #{inspect(e)}")
+          []
       end
 
     scored = Enum.map(entries, fn entry -> {1.0, entry} end)
@@ -527,7 +535,9 @@ defmodule MiosaMemory.Store do
         :ets.tab2list(@entry_table)
         |> Enum.map(fn {_id, entry} -> entry end)
       rescue
-        _ -> []
+        e ->
+          Logger.warning("Failed to load entries for search: #{inspect(e)}")
+          []
       end
 
     # Apply category filter
@@ -593,7 +603,9 @@ defmodule MiosaMemory.Store do
         :ets.tab2list(@entry_table)
         |> Enum.map(fn {id, entry} -> {id, entry} end)
       rescue
-        _ -> []
+        e ->
+          Logger.warning("Failed to load entries for archive: #{inspect(e)}")
+          []
       end
 
     # Partition into keep vs archive
@@ -675,14 +687,18 @@ defmodule MiosaMemory.Store do
       try do
         :ets.info(@entry_table, :size) || 0
       rescue
-        _ -> 0
+        e ->
+          Logger.warning("Failed to read entry table size: #{inspect(e)}")
+          0
       end
 
     index_count =
       try do
         :ets.info(@index_table, :size) || 0
       rescue
-        _ -> 0
+        e ->
+          Logger.warning("Failed to read index table size: #{inspect(e)}")
+          0
       end
 
     memory_file_size =
@@ -702,7 +718,9 @@ defmodule MiosaMemory.Store do
         |> Enum.map(fn {_id, entry} -> entry[:category] || "general" end)
         |> Enum.frequencies()
       rescue
-        _ -> %{}
+        e ->
+          Logger.warning("Failed to compute category frequencies: #{inspect(e)}")
+          %{}
       end
 
     # Session count
@@ -806,7 +824,8 @@ defmodule MiosaMemory.Store do
         topic_hint: topic_hint
       }
     rescue
-      _ ->
+      e ->
+        Logger.warning("Failed to extract session metadata for #{inspect(session_id)}: #{inspect(e)}")
         %{
           session_id: session_id,
           message_count: 0,
@@ -1089,7 +1108,9 @@ defmodule MiosaMemory.Store do
             :ets.tab2list(@entry_table)
             |> Enum.map(fn {_id, entry} -> entry end)
           rescue
-            _ -> []
+            e ->
+              Logger.warning("Failed to load entries for sidecar reindex: #{inspect(e)}")
+              []
           end
 
         # Send each entry to sidecar for indexing
