@@ -126,6 +126,42 @@ defmodule Daemon.Investigation.OptimizerTest do
     end
   end
 
+  describe "threshold_presweep/2" do
+    test "returns a strategy with optimal threshold" do
+      enriched = Optimizer.enrich_probe_ctx(@probe_ctx)
+      {strategy, eig} = Optimizer.threshold_presweep(Strategy.default(), enriched)
+      assert %Strategy{} = strategy
+      assert is_float(eig)
+      assert eig >= 0.0
+    end
+
+    test "swept EIG >= default EIG" do
+      enriched = Optimizer.enrich_probe_ctx(@probe_ctx)
+      default_eig = Daemon.Investigation.FastProbe.score(Strategy.default(), enriched)
+      {_strategy, swept_eig} = Optimizer.threshold_presweep(Strategy.default(), enriched)
+      assert swept_eig >= default_eig
+    end
+
+    test "threshold stays within bounds" do
+      enriched = Optimizer.enrich_probe_ctx(@probe_ctx)
+      {strategy, _eig} = Optimizer.threshold_presweep(Strategy.default(), enriched)
+      {min_t, max_t} = Strategy.bounds().grounded_threshold
+      assert strategy.grounded_threshold >= min_t
+      assert strategy.grounded_threshold <= max_t
+    end
+
+    test "preserves non-threshold parameters" do
+      enriched = Optimizer.enrich_probe_ctx(@probe_ctx)
+      base = Strategy.default()
+      {strategy, _eig} = Optimizer.threshold_presweep(base, enriched)
+      # All params except grounded_threshold should be unchanged
+      assert strategy.citation_weight == base.citation_weight
+      assert strategy.publisher_weight == base.publisher_weight
+      assert strategy.review_weight == base.review_weight
+      assert strategy.adversarial_temperature == base.adversarial_temperature
+    end
+  end
+
   describe "enrich_probe_ctx/1" do
     test "adds _publisher_score to papers without one" do
       ctx = %{

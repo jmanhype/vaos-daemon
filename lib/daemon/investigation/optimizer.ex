@@ -43,12 +43,24 @@ defmodule Daemon.Investigation.Optimizer do
     # Enrich paper_map with cached publisher scores for fast probing
     probe_ctx = enrich_probe_ctx(probe_ctx)
 
-    # Score baseline
-    baseline_eig = FastProbe.score(base_strategy, probe_ctx)
+    # Score original baseline
+    original_eig = FastProbe.score(base_strategy, probe_ctx)
 
-    # Initial state for MCTS
+    # Phase 1: Threshold pre-sweep — grid search the dominant parameter
+    # This is O(11) FastProbe calls (~1ms total), eliminates the MCTS step-size bottleneck
+    {swept_strategy, swept_eig} = threshold_presweep(base_strategy, probe_ctx)
+
+    if swept_eig > original_eig do
+      Logger.info(
+        "[investigate:optimizer] Presweep: threshold #{base_strategy.grounded_threshold} -> " <>
+          "#{swept_strategy.grounded_threshold} " <>
+          "(EIG: #{Float.round(original_eig, 3)} -> #{Float.round(swept_eig, 3)})"
+      )
+    end
+
+    # Phase 2: MCTS fine-tuning from swept starting point
     initial_state = %{
-      strategy: base_strategy,
+      strategy: swept_strategy,
       operations: [],
       depth: 0
     }
@@ -60,20 +72,28 @@ defmodule Daemon.Investigation.Optimizer do
     {tree, iterations_run} =
       run_iterations(tree, root_id, probe_ctx, 0, @default_iterations, deadline, @default_max_depth)
 
-    # Extract best path
-    {best_strategy, best_path} = extract_best_strategy(tree, root_id)
-    winning_eig = FastProbe.score(best_strategy, probe_ctx)
+    # Extract best path from MCTS
+    {best_mcts_strategy, mcts_path} = extract_best_strategy(tree, root_id)
+    mcts_eig = FastProbe.score(best_mcts_strategy, probe_ctx)
 
     elapsed = System.monotonic_time(:millisecond) - start_time
     tree_size = map_size(tree.nodes)
 
-    # Determine winner with sanity checks
+    # Pick the best: MCTS result or swept baseline (whichever is higher)
+    {best_strategy, best_eig, best_path} =
+      if mcts_eig > swept_eig and sane?(best_mcts_strategy, probe_ctx) do
+        {best_mcts_strategy, mcts_eig, mcts_path}
+      else
+        {swept_strategy, swept_eig, []}
+      end
+
+    # Save if better than original baseline
     {strategy, actual_winning_eig} =
-      if winning_eig > baseline_eig and sane?(best_strategy, probe_ctx) do
+      if best_eig > original_eig do
         Logger.info(
-          "[investigate:optimizer] MCTS #{iterations_run} iters in #{elapsed}ms. " <>
-            "EIG: #{Float.round(baseline_eig, 3)} -> #{Float.round(winning_eig, 3)} " <>
-            "(#{length(best_path)} mutations)"
+          "[investigate:optimizer] #{iterations_run} iters in #{elapsed}ms. " <>
+            "EIG: #{Float.round(original_eig, 3)} -> #{Float.round(best_eig, 3)} " <>
+            "(presweep + #{length(best_path)} MCTS mutations)"
         )
 
         winning = %{
@@ -84,14 +104,14 @@ defmodule Daemon.Investigation.Optimizer do
         }
 
         StrategyStore.save(winning)
-        {winning, winning_eig}
+        {winning, best_eig}
       else
         Logger.info(
           "[investigate:optimizer] Baseline strategy was already optimal " <>
             "(#{iterations_run} iters, #{elapsed}ms)"
         )
 
-        {base_strategy, baseline_eig}
+        {base_strategy, original_eig}
       end
 
     # Build receipt
@@ -99,7 +119,7 @@ defmodule Daemon.Investigation.Optimizer do
       Receipt.build(
         baseline_strategy: base_strategy,
         winning_strategy: strategy,
-        baseline_eig: baseline_eig,
+        baseline_eig: original_eig,
         winning_eig: actual_winning_eig,
         iterations_run: iterations_run,
         elapsed_ms: elapsed,
@@ -276,6 +296,29 @@ defmodule Daemon.Investigation.Optimizer do
 
         child = Tree.get(tree, best_child_id)
         extract_best_path(tree, best_child_id, acc ++ [{best_child_id, child.operation}])
+    end
+  end
+
+  # -- Threshold pre-sweep: grid search the dominant parameter ---------------
+
+  @doc false
+  def threshold_presweep(base_strategy, probe_ctx) do
+    {min_t, max_t} = Strategy.bounds().grounded_threshold
+    step = 0.05
+
+    candidates =
+      Stream.iterate(min_t, &(&1 + step))
+      |> Enum.take_while(&(&1 <= max_t + 0.001))
+      |> Enum.map(fn t ->
+        s = %{base_strategy | grounded_threshold: Float.round(t, 2)}
+        eig = FastProbe.score(s, probe_ctx)
+        {s, eig}
+      end)
+      |> Enum.filter(fn {s, _eig} -> sane?(s, probe_ctx) end)
+
+    case candidates do
+      [] -> {base_strategy, FastProbe.score(base_strategy, probe_ctx)}
+      _ -> Enum.max_by(candidates, fn {_s, eig} -> eig end)
     end
   end
 
