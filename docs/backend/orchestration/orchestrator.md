@@ -6,7 +6,7 @@ The Orchestrator is the autonomous task decomposition and multi-agent execution 
 
 ## Overview
 
-When a task arrives, the Orchestrator decides in real-time whether to run it as a single agent or decompose it into a team. It is a GenServer (`OptimalSystemAgent.Agent.Orchestrator`) that holds all active task state and drives execution through `handle_continue` callbacks — keeping the GenServer non-blocking while agents run in `Task.async` processes.
+When a task arrives, the Orchestrator decides in real-time whether to run it as a single agent or decompose it into a team. It is a GenServer (`Daemon.Agent.Orchestrator`) that holds all active task state and drives execution through `handle_continue` callbacks — keeping the GenServer non-blocking while agents run in `Task.async` processes.
 
 ```
 User request

@@ -32,7 +32,7 @@ Configurable via `:allowed_write_paths` in application config.
 .ssh/, .gnupg/, /etc/, /boot/, /usr/, /bin/, /sbin/, /var/, .aws/, .env
 ```
 
-Dotfiles outside `~/.osa/` are also blocked from writes. This prevents agents from accidentally modifying shell configs, git config, or other dotfiles while allowing writes to OSA's own configuration directory.
+Dotfiles outside `~/.daemon/` are also blocked from writes. This prevents agents from accidentally modifying shell configs, git config, or other dotfiles while allowing writes to Daemon's own configuration directory.
 
 ---
 
@@ -40,7 +40,7 @@ Dotfiles outside `~/.osa/` are also blocked from writes. This prevents agents fr
 
 Read a file from the filesystem.
 
-**Module:** `OptimalSystemAgent.Tools.Builtins.FileRead`
+**Module:** `Daemon.Tools.Builtins.FileRead`
 **Safety:** `:read_only`
 
 ### Parameters
@@ -70,7 +70,7 @@ Read a file from the filesystem.
 
 Write content to a file. Creates parent directories automatically.
 
-**Module:** `OptimalSystemAgent.Tools.Builtins.FileWrite`
+**Module:** `Daemon.Tools.Builtins.FileWrite`
 **Safety:** `:write_safe`
 
 ### Parameters
@@ -82,8 +82,8 @@ Write content to a file. Creates parent directories automatically.
 
 ### Path resolution
 
-Relative paths are automatically rooted at `~/.osa/workspace/`:
-- `"my-app/server.js"` → `~/.osa/workspace/my-app/server.js`
+Relative paths are automatically rooted at `~/.daemon/workspace/`:
+- `"my-app/server.js"` → `~/.daemon/workspace/my-app/server.js`
 - `"~/projects/app.ex"` → `~/projects/app.ex` (absolute honored)
 - `"/tmp/output.txt"` → `/tmp/output.txt` (absolute honored)
 
@@ -99,7 +99,7 @@ Relative paths are automatically rooted at `~/.osa/workspace/`:
 
 Make a surgical string replacement in a file.
 
-**Module:** `OptimalSystemAgent.Tools.Builtins.FileEdit`
+**Module:** `Daemon.Tools.Builtins.FileEdit`
 **Safety:** `:write_safe`
 
 ### Parameters
@@ -132,7 +132,7 @@ Make a surgical string replacement in a file.
 
 Apply multiple string replacements across one or more files atomically.
 
-**Module:** `OptimalSystemAgent.Tools.Builtins.MultiFileEdit`
+**Module:** `Daemon.Tools.Builtins.MultiFileEdit`
 **Safety:** `:write_safe`
 
 ### Parameters
@@ -166,7 +166,7 @@ Maximum 20 edits per call.
 
 Find files matching a glob pattern.
 
-**Module:** `OptimalSystemAgent.Tools.Builtins.FileGlob`
+**Module:** `Daemon.Tools.Builtins.FileGlob`
 **Safety:** `:read_only`
 
 ### Parameters
@@ -184,7 +184,7 @@ Returns a newline-separated list of matching file paths, sorted. Respects the re
 
 Search file contents with a regex pattern.
 
-**Module:** `OptimalSystemAgent.Tools.Builtins.FileGrep`
+**Module:** `Daemon.Tools.Builtins.FileGrep`
 **Safety:** `:read_only`
 
 ### Parameters
@@ -203,14 +203,14 @@ Returns `file:line_number: matching_line` format. Respects the read path allowli
 
 List the contents of a directory.
 
-**Module:** `OptimalSystemAgent.Tools.Builtins.DirList`
+**Module:** `Daemon.Tools.Builtins.DirList`
 **Safety:** `:read_only`
 
 ### Parameters
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `path` | string | no | Directory to list (default: `~/.osa/workspace`) |
+| `path` | string | no | Directory to list (default: `~/.daemon/workspace`) |
 
 Returns entries as tab-separated `type\tsize\tname` lines where type is `file` or `dir`.
 
@@ -220,14 +220,14 @@ Returns entries as tab-separated `type\tsize\tname` lines where type is `file` o
 
 Extract function, module, and class definitions from code files without reading full content.
 
-**Module:** `OptimalSystemAgent.Tools.Builtins.CodeSymbols`
+**Module:** `Daemon.Tools.Builtins.CodeSymbols`
 **Safety:** `:read_only`
 
 ### Parameters
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `path` | string | no | File or directory to scan (default: `~/.osa/workspace`) |
+| `path` | string | no | File or directory to scan (default: `~/.daemon/workspace`) |
 | `glob` | string | no | File filter (auto-detected from project type if omitted) |
 | `include_private` | boolean | no | Include private symbols (default: false) |
 
@@ -270,7 +270,7 @@ The tool detects project type from config files in the root:
 
 Composite exploration tool that combines directory listing, config reading, file search, and MCTS indexing into a single structured report.
 
-**Module:** `OptimalSystemAgent.Tools.Builtins.CodebaseExplore`
+**Module:** `Daemon.Tools.Builtins.CodebaseExplore`
 **Safety:** `:read_only`
 
 ### Parameters

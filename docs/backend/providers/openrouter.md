@@ -34,7 +34,7 @@ Auto-detected as priority 4 (after Anthropic, OpenAI, Groq).
 ## Configuration
 
 ```elixir
-config :optimal_system_agent, :openrouter,
+config :daemon, :openrouter,
   api_key: System.get_env("OPENROUTER_API_KEY"),
   model: "meta-llama/llama-3.3-70b-instruct",
   url: "https://openrouter.ai/api/v1"

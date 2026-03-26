@@ -2,7 +2,7 @@
 
 ## Correlation Fields
 
-OSA does not integrate an external distributed tracing system (no OpenTelemetry,
+Daemon does not integrate an external distributed tracing system (no OpenTelemetry,
 no Jaeger). Tracing is built from three correlation fields carried on every
 `Event` struct:
 
@@ -124,7 +124,7 @@ roll older events off the front.
 
 ## JSONL Session Files — Durable Trace Log
 
-Every session writes a JSONL file to `~/.osa/sessions/<session_id>.jsonl`. Each
+Every session writes a JSONL file to `~/.daemon/sessions/<session_id>.jsonl`. Each
 line is a JSON object representing one turn or memory entry. This is the primary
 durable trace log for post-hoc analysis.
 
@@ -141,7 +141,7 @@ create a handoff document that summarizes the session in narrative form.
 
 ## Episodic Memory as Trace
 
-`miosa_memory` maintains an episodic memory store in `~/.osa/sessions/`. Each
+`miosa_memory` maintains an episodic memory store in `~/.daemon/sessions/`. Each
 session's JSONL file serves as both:
 
 1. The conversation transcript (for replay via `Agent.Replay`)
@@ -156,13 +156,13 @@ The learning engine annotates the JSONL file with extracted patterns:
 
 ## Hook Execution Tracing
 
-Per-hook timing is available from ETS `:osa_hooks_metrics` without a GenServer
+Per-hook timing is available from ETS `:daemon_hooks_metrics` without a GenServer
 call:
 
 ```elixir
-call_count = :ets.lookup_element(:osa_hooks_metrics, {:pre_tool_use, :call_count}, 2)
-total_us   = :ets.lookup_element(:osa_hooks_metrics, {:pre_tool_use, :total_us},   2)
-blocks     = :ets.lookup_element(:osa_hooks_metrics, {:pre_tool_use, :blocks_count}, 2)
+call_count = :ets.lookup_element(:daemon_hooks_metrics, {:pre_tool_use, :call_count}, 2)
+total_us   = :ets.lookup_element(:daemon_hooks_metrics, {:pre_tool_use, :total_us},   2)
+blocks     = :ets.lookup_element(:daemon_hooks_metrics, {:pre_tool_use, :blocks_count}, 2)
 
 avg_latency_us = if call_count > 0, do: total_us / call_count, else: 0
 ```
@@ -183,11 +183,11 @@ This gives per-event-type hook chain average latency with no additional overhead
 ```
 
 `Telemetry.Metrics` maintains a rolling window of the last 100 durations per
-provider in `:osa_telemetry` ETS. Reading the window at any point gives an
+provider in `:daemon_telemetry` ETS. Reading the window at any point gives an
 accurate p99 estimate:
 
 ```elixir
-[{_, latencies}] = :ets.lookup(:osa_telemetry, :provider_latency)
+[{_, latencies}] = :ets.lookup(:daemon_telemetry, :provider_latency)
 window = Map.get(latencies, :anthropic, [])
 sorted = Enum.sort(window)
 p99 = Enum.at(sorted, round(length(sorted) * 0.99) - 1, 0)

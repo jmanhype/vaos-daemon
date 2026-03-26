@@ -31,13 +31,13 @@ sequenceDiagram
 
     rect rgb(240, 248, 255)
         note over App,ETS: Phase 1 — Pre-supervision ETS initialization
-        App->>ETS: :ets.new(:osa_cancel_flags, [:named_table, :public, :set])
-        App->>ETS: :ets.new(:osa_files_read, [:named_table, :public, :set])
-        App->>ETS: :ets.new(:osa_survey_answers, [:set, :public, :named_table])
-        App->>ETS: :ets.new(:osa_context_cache, [:set, :public, :named_table])
-        App->>ETS: :ets.new(:osa_survey_responses, [:bag, :public, :named_table])
-        App->>ETS: :ets.new(:osa_session_provider_overrides, [:named_table, :public, :set])
-        App->>ETS: :ets.new(:osa_pending_questions, [:named_table, :public, :set])
+        App->>ETS: :ets.new(:daemon_cancel_flags, [:named_table, :public, :set])
+        App->>ETS: :ets.new(:daemon_files_read, [:named_table, :public, :set])
+        App->>ETS: :ets.new(:daemon_survey_answers, [:set, :public, :named_table])
+        App->>ETS: :ets.new(:daemon_context_cache, [:set, :public, :named_table])
+        App->>ETS: :ets.new(:daemon_survey_responses, [:bag, :public, :named_table])
+        App->>ETS: :ets.new(:daemon_session_provider_overrides, [:named_table, :public, :set])
+        App->>ETS: :ets.new(:daemon_pending_questions, [:named_table, :public, :set])
     end
 
     rect rgb(240, 255, 240)
@@ -65,15 +65,15 @@ sequenceDiagram
         Infra->>Infra: start SessionRegistry [Registry]
         Infra->>Infra: start Events.TaskSupervisor [Task.Supervisor]
         Infra->>Infra: start Phoenix.PubSub [GenServer]
-        Infra->>Infra: start Events.Bus [GenServer] — glc:compile(:osa_event_router)
+        Infra->>Infra: start Events.Bus [GenServer] — glc:compile(:daemon_event_router)
         Infra->>Infra: start Events.DLQ [GenServer]
         Infra->>Infra: start Bridge.PubSub [GenServer]
         Infra->>Infra: start Store.Repo [Ecto.Repo] — SQLite WAL open
         Infra->>Infra: start EventStream [GenServer]
         Infra->>Infra: start Telemetry.Metrics [GenServer]
         Infra->>Infra: start MiosaLLM.HealthChecker [GenServer]
-        Infra->>Infra: start MiosaProviders.Registry [GenServer] — glc:compile(:osa_provider_router)
-        Infra->>Infra: start Tools.Registry [GenServer] — glc:compile(:osa_tool_dispatcher)
+        Infra->>Infra: start MiosaProviders.Registry [GenServer] — glc:compile(:daemon_provider_router)
+        Infra->>Infra: start Tools.Registry [GenServer] — glc:compile(:daemon_tool_dispatcher)
         Infra->>Infra: start Tools.Cache [GenServer]
         Infra->>Infra: start Machines [GenServer]
         Infra->>Infra: start Commands [GenServer]

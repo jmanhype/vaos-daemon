@@ -2,7 +2,7 @@
 
 ## Overview
 
-`OptimalSystemAgent.Telemetry.Metrics` is a GenServer under `Supervisors.Infrastructure` that collects runtime metrics by subscribing to `Events.Bus` and exposing a query API. All metric state lives in ETS `:osa_telemetry` (`:set`, `:public`, named table), allowing concurrent reads from any process without going through the GenServer. Metrics are flushed to `~/.osa/metrics.json` every 5 minutes.
+`Daemon.Telemetry.Metrics` is a GenServer under `Supervisors.Infrastructure` that collects runtime metrics by subscribing to `Events.Bus` and exposing a query API. All metric state lives in ETS `:daemon_telemetry` (`:set`, `:public`, named table), allowing concurrent reads from any process without going through the GenServer. Metrics are flushed to `~/.daemon/metrics.json` every 5 minutes.
 Writes go through `GenServer.cast/2` to serialize updates.
 
 ```elixir
@@ -169,10 +169,10 @@ The `/analytics` command and `GET /api/analytics` HTTP endpoint use
 ## Hooks Metrics
 
 The `Agent.Hooks` system maintains separate per-hook metrics in ETS
-`:osa_hooks_metrics` with `:write_concurrency: true`:
+`:daemon_hooks_metrics` with `:write_concurrency: true`:
 
 ```elixir
-:ets.new(:osa_hooks_metrics, [:named_table, :public, :set, {:write_concurrency, true}])
+:ets.new(:daemon_hooks_metrics, [:named_table, :public, :set, {:write_concurrency, true}])
 ```
 
 Per-hook counters:
@@ -188,11 +188,11 @@ execution:
 
 ```elixir
 defp update_metrics_ets(event, elapsed_us, result) do
-  :ets.update_counter(:osa_hooks_metrics, {event, :call_count}, {2, 1}, {{event, :call_count}, 0})
-  :ets.update_counter(:osa_hooks_metrics, {event, :total_us},   {2, elapsed_us}, {{event, :total_us}, 0})
+  :ets.update_counter(:daemon_hooks_metrics, {event, :call_count}, {2, 1}, {{event, :call_count}, 0})
+  :ets.update_counter(:daemon_hooks_metrics, {event, :total_us},   {2, elapsed_us}, {{event, :total_us}, 0})
 
   if match?({:blocked, _}, result) do
-    :ets.update_counter(:osa_hooks_metrics, {event, :blocks_count}, {2, 1}, {{event, :blocks_count}, 0})
+    :ets.update_counter(:daemon_hooks_metrics, {event, :blocks_count}, {2, 1}, {{event, :blocks_count}, 0})
   end
 end
 ```
@@ -201,7 +201,7 @@ Average latency per hook event: `total_us / call_count`.
 
 ## Disk Persistence
 
-`Telemetry.Metrics` writes a snapshot to `~/.osa/metrics.json` every 5 minutes
+`Telemetry.Metrics` writes a snapshot to `~/.daemon/metrics.json` every 5 minutes
 and on supervisor shutdown (`terminate/2`):
 
 ```json
@@ -221,4 +221,4 @@ and on supervisor shutdown (`terminate/2`):
 
 The file is overwritten on each flush, not appended. It represents a point-in-time
 snapshot of the current runtime, not a historical log. Historical analysis should
-use the JSONL session files in `~/.osa/sessions/`.
+use the JSONL session files in `~/.daemon/sessions/`.

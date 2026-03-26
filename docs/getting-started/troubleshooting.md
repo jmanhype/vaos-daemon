@@ -28,7 +28,7 @@ This checks:
 **Fix**:
 ```bash
 # Option 1: Set an API key
-echo 'ANTHROPIC_API_KEY=sk-ant-...' >> ~/.osa/.env
+echo 'ANTHROPIC_API_KEY=sk-ant-...' >> ~/.daemon/.env
 
 # Option 2: Start Ollama
 ollama serve
@@ -69,7 +69,7 @@ ollama pull llama3.2:latest    # Pull the model
 **Fix**: Now resolved automatically. The model name resolves from provider-specific env vars:
 ```bash
 # Override for any provider
-export OSA_MODEL=my-custom-model
+export DAEMON_MODEL=my-custom-model
 
 # Or set provider-specific
 export GROQ_MODEL=llama-3.3-70b-versatile
@@ -81,7 +81,7 @@ export OPENAI_MODEL=gpt-4o
 
 **Cause**: Model too small for tool use, but tool gating not working.
 
-**Fix**: OSA automatically gates tools for models < 7GB. If you see hallucinated tool calls:
+**Fix**: Daemon automatically gates tools for models < 7GB. If you see hallucinated tool calls:
 ```bash
 # Use a larger model
 /model ollama llama3.3:70b
@@ -101,15 +101,15 @@ export OPENAI_MODEL=gpt-4o
 **Fix**:
 ```bash
 /channels status           # Check which channels are configured
-# Verify credentials in ~/.osa/.env
-cat ~/.osa/.env | grep TELEGRAM
+# Verify credentials in ~/.daemon/.env
+cat ~/.daemon/.env | grep TELEGRAM
 ```
 
 ### Telegram: "Conflict: terminated by other getUpdates request"
 
-**Cause**: Multiple OSA instances polling the same bot.
+**Cause**: Multiple Daemon instances polling the same bot.
 
-**Fix**: Ensure only one OSA instance runs per Telegram bot token.
+**Fix**: Ensure only one Daemon instance runs per Telegram bot token.
 
 ### WhatsApp: "Webhook verification failed"
 
@@ -127,13 +127,13 @@ cat ~/.osa/.env | grep TELEGRAM
 
 **Fix**:
 ```bash
-# Ensure only one OSA instance per database
+# Ensure only one Daemon instance per database
 ps aux | grep osa
 
 # If stuck, remove the lock (safe with WAL mode)
-rm ~/.osa/osa.db-wal ~/.osa/osa.db-shm
+rm ~/.daemon/osa.db-wal ~/.daemon/osa.db-shm
 
-# Restart OSA
+# Restart Daemon
 ```
 
 ### Migration errors on startup
@@ -144,7 +144,7 @@ rm ~/.osa/osa.db-wal ~/.osa/osa.db-shm
 ```bash
 mix ecto.migrate
 # Or for release:
-_build/prod/rel/optimal_system_agent/bin/optimal_system_agent eval "OptimalSystemAgent.Release.migrate()"
+_build/prod/rel/daemon/bin/daemon eval "Daemon.Release.migrate()"
 ```
 
 ---
@@ -197,7 +197,7 @@ _build/prod/rel/optimal_system_agent/bin/optimal_system_agent eval "OptimalSyste
 **Fix**:
 ```bash
 # Check if enabled
-echo $OSA_GO_TOKENIZER_ENABLED
+echo $DAEMON_GO_TOKENIZER_ENABLED
 
 # Build the sidecar
 cd sidecars/go-tokenizer && go build -o tokenizer
@@ -212,7 +212,7 @@ The system falls back to heuristic token counting if the sidecar fails (circuit 
 **Fix**:
 ```bash
 pip3 install sentence-transformers
-export OSA_PYTHON_PATH=$(which python3)
+export DAEMON_PYTHON_PATH=$(which python3)
 ```
 
 ---
@@ -247,7 +247,7 @@ export OSA_PYTHON_PATH=$(which python3)
 /budget
 
 # Lower per-call limit
-export OSA_PER_CALL_LIMIT_USD=2.0
+export DAEMON_PER_CALL_LIMIT_USD=2.0
 
 # Use a cheaper model
 /model groq
@@ -257,14 +257,14 @@ export OSA_PER_CALL_LIMIT_USD=2.0
 
 ## Build Issues
 
-### "OSA_SKIP_NIF" errors
+### "DAEMON_SKIP_NIF" errors
 
 **Cause**: Rust NIF compilation failing.
 
 **Fix**:
 ```bash
 # Skip NIF compilation (uses Elixir fallback)
-export OSA_SKIP_NIF=true
+export DAEMON_SKIP_NIF=true
 mix compile
 ```
 
@@ -287,7 +287,7 @@ mix deps.compile
 ```
 
 If issues persist, check:
-1. `~/.osa/` directory exists and is writable
+1. `~/.daemon/` directory exists and is writable
 2. `.env` file has correct API keys
 3. No port conflicts on 8089
 4. Ollama is running (if using local models)

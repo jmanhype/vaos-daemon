@@ -1,7 +1,7 @@
-# OSA Live Simulation Results
+# Daemon Live Simulation Results
 
 **Date:** 2026-03-08
-**Server:** OSA v0.2.5, Bandit 1.10.3
+**Server:** Daemon v0.2.5, Bandit 1.10.3
 **Port:** 4001
 **Models tested:** qwen2.5:7b, qwen3:8b, llama3.2:3b
 
@@ -168,7 +168,7 @@ curl -s http://localhost:4001/api/v1/models
 ### Full-Stack App Generation
 Kimi-k2.5:cloud built a complete todo app using `file_write` tool calls across multiple ReAct iterations:
 
-**28 files generated** at `~/.osa/workspace/todo-app/`:
+**28 files generated** at `~/.daemon/workspace/todo-app/`:
 ```
 backend/
 ├── server.js                    # Express entry point
@@ -233,7 +233,7 @@ Testing gate passed: score 0.85 (threshold 0.7)
 Total time: 271 seconds
 ```
 
-**16 files generated** at `~/.osa/workspace/ecommerce-checkout/`:
+**16 files generated** at `~/.daemon/workspace/ecommerce-checkout/`:
 - Backend: Express server, 4 services (payment, shipping, cart, order), 3 route files, auth + error middleware
 - Frontend: React + TypeScript (App.tsx, main.tsx)
 - Database: SQL seed script
@@ -242,7 +242,7 @@ Total time: 271 seconds
 
 The agent analyzed its own codebase through 9+ ReAct iterations using `file_read`, `file_grep`, `dir_list`:
 
-- **613-line analysis document** written to `~/.osa/workspace/codebase-analysis.md`
+- **613-line analysis document** written to `~/.daemon/workspace/codebase-analysis.md`
 - Mapped 4-tier supervision tree with all children
 - Identified 45+ GenServer modules with responsibilities
 - Found real race conditions (Events.Bus TOCTOU, Orchestrator↔Registry deadlock risk)
@@ -279,7 +279,7 @@ For production tool-calling, use models with native tool support: Anthropic Clau
 5. **Mailbox ETS type mismatch** — Swarm mailbox created as `:bag` but `update_counter` requires `:set`. Fixed by using `:set` with composite keys `{swarm_id, seq}`.
 
 ### TaskFlow SaaS Generation (kimi-k2.5:cloud)
-- **25 files, 2,635 lines** generated at `~/.osa/workspace/taskflow/`
+- **25 files, 2,635 lines** generated at `~/.daemon/workspace/taskflow/`
 - Phases completed: Research → Schema → Backend → Frontend (4 of 7)
 - **28 tool calls** across 4 iterations
 - Used: `web_fetch` (Linear.app, Notion.so), `memory_save`, `file_write` x22
@@ -314,7 +314,7 @@ For production tool-calling, use models with native tool support: Anthropic Clau
 
 ```bash
 # Start server
-OLLAMA_MODEL=qwen3:32b OSA_HTTP_PORT=4001 mix run --no-halt
+OLLAMA_MODEL=qwen3:32b DAEMON_HTTP_PORT=4001 mix run --no-halt
 
 # Create session
 SESSION=$(curl -s -X POST http://localhost:4001/api/v1/sessions \

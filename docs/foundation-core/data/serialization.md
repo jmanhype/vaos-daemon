@@ -1,9 +1,9 @@
 # Serialization
 
-Audience: developers working with OSA's data formats, adding new storage
-backends, or integrating external systems that consume OSA's output.
+Audience: developers working with Daemon's data formats, adding new storage
+backends, or integrating external systems that consume Daemon's output.
 
-OSA uses four serialization formats across different subsystems. Each format
+Daemon uses four serialization formats across different subsystems. Each format
 was chosen for a specific trade-off between structure, readability,
 appendability, and tooling support.
 
@@ -14,7 +14,7 @@ appendability, and tooling support.
 **Library:** [`jason`](https://hex.pm/packages/jason)
 **Use:** HTTP API communication, tool arguments, database JSON fields.
 
-Jason is OSA's standard JSON library. It is used for all API request/response
+Jason is Daemon's standard JSON library. It is used for all API request/response
 bodies, all `:map` type Ecto field serialisation, and all inter-process
 message payloads that cross a network boundary.
 
@@ -114,7 +114,7 @@ tools:
 ### MCP Configuration
 
 ```yaml
-# ~/.osa/mcp.json is JSON, not YAML, but the pattern is similar
+# ~/.daemon/mcp.json is JSON, not YAML, but the pattern is similar
 # Application config overlays use YAML in some deployment setups:
 
 # osa_config.yaml
@@ -133,7 +133,7 @@ budget:
 ### Parsing Application Config
 
 ```elixir
-{:ok, config} = YamlElixir.read_from_file("~/.osa/config.yaml")
+{:ok, config} = YamlElixir.read_from_file("~/.daemon/config.yaml")
 providers = get_in(config, ["providers", "fallback_chain"])
 ```
 
@@ -154,7 +154,7 @@ JSONL is chosen for append-only storage because:
 ### Storage Locations
 
 ```
-~/.osa/
+~/.daemon/
 ├── sessions/
 │   ├── <session_id>.jsonl     # Conversation history per session
 │   └── ...
@@ -213,7 +213,7 @@ ETS index for keyword-based recall without file I/O on the hot path.
 
 **Use:** Vault entries, custom commands, skill definitions.
 
-The vault (`~/.osa/vault/`) stores structured knowledge as markdown files.
+The vault (`~/.daemon/vault/`) stores structured knowledge as markdown files.
 Each file has a YAML frontmatter section followed by markdown content.
 
 ### Vault Entry Format

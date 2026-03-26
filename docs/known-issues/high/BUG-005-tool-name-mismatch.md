@@ -2,7 +2,7 @@
 
 > **Severity:** HIGH
 > **Status:** Open
-> **Component:** `lib/optimal_system_agent/providers/ollama.ex`
+> **Component:** `lib/daemon/providers/ollama.ex`
 > **Reported:** 2026-03-14
 
 ---

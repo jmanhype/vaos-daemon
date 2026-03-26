@@ -1,6 +1,6 @@
 # System Architecture
 
-OSA (Optimal System Agent) is a production-grade, 154K-line Elixir/OTP AI agent runtime. It
+Daemon (Optimal System Agent) is a production-grade, 154K-line Elixir/OTP AI agent runtime. It
 delivers bounded ReAct-loop reasoning, Signal Theory message routing, multi-channel I/O, and an
 extension system for optional subsystems — all within a single OTP application that tolerates
 component failures without losing the session layer.
@@ -25,14 +25,14 @@ optional capabilities (treasury, fleet, swarm, AMQP, etc.) at runtime.
 
 ## Top-Level Supervision Tree
 
-The root supervisor is `OptimalSystemAgent.Supervisor`, strategy `:rest_for_one`. Children start
+The root supervisor is `Daemon.Supervisor`, strategy `:rest_for_one`. Children start
 left-to-right and are restarted in that order on failure. A crash in an earlier child restarts all
 later children.
 
 ```
-OptimalSystemAgent.Supervisor  (rest_for_one)
+Daemon.Supervisor  (rest_for_one)
 ├── [Platform.Repo]             (opt-in, if DATABASE_URL / platform_enabled)
-├── Task.Supervisor             (OptimalSystemAgent.TaskSupervisor)
+├── Task.Supervisor             (Daemon.TaskSupervisor)
 ├── Supervisors.Infrastructure  (rest_for_one)
 ├── Supervisors.Sessions        (one_for_one)
 ├── Supervisors.AgentServices   (one_for_one)
@@ -51,7 +51,7 @@ ready to serve requests.
 
 ## Subsystem: Infrastructure
 
-**Supervisor:** `OptimalSystemAgent.Supervisors.Infrastructure`
+**Supervisor:** `Daemon.Supervisors.Infrastructure`
 **Strategy:** `:rest_for_one`
 
 Children have ordering dependencies. `Events.TaskSupervisor` must exist before `Events.Bus`
@@ -62,16 +62,16 @@ spawns its supervised tasks. `Events.Bus` must precede `Events.DLQ` and `Bridge.
 Supervisors.Infrastructure  (rest_for_one)
 ├── Registry              (SessionRegistry, keys: :unique)
 ├── Task.Supervisor       (Events.TaskSupervisor, max_children: 100)
-├── Phoenix.PubSub        (name: OptimalSystemAgent.PubSub)
-├── Events.Bus            (goldrush-compiled :osa_event_router)
+├── Phoenix.PubSub        (name: Daemon.PubSub)
+├── Events.Bus            (goldrush-compiled :daemon_event_router)
 ├── Events.DLQ            (dead-letter queue, exponential backoff)
 ├── Bridge.PubSub         (cross-process pub/sub bridge)
 ├── Store.Repo            (SQLite3 via Ecto)
 ├── EventStream           (SSE circular buffer, Command Center)
 ├── Telemetry.Metrics     (subscribes to Events.Bus)
 ├── MiosaLLM.HealthChecker (circuit breaker for LLM providers)
-├── MiosaProviders.Registry (goldrush-compiled :osa_provider_router)
-├── Tools.Registry        (goldrush-compiled :osa_tool_dispatcher)
+├── MiosaProviders.Registry (goldrush-compiled :daemon_provider_router)
+├── Tools.Registry        (goldrush-compiled :daemon_tool_dispatcher)
 ├── Tools.Cache           (tool result memoization)
 ├── Machines              (OS template discovery)
 ├── Commands              (slash command registry)
@@ -84,7 +84,7 @@ Supervisors.Infrastructure  (rest_for_one)
 
 ## Subsystem: Sessions
 
-**Supervisor:** `OptimalSystemAgent.Supervisors.Sessions`
+**Supervisor:** `Daemon.Supervisors.Sessions`
 **Strategy:** `:one_for_one`
 
 A crashed channel adapter must not restart the event stream registry or the session supervisor.
@@ -106,7 +106,7 @@ demand (via CLI, HTTP API, or SDK) and removed when the session terminates.
 
 ## Subsystem: AgentServices
 
-**Supervisor:** `OptimalSystemAgent.Supervisors.AgentServices`
+**Supervisor:** `Daemon.Supervisors.AgentServices`
 **Strategy:** `:one_for_one`
 
 Agent services are independent. A Scheduler crash must not restart Memory or Orchestrator.
@@ -137,7 +137,7 @@ Supervisors.AgentServices  (one_for_one)
 
 ## Subsystem: Extensions
 
-**Supervisor:** `OptimalSystemAgent.Supervisors.Extensions`
+**Supervisor:** `Daemon.Supervisors.Extensions`
 **Strategy:** `:one_for_one`
 
 All children are either opt-in (environment flags) or self-contained. Extensions start conditionally
@@ -145,7 +145,7 @@ and are independent from each other.
 
 ```
 Supervisors.Extensions  (one_for_one)
-├── [MiosaBudget.Treasury]                 (OSA_TREASURY_ENABLED=true)
+├── [MiosaBudget.Treasury]                 (DAEMON_TREASURY_ENABLED=true)
 ├── Intelligence.Supervisor                (always, dormant until wired)
 │   ├── Intelligence.ConversationTracker
 │   ├── Intelligence.ContactDetector
@@ -153,7 +153,7 @@ Supervisors.Extensions  (one_for_one)
 ├── Agent.Orchestrator.Mailbox             (always — ETS table for swarm)
 ├── Agent.Orchestrator.SwarmMode           (always — GenServer)
 ├── DynamicSupervisor  (SwarmMode.AgentPool, max_children: 50)
-├── [Fleet.Supervisor]                     (OSA_FLEET_ENABLED=true)
+├── [Fleet.Supervisor]                     (DAEMON_FLEET_ENABLED=true)
 ├── Sidecar.Manager                        (always — creates circuit breaker tables)
 ├── [Go.Tokenizer]                         (go_tokenizer_enabled)
 ├── [Python.Supervisor]                    (python_sidecar_enabled)
@@ -173,7 +173,7 @@ Supervisors.Extensions  (one_for_one)
 
 ```mermaid
 graph TD
-  APP["OptimalSystemAgent.Supervisor\nrest_for_one"]
+  APP["Daemon.Supervisor\nrest_for_one"]
 
   APP --> PREPO["[Platform.Repo]\nopt-in"]
   APP --> TASKS0["Task.Supervisor\nTaskSupervisor"]
@@ -265,7 +265,7 @@ See [lifecycle.md](./lifecycle.md) for the detailed startup sequence.
 
 ## Signal Theory
 
-OSA routes all messages through Signal Theory dimensions: Mode, Genre, and Signal-to-Noise ratio.
+Daemon routes all messages through Signal Theory dimensions: Mode, Genre, and Signal-to-Noise ratio.
 The LLM reads Signal Theory tables embedded in `SYSTEM.md` (via `Soul.static_base/0`) and
 self-classifies incoming signals. `Events.Bus` auto-classifies events that do not carry explicit
 signal dimensions via `Events.Classifier`. `Events.DLQ` and `FailureModes` apply Algedonic alerts
@@ -277,13 +277,13 @@ See [data-flow.md](./data-flow.md) for the event routing details.
 
 | Environment Variable | Default | Effect |
 |---|---|---|
-| `OSA_HTTP_PORT` | `8089` | Bandit HTTP listener port |
+| `DAEMON_HTTP_PORT` | `8089` | Bandit HTTP listener port |
 | `DATABASE_URL` | unset | Enables Platform.Repo (PostgreSQL) |
-| `OSA_TREASURY_ENABLED` | `false` | Starts MiosaBudget.Treasury |
-| `OSA_FLEET_ENABLED` | `false` | Starts Fleet.Supervisor |
-| `OSA_SANDBOX_ENABLED` | `false` | Starts Sandbox.Supervisor |
-| `OSA_WALLET_ENABLED` | `false` | Starts Integrations.Wallet |
-| `OSA_UPDATE_ENABLED` | `false` | Starts System.Updater |
+| `DAEMON_TREASURY_ENABLED` | `false` | Starts MiosaBudget.Treasury |
+| `DAEMON_FLEET_ENABLED` | `false` | Starts Fleet.Supervisor |
+| `DAEMON_SANDBOX_ENABLED` | `false` | Starts Sandbox.Supervisor |
+| `DAEMON_WALLET_ENABLED` | `false` | Starts Integrations.Wallet |
+| `DAEMON_UPDATE_ENABLED` | `false` | Starts System.Updater |
 | `AMQP_URL` | unset | Starts Platform.AMQP publisher |
 | `go_tokenizer_enabled` | `false` | Starts Go.Tokenizer sidecar |
 | `python_sidecar_enabled` | `false` | Starts Python.Supervisor |

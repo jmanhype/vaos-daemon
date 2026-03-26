@@ -6,7 +6,7 @@
 
 ```bash
 EMAIL_FROM="osa@yourdomain.com"
-EMAIL_FROM_NAME="OSA Agent"
+EMAIL_FROM_NAME="Daemon Agent"
 SENDGRID_API_KEY="SG.xxx..."
 ```
 

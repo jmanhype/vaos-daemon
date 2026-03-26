@@ -4,7 +4,7 @@ Audience: contributors who need to understand when and how release artifacts are
 
 ## Overview
 
-OSA has two GitHub Actions workflows in `.github/workflows/`:
+Daemon has two GitHub Actions workflows in `.github/workflows/`:
 
 | Workflow | File | Trigger |
 |---------|------|---------|
@@ -58,15 +58,15 @@ Each build job runs these steps:
 4. Build the Go tokenizer: `CGO_ENABLED=0 go build -o osa-tokenizer .` with the target `GOOS`/`GOARCH` set.
 5. Install Elixir production deps: `mix deps.get --only prod`.
 6. Compile: `mix compile`.
-7. Assemble release: `mix release osagent`.
-8. Package tarball: `tar -czf osagent-{version}-{os}-{arch}.tar.gz .` from `_build/prod/rel/osagent/`.
+7. Assemble release: `mix release daemon`.
+8. Package tarball: `tar -czf daemon-{version}-{os}-{arch}.tar.gz .` from `_build/prod/rel/daemon/`.
 9. Upload tarball to the GitHub release via `gh release upload`.
 
-Tarball naming convention: `osagent-{version}-{os}-{arch}.tar.gz`
+Tarball naming convention: `daemon-{version}-{os}-{arch}.tar.gz`
 
 Examples:
-- `osagent-0.2.7-darwin-arm64.tar.gz`
-- `osagent-0.2.7-linux-amd64.tar.gz`
+- `daemon-0.2.7-darwin-arm64.tar.gz`
+- `daemon-0.2.7-linux-amd64.tar.gz`
 
 ### Artifact Storage
 
@@ -84,10 +84,10 @@ When a GitHub release is published (fires after `release.yml` completes and the 
 2. Wait 30 seconds for release assets to become available.
 3. Download all four tarballs and compute `sha256` checksums.
 4. Checkout `Miosa-osa/homebrew-tap` using the `HOMEBREW_TAP_TOKEN` secret.
-5. Render the Homebrew formula `Formula/osagent.rb` with current version and checksums.
+5. Render the Homebrew formula `Formula/daemon.rb` with current version and checksums.
 6. Commit and push to the tap repository.
 
-The formula installs the release tarball into `libexec/` and symlinks `bin/osagent` to `libexec/bin/osagent`. The `test do` block asserts `osagent version` outputs a version string.
+The formula installs the release tarball into `libexec/` and symlinks `bin/daemon` to `libexec/bin/daemon`. The `test do` block asserts `daemon version` outputs a version string.
 
 ### Required Secrets
 
@@ -119,7 +119,7 @@ The formula installs the release tarball into `libexec/` and symlinks `bin/osage
 - **Test runs on PRs** — no CI job runs tests automatically. Contributors run `mix test` locally.
 - **Linting** — `mix format` is not enforced by CI. Run it before committing.
 - **Docker image publishing** — the `Dockerfile` is provided for self-hosting but no image is pushed to a registry as part of the release pipeline.
-- **Windows builds** — the release matrix covers macOS and Linux only. Windows users run OSA under WSL2 or use the Elixir source directly.
+- **Windows builds** — the release matrix covers macOS and Linux only. Windows users run Daemon under WSL2 or use the Elixir source directly.
 
 ## Local Release Verification
 
@@ -132,9 +132,9 @@ cd priv/go/tokenizer && CGO_ENABLED=0 go build -o osa-tokenizer . && cd ../../..
 # Assemble release
 MIX_ENV=prod mix deps.get --only prod
 MIX_ENV=prod mix compile
-MIX_ENV=prod mix release osagent
+MIX_ENV=prod mix release daemon
 
 # Test the binary
-./_build/prod/rel/osagent/bin/osagent version
-# Expected: osagent v0.2.7
+./_build/prod/rel/daemon/bin/daemon version
+# Expected: daemon v0.2.7
 ```

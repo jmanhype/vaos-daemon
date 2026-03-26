@@ -2,17 +2,17 @@
 
 ## Audience
 
-Engineers debugging failures, adding error handling, or understanding how OSA categorizes and responds to different error conditions.
+Engineers debugging failures, adding error handling, or understanding how Daemon categorizes and responds to different error conditions.
 
 ## Overview
 
-OSA categorizes errors by their source and recoverability. Most errors are handled locally with a result tuple; only errors that affect the entire session surface to the user. The `Providers.Registry` wraps all LLM calls; tool errors are returned as tool results (not exceptions) so the agent can reason about them.
+Daemon categorizes errors by their source and recoverability. Most errors are handled locally with a result tuple; only errors that affect the entire session surface to the user. The `Providers.Registry` wraps all LLM calls; tool errors are returned as tool results (not exceptions) so the agent can reason about them.
 
 ---
 
 ## LLM Provider Errors
 
-Handled in `OptimalSystemAgent.Providers.Registry` and `MiosaLLM.HealthChecker`.
+Handled in `Daemon.Providers.Registry` and `MiosaLLM.HealthChecker`.
 
 ### Rate Limit (HTTP 429)
 
@@ -68,7 +68,7 @@ Context overflow after 3 compaction attempts (iteration N)  ← error, session e
 
 ## Circuit Breaker States
 
-`OptimalSystemAgent.Providers.HealthChecker` tracks each provider independently:
+`Daemon.Providers.HealthChecker` tracks each provider independently:
 
 | State | Condition | Behavior |
 |-------|-----------|---------|
@@ -156,11 +156,11 @@ If no checkpoint: the session starts fresh.
 
 **Pattern:** Runtime error during `Application.start/2`
 
-**Source:** `OSA_REQUIRE_AUTH=true` set without `OSA_SHARED_SECRET`.
+**Source:** `DAEMON_REQUIRE_AUTH=true` set without `DAEMON_SHARED_SECRET`.
 
 **Handling:** `runtime.exs` raises immediately at startup:
 ```elixir
-raise "OSA_SHARED_SECRET must be set when OSA_REQUIRE_AUTH=true"
+raise "DAEMON_SHARED_SECRET must be set when DAEMON_REQUIRE_AUTH=true"
 ```
 The application does not start. This is the correct behavior — running without auth when auth is required would be a security failure.
 
@@ -168,7 +168,7 @@ The application does not start. This is the correct behavior — running without
 
 **Pattern:** Silently uses default
 
-**Source:** `OSA_DAILY_BUDGET_USD=not-a-number` or similar.
+**Source:** `DAEMON_DAILY_BUDGET_USD=not-a-number` or similar.
 
 **Handling:** `parse_float` and `parse_int` helpers in `runtime.exs` return the default value on parse failure. No warning is logged. Check your values if budget limits seem wrong.
 
@@ -186,7 +186,7 @@ The application does not start. This is the correct behavior — running without
 
 ### Vault Storage
 
-Vault errors are internal to `OptimalSystemAgent.Vault.Supervisor`. Observation write failures are logged at debug level and do not affect the agent's response.
+Vault errors are internal to `Daemon.Vault.Supervisor`. Observation write failures are logged at debug level and do not affect the agent's response.
 
 ---
 

@@ -1,17 +1,17 @@
 # Provider Integration Reference
 
-How to configure and use each of the 18 LLM providers supported by OSA. Covers required
+How to configure and use each of the 18 LLM providers supported by Daemon. Covers required
 environment variables, model names, and capability differences.
 
 ## Audience
 
-Operators setting up OSA for the first time or adding new providers to a running instance.
+Operators setting up Daemon for the first time or adding new providers to a running instance.
 
 ---
 
 ## Provider Overview
 
-OSA supports 18 providers across three implementation categories:
+Daemon supports 18 providers across three implementation categories:
 
 | Category | Providers |
 |----------|-----------|
@@ -28,16 +28,16 @@ All providers expose the same public interface: `Providers.Registry.chat/2` and
 
 ```bash
 # Environment variable (runtime):
-export OSA_DEFAULT_PROVIDER=anthropic
+export DAEMON_DEFAULT_PROVIDER=anthropic
 
 # Or in config/runtime.exs (compile-time):
-config :optimal_system_agent, :default_provider, :anthropic
+config :daemon, :default_provider, :anthropic
 ```
 
 To configure a fallback chain (tried in order when the primary fails):
 
 ```elixir
-config :optimal_system_agent, :fallback_chain, [:anthropic, :openai, :groq, :ollama]
+config :daemon, :fallback_chain, [:anthropic, :openai, :groq, :ollama]
 ```
 
 ---
@@ -63,9 +63,9 @@ ollama pull llama3.2:latest  # Smaller, faster
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OLLAMA_URL` | `http://localhost:11434` | Base URL for Ollama API |
-| `OSA_OLLAMA_MODEL` or `OSA_DEFAULT_MODEL` | Auto-detected | Force a specific model |
+| `DAEMON_OLLAMA_MODEL` or `DAEMON_DEFAULT_MODEL` | Auto-detected | Force a specific model |
 
-**Auto-detection:** OSA probes Ollama at boot and selects the best available model.
+**Auto-detection:** Daemon probes Ollama at boot and selects the best available model.
 Selection criteria: prefers larger models from tool-capable prefixes
 (`qwen2.5`, `llama3.3`, `llama3.2`, `gemma3`, `mixtral`, `deepseek`, etc.).
 Models smaller than 7GB are deprioritized for tool use.
@@ -100,7 +100,7 @@ export ANTHROPIC_MODEL=claude-sonnet-4-6   # optional
 - Tool calling: yes (native function calling)
 - Vision: yes (image input in messages)
 
-**Notes:** Anthropic requires `max_tokens` to be set explicitly. OSA handles this
+**Notes:** Anthropic requires `max_tokens` to be set explicitly. Daemon handles this
 automatically. The `Providers.Anthropic` module uses Anthropic's native API format,
 not OpenAI-compatible.
 
@@ -126,7 +126,7 @@ export OPENAI_MODEL=gpt-4o   # optional
 | `o3-mini` | 200K | Fast reasoning |
 | `o4-mini` | 200K | Latest reasoning |
 
-**Reasoning models (o3, o4-mini):** OSA detects these automatically and sets
+**Reasoning models (o3, o4-mini):** Daemon detects these automatically and sets
 `reasoning_effort: "medium"`. Temperature is ignored. Response time is longer.
 
 ---
@@ -166,7 +166,7 @@ export DEEPSEEK_MODEL=deepseek-chat   # optional
 | `deepseek-reasoner` | 128K | Chain-of-thought (slow but thorough) |
 
 **Notes:** `deepseek-reasoner` is detected as a reasoning model by `reasoning_model?/1`.
-Streaming returns `reasoning_content` deltas that OSA captures as `:thinking_delta`.
+Streaming returns `reasoning_content` deltas that Daemon captures as `:thinking_delta`.
 
 ---
 
@@ -225,7 +225,7 @@ export OPENROUTER_API_KEY=sk-or-...
 export OPENROUTER_MODEL=meta-llama/llama-3.3-70b-instruct   # optional
 ```
 
-OpenRouter routes to hundreds of models. OSA adds the required `HTTP-Referer` and
+OpenRouter routes to hundreds of models. Daemon adds the required `HTTP-Referer` and
 `X-Title` headers automatically. Any model string from `openrouter.ai/models` works.
 
 Popular choices:
@@ -341,12 +341,12 @@ Base URL: `https://api.baichuan-ai.com/v1`
 
 ```elixir
 # List all providers and their configuration status:
-OptimalSystemAgent.Providers.Registry.list_providers()
+Daemon.Providers.Registry.list_providers()
 |> Enum.map(fn p ->
-  {:ok, info} = OptimalSystemAgent.Providers.Registry.provider_info(p)
+  {:ok, info} = Daemon.Providers.Registry.provider_info(p)
   {p, info.configured?, info.default_model}
 end)
 
 # Override the provider for a specific session (hot-swap without restart):
-:ets.insert(:osa_session_provider_overrides, {session_id, :groq, "llama-3.3-70b-versatile"})
+:ets.insert(:daemon_session_provider_overrides, {session_id, :groq, "llama-3.3-70b-versatile"})
 ```

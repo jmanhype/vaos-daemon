@@ -1,6 +1,6 @@
 # Configuration Reference
 
-> Complete reference for all OSA configuration options
+> Complete reference for all Daemon configuration options
 
 ## Configuration Sources (Priority Order)
 
@@ -11,7 +11,7 @@
 The system loads `.env` files from two locations:
 ```
 .env                  # Project root (highest priority)
-~/.osa/.env           # User config directory
+~/.daemon/.env           # User config directory
 ```
 
 Comments (`#`) and blank lines are skipped. Format: `KEY=value` or `KEY="quoted value"`.
@@ -42,10 +42,10 @@ Comments (`#`) and blank lines are skipped. Format: `KEY=value` or `KEY="quoted 
 
 ### Provider Auto-Detection
 
-When `OSA_DEFAULT_PROVIDER` is not set, the system auto-detects based on available keys:
+When `DAEMON_DEFAULT_PROVIDER` is not set, the system auto-detects based on available keys:
 
 ```
-1. OSA_DEFAULT_PROVIDER env var → explicit override
+1. DAEMON_DEFAULT_PROVIDER env var → explicit override
 2. ANTHROPIC_API_KEY present   → :anthropic
 3. OPENAI_API_KEY present      → :openai
 4. GROQ_API_KEY present        → :groq
@@ -89,9 +89,9 @@ Default models:
 
 | Env Var | Default | Description |
 |---------|---------|-------------|
-| `OSA_DAILY_BUDGET_USD` | `50.0` | Daily API spend limit (USD) |
-| `OSA_MONTHLY_BUDGET_USD` | `500.0` | Monthly API spend limit (USD) |
-| `OSA_PER_CALL_LIMIT_USD` | `5.0` | Per-LLM-call spend limit (USD) |
+| `DAEMON_DAILY_BUDGET_USD` | `50.0` | Daily API spend limit (USD) |
+| `DAEMON_MONTHLY_BUDGET_USD` | `500.0` | Monthly API spend limit (USD) |
+| `DAEMON_PER_CALL_LIMIT_USD` | `5.0` | Per-LLM-call spend limit (USD) |
 
 ---
 
@@ -99,11 +99,11 @@ Default models:
 
 | Env Var | Default | Description |
 |---------|---------|-------------|
-| `OSA_TREASURY_ENABLED` | `false` | Enable treasury balance management |
-| `OSA_TREASURY_AUTO_DEBIT` | `true` | Auto-debit treasury on LLM calls |
-| `OSA_TREASURY_DAILY_LIMIT` | `250.0` | Daily withdrawal limit (USD) |
-| `OSA_TREASURY_MONTHLY_LIMIT` | `2500.0` | Monthly withdrawal limit (USD) |
-| `OSA_TREASURY_MAX_SINGLE` | `50.0` | Max single transaction (USD) |
+| `DAEMON_TREASURY_ENABLED` | `false` | Enable treasury balance management |
+| `DAEMON_TREASURY_AUTO_DEBIT` | `true` | Auto-debit treasury on LLM calls |
+| `DAEMON_TREASURY_DAILY_LIMIT` | `250.0` | Daily withdrawal limit (USD) |
+| `DAEMON_TREASURY_MONTHLY_LIMIT` | `2500.0` | Monthly withdrawal limit (USD) |
+| `DAEMON_TREASURY_MAX_SINGLE` | `50.0` | Max single transaction (USD) |
 
 ---
 
@@ -111,9 +111,9 @@ Default models:
 
 | Env Var | Default | Description |
 |---------|---------|-------------|
-| `OSA_HTTP_PORT` | `8089` | HTTP API server port |
-| `OSA_REQUIRE_AUTH` | `false` | Require authentication |
-| `OSA_SHARED_SECRET` | Auto-generated | HMAC secret for request signing |
+| `DAEMON_HTTP_PORT` | `8089` | HTTP API server port |
+| `DAEMON_REQUIRE_AUTH` | `false` | Require authentication |
+| `DAEMON_SHARED_SECRET` | Auto-generated | HMAC secret for request signing |
 
 ---
 
@@ -121,16 +121,16 @@ Default models:
 
 | Env Var | Default | Description |
 |---------|---------|-------------|
-| `OSA_FLEET_ENABLED` | `false` | Multi-agent fleet registry + health monitoring |
-| `OSA_WALLET_ENABLED` | `false` | Crypto wallet integration |
-| `OSA_UPDATE_ENABLED` | `false` | OTA updates with TUF verification |
-| `OSA_SANDBOX_ENABLED` | `false` | Docker container isolation for skills |
-| `OSA_GO_TOKENIZER_ENABLED` | `false` | Go BPE tokenizer sidecar |
-| `OSA_PYTHON_SIDECAR_ENABLED` | `false` | Python embeddings sidecar |
-| `OSA_GO_GIT_ENABLED` | `false` | Go git introspection sidecar |
-| `OSA_GO_SYSMON_ENABLED` | `false` | Go system monitor sidecar |
-| `OSA_TREASURY_ENABLED` | `false` | Financial governance |
-| `OSA_QUIET_HOURS` | `nil` | Suppress heartbeat. Format: `"23:00-08:00"` |
+| `DAEMON_FLEET_ENABLED` | `false` | Multi-agent fleet registry + health monitoring |
+| `DAEMON_WALLET_ENABLED` | `false` | Crypto wallet integration |
+| `DAEMON_UPDATE_ENABLED` | `false` | OTA updates with TUF verification |
+| `DAEMON_SANDBOX_ENABLED` | `false` | Docker container isolation for skills |
+| `DAEMON_GO_TOKENIZER_ENABLED` | `false` | Go BPE tokenizer sidecar |
+| `DAEMON_PYTHON_SIDECAR_ENABLED` | `false` | Python embeddings sidecar |
+| `DAEMON_GO_GIT_ENABLED` | `false` | Go git introspection sidecar |
+| `DAEMON_GO_SYSMON_ENABLED` | `false` | Go system monitor sidecar |
+| `DAEMON_TREASURY_ENABLED` | `false` | Financial governance |
+| `DAEMON_QUIET_HOURS` | `nil` | Suppress heartbeat. Format: `"23:00-08:00"` |
 
 ---
 
@@ -178,7 +178,7 @@ MATRIX_USER_ID="@bot:matrix.org"
 ### Email (SendGrid)
 ```bash
 EMAIL_FROM="bot@yourdomain.com"
-EMAIL_FROM_NAME="OSA Agent"
+EMAIL_FROM_NAME="Daemon Agent"
 SENDGRID_API_KEY="SG.xxx..."
 ```
 
@@ -221,7 +221,7 @@ BRAVE_API_KEY="BSAx..."
 
 ```elixir
 # config.exs defaults
-config :optimal_system_agent, :sandbox,
+config :daemon, :sandbox,
   mode: :docker,
   image: "osa-sandbox:latest",
   network: false,
@@ -241,7 +241,7 @@ config :optimal_system_agent, :sandbox,
 ## Context Compaction Thresholds
 
 ```elixir
-config :optimal_system_agent, :compaction,
+config :daemon, :compaction,
   warn: 0.80,        # 80% of token budget → warning
   aggressive: 0.85,  # 85% → aggressive compaction
   emergency: 0.95    # 95% → emergency compaction
@@ -252,8 +252,8 @@ config :optimal_system_agent, :compaction,
 ## Database
 
 ```elixir
-config :optimal_system_agent, OptimalSystemAgent.Store.Repo,
-  database: "~/.osa/osa.db",
+config :daemon, Daemon.Store.Repo,
+  database: "~/.daemon/osa.db",
   pool_size: 5,
   journal_mode: :wal
 ```
@@ -263,7 +263,7 @@ config :optimal_system_agent, OptimalSystemAgent.Store.Repo,
 ## Directory Structure
 
 ```
-~/.osa/
+~/.daemon/
 ├── config.json              # Machine configuration
 ├── osa.db                   # SQLite database
 ├── IDENTITY.md              # Agent identity

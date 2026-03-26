@@ -1,12 +1,12 @@
 # Channels: Overview
 
-OSA channels are the inbound/outbound transport layer between external platforms and the agent runtime. Every channel is an independent GenServer adapter that implements a common behaviour contract, receives messages from its respective platform, routes them through `Agent.Loop`, and sends the responses back.
+Daemon channels are the inbound/outbound transport layer between external platforms and the agent runtime. Every channel is an independent GenServer adapter that implements a common behaviour contract, receives messages from its respective platform, routes them through `Agent.Loop`, and sends the responses back.
 
 ---
 
 ## Behaviour Contract
 
-Every channel adapter implements `OptimalSystemAgent.Channels.Behaviour`:
+Every channel adapter implements `Daemon.Channels.Behaviour`:
 
 | Callback | Signature | Description |
 |----------|-----------|-------------|
@@ -38,11 +38,11 @@ The Manager is the central registry and control point for all channel adapters. 
 | `channel_status/1` | Return full status map for a channel |
 | `test_channel/1` | Probe a channel for liveness |
 
-Starting and stopping emits `channel_connected` and `channel_disconnected` events on the Bus. Config is resolved from `~/.osa/config.json` first, falling back to `Application.get_env/2` for known platform keys.
+Starting and stopping emits `channel_connected` and `channel_disconnected` events on the Bus. Config is resolved from `~/.daemon/config.json` first, falling back to `Application.get_env/2` for known platform keys.
 
 ### Session (`Channels.Session`)
 
-`Session.ensure_loop/3` is called by every inbound channel adapter to guarantee an `Agent.Loop` process exists for the given session before processing a message. It looks up the session in `OptimalSystemAgent.SessionRegistry`. If no loop is found, it starts one under `SessionSupervisor`. A single retry (after 50 ms) handles supervisor contention races.
+`Session.ensure_loop/3` is called by every inbound channel adapter to guarantee an `Agent.Loop` process exists for the given session before processing a message. It looks up the session in `Daemon.SessionRegistry`. If no loop is found, it starts one under `SessionSupervisor`. A single retry (after 50 ms) handles supervisor contention races.
 
 Session IDs follow the pattern `<channel>_<platform_id>`, e.g.:
 - Telegram: `telegram_123456789`
@@ -85,7 +85,7 @@ When a `signal_weight` (0.0–1.0) is provided by a classifier:
 Thresholds are runtime-configurable:
 
 ```elixir
-config :optimal_system_agent,
+config :daemon,
   noise_filter_thresholds: %{
     definitely_noise: 0.15,
     likely_noise: 0.35,

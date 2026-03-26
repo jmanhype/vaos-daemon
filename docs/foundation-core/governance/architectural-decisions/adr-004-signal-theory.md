@@ -17,7 +17,7 @@ A user typing "ok" is sent through the same pipeline — including LLM inference
 a user asking "Refactor this 3,000-line module and add comprehensive tests." The
 compute cost, latency, and model tier required are vastly different.
 
-Before Signal Theory was adopted, OSA's message processing was undifferentiated:
+Before Signal Theory was adopted, Daemon's message processing was undifferentiated:
 
 - Every message triggered a full ReAct loop
 - No pre-LLM filtering existed
@@ -46,7 +46,7 @@ cannot capture the communicative purpose of a message (asking for help vs. issui
 command vs. expressing frustration all use different downstream strategies).
 
 **A fixed taxonomy (intent categories)**: Existing intent classification taxonomies
-(e.g., from dialogue systems) are designed for narrow domains. OSA serves an open-ended
+(e.g., from dialogue systems) are designed for narrow domains. Daemon serves an open-ended
 general-purpose agent and needs a domain-agnostic structure.
 
 ---
@@ -106,7 +106,7 @@ asynchronously via LLM.
 ## Decision
 
 Adopt Signal Theory (Luna, 2026) as the classification framework for all incoming
-messages. Implement a two-level classifier in `OptimalSystemAgent.Signal.Classifier`:
+messages. Implement a two-level classifier in `Daemon.Signal.Classifier`:
 
 **Level 1 (synchronous, <1ms):** `classify_fast/2` runs regex and keyword patterns to
 produce a signal with `confidence: :low`. This is always available.
@@ -131,7 +131,7 @@ below this threshold receive no tool list, preventing hallucinated tool sequence
 low-signal inputs.
 
 The canonical implementation lives in `MiosaSignal.MessageClassifier` (shim) with the
-OSA-wired integration in `OptimalSystemAgent.Signal.Classifier`.
+Daemon-wired integration in `Daemon.Signal.Classifier`.
 
 Reference: Luna, R. (2026). *Signal Theory: The Architecture of Optimal Intent Encoding
 in Communication Systems*. https://zenodo.org/records/18774174
@@ -172,7 +172,7 @@ in Communication Systems*. https://zenodo.org/records/18774174
 ## References
 
 - Luna, R. (2026). Signal Theory: The Architecture of Optimal Intent Encoding in Communication Systems. https://zenodo.org/records/18774174
-- `lib/optimal_system_agent/signal/classifier.ex`
-- `lib/optimal_system_agent/agent/loop/genre_router.ex`
-- `lib/optimal_system_agent/channels/noise_filter.ex`
+- `lib/daemon/signal/classifier.ex`
+- `lib/daemon/agent/loop/genre_router.ex`
+- `lib/daemon/channels/noise_filter.ex`
 - ADR-003: goldrush Event Bus (Signal Theory events propagate through it)

@@ -1,10 +1,10 @@
-# OSA Desktop Command Center
+# Daemon Desktop Command Center
 
-The OSA Desktop Command Center is a cross-platform desktop application built with Tauri 2 and SvelteKit 5. It provides a native window around the OSA agent system, bundling the Elixir backend as a sidecar process and exposing a dark-themed UI for chat, terminal access, agent monitoring, model management, and settings.
+The Daemon Desktop Command Center is a cross-platform desktop application built with Tauri 2 and SvelteKit 5. It provides a native window around the Daemon agent system, bundling the Elixir backend as a sidecar process and exposing a dark-themed UI for chat, terminal access, agent monitoring, model management, and settings.
 
 ## What It Is
 
-The app is a Tauri 2 shell (`identifier: ai.osa.desktop`) that loads a statically-built SvelteKit 5 frontend at startup. When the window opens, the Rust layer spawns the OSA Elixir backend (`binaries/osagent`) as a child process on port 9089. The SvelteKit frontend communicates exclusively over HTTP and Server-Sent Events (SSE) to that local backend — there is no direct Tauri IPC for data, only for system-level operations (health checks, restart, hardware detection, terminal launch).
+The app is a Tauri 2 shell (`identifier: ai.osa.desktop`) that loads a statically-built SvelteKit 5 frontend at startup. When the window opens, the Rust layer spawns the Daemon Elixir backend (`binaries/daemon`) as a child process on port 9089. The SvelteKit frontend communicates exclusively over HTTP and Server-Sent Events (SSE) to that local backend — there is no direct Tauri IPC for data, only for system-level operations (health checks, restart, hardware detection, terminal launch).
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
@@ -20,8 +20,8 @@ The app is a Tauri 2 shell (`identifier: ai.osa.desktop`) that loads a staticall
 │  │  └──────────┬───────────────────────────────────────┘   │  │
 │  │             │  HTTP + SSE  (127.0.0.1:9089)             │  │
 │  │  ┌──────────▼───────────────────────────────────────┐   │  │
-│  │  │  Elixir Sidecar  (binaries/osagent)              │   │  │
-│  │  │  OSA_HTTP_PORT=9089  OSA_HEADLESS=true           │   │  │
+│  │  │  Elixir Sidecar  (binaries/daemon)              │   │  │
+│  │  │  DAEMON_HTTP_PORT=9089  DAEMON_HEADLESS=true           │   │  │
 │  │  └──────────────────────────────────────────────────┘   │  │
 │  └──────────────────────────────────────────────────────────┘  │
 └────────────────────────────────────────────────────────────────┘
@@ -29,12 +29,12 @@ The app is a Tauri 2 shell (`identifier: ai.osa.desktop`) that loads a staticall
 
 ## How It Connects to the Backend
 
-The Tauri shell spawns `osagent` with three environment variables:
+The Tauri shell spawns `daemon` with three environment variables:
 
 ```
-OSA_HTTP_PORT=9089
-OSA_LOG_LEVEL=warn
-OSA_HEADLESS=true
+DAEMON_HTTP_PORT=9089
+DAEMON_LOG_LEVEL=warn
+DAEMON_HEADLESS=true
 ```
 
 Startup is non-blocking: the main window is shown immediately while the sidecar starts in the background. The Rust layer polls `http://127.0.0.1:9089/health` with exponential backoff (100 ms initial, doubling to 2 s max) for up to 30 seconds, then emits either `backend-ready` or `backend-unavailable` to the frontend via Tauri events.
@@ -53,7 +53,7 @@ In development, if port 9089 is already in use (e.g., a manually-started backend
 
 **Onboarding.** First-run wizard (3 steps) detects local providers (Ollama, LM Studio), collects an API key if needed, and sets the working directory.
 
-**System tray.** The app hides to the tray on window close rather than quitting. The tray menu offers: Open Dashboard, Open Terminal (launches `osa-tui` in a native terminal window), and Quit OSA.
+**System tray.** The app hides to the tray on window close rather than quitting. The tray menu offers: Open Dashboard, Open Terminal (launches `osa-tui` in a native terminal window), and Quit Daemon.
 
 **Command palette.** `⌘K` opens a global command palette registered with nav shortcuts, new session, clear chat, YOLO toggle, and backend restart.
 

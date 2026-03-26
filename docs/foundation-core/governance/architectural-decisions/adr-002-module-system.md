@@ -10,7 +10,7 @@ Accepted (shim layer active as of v0.2.x)
 
 ## Context
 
-OSA was originally a monolith: all code under the `OptimalSystemAgent` namespace
+Daemon was originally a monolith: all code under the `Daemon` namespace
 in a single Mix project. As the system matured, seven logical subsystems were
 identified as candidates for extraction into reusable, independently published
 Hex packages under the `miosa_*` naming scheme:
@@ -26,11 +26,11 @@ Hex packages under the `miosa_*` naming scheme:
 | `miosa_knowledge` | Knowledge graph (Mnesia/ETS backend) |
 
 The intent was to allow other Elixir projects to use these packages independently
-of OSA.
+of Daemon.
 
 ### Problem
 
-The extracted packages were placed in a separate repository. When OSA's `mix.exs`
+The extracted packages were placed in a separate repository. When Daemon's `mix.exs`
 referenced them as `path:` or git dependencies, build complexity increased
 significantly:
 
@@ -43,22 +43,22 @@ significantly:
   required changes across two repositories and two CI pipelines
 
 The packages were not ready for public Hex publication. Running them as path
-dependencies inside the OSA repo negated most of the intended benefits.
+dependencies inside the Daemon repo negated most of the intended benefits.
 
 ### Decision to Inline
 
 The decision was made to inline all package implementations back into the
-`OptimalSystemAgent` namespace and delete the external dependency declarations.
+`Daemon` namespace and delete the external dependency declarations.
 The actual implementations live at paths like:
 
-- `OptimalSystemAgent.Providers.HealthChecker` (was: `MiosaLLM.HealthChecker`)
-- `OptimalSystemAgent.Agent.Memory` (was: `MiosaMemory.Store`)
+- `Daemon.Providers.HealthChecker` (was: `MiosaLLM.HealthChecker`)
+- `Daemon.Agent.Memory` (was: `MiosaMemory.Store`)
 - `MiosaBudget.Budget` (inline implementation in `lib/miosa/shims.ex`)
 
 ## Decision
 
 Create `lib/miosa/shims.ex` containing 28 alias modules that forward all
-`Miosa*` namespace calls to their `OptimalSystemAgent.*` inline implementations.
+`Miosa*` namespace calls to their `Daemon.*` inline implementations.
 
 The shim file serves three purposes:
 
@@ -68,7 +68,7 @@ The shim file serves three purposes:
 2. **Behaviour compliance**: Modules declaring `@behaviour MiosaXxx.Behaviour` compile
    because the behaviour definition exists in the shim.
 
-3. **Stub coverage**: Packages with no OSA equivalent yet (primarily `MiosaKnowledge`)
+3. **Stub coverage**: Packages with no Daemon equivalent yet (primarily `MiosaKnowledge`)
    are provided as lightweight stubs that return sensible defaults, allowing the
    system to compile and run without a fully implemented knowledge graph.
 
@@ -93,7 +93,7 @@ pattern visible and easy to audit in one place.
   compiler warnings when the delegated function has a different arity or
   default arguments. These warnings are tracked and suppressed with `@dialyzer`
   annotations where necessary.
-- **Namespace confusion**: Two namespaces (`Miosa*` and `OptimalSystemAgent.*`)
+- **Namespace confusion**: Two namespaces (`Miosa*` and `Daemon.*`)
   exist for the same implementations. Contributors must understand that
   `MiosaLLM.HealthChecker` is a shim, not a separate module.
 - **Stub debt**: `MiosaKnowledge` stubs return `:not_implemented` or empty
@@ -106,21 +106,21 @@ The following modules in `lib/miosa/shims.ex` are shims (not stubs):
 
 | Shim module | Delegates to |
 |---|---|
-| `MiosaLLM.HealthChecker` | `OptimalSystemAgent.Providers.HealthChecker` |
-| `MiosaProviders.Registry` | `OptimalSystemAgent.Providers.Registry` |
-| `MiosaProviders.Ollama` | `OptimalSystemAgent.Providers.Ollama` |
-| `MiosaProviders.Anthropic` | `OptimalSystemAgent.Providers.Anthropic` |
-| `MiosaProviders.OpenAICompat` | `OptimalSystemAgent.Providers.OpenAICompat` |
-| `MiosaProviders.Behaviour` | `OptimalSystemAgent.Providers.Behaviour` |
-| `MiosaSignal.Event` | `OptimalSystemAgent.Events.Event` |
-| `MiosaSignal.CloudEvent` | `OptimalSystemAgent.Protocol.CloudEvent` |
-| `MiosaSignal.Classifier` | `OptimalSystemAgent.Events.Classifier` |
-| `MiosaSignal.FailureModes` | `OptimalSystemAgent.Events.FailureModes` |
-| `MiosaMemory.Episodic` | `OptimalSystemAgent.Agent.Memory.Episodic` |
-| `MiosaMemory.Injector` | `OptimalSystemAgent.Agent.Memory.Injector` |
-| `MiosaMemory.Taxonomy` | `OptimalSystemAgent.Agent.Memory.Taxonomy` |
-| `MiosaMemory.Learning` | `OptimalSystemAgent.Agent.Learning` |
-| `MiosaMemory.Cortex` | `OptimalSystemAgent.Agent.Cortex` |
+| `MiosaLLM.HealthChecker` | `Daemon.Providers.HealthChecker` |
+| `MiosaProviders.Registry` | `Daemon.Providers.Registry` |
+| `MiosaProviders.Ollama` | `Daemon.Providers.Ollama` |
+| `MiosaProviders.Anthropic` | `Daemon.Providers.Anthropic` |
+| `MiosaProviders.OpenAICompat` | `Daemon.Providers.OpenAICompat` |
+| `MiosaProviders.Behaviour` | `Daemon.Providers.Behaviour` |
+| `MiosaSignal.Event` | `Daemon.Events.Event` |
+| `MiosaSignal.CloudEvent` | `Daemon.Protocol.CloudEvent` |
+| `MiosaSignal.Classifier` | `Daemon.Events.Classifier` |
+| `MiosaSignal.FailureModes` | `Daemon.Events.FailureModes` |
+| `MiosaMemory.Episodic` | `Daemon.Agent.Memory.Episodic` |
+| `MiosaMemory.Injector` | `Daemon.Agent.Memory.Injector` |
+| `MiosaMemory.Taxonomy` | `Daemon.Agent.Memory.Taxonomy` |
+| `MiosaMemory.Learning` | `Daemon.Agent.Learning` |
+| `MiosaMemory.Cortex` | `Daemon.Agent.Cortex` |
 
 The following are inline implementations (not delegates):
 
@@ -154,5 +154,5 @@ The shim layer can be removed when:
 
 1. All `miosa_*` packages are published to Hex with stable APIs
 2. The packages are referenced as Hex dependencies in `mix.exs`
-3. OSA-specific implementations are deleted from the OSA repository
+3. Daemon-specific implementations are deleted from the Daemon repository
 4. `lib/miosa/shims.ex` is deleted

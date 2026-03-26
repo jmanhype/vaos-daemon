@@ -23,7 +23,7 @@ WHATSAPP_VERIFY_TOKEN="my-verify-token"
 For personal WhatsApp (not Business API):
 
 ```bash
-OSA_WHATSAPP_WEB_ENABLED=true
+DAEMON_WHATSAPP_WEB_ENABLED=true
 ```
 
 Uses a Puppeteer-like sidecar for WhatsApp Web automation. Requires a Chromium-based browser.

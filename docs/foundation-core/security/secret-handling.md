@@ -1,9 +1,9 @@
 # Secret Handling
 
-Audience: operators deploying OSA and developers adding new integrations that
+Audience: operators deploying Daemon and developers adding new integrations that
 require API keys or credentials.
 
-OSA never hardcodes secrets in source code. All credentials are injected at
+Daemon never hardcodes secrets in source code. All credentials are injected at
 runtime via environment variables. This document covers the secret loading
 path, runtime storage, and known issues.
 
@@ -43,12 +43,12 @@ convention is `<SERVICE>_API_KEY` or `<SERVICE>_TOKEN`.
 | `OPENROUTER_API_KEY` | OpenRouter |
 | `REPLICATE_API_TOKEN` | Replicate |
 
-### OSA Authentication
+### Daemon Authentication
 
 | Variable | Purpose |
 |---|---|
-| `OSA_SHARED_SECRET` | JWT HS256 signing secret for the HTTP API. Also accepted as `JWT_SECRET`. |
-| `OSA_REQUIRE_AUTH` | Set to `"true"` to enforce JWT on all HTTP endpoints. |
+| `DAEMON_SHARED_SECRET` | JWT HS256 signing secret for the HTTP API. Also accepted as `JWT_SECRET`. |
+| `DAEMON_REQUIRE_AUTH` | Set to `"true"` to enforce JWT on all HTTP endpoints. |
 
 ### Channel and Integration Keys
 
@@ -65,24 +65,24 @@ convention is `<SERVICE>_API_KEY` or `<SERVICE>_TOKEN`.
 ## .env File
 
 The recommended way to set secrets in local and single-server deployments is
-a `.env` file at `~/.osa/.env`.
+a `.env` file at `~/.daemon/.env`.
 
 ```bash
-# ~/.osa/.env
+# ~/.daemon/.env
 ANTHROPIC_API_KEY=sk-ant-...
 GROQ_API_KEY=gsk_...
 OPENAI_API_KEY=sk-...
-OSA_SHARED_SECRET=your-long-random-secret-here
+DAEMON_SHARED_SECRET=your-long-random-secret-here
 TELEGRAM_BOT_TOKEN=1234567890:ABC...
 ```
 
-OSA loads this file at startup via `Config.Reader` or the `dotenv` loader
+Daemon loads this file at startup via `Config.Reader` or the `dotenv` loader
 in `config/runtime.exs`. The file must not be committed to version control.
 
 ### Verifying .env is gitignored
 
 ```bash
-cat ~/.osa/.gitignore
+cat ~/.daemon/.gitignore
 # Should contain:
 .env
 *.env
@@ -135,7 +135,7 @@ The following are never written to logs, crash reports, or telemetry:
 - The contents of `.env` files
 - Arguments to tools that include secret-like values
 
-OSA's structured logging (via the Elixir `Logger`) uses message templates.
+Daemon's structured logging (via the Elixir `Logger`) uses message templates.
 Any map containing a key matching `~r/key|secret|token|password|credential/i`
 is logged with the value replaced by `"[REDACTED]"` when passed through
 the structured logging helpers.
@@ -201,9 +201,9 @@ and consider the system prompt as potentially observable by determined users.
 
 When rotating an API key:
 
-1. Update the value in `~/.osa/.env` (or the environment variable source for
+1. Update the value in `~/.daemon/.env` (or the environment variable source for
    your deployment).
-2. Restart the OSA process. `:persistent_term` values are set at startup and
+2. Restart the Daemon process. `:persistent_term` values are set at startup and
    are not hot-reloadable.
 3. Verify the new key is active:
    ```bash

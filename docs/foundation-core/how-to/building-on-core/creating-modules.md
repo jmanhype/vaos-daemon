@@ -1,15 +1,15 @@
-# Creating Modules in OSA
+# Creating Modules in Daemon
 
-This guide covers how to create a new module that integrates properly with the OSA supervision
+This guide covers how to create a new module that integrates properly with the Daemon supervision
 tree, event bus, and tool registry.
 
 ## Audience
 
-Elixir developers extending OSA with new GenServers, tools, or subsystems.
+Elixir developers extending Daemon with new GenServers, tools, or subsystems.
 
 ## The Supervision Tree
 
-OSA organizes processes into four subsystem supervisors under a top-level `:rest_for_one`
+Daemon organizes processes into four subsystem supervisors under a top-level `:rest_for_one`
 supervisor. Pick the right home for your module:
 
 | Subsystem | Supervisor | Purpose |
@@ -24,7 +24,7 @@ sibling agent services. Choose your supervisor based on how critical your module
 
 ## GenServer Template
 
-Here is the standard pattern used throughout OSA. The key conventions are:
+Here is the standard pattern used throughout Daemon. The key conventions are:
 
 - Use a module-level `name: __MODULE__` registration for singletons.
 - Use `Registry`-based naming for per-session processes.
@@ -32,7 +32,7 @@ Here is the standard pattern used throughout OSA. The key conventions are:
 - Store mutable shared data in ETS with `:public` access when many callers read concurrently.
 
 ```elixir
-defmodule OptimalSystemAgent.MyFeature do
+defmodule Daemon.MyFeature do
   @moduledoc """
   One-line description of what this module does.
 
@@ -95,27 +95,27 @@ the supervisor strategy is `:rest_for_one`.
 ```elixir
 # In Supervisors.AgentServices.init/1:
 children = [
-  OptimalSystemAgent.Agent.Memory,
-  OptimalSystemAgent.Agent.Hooks,
-  OptimalSystemAgent.MyFeature,   # Add here, after deps, before dependents
+  Daemon.Agent.Memory,
+  Daemon.Agent.Hooks,
+  Daemon.MyFeature,   # Add here, after deps, before dependents
   # ...
 ]
 ```
 
 For per-session processes (one process per conversation), use the existing
-`OptimalSystemAgent.SessionSupervisor` DynamicSupervisor:
+`Daemon.SessionSupervisor` DynamicSupervisor:
 
 ```elixir
 # To start a session-scoped process:
 DynamicSupervisor.start_child(
-  OptimalSystemAgent.SessionSupervisor,
-  {OptimalSystemAgent.MySessionModule, session_id: session_id, channel: :cli}
+  Daemon.SessionSupervisor,
+  {Daemon.MySessionModule, session_id: session_id, channel: :cli}
 )
 ```
 
 ## Subscribing to Events
 
-OSA routes events through a goldrush-compiled `:osa_event_router`. Valid event types are
+Daemon routes events through a goldrush-compiled `:daemon_event_router`. Valid event types are
 declared in `Events.Bus` and include: `:user_message`, `:llm_request`, `:llm_response`,
 `:tool_call`, `:tool_result`, `:agent_response`, `:system_event`.
 
@@ -127,7 +127,7 @@ crashes do not propagate to your GenServer.
 def init(opts) do
   # Register an event handler for tool results.
   # The ref can be used later to unregister.
-  ref = OptimalSystemAgent.Events.Bus.register_handler(:tool_result, fn event ->
+  ref = Daemon.Events.Bus.register_handler(:tool_result, fn event ->
     # event is a plain map with all Event struct fields:
     # :id, :type, :source, :payload, :session_id, :correlation_id, :timestamp
     payload = event[:payload] || %{}
@@ -142,7 +142,7 @@ end
 To emit an event from your module:
 
 ```elixir
-OptimalSystemAgent.Events.Bus.emit(:system_event, %{
+Daemon.Events.Bus.emit(:system_event, %{
   event: :my_feature_updated,
   data: some_data
 }, session_id: session_id, source: "my_feature")
@@ -151,7 +151,7 @@ OptimalSystemAgent.Events.Bus.emit(:system_event, %{
 ## ETS Tables
 
 If your module needs concurrent reads from many callers (e.g., during LLM loop execution),
-create a named ETS table. OSA creates its own tables at boot in `Application.start/2`
+create a named ETS table. Daemon creates its own tables at boot in `Application.start/2`
 before the supervision tree starts.
 
 For module-owned tables, create in `init/1`:
@@ -171,7 +171,7 @@ end
 ```
 
 Use `:bag` instead of `:set` when one key maps to multiple values (as `Events.Bus` does
-for its `:osa_event_handlers` table).
+for its `:daemon_event_handlers` table).
 
 ## Registry-Based Naming for Sessions
 
@@ -180,12 +180,12 @@ When you need one process per session rather than one singleton:
 ```elixir
 def start_link(opts) do
   session_id = Keyword.fetch!(opts, :session_id)
-  name = {:via, Registry, {OptimalSystemAgent.SessionRegistry, session_id}}
+  name = {:via, Registry, {Daemon.SessionRegistry, session_id}}
   GenServer.start_link(__MODULE__, opts, name: name)
 end
 
 # To look up a session process:
-case Registry.lookup(OptimalSystemAgent.SessionRegistry, session_id) do
+case Registry.lookup(Daemon.SessionRegistry, session_id) do
   [{pid, _}] -> pid
   [] -> nil
 end

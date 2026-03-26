@@ -2,7 +2,7 @@
 
 ## Agent.Loop GenServer
 
-`OptimalSystemAgent.Agent.Loop` is the core reasoning engine. It is a GenServer
+`Daemon.Agent.Loop` is the core reasoning engine. It is a GenServer
 that owns one session's full execution context and processes messages serially
 within that session.
 
@@ -68,7 +68,7 @@ acknowledgements ("ok", "thanks") or conversational filler ("lol", "hm").
 
 The ReAct loop implements Reason + Act cycles. The loop is bounded by
 `max_iterations` (default: `20`, configured via
-`Application.get_env(:optimal_system_agent, :max_iterations, 30)`):
+`Application.get_env(:daemon, :max_iterations, 30)`):
 
 ```
 iteration 0 → think → call LLM → tool_calls? → yes → execute tools → append results
@@ -86,7 +86,7 @@ defp run_loop(state, messages) when state.iteration >= max_iterations() do
 end
 
 defp run_loop(state, messages) do
-  case :ets.lookup(:osa_cancel_flags, state.session_id) do
+  case :ets.lookup(:daemon_cancel_flags, state.session_id) do
     [{_, true}] -> {:cancelled, "Loop cancelled"}
     [] ->
       case LLMClient.call(state, messages) do
@@ -103,14 +103,14 @@ end
 ## LLM Client Dispatch
 
 `Agent.Loop.LLMClient` dispatches to `MiosaProviders.Registry`, which routes
-to the active provider module via the goldrush-compiled `:osa_provider_router`:
+to the active provider module via the goldrush-compiled `:daemon_provider_router`:
 
 ```elixir
 # In LLMClient:
 MiosaProviders.Registry.call(provider, model, messages, tools, opts)
 
 # In MiosaProviders.Registry — goldrush routing:
-:glc.handle(:osa_provider_router, event)
+:glc.handle(:daemon_provider_router, event)
 # → dispatches to MiosaProviders.Anthropic | OpenAI | Groq | Ollama | ...
 ```
 
@@ -178,7 +178,7 @@ Built-in hooks:
 ## Reasoning Strategies
 
 `Agent.Loop` supports pluggable reasoning strategies via the
-`OptimalSystemAgent.Agent.Strategy` behaviour. The active strategy module is
+`Daemon.Agent.Strategy` behaviour. The active strategy module is
 stored in `state.strategy`; strategy-specific state is in `state.strategy_state`.
 
 ### Available Strategies
@@ -237,7 +237,7 @@ end
 ```
 
 `Loop.Checkpoint` persists conversation messages, iteration count, plan mode,
-and turn count to `~/.osa/checkpoints/<session_id>.json`. On `init/1`, the loop
+and turn count to `~/.daemon/checkpoints/<session_id>.json`. On `init/1`, the loop
 attempts to restore from this file, enabling crash recovery without losing
 conversation context.
 

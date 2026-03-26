@@ -1,12 +1,12 @@
 # Agents and Roster
 
-OSA maintains a roster of named specialist agents. Each agent has an identity, a tier (model class), and a system prompt stored as a Markdown definition file. The Orchestrator uses multi-factor scoring to select the best agent for each sub-task.
+Daemon maintains a roster of named specialist agents. Each agent has an identity, a tier (model class), and a system prompt stored as a Markdown definition file. The Orchestrator uses multi-factor scoring to select the best agent for each sub-task.
 
 ---
 
 ## The Roster
 
-`OptimalSystemAgent.Agent.Roster` builds the agent map at runtime from module callbacks, not compile-time. The roster supports:
+`Daemon.Agent.Roster` builds the agent map at runtime from module callbacks, not compile-time. The roster supports:
 
 - `Roster.get/1` — retrieve agent metadata by name
 - `Roster.select_for_task_scored/1` — rank all agents against a task description, returns `[{name, score}]`
@@ -21,7 +21,7 @@ Agent definitions live in `priv/agents/<name>.md`. Each file contains the agent'
 
 ## Agent Tiers
 
-OSA uses three tiers that map to model classes:
+Daemon uses three tiers that map to model classes:
 
 | Tier | Purpose | Model class |
 |------|---------|------------|

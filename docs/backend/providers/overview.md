@@ -1,6 +1,6 @@
 # Provider System Overview
 
-OSA routes all LLM calls through `MiosaProviders` — a standalone package that abstracts 18 providers behind a single interface. The agent loop, recipe engine, and orchestrator never call a provider directly; they call `MiosaProviders.Registry.chat/2` and the registry selects, validates, and calls the right provider.
+Daemon routes all LLM calls through `MiosaProviders` — a standalone package that abstracts 18 providers behind a single interface. The agent loop, recipe engine, and orchestrator never call a provider directly; they call `MiosaProviders.Registry.chat/2` and the registry selects, validates, and calls the right provider.
 
 ---
 
@@ -84,7 +84,7 @@ MiosaProviders.Registry.chat(messages, opts)
 
 ## Tier System
 
-The tier system maps capability levels to model classes. OSA uses tiers internally to select the right model for the task — the orchestrator uses `:elite` for planning, specialists use `:specialist`, and utility tasks like classification use `:utility`.
+The tier system maps capability levels to model classes. Daemon uses tiers internally to select the right model for the task — the orchestrator uses `:elite` for planning, specialists use `:specialist`, and utility tasks like classification use `:utility`.
 
 | Tier | Purpose | Claude equivalent |
 |------|---------|-------------------|
@@ -101,7 +101,7 @@ Providers map their models to tiers internally. When you call `Registry.chat/2` 
 On startup, the registry inspects environment variables and selects the provider in this order:
 
 ```
-1. OSA_DEFAULT_PROVIDER=<name>   Explicit override — used as-is
+1. DAEMON_DEFAULT_PROVIDER=<name>   Explicit override — used as-is
 2. ANTHROPIC_API_KEY present     → :anthropic
 3. OPENAI_API_KEY present        → :openai
 4. GROQ_API_KEY present          → :groq
@@ -153,7 +153,7 @@ Switching takes effect for the next request. The registry updates in-memory stat
 
 ## Ollama Tool Gating
 
-Ollama is the only provider with a tool gating rule. OSA withholds tool definitions from Ollama models unless the model meets both criteria:
+Ollama is the only provider with a tool gating rule. Daemon withholds tool definitions from Ollama models unless the model meets both criteria:
 
 1. Model size is 7 GB or larger
 2. Model name matches a known tool-capable prefix (`llama3`, `qwen2`, `mistral`, etc.)

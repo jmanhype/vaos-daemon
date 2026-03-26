@@ -5,10 +5,10 @@
 ## Entry Points
 
 ```bash
-osagent              # Interactive chat (default)
-osagent setup        # Configuration wizard
-osagent serve        # Headless HTTP API mode
-osagent version      # Print version
+daemon              # Interactive chat (default)
+daemon setup        # Configuration wizard
+daemon serve        # Headless HTTP API mode
+daemon version      # Print version
 ```
 
 ---
@@ -21,7 +21,7 @@ osagent version      # Print version
 | `/status` | System status (provider, model, channels, memory) |
 | `/doctor` | Run diagnostics (providers, channels, sidecars, database) |
 | `/config` | Show runtime configuration |
-| `/banner` | Show OSA Agent banner |
+| `/banner` | Show Daemon Agent banner |
 
 ## Model & Provider
 
@@ -33,7 +33,7 @@ osagent version      # Print version
 | `/models` | Open interactive model picker (TUI) or list models (CLI) |
 | `/provider` | Show provider details |
 | `/theme` | List available TUI themes |
-| `/theme <name>` | Switch TUI theme (persisted to ~/.osa/tui.json) |
+| `/theme <name>` | Switch TUI theme (persisted to ~/.daemon/tui.json) |
 
 ## Session Management
 
@@ -45,7 +45,7 @@ osagent version      # Print version
 | `/history` | View current session history |
 | `/history search <query>` | Search across session history |
 | `/clear` | Clear current display |
-| `/exit` or `/quit` | Exit OSA |
+| `/exit` or `/quit` | Exit Daemon |
 
 ## Memory
 
@@ -147,7 +147,7 @@ osagent version      # Print version
 | `/prime-security` | Load security audit context |
 | `/prime-devops` | Load DevOps/infrastructure context |
 | `/prime-testing` | Load testing/QA context |
-| `/prime-osa` | Load OSA Terminal development context |
+| `/prime-osa` | Load Daemon Terminal development context |
 | `/prime-miosa` | Load MIOSA platform context |
 
 ## Security

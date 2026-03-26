@@ -48,7 +48,7 @@ Before opening a PR:
 - [ ] User-supplied input is validated before use (especially file paths and
       shell commands)
 - [ ] Tool `execute/1` functions do not expose the file system beyond
-      `OSA_WORKING_DIR` without explicit permission tier enforcement
+      `DAEMON_WORKING_DIR` without explicit permission tier enforcement
 - [ ] No new HTTP endpoints bypass the authentication middleware when
       `require_auth` is enabled
 - [ ] Sensitive data (API keys, message content, PII) is not passed to

@@ -1,7 +1,7 @@
 # Registering Components
 
 Audience: developers who have written a tool, skill, command, hook, or channel
-adapter and now need to make OSA aware of it.
+adapter and now need to make Daemon aware of it.
 
 All registrations happen at runtime, not at compile time. You can register a
 component from `init/1` of a supervised process, from a Mix task, from IEx,
@@ -11,14 +11,14 @@ or from application startup code.
 
 ## Register a Tool
 
-Tools are Elixir modules that implement `OptimalSystemAgent.Tools.Behaviour`.
+Tools are Elixir modules that implement `Daemon.Tools.Behaviour`.
 Once registered, the tool becomes available to the LLM for function calling.
 
 ```elixir
-OptimalSystemAgent.Tools.Registry.register(MyApp.Tools.WeatherTool)
+Daemon.Tools.Registry.register(MyApp.Tools.WeatherTool)
 ```
 
-Registration recompiles the goldrush `:osa_tool_dispatcher` bytecode module
+Registration recompiles the goldrush `:daemon_tool_dispatcher` bytecode module
 automatically. New tools are available to the LLM immediately — no restart
 required.
 
@@ -27,14 +27,14 @@ supervised process (after `Tools.Registry` is started under Infrastructure):
 
 ```elixir
 # In your service's init/1, or from Supervisors.Extensions init
-OptimalSystemAgent.Tools.Registry.register(MyApp.Tools.WeatherTool)
-OptimalSystemAgent.Tools.Registry.register(MyApp.Tools.CalendarTool)
+Daemon.Tools.Registry.register(MyApp.Tools.WeatherTool)
+Daemon.Tools.Registry.register(MyApp.Tools.CalendarTool)
 ```
 
 List all registered tools:
 
 ```elixir
-OptimalSystemAgent.Tools.Registry.list_tools()
+Daemon.Tools.Registry.list_tools()
 ```
 
 ---
@@ -47,10 +47,10 @@ register a skill.
 
 ### Option A: SKILL.md file
 
-Drop a markdown file in `~/.osa/skills/`. OSA discovers skill files at boot
+Drop a markdown file in `~/.daemon/skills/`. Daemon discovers skill files at boot
 and when `Tools.Registry` is explicitly reloaded.
 
-File format (`~/.osa/skills/my_skill.md`):
+File format (`~/.daemon/skills/my_skill.md`):
 
 ```markdown
 ---
@@ -79,7 +79,7 @@ skill expects to use. It does not restrict other tools — it is informational.
 ### Option B: Programmatic registration
 
 ```elixir
-OptimalSystemAgent.Tools.Registry.register_skill(%{
+Daemon.Tools.Registry.register_skill(%{
   name: "my_skill",
   description: "Brief description",
   instructions: "Full skill instructions as a string",
@@ -93,11 +93,11 @@ OptimalSystemAgent.Tools.Registry.register_skill(%{
 
 Slash commands are shortcuts that expand into prompt templates or call Elixir
 functions directly. Commands are stored in ETS and optionally persisted to
-`~/.osa/commands/`.
+`~/.daemon/commands/`.
 
 ### File-based commands (recommended)
 
-Create a markdown file in `~/.osa/commands/`:
+Create a markdown file in `~/.daemon/commands/`:
 
 ```markdown
 ---
@@ -117,7 +117,7 @@ The command is accessible as `/standup` in any chat channel.
 ### Programmatic registration
 
 ```elixir
-OptimalSystemAgent.Commands.register("my_command", fn _args ->
+Daemon.Commands.register("my_command", fn _args ->
   # Return the prompt string or {:ok, response_string}
   "Perform my custom action and report the result."
 end)
@@ -136,7 +136,7 @@ Hooks intercept the agent lifecycle. Register a hook from any supervised
 process after `Agent.Hooks` starts (under `Supervisors.AgentServices`).
 
 ```elixir
-alias OptimalSystemAgent.Agent.Hooks
+alias Daemon.Agent.Hooks
 
 Hooks.register(%{
   name: "my_audit_hook",
@@ -184,17 +184,17 @@ Built-in hooks use priorities 8–90. Safe ranges for custom hooks:
 
 ## Register a Channel
 
-Channel adapters run under `OptimalSystemAgent.Channels.Supervisor`, a
+Channel adapters run under `Daemon.Channels.Supervisor`, a
 `DynamicSupervisor`. Start a channel adapter as a dynamic child:
 
 ```elixir
 DynamicSupervisor.start_child(
-  OptimalSystemAgent.Channels.Supervisor,
+  Daemon.Channels.Supervisor,
   {MyApp.Channels.MyAdapter, config: my_config}
 )
 ```
 
-Channel adapters must implement `OptimalSystemAgent.Channels.Behaviour`. See
+Channel adapters must implement `Daemon.Channels.Behaviour`. See
 [Extending the Runtime](./extending-the-runtime.md) for the full adapter
 contract.
 
@@ -210,15 +210,15 @@ it is missing rather than crashing.
 
 ```elixir
 # Tools
-OptimalSystemAgent.Tools.Registry.list_tools()
+Daemon.Tools.Registry.list_tools()
 |> Enum.map(& &1.name)
 
 # Hooks
-OptimalSystemAgent.Agent.Hooks.list_hooks()
+Daemon.Agent.Hooks.list_hooks()
 
 # Commands
 # (inspect the ETS table directly)
-:ets.tab2list(:osa_commands)
+:ets.tab2list(:daemon_commands)
 ```
 
 ---

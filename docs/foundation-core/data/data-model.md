@@ -1,9 +1,9 @@
 # Data Model
 
-Audience: developers querying the OSA database directly and contributors
+Audience: developers querying the Daemon database directly and contributors
 adding new persistence requirements.
 
-OSA uses SQLite3 as its primary local database, accessed via Ecto with the
+Daemon uses SQLite3 as its primary local database, accessed via Ecto with the
 `ecto_sqlite3` adapter. For multi-tenant platform deployments, PostgreSQL
 is used instead (same schema, different adapter).
 
@@ -12,19 +12,19 @@ is used instead (same schema, different adapter).
 ## Database Location
 
 ```
-~/.osa/osa.db           # Default location
+~/.daemon/osa.db           # Default location
 ```
 
-Override with the `OSA_DATABASE_PATH` environment variable or by setting
-`config :optimal_system_agent, :database_path` in `config/runtime.exs`.
+Override with the `DAEMON_DATABASE_PATH` environment variable or by setting
+`config :daemon, :database_path` in `config/runtime.exs`.
 
 SQLite is configured with WAL (Write-Ahead Logging) mode and a pool size
 of 5 connections:
 
 ```elixir
 # config/config.exs
-config :optimal_system_agent, OptimalSystemAgent.Store.Repo,
-  database: "~/.osa/osa.db",
+config :daemon, Daemon.Store.Repo,
+  database: "~/.daemon/osa.db",
   pool_size: 5,
   journal_mode: :wal,
   cache_size: -64_000,         # 64MB page cache
@@ -277,19 +277,19 @@ DATABASE_URL=postgresql://user:pass@host/osa_platform
 ```elixir
 # config/runtime.exs
 if System.get_env("DATABASE_URL") do
-  config :optimal_system_agent, OptimalSystemAgent.Platform.Repo,
+  config :daemon, Daemon.Platform.Repo,
     url: System.get_env("DATABASE_URL"),
     pool_size: String.to_integer(System.get_env("POOL_SIZE", "10")),
     ssl: true
 end
 ```
 
-### Platform Tables (`OptimalSystemAgent.Platform.Repo`)
+### Platform Tables (`Daemon.Platform.Repo`)
 
 These tables are in `priv/platform_repo/migrations/` and use UUID primary keys
 (`binary_id` in Ecto, `uuid` in PostgreSQL).
 
-**`platform_users`** — Ecto schema: `OptimalSystemAgent.Platform.Schemas.User`
+**`platform_users`** — Ecto schema: `Daemon.Platform.Schemas.User`
 
 | Column | Type | Constraints |
 |---|---|---|
@@ -302,7 +302,7 @@ These tables are in `priv/platform_repo/migrations/` and use UUID primary keys
 | `email_verified_at` | utc_datetime | |
 | `last_login_at` | utc_datetime | |
 
-**`tenants`** — Ecto schema: `OptimalSystemAgent.Platform.Schemas.Tenant`
+**`tenants`** — Ecto schema: `Daemon.Platform.Schemas.Tenant`
 
 | Column | Type | Constraints |
 |---|---|---|
@@ -319,7 +319,7 @@ UNIQUE on `(tenant_id, user_id)`.
 
 **`tenant_invites`** — invite tokens generated via `:crypto.strong_rand_bytes(32) |> Base.url_encode64/1`.
 
-**`os_instances`** — one row per running OSA instance within a tenant.
+**`os_instances`** — one row per running Daemon instance within a tenant.
 
 | Column | Type | Description |
 |---|---|---|
@@ -351,12 +351,12 @@ UNIQUE on `(tenant_id, user_id)`.
 
 | Module | Table | Repo |
 |---|---|---|
-| `OptimalSystemAgent.Store.Message` | `messages` | Store.Repo (SQLite) |
-| `OptimalSystemAgent.Store.Task` | `task_queue` | Store.Repo (SQLite) |
-| `OptimalSystemAgent.Platform.Schemas.User` | `platform_users` | Platform.Repo (PostgreSQL) |
-| `OptimalSystemAgent.Platform.Schemas.Tenant` | `tenants` | Platform.Repo (PostgreSQL) |
-| `OptimalSystemAgent.Platform.Schemas.TenantMember` | `tenant_members` | Platform.Repo (PostgreSQL) |
-| `OptimalSystemAgent.Platform.Schemas.TenantInvite` | `tenant_invites` | Platform.Repo (PostgreSQL) |
-| `OptimalSystemAgent.Platform.Schemas.OsInstance` | `os_instances` | Platform.Repo (PostgreSQL) |
-| `OptimalSystemAgent.Platform.Schemas.Grant` | `cross_os_grants` | Platform.Repo (PostgreSQL) |
-| `OptimalSystemAgent.Platform.Schemas.SurveyResponse` | `survey_responses` | Platform.Repo (PostgreSQL) |
+| `Daemon.Store.Message` | `messages` | Store.Repo (SQLite) |
+| `Daemon.Store.Task` | `task_queue` | Store.Repo (SQLite) |
+| `Daemon.Platform.Schemas.User` | `platform_users` | Platform.Repo (PostgreSQL) |
+| `Daemon.Platform.Schemas.Tenant` | `tenants` | Platform.Repo (PostgreSQL) |
+| `Daemon.Platform.Schemas.TenantMember` | `tenant_members` | Platform.Repo (PostgreSQL) |
+| `Daemon.Platform.Schemas.TenantInvite` | `tenant_invites` | Platform.Repo (PostgreSQL) |
+| `Daemon.Platform.Schemas.OsInstance` | `os_instances` | Platform.Repo (PostgreSQL) |
+| `Daemon.Platform.Schemas.Grant` | `cross_os_grants` | Platform.Repo (PostgreSQL) |
+| `Daemon.Platform.Schemas.SurveyResponse` | `survey_responses` | Platform.Repo (PostgreSQL) |

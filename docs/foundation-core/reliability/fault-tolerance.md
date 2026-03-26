@@ -1,6 +1,6 @@
 # Fault Tolerance
 
-OSA relies on OTP supervision for fault isolation and automatic recovery. The design principle
+Daemon relies on OTP supervision for fault isolation and automatic recovery. The design principle
 is crash containment: a failed process should restart itself without destabilizing anything that
 was not already affected.
 
@@ -8,13 +8,13 @@ was not already affected.
 
 ## Top-Level Supervision Strategy: `:rest_for_one`
 
-The root supervisor (`OptimalSystemAgent.Supervisor`) uses `:rest_for_one`.
+The root supervisor (`Daemon.Supervisor`) uses `:rest_for_one`.
 
 ```
-OptimalSystemAgent.Supervisor  [strategy: :rest_for_one]
+Daemon.Supervisor  [strategy: :rest_for_one]
 │
 ├── [opt] Platform.Repo              PostgreSQL — multi-tenant (conditional on DATABASE_URL)
-├── Task.Supervisor                  name: OptimalSystemAgent.TaskSupervisor
+├── Task.Supervisor                  name: Daemon.TaskSupervisor
 ├── Supervisors.Infrastructure       [strategy: :rest_for_one]
 ├── Supervisors.Sessions             [strategy: :one_for_one]
 ├── Supervisors.AgentServices        [strategy: :one_for_one]
@@ -49,8 +49,8 @@ Children have strict initialization ordering. Later children depend on earlier o
 Infrastructure supervisor children (in start order):
   1. SessionRegistry          — ETS-backed unique registry for session lookup
   2. Events.TaskSupervisor    — max_children: 100; must exist before Events.Bus
-  3. Phoenix.PubSub           — name: OptimalSystemAgent.PubSub
-  4. Events.Bus               — goldrush :osa_event_router; depends on TaskSupervisor
+  3. Phoenix.PubSub           — name: Daemon.PubSub
+  4. Events.Bus               — goldrush :daemon_event_router; depends on TaskSupervisor
   5. Events.DLQ               — dead-letter queue; depends on Events.Bus
   6. Bridge.PubSub            — goldrush → Phoenix.PubSub fan-out; depends on both
   7. Store.Repo               — Ecto/SQLite3 persistent store
@@ -58,7 +58,7 @@ Infrastructure supervisor children (in start order):
   9. Telemetry.Metrics        — subscribes to Events.Bus; depends on Bus + TaskSupervisor
   10. MiosaLLM.HealthChecker  — circuit breaker GenServer; must start before Registry
   11. MiosaProviders.Registry — LLM routing; depends on HealthChecker
-  12. Tools.Registry           — goldrush :osa_tool_dispatcher
+  12. Tools.Registry           — goldrush :daemon_tool_dispatcher
   13. Tools.Cache              — ETS-backed tool result cache
   14. Machines                 — composable skill set manager
   15. Commands                 — slash command registry
@@ -118,8 +118,8 @@ Extensions supervisor children (conditional):
   SwarmMode.AgentPool        — DynamicSupervisor, max_children: 50
 
   [conditional on config flags]:
-  MiosaBudget.Treasury       — OSA_TREASURY_ENABLED=true
-  Fleet.Supervisor           — OSA_FLEET_ENABLED=true
+  MiosaBudget.Treasury       — DAEMON_TREASURY_ENABLED=true
+  Fleet.Supervisor           — DAEMON_FLEET_ENABLED=true
   Sidecar.Manager            — always started when sidecars enabled
   Go.Tokenizer               — go_tokenizer_enabled: true
   Python.Supervisor          — python_sidecar_enabled: true
@@ -171,20 +171,20 @@ Seven ETS tables are created before the supervision tree starts, in `Application
 
 | Table | Type | Purpose |
 |---|---|---|
-| `:osa_cancel_flags` | `:public, :set` | Per-session loop cancellation flags |
-| `:osa_files_read` | `:public, :set` | Read-before-write tracking per session |
-| `:osa_survey_answers` | `:public, :set` | ask_user HTTP poll answers |
-| `:osa_context_cache` | `:public, :set` | Ollama model context window size cache |
-| `:osa_survey_responses` | `:public, :bag` | Survey responses (when platform DB off) |
-| `:osa_session_provider_overrides` | `:public, :set` | Hot-swap provider/model per session |
-| `:osa_pending_questions` | `:public, :set` | Pending ask_user question tracking |
+| `:daemon_cancel_flags` | `:public, :set` | Per-session loop cancellation flags |
+| `:daemon_files_read` | `:public, :set` | Read-before-write tracking per session |
+| `:daemon_survey_answers` | `:public, :set` | ask_user HTTP poll answers |
+| `:daemon_context_cache` | `:public, :set` | Ollama model context window size cache |
+| `:daemon_survey_responses` | `:public, :bag` | Survey responses (when platform DB off) |
+| `:daemon_session_provider_overrides` | `:public, :set` | Hot-swap provider/model per session |
+| `:daemon_pending_questions` | `:public, :set` | Pending ask_user question tracking |
 
 These tables survive individual process crashes because they are not owned by any single
 process — they were created by the application process before supervision started.
 
 Two additional ETS tables are created by subsystems on startup:
-- `:osa_event_handlers` — created by `Events.Bus.init/1`, holds registered event handlers
-- `:osa_tool_handlers` — created by `Tools.Registry` via goldrush compile
+- `:daemon_event_handlers` — created by `Events.Bus.init/1`, holds registered event handlers
+- `:daemon_tool_handlers` — created by `Tools.Registry` via goldrush compile
 
 ---
 
@@ -192,11 +192,11 @@ Two additional ETS tables are created by subsystems on startup:
 
 Ollama tier assignments and manual tier overrides are stored in `persistent_term`:
 
-- `:osa_ollama_tiers` — model-to-tier mapping (elite/specialist/utility)
-- `:osa_tier_overrides` — manual overrides applied on top of auto-detection
+- `:daemon_ollama_tiers` — model-to-tier mapping (elite/specialist/utility)
+- `:daemon_tier_overrides` — manual overrides applied on top of auto-detection
 
 These survive GenServer crashes. They are written at boot by `Agent.Tier.detect_ollama_tiers/0`
 and whenever `Agent.Tier.set_tier_override/2` is called.
 
 Soul and prompt content is loaded into `persistent_term` before the supervision tree starts
-via `OptimalSystemAgent.Soul.load/0` and `OptimalSystemAgent.PromptLoader.load/0`.
+via `Daemon.Soul.load/0` and `Daemon.PromptLoader.load/0`.

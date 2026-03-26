@@ -2,9 +2,9 @@
 
 ## Overview
 
-OSA uses circuit breakers in two distinct domains: LLM provider health tracking
+Daemon uses circuit breakers in two distinct domains: LLM provider health tracking
 (managed by `MiosaLLM.HealthChecker`) and sidecar process fault isolation
-(managed by `OptimalSystemAgent.Sidecar.CircuitBreaker`). Both follow the
+(managed by `Daemon.Sidecar.CircuitBreaker`). Both follow the
 standard three-state circuit breaker pattern but are tuned for their respective
 workloads.
 
@@ -14,7 +14,7 @@ workloads.
 
 ### Implementation
 
-`OptimalSystemAgent.Providers.HealthChecker` is a named GenServer started
+`Daemon.Providers.HealthChecker` is a named GenServer started
 under `Supervisors.Infrastructure` before `MiosaProviders.Registry`. It stores
 per-provider health state in GenServer state (a map keyed by provider atom).
 
@@ -93,9 +93,9 @@ each LLM response, keeping the circuit state current.
 
 ### Implementation
 
-`OptimalSystemAgent.Sidecar.CircuitBreaker` is a pure ETS-based circuit
-breaker with no GenServer. State is stored in the `:osa_circuit_breakers` ETS
-table, initialized by `OptimalSystemAgent.Sidecar.Manager` at startup.
+`Daemon.Sidecar.CircuitBreaker` is a pure ETS-based circuit
+breaker with no GenServer. State is stored in the `:daemon_circuit_breakers` ETS
+table, initialized by `Daemon.Sidecar.Manager` at startup.
 
 Using ETS (with `read_concurrency: true`) allows lock-free concurrent reads
 from multiple agent Loop processes calling sidecar tools simultaneously.
@@ -145,21 +145,21 @@ record_failure(name):
 
 ```elixir
 # Initialize table (called by Sidecar.Manager)
-OptimalSystemAgent.Sidecar.CircuitBreaker.init()
+Daemon.Sidecar.CircuitBreaker.init()
 
 # Check before calling sidecar
-if OptimalSystemAgent.Sidecar.CircuitBreaker.allow?(OptimalSystemAgent.Go.Tokenizer) do
+if Daemon.Sidecar.CircuitBreaker.allow?(Daemon.Go.Tokenizer) do
   call_sidecar(...)
 else
   {:error, :circuit_open}
 end
 
 # Report outcomes
-OptimalSystemAgent.Sidecar.CircuitBreaker.record_success(OptimalSystemAgent.Go.Tokenizer)
-OptimalSystemAgent.Sidecar.CircuitBreaker.record_failure(OptimalSystemAgent.Go.Tokenizer)
+Daemon.Sidecar.CircuitBreaker.record_success(Daemon.Go.Tokenizer)
+Daemon.Sidecar.CircuitBreaker.record_failure(Daemon.Go.Tokenizer)
 
 # Inspect state
-OptimalSystemAgent.Sidecar.CircuitBreaker.state(OptimalSystemAgent.Go.Tokenizer)
+Daemon.Sidecar.CircuitBreaker.state(Daemon.Go.Tokenizer)
 # => :closed | :open | :half_open
 ```
 
@@ -170,11 +170,11 @@ The circuit breaker is applied to all sidecar modules managed under
 
 | Sidecar | Module |
 |---|---|
-| Go Tokenizer | `OptimalSystemAgent.Go.Tokenizer` |
-| Go Git | `OptimalSystemAgent.Go.Git` |
-| Go Sysmon | `OptimalSystemAgent.Go.Sysmon` |
-| Python | `OptimalSystemAgent.Python.Supervisor` |
-| WhatsApp Web | `OptimalSystemAgent.WhatsAppWeb` |
+| Go Tokenizer | `Daemon.Go.Tokenizer` |
+| Go Git | `Daemon.Go.Git` |
+| Go Sysmon | `Daemon.Go.Sysmon` |
+| Python | `Daemon.Python.Supervisor` |
+| WhatsApp Web | `Daemon.WhatsAppWeb` |
 
 ---
 
@@ -182,7 +182,7 @@ The circuit breaker is applied to all sidecar modules managed under
 
 | Property | LLM HealthChecker | Sidecar CircuitBreaker |
 |---|---|---|
-| Storage | GenServer state | ETS (`:osa_circuit_breakers`) |
+| Storage | GenServer state | ETS (`:daemon_circuit_breakers`) |
 | Concurrency model | Serialized via GenServer | Lock-free ETS reads |
 | Failure threshold | 3 | 5 |
 | Recovery timeout | 30 seconds | 30 seconds |

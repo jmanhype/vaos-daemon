@@ -1,7 +1,7 @@
 # Data Flow
 
 Audience: senior Elixir engineers who need to understand how data is transformed
-as it moves through OSA, from raw channel input to LLM completion to tool
+as it moves through Daemon, from raw channel input to LLM completion to tool
 execution and back.
 
 This document is complementary to [execution-flow.md](execution-flow.md), which
@@ -73,7 +73,7 @@ The noise filter receives the raw string and the weight float. It returns a
 routing decision, not a transformed value.
 
 ```elixir
-# OptimalSystemAgent.Channels.NoiseFilter.check/2
+# Daemon.Channels.NoiseFilter.check/2
 @spec check(String.t(), float() | nil) ::
         :pass | {:filtered, String.t()} | {:clarify, String.t()}
 
@@ -96,7 +96,7 @@ When a message passes the noise filter, it is persisted to the JSONL session log
 as a message map:
 
 ```elixir
-# OptimalSystemAgent.Agent.Memory.append/2
+# Daemon.Agent.Memory.append/2
 memory_entry = %{
   role: "user",
   content: "Read the README and summarize it for me",
@@ -112,13 +112,13 @@ format. System messages have `role: "system"`.
 
 ## Stage 4: Message List to Context (System Prompt Assembly)
 
-`OptimalSystemAgent.Agent.Context.build/1` receives the `Agent.Loop` state and
+`Daemon.Agent.Context.build/1` receives the `Agent.Loop` state and
 produces a `%{messages: [system_msg | conversation]}` map.
 
 ### Tier 1: Static Base (cached)
 
 ```elixir
-# OptimalSystemAgent.Soul.static_base/0
+# Daemon.Soul.static_base/0
 # Returns from persistent_term after first interpolation:
 static_base = :persistent_term.get({Soul, :static_base})
 # Binary string: SYSTEM.md with {{TOOL_DEFINITIONS}}, {{RULES}}, {{USER_PROFILE}} expanded
@@ -190,7 +190,7 @@ For all other providers:
 
 ### Request Shape (sent to Anthropic)
 
-`OptimalSystemAgent.Providers.Anthropic.chat/2` formats the messages and tools
+`Daemon.Providers.Anthropic.chat/2` formats the messages and tools
 into the Anthropic API body:
 
 ```elixir
@@ -287,9 +287,9 @@ The error string is appended to the conversation as a tool result and re-prompte
 ### Execution
 
 ```elixir
-# OptimalSystemAgent.Tools.Builtins.FileRead.execute/1
+# Daemon.Tools.Builtins.FileRead.execute/1
 execute(%{"path" => "README.md"})
-# => {:ok, "# OSA\n\nOptimal System Agent...\n[content continues]"}
+# => {:ok, "# Daemon\n\nOptimal System Agent...\n[content continues]"}
 ```
 
 ### Tool Result Message
@@ -304,7 +304,7 @@ by the active provider. For Anthropic:
     %{
       type: "tool_result",
       tool_use_id: "toolu_01ABC",
-      content: "# OSA\n\nOptimal System Agent...\n"
+      content: "# Daemon\n\nOptimal System Agent...\n"
     }
   ]
 }
@@ -316,7 +316,7 @@ For OpenAI-compatible providers:
 %{
   role: "tool",
   tool_call_id: "toolu_01ABC",
-  content: "# OSA\n\nOptimal System Agent...\n"
+  content: "# Daemon\n\nOptimal System Agent...\n"
 }
 ```
 
@@ -342,12 +342,12 @@ models). If detected, a refusal message replaces the content.
 # Appended to JSONL session log:
 Memory.append(state.session_id, %{
   role: "assistant",
-  content: "The README describes OSA as..."
+  content: "The README describes Daemon as..."
 })
 
 # Episodic memory record:
 Episodic.record(:agent_response, %{
-  content: "The README describes OSA as...",
+  content: "The README describes Daemon as...",
   session_id: state.session_id,
   turn: state.turn_count
 }, state.session_id)
@@ -360,7 +360,7 @@ The response string is delivered through the channel adapter's `send_message/3`:
 ```elixir
 # For HTTP channel — SSE stream push:
 Phoenix.PubSub.broadcast(
-  OptimalSystemAgent.PubSub,
+  Daemon.PubSub,
   "session:#{session_id}",
   {:agent_response, response_text}
 )
@@ -393,14 +393,14 @@ Named ETS tables hold hot state that multiple processes read and write concurren
 
 | Table | Type | Access | Purpose |
 |-------|------|--------|---------|
-| `:osa_cancel_flags` | `set, public` | `Loop.cancel/1` writes; `run_loop` reads | Per-session loop cancellation |
-| `:osa_files_read` | `set, public` | Tool hooks write; hook reads | Read-before-write tracking |
-| `:osa_survey_answers` | `set, public` | HTTP handler writes; `ask_user` polls | `ask_user` survey responses |
-| `:osa_context_cache` | `set, public` | `Providers.Registry` reads/writes | Ollama model context window cache |
-| `:osa_session_provider_overrides` | `set, public` | Hot-swap API writes; `Loop.apply_overrides` reads | Per-session model overrides |
-| `:osa_pending_questions` | `set, public` | `ask_user` writes; HTTP reads | Pending `ask_user` question tracking |
-| `:osa_hooks` | `bag, public` | `Hooks.GenServer` writes; `Hooks.run` reads | Hook registrations (bag = multiple per event) |
-| `:osa_hooks_metrics` | `set, public, write_concurrency: true` | `Hooks.run` writes | Hook timing counters |
+| `:daemon_cancel_flags` | `set, public` | `Loop.cancel/1` writes; `run_loop` reads | Per-session loop cancellation |
+| `:daemon_files_read` | `set, public` | Tool hooks write; hook reads | Read-before-write tracking |
+| `:daemon_survey_answers` | `set, public` | HTTP handler writes; `ask_user` polls | `ask_user` survey responses |
+| `:daemon_context_cache` | `set, public` | `Providers.Registry` reads/writes | Ollama model context window cache |
+| `:daemon_session_provider_overrides` | `set, public` | Hot-swap API writes; `Loop.apply_overrides` reads | Per-session model overrides |
+| `:daemon_pending_questions` | `set, public` | `ask_user` writes; HTTP reads | Pending `ask_user` question tracking |
+| `:daemon_hooks` | `bag, public` | `Hooks.GenServer` writes; `Hooks.run` reads | Hook registrations (bag = multiple per event) |
+| `:daemon_hooks_metrics` | `set, public, write_concurrency: true` | `Hooks.run` writes | Hook timing counters |
 
 ---
 
@@ -413,7 +413,7 @@ modules at startup, eliminating runtime pattern matching overhead on the hot pat
 ```mermaid
 flowchart LR
     EMITTER[Any Process\nBus.emit/3] --> BUS[Events.Bus\nGenServer]
-    BUS --> GR[:osa_event_router\ncompiled BEAM module]
+    BUS --> GR[:daemon_event_router\ncompiled BEAM module]
     GR --> TASK[Events.TaskSupervisor\nper-handler Task]
     TASK --> HANDLER1[Telemetry.Metrics]
     TASK --> HANDLER2[Bridge.PubSub]
@@ -430,19 +430,19 @@ known event type atoms:
 ```elixir
 type_filters = Enum.map(@event_types, &:glc.eq(:type, &1))
 query = :glc.with(:glc.any(type_filters), fn event -> dispatch_event(event) end)
-:glc.compile(:osa_event_router, query)
+:glc.compile(:daemon_event_router, query)
 ```
 
 At emit time, dispatch runs in a supervised Task:
 
 ```elixir
 Task.Supervisor.start_child(Events.TaskSupervisor, fn ->
-  :glc.handle(:osa_event_router, gre_event)
+  :glc.handle(:daemon_event_router, gre_event)
 end)
 ```
 
 The goldrush module runs at BEAM instruction speed. `dispatch_event/1` reads registered handlers
-from `:osa_event_handlers` ETS at call time — handlers are dynamic; the compiled module is
+from `:daemon_event_handlers` ETS at call time — handlers are dynamic; the compiled module is
 static. The goldrush module is compiled once at init and never recompiled (recompilation causes a
 TOCTOU race with `gr_param`'s internal ETS tables).
 
@@ -484,7 +484,7 @@ Retry schedule with exponential backoff (base 1s, cap 30s):
 Exhausted   → drop + emit algedonic_alert(:high, "DLQ exhausted")
 ```
 
-The DLQ is ETS-backed (`:osa_dlq`, `set, public`). No persistence across restarts — events are
+The DLQ is ETS-backed (`:daemon_dlq`, `set, public`). No persistence across restarts — events are
 ephemeral; the learning engine captures durable failure patterns separately.
 
 ---

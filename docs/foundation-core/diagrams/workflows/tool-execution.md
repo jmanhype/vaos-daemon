@@ -3,8 +3,8 @@
 Detailed flow for a single tool call from `Agent.Loop` through the permission
 check, hook pipeline, tool dispatch, and result formatting.
 
-Source: `lib/optimal_system_agent/agent/loop/tool_executor.ex` and
-`lib/optimal_system_agent/tools/registry.ex`.
+Source: `lib/daemon/agent/loop/tool_executor.ex` and
+`lib/daemon/tools/registry.ex`.
 
 ---
 

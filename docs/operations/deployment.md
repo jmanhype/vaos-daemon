@@ -13,7 +13,7 @@
 ```bash
 # Clone and setup
 git clone <repo-url>
-cd OptimalSystemAgent
+cd Daemon
 mix deps.get
 mix ecto.create
 mix ecto.migrate
@@ -23,10 +23,10 @@ cp .env.example .env
 # Edit .env with your API keys
 
 # Run interactive
-mix osa.chat
+mix daemon.chat
 
 # Run HTTP API server
-mix osa.serve
+mix daemon.serve
 
 # Run tests
 mix test
@@ -38,9 +38,9 @@ mix test
 # Build production release
 MIX_ENV=prod mix release
 
-# The release is at _build/prod/rel/optimal_system_agent/
+# The release is at _build/prod/rel/daemon/
 # Run it:
-_build/prod/rel/optimal_system_agent/bin/optimal_system_agent start
+_build/prod/rel/daemon/bin/daemon start
 ```
 
 ## Docker Deployment
@@ -73,16 +73,16 @@ RUN sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen
 ENV LANG=en_US.UTF-8
 
 WORKDIR /app
-COPY --from=build /app/_build/prod/rel/optimal_system_agent ./
+COPY --from=build /app/_build/prod/rel/daemon ./
 
 # Create data directory
 RUN mkdir -p /data/osa
-ENV OSA_CONFIG_DIR=/data/osa
+ENV DAEMON_CONFIG_DIR=/data/osa
 
 EXPOSE 8089
 VOLUME ["/data/osa"]
 
-CMD ["bin/optimal_system_agent", "start"]
+CMD ["bin/daemon", "start"]
 ```
 
 ### Docker Compose
@@ -99,9 +99,9 @@ services:
       - osa-data:/data/osa
       - ./.env:/app/.env:ro
     environment:
-      - OSA_HTTP_PORT=8089
-      - OSA_REQUIRE_AUTH=true
-      - OSA_SHARED_SECRET=${OSA_SHARED_SECRET}
+      - DAEMON_HTTP_PORT=8089
+      - DAEMON_REQUIRE_AUTH=true
+      - DAEMON_SHARED_SECRET=${DAEMON_SHARED_SECRET}
     restart: unless-stopped
 
 volumes:
@@ -151,30 +151,30 @@ server {
 
 ```bash
 # Required
-OSA_DEFAULT_PROVIDER=anthropic
+DAEMON_DEFAULT_PROVIDER=anthropic
 ANTHROPIC_API_KEY=sk-ant-...
 
 # Security
-OSA_REQUIRE_AUTH=true
-OSA_SHARED_SECRET=<generate-a-strong-secret>
+DAEMON_REQUIRE_AUTH=true
+DAEMON_SHARED_SECRET=<generate-a-strong-secret>
 
 # Budget limits
-OSA_DAILY_BUDGET_USD=100.0
-OSA_MONTHLY_BUDGET_USD=1000.0
+DAEMON_DAILY_BUDGET_USD=100.0
+DAEMON_MONTHLY_BUDGET_USD=1000.0
 
 # Optional: Enable features
-OSA_SANDBOX_ENABLED=true
-OSA_FLEET_ENABLED=false
-OSA_TREASURY_ENABLED=true
+DAEMON_SANDBOX_ENABLED=true
+DAEMON_FLEET_ENABLED=false
+DAEMON_TREASURY_ENABLED=true
 
 # Optional: Quiet hours (no heartbeat)
-OSA_QUIET_HOURS="23:00-08:00"
+DAEMON_QUIET_HOURS="23:00-08:00"
 ```
 
 ## Production Checklist
 
 ### Security
-- [ ] `OSA_REQUIRE_AUTH=true` with strong `OSA_SHARED_SECRET`
+- [ ] `DAEMON_REQUIRE_AUTH=true` with strong `DAEMON_SHARED_SECRET`
 - [ ] HTTPS via reverse proxy
 - [ ] No API keys in code or Docker images
 - [ ] Sandbox enabled for untrusted tool execution
@@ -186,7 +186,7 @@ OSA_QUIET_HOURS="23:00-08:00"
 - [ ] SQLite WAL mode enabled (default)
 - [ ] Session persistence configured
 - [ ] Memory persistence configured
-- [ ] Backups for `~/.osa/` directory
+- [ ] Backups for `~/.daemon/` directory
 
 ### Monitoring
 - [ ] Health endpoint: `GET /health` returns 200
@@ -203,26 +203,26 @@ OSA_QUIET_HOURS="23:00-08:00"
 ## Backups
 
 ```bash
-# Back up all OSA data
-tar -czf osa-backup-$(date +%Y%m%d).tar.gz ~/.osa/
+# Back up all Daemon data
+tar -czf osa-backup-$(date +%Y%m%d).tar.gz ~/.daemon/
 
 # Back up just the database
-sqlite3 ~/.osa/osa.db ".backup /backups/osa-$(date +%Y%m%d).db"
+sqlite3 ~/.daemon/osa.db ".backup /backups/osa-$(date +%Y%m%d).db"
 ```
 
 ## Systemd Service
 
 ```ini
 [Unit]
-Description=OSA Agent
+Description=Daemon Agent
 After=network.target
 
 [Service]
 Type=simple
 User=osa
 WorkingDirectory=/opt/osa
-ExecStart=/opt/osa/bin/optimal_system_agent start
-ExecStop=/opt/osa/bin/optimal_system_agent stop
+ExecStart=/opt/osa/bin/daemon start
+ExecStop=/opt/osa/bin/daemon stop
 Restart=on-failure
 RestartSec=5
 Environment=HOME=/opt/osa
@@ -251,7 +251,7 @@ journalctl -u osa -f
     <string>com.miosa.osa</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/bin/osagent</string>
+        <string>/usr/local/bin/daemon</string>
         <string>serve</string>
     </array>
     <key>RunAtLoad</key>
@@ -275,8 +275,8 @@ launchctl load ~/Library/LaunchAgents/com.miosa.osa.plist
 
 | Issue | Cause | Fix |
 |-------|-------|-----|
-| Port 8089 in use | Another process | `OSA_HTTP_PORT=8090` or find/kill the process |
+| Port 8089 in use | Another process | `DAEMON_HTTP_PORT=8090` or find/kill the process |
 | Provider timeout | API rate limit or network | Check budget, try fallback provider |
-| SQLite locked | Multiple processes | Ensure only one OSA instance per database |
-| Sidecar not starting | Missing binary | Check `OSA_GO_TOKENIZER_ENABLED` and binary path |
+| SQLite locked | Multiple processes | Ensure only one Daemon instance per database |
+| Sidecar not starting | Missing binary | Check `DAEMON_GO_TOKENIZER_ENABLED` and binary path |
 | Out of memory | Context too large | Lower compaction thresholds, reduce `max_tokens` |

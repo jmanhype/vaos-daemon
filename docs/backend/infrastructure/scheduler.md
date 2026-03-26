@@ -1,12 +1,12 @@
 # Infrastructure: Scheduler
 
-`Agent.Scheduler` is the OSA cron engine. It provides three automation mechanisms: HEARTBEAT.md (periodic task lists), CRONS.json (structured scheduled jobs), and TRIGGERS.json (event-driven automation). All three share a circuit breaker that auto-disables failing jobs after 3 consecutive errors.
+`Agent.Scheduler` is the Daemon cron engine. It provides three automation mechanisms: HEARTBEAT.md (periodic task lists), CRONS.json (structured scheduled jobs), and TRIGGERS.json (event-driven automation). All three share a circuit breaker that auto-disables failing jobs after 3 consecutive errors.
 
 ---
 
 ## HEARTBEAT.md
 
-A markdown checklist file at `~/.osa/HEARTBEAT.md`. The scheduler reads and processes it every 30 minutes (configurable).
+A markdown checklist file at `~/.daemon/HEARTBEAT.md`. The scheduler reads and processes it every 30 minutes (configurable).
 
 ### Format
 
@@ -22,7 +22,7 @@ Unchecked items (`- [ ]`) are collected, executed sequentially through `Agent.Lo
 ### Configuration
 
 ```elixir
-config :optimal_system_agent,
+config :daemon,
   heartbeat_interval: 1_800_000   # 30 minutes (default)
 ```
 
@@ -38,7 +38,7 @@ Scheduler.next_heartbeat_at()                # return next DateTime
 
 ## CRONS.json
 
-Structured scheduled jobs at `~/.osa/CRONS.json`. Checked every 60 seconds (1-minute resolution).
+Structured scheduled jobs at `~/.daemon/CRONS.json`. Checked every 60 seconds (1-minute resolution).
 
 ### File format
 
@@ -97,7 +97,7 @@ Parsing and matching is delegated to `Scheduler.CronEngine`.
 
 ## TRIGGERS.json
 
-Event-driven automation at `~/.osa/TRIGGERS.json`. Triggers fire when matching events arrive on the Bus.
+Event-driven automation at `~/.daemon/TRIGGERS.json`. Triggers fire when matching events arrive on the Bus.
 
 ### File format
 

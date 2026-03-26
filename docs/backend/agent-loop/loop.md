@@ -1,8 +1,8 @@
 # Agent Loop
 
-The core reasoning engine for OSA. Implements a bounded ReAct loop as an Elixir `GenServer`, one per session. Receives messages from channels or the event bus, drives tool execution, and returns final responses.
+The core reasoning engine for Daemon. Implements a bounded ReAct loop as an Elixir `GenServer`, one per session. Receives messages from channels or the event bus, drives tool execution, and returns final responses.
 
-**Module:** `OptimalSystemAgent.Agent.Loop`
+**Module:** `Daemon.Agent.Loop`
 **Submodules:** `Loop.Checkpoint`, `Loop.Guardrails`, `Loop.LLMClient`, `Loop.ToolExecutor`, `Loop.GenreRouter`
 
 ---
@@ -43,13 +43,13 @@ The core reasoning engine for OSA. Implements a bounded ReAct loop as an Elixir 
 | `:auto_insights_interval` | `10` | Every N turns, extract insights from history |
 | `:max_response_tokens` | `8192` | Max tokens in each LLM response |
 | `:plan_mode_enabled` | `false` | Whether plan mode is active for the session |
-| `:checkpoint_dir` | `~/.osa/checkpoints` | Crash recovery checkpoint location |
+| `:checkpoint_dir` | `~/.daemon/checkpoints` | Crash recovery checkpoint location |
 
 ---
 
 ## Registration and Lifecycle
 
-Each loop process registers via `Registry` under `OptimalSystemAgent.SessionRegistry` with the session ID as key and `user_id` as the value stored alongside the PID. The `child_spec` uses `:transient` restart so the process only restarts on abnormal termination — crash recovery uses the checkpoint.
+Each loop process registers via `Registry` under `Daemon.SessionRegistry` with the session ID as key and `user_id` as the value stored alongside the PID. The `child_spec` uses `:transient` restart so the process only restarts on abnormal termination — crash recovery uses the checkpoint.
 
 On `init`, the loop attempts to restore a checkpoint for the session. If one exists (from a previous crash), messages, iteration count, plan mode, and turn count are restored. The reasoning strategy is also resolved at init time.
 
@@ -87,7 +87,7 @@ On normal or `:shutdown` termination, the checkpoint is deleted. On abnormal ter
 
 `run_loop/1` checks two conditions before each iteration:
 
-- **Cancel flag:** Reads the `:osa_cancel_flags` ETS table. If `{session_id, true}` is present, stops immediately. This is safe during a blocking `handle_call` because ETS reads are concurrent.
+- **Cancel flag:** Reads the `:daemon_cancel_flags` ETS table. If `{session_id, true}` is present, stops immediately. This is safe during a blocking `handle_call` because ETS reads are concurrent.
 - **Max iterations:** If `state.iteration >= max_iterations()`, returns a limit-reached message.
 
 `do_run_loop/1` executes one iteration:
@@ -132,7 +132,7 @@ If the LLM call returns an error containing `"context_length"`, `"max_tokens"`, 
 
 ## System Message Cache
 
-Within a single `process_message` call, the system message (Tier 1 static base) is cached in the process dictionary under `:osa_system_msg_cache`. The cache key is `{plan_mode, session_id, memory_version, channel}`. The cache is invalidated when:
+Within a single `process_message` call, the system message (Tier 1 static base) is cached in the process dictionary under `:daemon_system_msg_cache`. The cache key is `{plan_mode, session_id, memory_version, channel}`. The cache is invalidated when:
 
 - A new `process_message` call starts (cache cleared explicitly).
 - `memory_save` runs successfully (memory version bumped in the process dictionary).
@@ -158,7 +158,7 @@ Plan mode is toggled via the `:toggle_plan_mode` call or the `/plan` CLI command
 
 ## Checkpoint / Resume
 
-`Checkpoint.checkpoint_state/1` writes a JSON file to `~/.osa/checkpoints/<session_id>.json` after every successful tool-result cycle. The checkpoint contains:
+`Checkpoint.checkpoint_state/1` writes a JSON file to `~/.daemon/checkpoints/<session_id>.json` after every successful tool-result cycle. The checkpoint contains:
 
 - `messages` — full conversation history at that point
 - `iteration` — current iteration count
@@ -172,7 +172,7 @@ On `init`, `Checkpoint.restore_checkpoint/1` reads this file if it exists. A suc
 
 ## Cancellation
 
-`Loop.cancel/1` writes `{session_id, true}` to the `:osa_cancel_flags` ETS table. The `run_loop` function reads this table at the top of every iteration. Because ETS reads are concurrent (the table uses `:public` access), this works correctly even though the `GenServer` mailbox is blocked during `handle_call`.
+`Loop.cancel/1` writes `{session_id, true}` to the `:daemon_cancel_flags` ETS table. The `run_loop` function reads this table at the top of every iteration. Because ETS reads are concurrent (the table uses `:public` access), this works correctly even though the `GenServer` mailbox is blocked during `handle_call`.
 
 ---
 

@@ -1,9 +1,9 @@
 # Authentication
 
-Audience: operators deploying OSA as an HTTP API server, and developers
+Audience: operators deploying Daemon as an HTTP API server, and developers
 integrating with the HTTP channel.
 
-OSA's HTTP channel uses JWT HS256 authentication. The local CLI does not
+Daemon's HTTP channel uses JWT HS256 authentication. The local CLI does not
 require authentication by default. Authentication is opt-in and must be
 explicitly enabled for production deployments.
 
@@ -11,30 +11,30 @@ explicitly enabled for production deployments.
 
 ## Enabling Authentication
 
-Set two environment variables before starting OSA:
+Set two environment variables before starting Daemon:
 
 ```bash
-export OSA_SHARED_SECRET="your-secret-key-at-least-32-chars"
-export OSA_REQUIRE_AUTH=true
+export DAEMON_SHARED_SECRET="your-secret-key-at-least-32-chars"
+export DAEMON_REQUIRE_AUTH=true
 ```
 
-When `OSA_REQUIRE_AUTH` is `true`, all HTTP API endpoints except `/health`
+When `DAEMON_REQUIRE_AUTH` is `true`, all HTTP API endpoints except `/health`
 and `/auth/token` require a valid `Authorization: Bearer <token>` header.
 
-When `OSA_SHARED_SECRET` is not set, OSA generates an ephemeral random secret
+When `DAEMON_SHARED_SECRET` is not set, Daemon generates an ephemeral random secret
 at startup. This secret is printed to the log as a warning and is not suitable
 for production because it changes on every restart:
 
 ```
 [warning] HTTP Auth: No shared secret configured. Generated ephemeral secret
-for this session. Set OSA_SHARED_SECRET env var for production.
+for this session. Set DAEMON_SHARED_SECRET env var for production.
 ```
 
 ---
 
 ## Token Format
 
-OSA uses HMAC-SHA256 signed JWTs (alg: `HS256`).
+Daemon uses HMAC-SHA256 signed JWTs (alg: `HS256`).
 
 ### Access Token
 
@@ -78,13 +78,13 @@ OSA uses HMAC-SHA256 signed JWTs (alg: `HS256`).
 
 ### Via Platform.Auth (Elixir)
 
-`OptimalSystemAgent.Platform.Auth` handles user registration, login, and token
+`Daemon.Platform.Auth` handles user registration, login, and token
 issuance for the multi-tenant platform.
 
 ```elixir
 # Register a new user
 {:ok, %{user: user, token: access_token, refresh_token: refresh_token}} =
-  OptimalSystemAgent.Platform.Auth.register(%{
+  Daemon.Platform.Auth.register(%{
     email:        "alice@example.com",
     password:     "securepassword123",
     display_name: "Alice"
@@ -92,14 +92,14 @@ issuance for the multi-tenant platform.
 
 # Login
 {:ok, %{user: user, token: access_token, refresh_token: refresh_token}} =
-  OptimalSystemAgent.Platform.Auth.login(%{
+  Daemon.Platform.Auth.login(%{
     email:    "alice@example.com",
     password: "securepassword123"
   })
 
 # Generate tokens for an existing user (e.g. for service accounts)
 {:ok, %{token: access_token, refresh_token: refresh_token}} =
-  OptimalSystemAgent.Platform.Auth.generate_tokens(user, tenant_id: "ten_abc", os_id: "osi_xyz")
+  Daemon.Platform.Auth.generate_tokens(user, tenant_id: "ten_abc", os_id: "osi_xyz")
 ```
 
 Password hashing uses **Bcrypt** via the `bcrypt_elixir` library. Passwords
@@ -148,7 +148,7 @@ curl -X POST http://localhost:4000/auth/refresh \
 
 ## Token Verification
 
-`OptimalSystemAgent.Channels.HTTP.Auth.verify_token/1` validates:
+`Daemon.Channels.HTTP.Auth.verify_token/1` validates:
 
 1. Token has three dot-separated segments (header, payload, signature).
 2. Header `alg` is `"HS256"`. Other algorithms are rejected.
@@ -157,7 +157,7 @@ curl -X POST http://localhost:4000/auth/refresh \
 5. `user_id` claim is present.
 
 ```elixir
-case OptimalSystemAgent.Channels.HTTP.Auth.verify_token(bearer_token) do
+case Daemon.Channels.HTTP.Auth.verify_token(bearer_token) do
   {:ok, claims} ->
     # claims = %{"user_id" => "...", "email" => "...", "role" => "...", ...}
     :ok
@@ -174,14 +174,14 @@ to prevent timing attacks.
 
 ## Local / Development Mode
 
-When `OSA_REQUIRE_AUTH` is not set or is `false`:
+When `DAEMON_REQUIRE_AUTH` is not set or is `false`:
 
 - The HTTP API is unauthenticated.
 - The CLI operates without tokens.
-- An ephemeral JWT secret is generated if `OSA_SHARED_SECRET` is absent.
+- An ephemeral JWT secret is generated if `DAEMON_SHARED_SECRET` is absent.
 
 Development mode is the default to reduce friction during local development.
-Always set `OSA_REQUIRE_AUTH=true` before any network-accessible deployment.
+Always set `DAEMON_REQUIRE_AUTH=true` before any network-accessible deployment.
 
 ---
 
@@ -206,9 +206,9 @@ provides 384 bits of entropy.
 
 | Variable | Required | Description |
 |---|---|---|
-| `OSA_SHARED_SECRET` | No (dev only) | HS256 signing secret. Also accepted as `JWT_SECRET`. |
-| `OSA_REQUIRE_AUTH` | No (dev only) | Set to `"true"` to enforce JWT on all HTTP endpoints. |
+| `DAEMON_SHARED_SECRET` | No (dev only) | HS256 signing secret. Also accepted as `JWT_SECRET`. |
+| `DAEMON_REQUIRE_AUTH` | No (dev only) | Set to `"true"` to enforce JWT on all HTTP endpoints. |
 
-Lookup priority for the secret: `Application.get_env(:optimal_system_agent, :jwt_secret)` →
-`Application.get_env(:optimal_system_agent, :shared_secret)` →
-`JWT_SECRET` env var → `OSA_SHARED_SECRET` env var → ephemeral generated secret.
+Lookup priority for the secret: `Application.get_env(:daemon, :jwt_secret)` →
+`Application.get_env(:daemon, :shared_secret)` →
+`JWT_SECRET` env var → `DAEMON_SHARED_SECRET` env var → ephemeral generated secret.

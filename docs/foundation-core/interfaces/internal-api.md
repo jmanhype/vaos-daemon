@@ -1,20 +1,20 @@
 # Internal API
 
-Audience: OSA core contributors and developers building integrations that call
-into OSA from within the same BEAM node.
+Audience: Daemon core contributors and developers building integrations that call
+into Daemon from within the same BEAM node.
 
 This document covers the internal Elixir API surface — the public functions on
-OSA's core GenServers and registries that are safe to call from application code.
-All modules listed here are part of the `OptimalSystemAgent` OTP application.
+Daemon's core GenServers and registries that are safe to call from application code.
+All modules listed here are part of the `Daemon` OTP application.
 
 ---
 
 ## Agent.Loop
 
-**Module:** `OptimalSystemAgent.Agent.Loop`
+**Module:** `Daemon.Agent.Loop`
 
 The bounded ReAct agent loop. One process per session, started on demand and
-registered in `OptimalSystemAgent.SessionRegistry` under `{session_id, user_id}`.
+registered in `Daemon.SessionRegistry` under `{session_id, user_id}`.
 
 ### send_message / process_message
 
@@ -27,7 +27,7 @@ Deliver a user message to the agent loop for a session. Blocks until the agent
 produces a final response (synchronous call with `:infinity` timeout).
 
 ```elixir
-{:ok, reply} = OptimalSystemAgent.Agent.Loop.process_message(
+{:ok, reply} = Daemon.Agent.Loop.process_message(
   "session-abc",
   "Summarise the last deployment",
   provider: :anthropic,
@@ -53,7 +53,7 @@ Options:
 Return the current loop state for a running session.
 
 ```elixir
-{:ok, state} = OptimalSystemAgent.Agent.Loop.get_state("session-abc")
+{:ok, state} = Daemon.Agent.Loop.get_state("session-abc")
 # state.status       => :idle | :running
 # state.turn_count   => integer
 # state.last_meta    => %{iteration_count: 3, tools_used: ["file_read", "shell_execute"]}
@@ -70,18 +70,18 @@ read by the loop at each iteration. Returns `:ok` immediately; the loop may
 run one more iteration before halting.
 
 ```elixir
-:ok = OptimalSystemAgent.Agent.Loop.cancel("session-abc")
+:ok = Daemon.Agent.Loop.cancel("session-abc")
 ```
 
 ---
 
 ## Agent.Memory
 
-**Module:** `OptimalSystemAgent.Agent.Memory`
+**Module:** `Daemon.Agent.Memory`
 
 Delegate module over `MiosaMemory.Store`. Manages per-session conversation
 history and long-term cross-session memories. Storage: JSONL files at
-`~/.osa/sessions/<session_id>.jsonl` and `~/.osa/memory.jsonl`.
+`~/.daemon/sessions/<session_id>.jsonl` and `~/.daemon/memory.jsonl`.
 
 ### save / remember
 
@@ -92,7 +92,7 @@ history and long-term cross-session memories. Storage: JSONL files at
 Save a fact to long-term memory. Category is used for retrieval grouping.
 
 ```elixir
-:ok = OptimalSystemAgent.Agent.Memory.remember(
+:ok = Daemon.Agent.Memory.remember(
   "User prefers dark mode and uses neovim",
   "preferences"
 )
@@ -108,7 +108,7 @@ Return the full long-term memory file content as a string, formatted for
 prompt injection.
 
 ```elixir
-context = OptimalSystemAgent.Agent.Memory.recall()
+context = Daemon.Agent.Memory.recall()
 ```
 
 ### search
@@ -121,7 +121,7 @@ context = OptimalSystemAgent.Agent.Memory.recall()
 Search memory entries by keyword match.
 
 ```elixir
-{:ok, entries} = OptimalSystemAgent.Agent.Memory.search("neovim", limit: 5)
+{:ok, entries} = Daemon.Agent.Memory.search("neovim", limit: 5)
 ```
 
 ### append
@@ -137,7 +137,7 @@ the loop after each turn.
 
 ## Tools.Registry
 
-**Module:** `OptimalSystemAgent.Tools.Registry`
+**Module:** `Daemon.Tools.Registry`
 
 Central registry for all callable tools (built-in Elixir modules + SKILL.md
 files + MCP server tools). The registry maintains an ETS-backed persistent_term
@@ -153,7 +153,7 @@ Register a module implementing `MiosaTools.Behaviour`. The goldrush dispatcher
 is recompiled automatically. The tool is immediately available to the LLM.
 
 ```elixir
-:ok = OptimalSystemAgent.Tools.Registry.register(MyApp.Tools.SlackPost)
+:ok = Daemon.Tools.Registry.register(MyApp.Tools.SlackPost)
 ```
 
 ### lookup / list_tools_direct
@@ -166,7 +166,7 @@ Return all registered tools in the LLM schema format. Lock-free via
 `:persistent_term`. Safe to call from inside GenServer callbacks.
 
 ```elixir
-tools = OptimalSystemAgent.Tools.Registry.list_tools_direct()
+tools = Daemon.Tools.Registry.list_tools_direct()
 # [%{name: "file_read", description: "...", parameters: %{...}}, ...]
 ```
 
@@ -181,13 +181,13 @@ Execute a named tool with the given arguments. Arguments are validated against
 the tool's JSON Schema before `execute/1` is called on the module.
 
 ```elixir
-{:ok, result} = OptimalSystemAgent.Tools.Registry.execute(
+{:ok, result} = Daemon.Tools.Registry.execute(
   "file_read",
   %{"path" => "/tmp/report.txt"}
 )
 ```
 
-MCP tools (prefixed `mcp_`) are routed to `OptimalSystemAgent.MCP.Client.call_tool/2`.
+MCP tools (prefixed `mcp_`) are routed to `Daemon.MCP.Client.call_tool/2`.
 
 ### search
 
@@ -199,7 +199,7 @@ Search registered tools and skills by keyword. Returns `{name, description, scor
 sorted by relevance (0.0–1.0).
 
 ```elixir
-results = OptimalSystemAgent.Tools.Registry.search("read file")
+results = Daemon.Tools.Registry.search("read file")
 # [{"file_read", "Read the contents of a file", 0.85}, ...]
 ```
 
@@ -207,7 +207,7 @@ results = OptimalSystemAgent.Tools.Registry.search("read file")
 
 ## Providers.Registry
 
-**Module:** `OptimalSystemAgent.Providers.Registry`
+**Module:** `Daemon.Providers.Registry`
 
 LLM provider routing, fallback chains, and dynamic provider registration.
 Supports 18 providers across local, OpenAI-compatible, and native API categories.
@@ -223,7 +223,7 @@ Send a chat completion request. Uses the configured default provider unless
 overridden via options. Applies the fallback chain automatically on failure.
 
 ```elixir
-{:ok, response} = OptimalSystemAgent.Providers.Registry.chat(
+{:ok, response} = Daemon.Providers.Registry.chat(
   [%{role: "user", content: "Hello"}],
   provider: :groq,
   model: "llama-3.3-70b-versatile",
@@ -243,7 +243,7 @@ response.tool_calls # => []
 Register a custom provider module at runtime.
 
 ```elixir
-:ok = OptimalSystemAgent.Providers.Registry.register_provider(
+:ok = Daemon.Providers.Registry.register_provider(
   :bedrock,
   MyApp.Providers.Bedrock
 )
@@ -258,7 +258,7 @@ Register a custom provider module at runtime.
 Check whether a provider has the required API keys configured.
 
 ```elixir
-OptimalSystemAgent.Providers.Registry.provider_configured?(:anthropic)
+Daemon.Providers.Registry.provider_configured?(:anthropic)
 # => true | false
 ```
 
@@ -266,7 +266,7 @@ OptimalSystemAgent.Providers.Registry.provider_configured?(:anthropic)
 
 ## Events.Bus
 
-**Module:** `OptimalSystemAgent.Events.Bus`
+**Module:** `Daemon.Events.Bus`
 
 Zero-overhead event bus backed by a goldrush-compiled BEAM bytecode router.
 All internal agent lifecycle events flow through this bus.
@@ -275,7 +275,7 @@ All internal agent lifecycle events flow through this bus.
 
 ```elixir
 @spec emit(event_type :: atom(), payload :: map(), opts :: keyword()) ::
-  {:ok, OptimalSystemAgent.Events.Event.t()}
+  {:ok, Daemon.Events.Event.t()}
 ```
 
 Emit an event. The payload is wrapped in an `Event` struct with UUID, timestamp,
@@ -287,7 +287,7 @@ Valid event types: `:user_message`, `:llm_request`, `:llm_response`,
 `:ask_user_question`, `:survey_answered`, `:algedonic_alert`.
 
 ```elixir
-{:ok, event} = OptimalSystemAgent.Events.Bus.emit(
+{:ok, event} = Daemon.Events.Bus.emit(
   :system_event,
   %{event: :deployment_complete, environment: "production"},
   source: "deploy-agent",
@@ -318,7 +318,7 @@ later deregistration. Handlers run in supervised Task processes — a crashing
 handler is logged and enqueued to the dead-letter queue.
 
 ```elixir
-ref = OptimalSystemAgent.Events.Bus.register_handler(:tool_call, fn event ->
+ref = Daemon.Events.Bus.register_handler(:tool_call, fn event ->
   Logger.info("Tool called: #{event.payload.tool_name}")
 end)
 ```
@@ -332,30 +332,30 @@ end)
 Remove a previously registered handler.
 
 ```elixir
-:ok = OptimalSystemAgent.Events.Bus.unregister_handler(:tool_call, ref)
+:ok = Daemon.Events.Bus.unregister_handler(:tool_call, ref)
 ```
 
 ---
 
 ## Commands
 
-Custom commands are markdown files loaded from `~/.osa/commands/`. They are
+Custom commands are markdown files loaded from `~/.daemon/commands/`. They are
 not a GenServer API but a file-driven extension mechanism. See
 [extension-interfaces.md](./extension-interfaces.md) for authoring commands.
 
 ### register (file-based)
 
-Place a `.md` file in `~/.osa/commands/`:
+Place a `.md` file in `~/.daemon/commands/`:
 
 ```
-~/.osa/commands/
+~/.daemon/commands/
 └── deploy.md
 ```
 
 ### dispatch
 
 ```elixir
-OptimalSystemAgent.Command.Center.dispatch("/deploy staging")
+Daemon.Command.Center.dispatch("/deploy staging")
 ```
 
 The command center parses the slash command, matches it to a registered command
@@ -365,7 +365,7 @@ file, and calls the associated skill or handler.
 
 ## Agent.Hooks
 
-**Module:** `OptimalSystemAgent.Agent.Hooks`
+**Module:** `Daemon.Agent.Hooks`
 
 Middleware pipeline for agent lifecycle events. Hooks run in priority order
 before and after tool calls.
@@ -384,7 +384,7 @@ before and after tool calls.
 Register a hook. Lower priority number runs first (default: 50).
 
 ```elixir
-OptimalSystemAgent.Agent.Hooks.register(
+Daemon.Agent.Hooks.register(
   :pre_tool_use,
   "rate-limit-check",
   fn payload ->

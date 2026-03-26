@@ -12,21 +12,21 @@ All adapters follow the same inbound flow:
 
 ## Telegram
 
-**Module:** `OptimalSystemAgent.Channels.Telegram`
+**Module:** `Daemon.Channels.Telegram`
 
 Operates in webhook mode. Telegram POSTs updates to `POST /api/v1/channels/telegram/webhook`.
 
 ### Configuration
 
 ```elixir
-config :optimal_system_agent,
+config :daemon,
   telegram_bot_token: System.get_env("TELEGRAM_BOT_TOKEN")
 ```
 
 ### Webhook registration
 
 ```elixir
-OptimalSystemAgent.Channels.Telegram.set_webhook("https://yourdomain.com")
+Daemon.Channels.Telegram.set_webhook("https://yourdomain.com")
 # Registers: https://yourdomain.com/api/v1/channels/telegram/webhook
 ```
 
@@ -48,14 +48,14 @@ Format: `telegram_<chat_id>`
 
 ## Discord
 
-**Module:** `OptimalSystemAgent.Channels.Discord`
+**Module:** `Daemon.Channels.Discord`
 
 Operates in webhook/interactions mode. Discord POSTs interactions to `POST /api/v1/channels/discord/webhook`.
 
 ### Configuration
 
 ```elixir
-config :optimal_system_agent,
+config :daemon,
   discord_bot_token: System.get_env("DISCORD_BOT_TOKEN"),
   discord_application_id: System.get_env("DISCORD_APPLICATION_ID"),
   discord_public_key: System.get_env("DISCORD_PUBLIC_KEY")
@@ -83,14 +83,14 @@ Format: `discord_<user_id>`
 
 ## Slack
 
-**Module:** `OptimalSystemAgent.Channels.Slack`
+**Module:** `Daemon.Channels.Slack`
 
 Uses the Slack Events API. Slack POSTs events to `POST /api/v1/channels/slack/events`.
 
 ### Configuration
 
 ```elixir
-config :optimal_system_agent,
+config :daemon,
   slack_bot_token: System.get_env("SLACK_BOT_TOKEN"),
   slack_signing_secret: System.get_env("SLACK_SIGNING_SECRET")
 ```
@@ -117,14 +117,14 @@ Format: `slack_<user_id>_<channel_id>`
 
 ## WhatsApp
 
-**Module:** `OptimalSystemAgent.Channels.WhatsApp`
+**Module:** `Daemon.Channels.WhatsApp`
 
 Uses the Meta Cloud API (Graph API v21.0). Receives messages via `POST /api/v1/channels/whatsapp/webhook`; Meta webhook verification via `GET /api/v1/channels/whatsapp/webhook`.
 
 ### Configuration
 
 ```elixir
-config :optimal_system_agent,
+config :daemon,
   whatsapp_token: System.get_env("WHATSAPP_TOKEN"),
   whatsapp_phone_number_id: System.get_env("WHATSAPP_PHONE_NUMBER_ID"),
   whatsapp_verify_token: System.get_env("WHATSAPP_VERIFY_TOKEN")
@@ -132,7 +132,7 @@ config :optimal_system_agent,
 
 ### Mode selection
 
-Supports a `whatsapp_mode` config key (`"api"`, `"web"`, `"auto"`). In `"auto"` mode, prefers WhatsApp Web if `OptimalSystemAgent.WhatsAppWeb.available?/0` returns true; otherwise falls back to the Meta Graph API.
+Supports a `whatsapp_mode` config key (`"api"`, `"web"`, `"auto"`). In `"auto"` mode, prefers WhatsApp Web if `Daemon.WhatsAppWeb.available?/0` returns true; otherwise falls back to the Meta Graph API.
 
 ### Inbound processing
 
@@ -150,14 +150,14 @@ Format: `whatsapp_<from_phone_number>`
 
 ## Matrix
 
-**Module:** `OptimalSystemAgent.Channels.Matrix`
+**Module:** `Daemon.Channels.Matrix`
 
 Uses the Matrix Client-Server API with long-polling via `/sync`. No external library required.
 
 ### Configuration
 
 ```elixir
-config :optimal_system_agent,
+config :daemon,
   matrix_homeserver: System.get_env("MATRIX_HOMESERVER"),   # e.g. "https://matrix.org"
   matrix_access_token: System.get_env("MATRIX_ACCESS_TOKEN"),
   matrix_user_id: System.get_env("MATRIX_USER_ID")          # e.g. "@bot:matrix.org"
@@ -186,14 +186,14 @@ Format: `matrix_<room_id>_<sender_id>`
 
 ## Signal
 
-**Module:** `OptimalSystemAgent.Channels.Signal`
+**Module:** `Daemon.Channels.Signal`
 
-Signal Private Messenger adapter. See `lib/optimal_system_agent/channels/signal.ex` for current implementation details.
+Signal Private Messenger adapter. See `lib/daemon/channels/signal.ex` for current implementation details.
 
 ### Configuration
 
 ```elixir
-config :optimal_system_agent,
+config :daemon,
   signal_phone: System.get_env("SIGNAL_PHONE")
 ```
 
@@ -201,14 +201,14 @@ config :optimal_system_agent,
 
 ## QQ
 
-**Module:** `OptimalSystemAgent.Channels.QQ`
+**Module:** `Daemon.Channels.QQ`
 
 Tencent Open Platform bot adapter. Receives events via `POST /api/v1/channels/qq/webhook`.
 
 ### Configuration
 
 ```elixir
-config :optimal_system_agent,
+config :daemon,
   qq_app_id: System.get_env("QQ_APP_ID"),
   qq_app_secret: System.get_env("QQ_APP_SECRET"),
   qq_token: System.get_env("QQ_TOKEN")
@@ -244,14 +244,14 @@ Format: `qq_<user_id>_<channel_id>`
 
 ## DingTalk
 
-**Module:** `OptimalSystemAgent.Channels.DingTalk`
+**Module:** `Daemon.Channels.DingTalk`
 
 Alibaba DingTalk custom robot adapter. Receives events via `POST /api/v1/channels/dingtalk/webhook`.
 
 ### Configuration
 
 ```elixir
-config :optimal_system_agent,
+config :daemon,
   dingtalk_access_token: System.get_env("DINGTALK_ACCESS_TOKEN"),
   dingtalk_secret: System.get_env("DINGTALK_SECRET")   # optional
 ```
@@ -264,7 +264,7 @@ When `dingtalk_secret` is set, outbound webhook URLs include `?timestamp=<ms>&si
 
 Messages are sent to a group webhook URL (not individual chats — DingTalk robot webhooks are group-scoped). Format is selected automatically:
 - `:auto` — uses `markdown` type if the response contains `**`, `##`, `` ` ``, or `- `; otherwise `text`.
-- `:markdown` — `msgtype: "markdown"` with `title: "OSA Agent"`.
+- `:markdown` — `msgtype: "markdown"` with `title: "Daemon Agent"`.
 - `:text` — `msgtype: "text"`.
 
 ### Error codes
@@ -279,14 +279,14 @@ Format: `dingtalk_<conversation_id>_<sender_id>`
 
 ## Feishu (Lark)
 
-**Module:** `OptimalSystemAgent.Channels.Feishu`
+**Module:** `Daemon.Channels.Feishu`
 
 ByteDance Feishu/Lark Open API adapter. Receives events via `POST /api/v1/channels/feishu/events`.
 
 ### Configuration
 
 ```elixir
-config :optimal_system_agent,
+config :daemon,
   feishu_app_id: System.get_env("FEISHU_APP_ID"),
   feishu_app_secret: System.get_env("FEISHU_APP_SECRET"),
   feishu_encrypt_key: System.get_env("FEISHU_ENCRYPT_KEY")   # optional

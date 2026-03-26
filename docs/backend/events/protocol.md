@@ -1,12 +1,12 @@
 # Events: Protocol
 
-OSA uses two protocol layers for structured event communication: CloudEvents 1.0 as the envelope standard, and OSCP (Optimal Signal Communication Protocol) as the typed agent-to-agent message format built on top of CloudEvents.
+Daemon uses two protocol layers for structured event communication: CloudEvents 1.0 as the envelope standard, and OSCP (Optimal Signal Communication Protocol) as the typed agent-to-agent message format built on top of CloudEvents.
 
 ---
 
 ## CloudEvents 1.0 (`Protocol.CloudEvent`)
 
-`OptimalSystemAgent.Protocol.CloudEvent` is a backward-compatibility shim over `MiosaSignal.CloudEvent`. The canonical implementation lives in the `miosa_signal` package.
+`Daemon.Protocol.CloudEvent` is a backward-compatibility shim over `MiosaSignal.CloudEvent`. The canonical implementation lives in the `miosa_signal` package.
 
 ### Struct fields
 

@@ -35,7 +35,7 @@ flowchart TD
 
 ## Step 1 — Channel Receives Message
 
-A message enters OSA through one of 12 channel adapters. Each adapter implements
+A message enters Daemon through one of 12 channel adapters. Each adapter implements
 `Channels.Behaviour` and calls `Agent.Loop.process_message/2` (or `process_message/3` with signal
 metadata) to hand off the message to the session loop.
 
@@ -331,7 +331,7 @@ Hooks.run_async(:post_tool_use, post_payload)
 `run_async` fires the hook chain in a separate Task — post-tool results are observational and
 must not block the loop. Built-in `post_tool_use` hooks:
 
-1. **track_files_read** (p5) — Records the file path in `:osa_files_read` ETS after successful
+1. **track_files_read** (p5) — Records the file path in `:daemon_files_read` ETS after successful
    `file_read`, `dir_list`, or `file_glob` calls.
 2. **mcp_cache_post** (p15) — Caches MCP tool results in `:persistent_term` with timestamp.
 3. **cost_tracker** (p25) — `MiosaBudget.Budget.record_cost/5`. Records actual token spend.
@@ -343,12 +343,12 @@ very large) appears in the SSE stream.
 
 ### Cancel flag check
 
-At the start of each loop iteration, the loop checks the `:osa_cancel_flags` ETS table:
+At the start of each loop iteration, the loop checks the `:daemon_cancel_flags` ETS table:
 
 ```elixir
-case :ets.lookup(:osa_cancel_flags, state.session_id) do
+case :ets.lookup(:daemon_cancel_flags, state.session_id) do
   [{_, true}] ->
-    :ets.delete(:osa_cancel_flags, state.session_id)
+    :ets.delete(:daemon_cancel_flags, state.session_id)
     {:cancelled, "Loop cancelled by user"}
 
   _ ->
@@ -493,7 +493,7 @@ Signal Theory genre classifier has high confidence that no reasoning is required
 Each `Agent.Loop` is an isolated GenServer. Multiple sessions run in parallel without shared
 state. The only shared resources are:
 
-- **ETS tables** (`:osa_cancel_flags`, `:osa_files_read`) — keyed by `session_id`, no cross-session
+- **ETS tables** (`:daemon_cancel_flags`, `:daemon_files_read`) — keyed by `session_id`, no cross-session
   access.
 - **Agent.Memory** — the GenServer serializes writes, but `Memory.recall/0` returns the shared
   long-term memory that all sessions read from. Session-specific episodic memory is maintained

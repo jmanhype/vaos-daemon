@@ -2,21 +2,21 @@
 
 ## Audience
 
-Engineers adding new event types, subscribing to events, or debugging event routing in OSA.
+Engineers adding new event types, subscribing to events, or debugging event routing in Daemon.
 
 ## Overview
 
-OSA uses a two-layer event system:
+Daemon uses a two-layer event system:
 
 1. **goldrush** (`Events.Bus`) — high-speed internal dispatch. Handlers are compiled to BEAM bytecode modules at startup. Events are dispatched via supervised tasks.
 2. **Phoenix.PubSub** (`Bridge.PubSub`) — multi-process fan-out. Bridges goldrush events to named pub/sub topics so SDK connections, SSE streams, and monitoring processes can subscribe without coupling to goldrush directly.
 
 ## Event Struct
 
-Events conform to CloudEvents v1.0.2. The canonical implementation is in `MiosaSignal.Event`; `OptimalSystemAgent.Events.Event` is a delegation shim for backward compatibility.
+Events conform to CloudEvents v1.0.2. The canonical implementation is in `MiosaSignal.Event`; `Daemon.Events.Event` is a delegation shim for backward compatibility.
 
 ```elixir
-%OptimalSystemAgent.Events.Event{
+%Daemon.Events.Event{
   # CloudEvents v1.0.2 required
   id: "uuid-string",
   type: :llm_response,        # atom, one of @event_types
@@ -72,7 +72,7 @@ Events not in this list are rejected by the goldrush type filter and never dispa
 
 ## goldrush Compilation
 
-At `Events.Bus.init/1`, a goldrush query is compiled into a real `.beam` module named `:osa_event_router`:
+At `Events.Bus.init/1`, a goldrush query is compiled into a real `.beam` module named `:daemon_event_router`:
 
 ```elixir
 type_filters = Enum.map(@event_types, &:glc.eq(:type, &1))
@@ -81,7 +81,7 @@ query = :glc.with(:glc.any(type_filters), fn event ->
   dispatch_event(event)
 end)
 
-:glc.compile(:osa_event_router, query)
+:glc.compile(:daemon_event_router, query)
 ```
 
 This compilation happens exactly once. Recompiling after init would cause a TOCTOU race between `gr_param`'s ETS tables and in-flight task workers holding references to the old bytecode.
@@ -91,7 +91,7 @@ At dispatch time, an event is converted to a goldrush record:
 ```elixir
 gre_fields = typed_event |> Event.to_map() |> Map.to_list()
 gre_event  = :gre.make(gre_fields, [:list])
-:glc.handle(:osa_event_router, gre_event)
+:glc.handle(:daemon_event_router, gre_event)
 ```
 
 The `:type` field must be present at the top level for the goldrush filter to match.
@@ -99,7 +99,7 @@ The `:type` field must be present at the top level for the goldrush filter to ma
 ## Emitting Events
 
 ```elixir
-alias OptimalSystemAgent.Events.Bus
+alias Daemon.Events.Bus
 
 # Standard event
 {:ok, event} = Bus.emit(:llm_response, %{
@@ -151,7 +151,7 @@ end)
 Events.Bus.unregister_handler(:llm_response, ref)
 ```
 
-Handlers are stored in `:osa_event_handlers` ETS table (`:named_table, :public, :bag`). Registration does not recompile the goldrush module — the compiled module does type filtering only; handler lookup is dynamic via ETS.
+Handlers are stored in `:daemon_event_handlers` ETS table (`:named_table, :public, :bag`). Registration does not recompile the goldrush module — the compiled module does type filtering only; handler lookup is dynamic via ETS.
 
 Each handler invocation is wrapped in a supervised task. A handler crash routes the event to `Events.DLQ` for retry.
 
@@ -182,7 +182,7 @@ Bridge.PubSub.subscribe_type(:llm_response)
 Bridge.PubSub.subscribe_tui_output()
 ```
 
-Subscribers receive `{:osa_event, payload}` messages where `payload` is the event map.
+Subscribers receive `{:daemon_event, payload}` messages where `payload` is the event map.
 
 ## TUI Event Types
 
@@ -203,7 +203,7 @@ A `system_event` reaches the TUI only if its `event` field is in `@tui_system_ev
 
 ## Per-Session Event Streams
 
-In addition to PubSub, each session has a dedicated `Events.Stream` GenServer (circular buffer of 1000 events, registered in `OptimalSystemAgent.EventStreamRegistry`). The bus appends to it automatically when `session_id` is present on the event:
+In addition to PubSub, each session has a dedicated `Events.Stream` GenServer (circular buffer of 1000 events, registered in `Daemon.EventStreamRegistry`). The bus appends to it automatically when `session_id` is present on the event:
 
 ```elixir
 if typed_event.session_id do

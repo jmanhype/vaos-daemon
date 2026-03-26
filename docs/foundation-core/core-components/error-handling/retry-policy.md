@@ -2,7 +2,7 @@
 
 ## LLM Provider Retry — Fallback Chain
 
-OSA does not retry the same provider on failure. Instead, it fails over to the
+Daemon does not retry the same provider on failure. Instead, it fails over to the
 next provider in the `fallback_chain`. This is more reliable than per-provider
 retry because most LLM failures are either rate limits (where backing off helps
 less than switching providers) or service outages (where retrying is futile).
@@ -13,7 +13,7 @@ The chain is built at boot in `config/runtime.exs`:
 
 ```elixir
 fallback_chain: (
-  case System.get_env("OSA_FALLBACK_CHAIN") do
+  case System.get_env("DAEMON_FALLBACK_CHAIN") do
     nil ->
       # Auto-detect from configured API keys
       candidates = [

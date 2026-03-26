@@ -1,12 +1,12 @@
 # Development Environment Setup
 
-Audience: contributors setting up OSA for local development and testing.
+Audience: contributors setting up Daemon for local development and testing.
 
 ## Required Toolchain
 
 ### Elixir and Erlang/OTP
 
-OSA requires Elixir 1.17+ and OTP 27. The release CI uses Elixir 1.17.3 and OTP 27.2.
+Daemon requires Elixir 1.17+ and OTP 27. The release CI uses Elixir 1.17.3 and OTP 27.2.
 
 The recommended way to manage Elixir versions is `asdf` or `mise`.
 
@@ -34,7 +34,7 @@ elixir --version
 
 ### Go (for the tokenizer sidecar)
 
-OSA includes a Go-based BPE tokenizer (`priv/go/tokenizer/`) used for accurate token counting. Go 1.22+ is required to build it.
+Daemon includes a Go-based BPE tokenizer (`priv/go/tokenizer/`) used for accurate token counting. Go 1.22+ is required to build it.
 
 ```bash
 # macOS
@@ -46,7 +46,7 @@ sudo tar -C /usr/local -xzf go1.22.linux-amd64.tar.gz
 export PATH=$PATH:/usr/local/go/bin
 ```
 
-The tokenizer is optional — OSA falls back to a word-count heuristic when the binary is absent or `OSA_GO_TOKENIZER` is not set to `true`.
+The tokenizer is optional — Daemon falls back to a word-count heuristic when the binary is absent or `DAEMON_GO_TOKENIZER` is not set to `true`.
 
 ### System Dependencies
 
@@ -83,13 +83,13 @@ ollama serve &
 ollama pull qwen2.5:7b
 ```
 
-OSA auto-detects a running Ollama instance at startup and sets it as the default provider if no cloud API keys are configured.
+Daemon auto-detects a running Ollama instance at startup and sets it as the default provider if no cloud API keys are configured.
 
 ## Cloning and Initial Setup
 
 ```bash
 git clone https://github.com/Miosa-osa/OSA.git
-cd OSA
+cd Daemon
 
 # Install Hex package manager and rebar3
 mix local.hex --force
@@ -99,14 +99,14 @@ mix local.rebar --force
 mix setup
 ```
 
-`mix setup` is defined in `mix.exs` as `["deps.get", "ecto.setup", "compile"]`, where `ecto.setup` runs `ecto.create` and `ecto.migrate` to create `~/.osa/osa.db`.
+`mix setup` is defined in `mix.exs` as `["deps.get", "ecto.setup", "compile"]`, where `ecto.setup` runs `ecto.create` and `ecto.migrate` to create `~/.daemon/osa.db`.
 
 ### Configuration Directory
 
-On first run, OSA creates `~/.osa/` with the following structure:
+On first run, Daemon creates `~/.daemon/` with the following structure:
 
 ```
-~/.osa/
+~/.daemon/
 ├── osa.db          # SQLite database (messages, budget, tasks, treasury)
 ├── .env            # API keys and overrides (optional; project .env takes priority)
 ├── mcp.json        # MCP server definitions
@@ -119,9 +119,9 @@ On first run, OSA creates `~/.osa/` with the following structure:
 Run the interactive setup wizard to configure a provider and API key:
 
 ```bash
-mix run --no-halt -e 'OptimalSystemAgent.CLI.setup()'
+mix run --no-halt -e 'Daemon.CLI.setup()'
 # or with the release binary:
-./bin/osagent setup
+./bin/daemon setup
 ```
 
 ### Building the Go Tokenizer (optional)
@@ -133,7 +133,7 @@ cd priv/go/tokenizer
 CGO_ENABLED=0 go build -o osa-tokenizer .
 cd ../../..
 # Enable in environment:
-export OSA_GO_TOKENIZER=true
+export DAEMON_GO_TOKENIZER=true
 ```
 
 ## Running the Application
@@ -183,6 +183,6 @@ mix run --no-halt
 
 **`goldrush` fetch fails:** The dependency is pulled from GitHub (`robertohluna/goldrush`, branch `main`). Ensure Git is installed and you have outbound network access.
 
-**Ollama not detected at startup:** OSA performs a TCP probe to `localhost:11434` during `runtime.exs` evaluation to build the fallback chain. Start `ollama serve` before running OSA or set `OSA_DEFAULT_PROVIDER` explicitly.
+**Ollama not detected at startup:** Daemon performs a TCP probe to `localhost:11434` during `runtime.exs` evaluation to build the fallback chain. Start `ollama serve` before running Daemon or set `DAEMON_DEFAULT_PROVIDER` explicitly.
 
-**Database location:** The SQLite database defaults to `~/.osa/osa.db`. Override with `DATABASE_URL` (PostgreSQL) if you need a different backend for platform mode.
+**Database location:** The SQLite database defaults to `~/.daemon/osa.db`. Override with `DATABASE_URL` (PostgreSQL) if you need a different backend for platform mode.

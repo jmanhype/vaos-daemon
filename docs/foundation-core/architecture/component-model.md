@@ -1,6 +1,6 @@
 # Component Model
 
-Each component in OSA runs as a named OTP process. This document catalogues every component by
+Each component in Daemon runs as a named OTP process. This document catalogues every component by
 subsystem, describing its OTP process type, primary responsibility, and the public interfaces other
 components use to interact with it.
 
@@ -23,7 +23,7 @@ These components form the foundational layer. Everything else depends on them.
 | | |
 |---|---|
 | Type | Registry (`:unique`) |
-| Module | `OptimalSystemAgent.SessionRegistry` |
+| Module | `Daemon.SessionRegistry` |
 | Responsibility | Maps session IDs to `Agent.Loop` PIDs. Used by all code that needs to find or message a session process. |
 | Key interfaces | `Registry.lookup/2`, `Registry.register/3` (called by `Agent.Loop` on start) |
 
@@ -32,7 +32,7 @@ These components form the foundational layer. Everything else depends on them.
 | | |
 |---|---|
 | Type | Task.Supervisor |
-| Module | `OptimalSystemAgent.Events.TaskSupervisor` |
+| Module | `Daemon.Events.TaskSupervisor` |
 | Responsibility | Supervises short-lived tasks spawned by the event bus for handler dispatch. Caps at 100 concurrent children. Must start before `Events.Bus`. |
 | Key interfaces | `Task.Supervisor.start_child/2` (called by `Events.Bus`) |
 
@@ -41,7 +41,7 @@ These components form the foundational layer. Everything else depends on them.
 | | |
 |---|---|
 | Type | Supervisor (internal, Phoenix library) |
-| Module | `Phoenix.PubSub` (name: `OptimalSystemAgent.PubSub`) |
+| Module | `Phoenix.PubSub` (name: `Daemon.PubSub`) |
 | Responsibility | In-process pub/sub for channel-level message broadcast. Used by `Channels.HTTP` for SSE fan-out. |
 | Key interfaces | `Phoenix.PubSub.broadcast/3`, `Phoenix.PubSub.subscribe/2` |
 
@@ -50,8 +50,8 @@ These components form the foundational layer. Everything else depends on them.
 | | |
 |---|---|
 | Type | GenServer |
-| Module | `OptimalSystemAgent.Events.Bus` |
-| Responsibility | Central event router. Compiles a goldrush BEAM module (`:osa_event_router`) at init for zero-overhead dispatch. Routes 14 typed events: `user_message`, `llm_request`, `llm_response`, `tool_call`, `tool_result`, `agent_response`, `system_event`, `channel_connected`, `channel_disconnected`, `channel_error`, `ask_user_question`, `survey_answered`, `algedonic_alert`. Failed handler executions are forwarded to `Events.DLQ`. |
+| Module | `Daemon.Events.Bus` |
+| Responsibility | Central event router. Compiles a goldrush BEAM module (`:daemon_event_router`) at init for zero-overhead dispatch. Routes 14 typed events: `user_message`, `llm_request`, `llm_response`, `tool_call`, `tool_result`, `agent_response`, `system_event`, `channel_connected`, `channel_disconnected`, `channel_error`, `ask_user_question`, `survey_answered`, `algedonic_alert`. Failed handler executions are forwarded to `Events.DLQ`. |
 | Key interfaces | `Bus.emit/3`, `Bus.emit_algedonic/3`, `Bus.register_handler/2`, `Bus.unregister_handler/2` |
 
 ### Events.DLQ
@@ -59,7 +59,7 @@ These components form the foundational layer. Everything else depends on them.
 | | |
 |---|---|
 | Type | GenServer |
-| Module | `OptimalSystemAgent.Events.DLQ` |
+| Module | `Daemon.Events.DLQ` |
 | Responsibility | Dead-letter queue for failed event handler dispatches. ETS-backed. Retries with exponential backoff (base 1s, max 30s) up to 3 times. On exhaustion emits an algedonic alert and drops the event. Periodic retry tick every 60 seconds. |
 | Key interfaces | `DLQ.enqueue/4`, `DLQ.depth/0`, `DLQ.drain/0` |
 
@@ -68,7 +68,7 @@ These components form the foundational layer. Everything else depends on them.
 | | |
 |---|---|
 | Type | GenServer |
-| Module | `OptimalSystemAgent.Bridge.PubSub` |
+| Module | `Daemon.Bridge.PubSub` |
 | Responsibility | Bridges events from `Events.Bus` into `Phoenix.PubSub` topics. Enables HTTP SSE clients and the Command Center to subscribe to live agent events without coupling to the bus internals. |
 | Key interfaces | `Bridge.PubSub.broadcast/2` |
 
@@ -77,7 +77,7 @@ These components form the foundational layer. Everything else depends on them.
 | | |
 |---|---|
 | Type | GenServer (Ecto adapter) |
-| Module | `OptimalSystemAgent.Store.Repo` |
+| Module | `Daemon.Store.Repo` |
 | Responsibility | Ecto repository backed by SQLite3 (Exqlite adapter). Persists messages, memories, tasks, and agent state across restarts. |
 | Key interfaces | `Repo.get/2`, `Repo.insert/1`, `Repo.query/2`, standard Ecto `Repo` API |
 
@@ -86,7 +86,7 @@ These components form the foundational layer. Everything else depends on them.
 | | |
 |---|---|
 | Type | GenServer |
-| Module | `OptimalSystemAgent.EventStream` |
+| Module | `Daemon.EventStream` |
 | Responsibility | Per-session circular event buffer (max 1000 events) for Server-Sent Events delivery to the Command Center. Appended to by `Events.Bus` for all events carrying a `session_id`. |
 | Key interfaces | `EventStream.append/2`, `EventStream.recent/2` |
 
@@ -95,7 +95,7 @@ These components form the foundational layer. Everything else depends on them.
 | | |
 |---|---|
 | Type | GenServer |
-| Module | `OptimalSystemAgent.Telemetry.Metrics` |
+| Module | `Daemon.Telemetry.Metrics` |
 | Responsibility | Subscribes to `Events.Bus` for `tool_telemetry` system events. Accumulates tool timing metrics and exposes aggregated stats. |
 | Key interfaces | `Telemetry.Metrics.get/0` |
 
@@ -114,7 +114,7 @@ These components form the foundational layer. Everything else depends on them.
 |---|---|
 | Type | GenServer |
 | Module | `MiosaProviders.Registry` |
-| Responsibility | Routes LLM calls to the configured provider (Anthropic, Ollama, OpenAI, etc.). Compiles a goldrush module (`:osa_provider_router`) for dispatch. Exposes `context_window/1` for token budget calculations. |
+| Responsibility | Routes LLM calls to the configured provider (Anthropic, Ollama, OpenAI, etc.). Compiles a goldrush module (`:daemon_provider_router`) for dispatch. Exposes `context_window/1` for token budget calculations. |
 | Key interfaces | `Registry.call/3`, `Registry.context_window/1`, `Registry.list_providers/0` |
 
 ### Tools.Registry
@@ -122,8 +122,8 @@ These components form the foundational layer. Everything else depends on them.
 | | |
 |---|---|
 | Type | GenServer |
-| Module | `OptimalSystemAgent.Tools.Registry` |
-| Responsibility | Manages 40+ built-in tool modules, SKILL.md skill files (from `priv/skills/` and `~/.osa/skills/`), and MCP-discovered tools. Compiles goldrush dispatcher (`:osa_tool_dispatcher`). Stores tool maps in `:persistent_term` for lock-free concurrent reads. Supports hot registration of new tools without restart. |
+| Module | `Daemon.Tools.Registry` |
+| Responsibility | Manages 40+ built-in tool modules, SKILL.md skill files (from `priv/skills/` and `~/.daemon/skills/`), and MCP-discovered tools. Compiles goldrush dispatcher (`:daemon_tool_dispatcher`). Stores tool maps in `:persistent_term` for lock-free concurrent reads. Supports hot registration of new tools without restart. |
 | Key interfaces | `Registry.execute/2`, `Registry.execute_direct/2`, `Registry.list_tools/0`, `Registry.list_tools_direct/0`, `Registry.register/1`, `Registry.register_mcp_tools/0`, `Registry.active_skills_context/1`, `Registry.filter_applicable_tools/1` |
 
 ### Tools.Cache
@@ -131,7 +131,7 @@ These components form the foundational layer. Everything else depends on them.
 | | |
 |---|---|
 | Type | GenServer |
-| Module | `OptimalSystemAgent.Tools.Cache` |
+| Module | `Daemon.Tools.Cache` |
 | Responsibility | Memoizes tool results with configurable TTL. Keyed by `{tool_name, arguments_hash}`. Used by tools that call external APIs to avoid redundant requests within a session. |
 | Key interfaces | `Tools.Cache.get/2`, `Tools.Cache.put/3` |
 
@@ -140,7 +140,7 @@ These components form the foundational layer. Everything else depends on them.
 | | |
 |---|---|
 | Type | GenServer |
-| Module | `OptimalSystemAgent.Machines` |
+| Module | `Daemon.Machines` |
 | Responsibility | Discovers and manages OS template definitions. Templates define environment shapes (e.g., a pre-configured dev container) the agent can instantiate or connect to. |
 | Key interfaces | `Machines.list/0`, `Machines.get/1` |
 
@@ -149,8 +149,8 @@ These components form the foundational layer. Everything else depends on them.
 | | |
 |---|---|
 | Type | GenServer |
-| Module | `OptimalSystemAgent.Commands` |
-| Responsibility | Slash command registry for built-in commands (`/help`, `/budget`, `/status`, etc.), user-defined markdown commands from `~/.osa/commands/`, and agent-created commands. |
+| Module | `Daemon.Commands` |
+| Responsibility | Slash command registry for built-in commands (`/help`, `/budget`, `/status`, etc.), user-defined markdown commands from `~/.daemon/commands/`, and agent-created commands. |
 | Key interfaces | `Commands.execute/2`, `Commands.list/0`, `Commands.register/2` |
 
 ### OS.Registry
@@ -158,7 +158,7 @@ These components form the foundational layer. Everything else depends on them.
 | | |
 |---|---|
 | Type | GenServer |
-| Module | `OptimalSystemAgent.OS.Registry` |
+| Module | `Daemon.OS.Registry` |
 | Responsibility | Tracks OS template connections. Maps template names to active connection state. |
 | Key interfaces | `OS.Registry.register/2`, `OS.Registry.lookup/1` |
 
@@ -167,7 +167,7 @@ These components form the foundational layer. Everything else depends on them.
 | | |
 |---|---|
 | Type | Registry (`:unique`) |
-| Module | `OptimalSystemAgent.MCP.Registry` |
+| Module | `Daemon.MCP.Registry` |
 | Responsibility | Maps MCP server names to their `MCP.Server` GenServer PIDs. Used by `MCP.Client` for server lookup before JSON-RPC calls. |
 | Key interfaces | `Registry.lookup/2` (standard `Registry` API) |
 
@@ -176,8 +176,8 @@ These components form the foundational layer. Everything else depends on them.
 | | |
 |---|---|
 | Type | DynamicSupervisor |
-| Module | `OptimalSystemAgent.MCP.Supervisor` |
-| Responsibility | Owns one `MCP.Server` GenServer per configured MCP server entry in `~/.osa/mcp.json`. Servers are started asynchronously after boot via `MCP.Client.start_servers/0`. |
+| Module | `Daemon.MCP.Supervisor` |
+| Responsibility | Owns one `MCP.Server` GenServer per configured MCP server entry in `~/.daemon/mcp.json`. Servers are started asynchronously after boot via `MCP.Client.start_servers/0`. |
 | Key interfaces | `DynamicSupervisor.start_child/2` (called by `MCP.Client`) |
 
 ---
@@ -189,13 +189,13 @@ These components form the foundational layer. Everything else depends on them.
 | | |
 |---|---|
 | Type | DynamicSupervisor |
-| Module | `OptimalSystemAgent.Channels.Supervisor` |
+| Module | `Daemon.Channels.Supervisor` |
 | Responsibility | Owns one GenServer per active channel adapter. Adapters are started by `Channels.Starter` during `handle_continue` after the supervisor tree is up. Supports up to 12 concurrent adapter types. |
 | Key interfaces | `DynamicSupervisor.start_child/2` |
 
 ### Channel Adapters (12 adapters)
 
-Each adapter implements `OptimalSystemAgent.Channels.Behaviour`:
+Each adapter implements `Daemon.Channels.Behaviour`:
 
 | Adapter | Module | Protocol |
 |---|---|---|
@@ -227,7 +227,7 @@ Required callbacks for all adapters:
 | | |
 |---|---|
 | Type | Registry (`:unique`) |
-| Module | `OptimalSystemAgent.EventStreamRegistry` |
+| Module | `Daemon.EventStreamRegistry` |
 | Responsibility | Maps session IDs to per-session event stream GenServer PIDs. Used by SSE handlers to subscribe a client to the correct session's event buffer. |
 | Key interfaces | `Registry.lookup/2`, `Registry.register/3` |
 
@@ -236,7 +236,7 @@ Required callbacks for all adapters:
 | | |
 |---|---|
 | Type | DynamicSupervisor |
-| Module | `OptimalSystemAgent.SessionSupervisor` |
+| Module | `Daemon.SessionSupervisor` |
 | Responsibility | Owns one `Agent.Loop` GenServer per active agent session. Sessions are created on first message and terminated explicitly or via timeout. |
 | Key interfaces | `DynamicSupervisor.start_child/2`, `DynamicSupervisor.terminate_child/2` |
 
@@ -249,7 +249,7 @@ Required callbacks for all adapters:
 | | |
 |---|---|
 | Type | GenServer |
-| Module | `OptimalSystemAgent.Agent.Memory` |
+| Module | `Daemon.Agent.Memory` |
 | Responsibility | Long-term memory store. Persists facts, decisions, and context across sessions. Provides `recall/0` for full memory dump and relevance-filtered recall via keyword overlap. The `KnowledgeBridge` syncs important memories into `MiosaKnowledge.Store`. |
 | Key interfaces | `Memory.remember/2`, `Memory.recall/0`, `Memory.forget/1` |
 
@@ -258,7 +258,7 @@ Required callbacks for all adapters:
 | | |
 |---|---|
 | Type | GenServer |
-| Module | `OptimalSystemAgent.Agent.HeartbeatState` |
+| Module | `Daemon.Agent.HeartbeatState` |
 | Responsibility | Tracks per-session liveness. Channel adapters ping this periodically; idle sessions are marked for reaping by the Scheduler. |
 | Key interfaces | `HeartbeatState.ping/1`, `HeartbeatState.last_seen/1` |
 
@@ -267,7 +267,7 @@ Required callbacks for all adapters:
 | | |
 |---|---|
 | Type | GenServer |
-| Module | `OptimalSystemAgent.Agent.Tasks` |
+| Module | `Daemon.Agent.Tasks` |
 | Responsibility | Task queue per session. Tracks tasks with statuses `:pending`, `:in_progress`, `:completed`, `:failed`. The `Context` builder reads tasks via `Tasks.get_tasks/1` and injects them into the system prompt. Exposes workflow context blocks for multi-step plans. |
 | Key interfaces | `Tasks.add/2`, `Tasks.get_tasks/1`, `Tasks.update_status/3`, `Tasks.workflow_context_block/1` |
 
@@ -285,7 +285,7 @@ Required callbacks for all adapters:
 | | |
 |---|---|
 | Type | GenServer |
-| Module | `OptimalSystemAgent.Agent.Orchestrator` |
+| Module | `Daemon.Agent.Orchestrator` |
 | Responsibility | Coordinates multi-agent parallel task execution. Spawns sub-agent sessions via the `orchestrate` tool. Tracks sub-agent results, aggregates outputs, and returns synthesized responses to the calling session. |
 | Key interfaces | `Orchestrator.spawn_agents/2`, `Orchestrator.await_results/1` |
 
@@ -294,7 +294,7 @@ Required callbacks for all adapters:
 | | |
 |---|---|
 | Type | GenServer |
-| Module | `OptimalSystemAgent.Agent.Progress` |
+| Module | `Daemon.Agent.Progress` |
 | Responsibility | Reports progress for long-running operations to channels and the Command Center. Integrates with `Bridge.PubSub` for live progress streaming. |
 | Key interfaces | `Progress.update/3`, `Progress.complete/2` |
 
@@ -303,8 +303,8 @@ Required callbacks for all adapters:
 | | |
 |---|---|
 | Type | GenServer |
-| Module | `OptimalSystemAgent.Agent.Hooks` |
-| Responsibility | Priority-ordered middleware pipeline for agent lifecycle events. Registration goes through the GenServer (serialized writes). Hook definitions stored in ETS (`:osa_hooks`, bag, read_concurrency). Hook execution reads from ETS in the caller's process — no GenServer bottleneck. Metrics stored in ETS (`:osa_hooks_metrics`, write_concurrency). |
+| Module | `Daemon.Agent.Hooks` |
+| Responsibility | Priority-ordered middleware pipeline for agent lifecycle events. Registration goes through the GenServer (serialized writes). Hook definitions stored in ETS (`:daemon_hooks`, bag, read_concurrency). Hook execution reads from ETS in the caller's process — no GenServer bottleneck. Metrics stored in ETS (`:daemon_hooks_metrics`, write_concurrency). |
 | Key interfaces | `Hooks.register/4`, `Hooks.run/2`, `Hooks.run_async/2`, `Hooks.list_hooks/0`, `Hooks.metrics/0` |
 
 Built-in hooks:
@@ -327,7 +327,7 @@ Built-in hooks:
 | | |
 |---|---|
 | Type | GenServer |
-| Module | `OptimalSystemAgent.Agent.Learning` |
+| Module | `Daemon.Agent.Learning` |
 | Responsibility | Accumulates patterns and solutions from agent interactions. `Context.build` injects relevant patterns into the system prompt via `Taxonomy` and `Injector`. Patterns persist across sessions in the knowledge backend. |
 | Key interfaces | `Learning.patterns/0`, `Learning.solutions/0`, `Learning.record_pattern/2`, `Learning.record_solution/2` |
 
@@ -345,7 +345,7 @@ Built-in hooks:
 | | |
 |---|---|
 | Type | GenServer |
-| Module | `OptimalSystemAgent.Agent.Memory.KnowledgeBridge` |
+| Module | `Daemon.Agent.Memory.KnowledgeBridge` |
 | Responsibility | Bridges long-term memory entries into the structured knowledge store. Classifies memory content via `Memory.Taxonomy` and upserts into `MiosaKnowledge.Store`. |
 | Key interfaces | Called internally on memory writes |
 
@@ -354,7 +354,7 @@ Built-in hooks:
 | | |
 |---|---|
 | Type | Supervisor |
-| Module | `OptimalSystemAgent.Vault.Supervisor` |
+| Module | `Daemon.Vault.Supervisor` |
 | Responsibility | Owns the Vault GenServer and its persistence workers. The Vault is a persistent, encrypted context store where the agent can `remember`, `wake`, `sleep`, `checkpoint`, and `inject` named context bundles. |
 | Key interfaces | `Vault.remember/2`, `Vault.context/1`, `Vault.checkpoint/1`, `Vault.wake/1`, `Vault.sleep/1` |
 
@@ -363,7 +363,7 @@ Built-in hooks:
 | | |
 |---|---|
 | Type | GenServer |
-| Module | `OptimalSystemAgent.Agent.Scheduler` |
+| Module | `Daemon.Agent.Scheduler` |
 | Responsibility | Runs scheduled tasks (cron-style or interval-based). Supports one-shot and recurring schedules. Dispatches due tasks to the appropriate session or creates a new session. |
 | Key interfaces | `Scheduler.schedule/3`, `Scheduler.cancel/1`, `Scheduler.list/0` |
 
@@ -372,7 +372,7 @@ Built-in hooks:
 | | |
 |---|---|
 | Type | GenServer |
-| Module | `OptimalSystemAgent.Agent.Compactor` |
+| Module | `Daemon.Agent.Compactor` |
 | Responsibility | Context window compaction. When a session's conversation history exceeds the token budget, the Compactor summarizes older exchanges and replaces them with a compressed summary. The `pre_compact` hook fires before compaction. |
 | Key interfaces | `Compactor.compact/2`, `Compactor.needs_compact?/2` |
 
@@ -381,7 +381,7 @@ Built-in hooks:
 | | |
 |---|---|
 | Type | GenServer |
-| Module | `OptimalSystemAgent.Agent.Cortex` |
+| Module | `Daemon.Agent.Cortex` |
 | Responsibility | Multi-provider synthesis. Fans a prompt out to multiple LLM providers in parallel and synthesizes the responses into a single answer. Used for high-stakes queries where cross-provider validation is desired. |
 | Key interfaces | `Cortex.synthesize/2` |
 
@@ -390,7 +390,7 @@ Built-in hooks:
 | | |
 |---|---|
 | Type | GenServer |
-| Module | `OptimalSystemAgent.Agent.ProactiveMode` |
+| Module | `Daemon.Agent.ProactiveMode` |
 | Responsibility | Enables the agent to initiate actions without user prompts. Monitors triggers (schedule, event, condition) and dispatches proactive tasks to sessions. |
 | Key interfaces | `ProactiveMode.enable/1`, `ProactiveMode.disable/1`, `ProactiveMode.status/0` |
 
@@ -399,7 +399,7 @@ Built-in hooks:
 | | |
 |---|---|
 | Type | GenServer |
-| Module | `OptimalSystemAgent.Webhooks.Dispatcher` |
+| Module | `Daemon.Webhooks.Dispatcher` |
 | Responsibility | Delivers outbound webhook payloads to configured URLs. Supports retry logic and signature verification. Used by the `agent_response` event to notify external systems. |
 | Key interfaces | `Webhooks.Dispatcher.dispatch/2`, `Webhooks.Dispatcher.register_endpoint/2` |
 
@@ -413,15 +413,15 @@ Built-in hooks:
 |---|---|
 | Type | GenServer |
 | Module | `MiosaBudget.Treasury` |
-| Responsibility | Organization-level budget management. Aggregates spend across sessions and enforces team/org-level limits. Opt-in via `OSA_TREASURY_ENABLED=true`. |
-| Condition | `OSA_TREASURY_ENABLED=true` |
+| Responsibility | Organization-level budget management. Aggregates spend across sessions and enforces team/org-level limits. Opt-in via `DAEMON_TREASURY_ENABLED=true`. |
+| Condition | `DAEMON_TREASURY_ENABLED=true` |
 
 ### Intelligence.Supervisor
 
 | | |
 |---|---|
 | Type | Supervisor |
-| Module | `OptimalSystemAgent.Intelligence.Supervisor` |
+| Module | `Daemon.Intelligence.Supervisor` |
 | Responsibility | Umbrella for Signal Theory intelligence processes. Children start dormant and activate when wired to session data. `ConversationTracker` tracks conversation depth per session; `Context.runtime_block` uses it. |
 | Children | `ConversationTracker`, `ContactDetector`, `ProactiveMonitor` |
 
@@ -430,7 +430,7 @@ Built-in hooks:
 | | |
 |---|---|
 | Type | GenServer |
-| Module | `OptimalSystemAgent.Agent.Orchestrator.Mailbox` |
+| Module | `Daemon.Agent.Orchestrator.Mailbox` |
 | Responsibility | ETS-backed message mailbox for swarm coordination. Sub-agents write results here; the orchestrating session reads and aggregates. Must start before `SwarmMode`. |
 | Key interfaces | `Mailbox.put/3`, `Mailbox.take/2`, `Mailbox.list/1` |
 
@@ -439,7 +439,7 @@ Built-in hooks:
 | | |
 |---|---|
 | Type | GenServer |
-| Module | `OptimalSystemAgent.Agent.Orchestrator.SwarmMode` |
+| Module | `Daemon.Agent.Orchestrator.SwarmMode` |
 | Responsibility | Manages active swarm sessions. Tracks which sessions are operating as swarm coordinators and which are workers. Routes swarm-level messages. |
 | Key interfaces | `SwarmMode.enter/2`, `SwarmMode.exit/1`, `SwarmMode.status/0` |
 
@@ -448,7 +448,7 @@ Built-in hooks:
 | | |
 |---|---|
 | Type | DynamicSupervisor |
-| Module | `OptimalSystemAgent.Agent.Orchestrator.SwarmMode.AgentPool` |
+| Module | `Daemon.Agent.Orchestrator.SwarmMode.AgentPool` |
 | Responsibility | Pool of sub-agent sessions spawned for swarm tasks. Max 50 concurrent sub-agents. |
 | Key interfaces | `DynamicSupervisor.start_child/2` |
 
@@ -457,16 +457,16 @@ Built-in hooks:
 | | |
 |---|---|
 | Type | Supervisor |
-| Module | `OptimalSystemAgent.Fleet.Supervisor` |
-| Responsibility | Manages a fleet of OSA instances (sentinel model). Tracks registered remote agents and routes cross-instance tasks. Opt-in via `OSA_FLEET_ENABLED=true`. |
-| Condition | `OSA_FLEET_ENABLED=true` |
+| Module | `Daemon.Fleet.Supervisor` |
+| Responsibility | Manages a fleet of Daemon instances (sentinel model). Tracks registered remote agents and routes cross-instance tasks. Opt-in via `DAEMON_FLEET_ENABLED=true`. |
+| Condition | `DAEMON_FLEET_ENABLED=true` |
 
 ### Sidecar.Manager
 
 | | |
 |---|---|
 | Type | GenServer |
-| Module | `OptimalSystemAgent.Sidecar.Manager` |
+| Module | `Daemon.Sidecar.Manager` |
 | Responsibility | Creates ETS tables for sidecar circuit breakers and manages the lifecycle of external sidecar processes (Go, Python). Always starts so the ETS tables are available before optional sidecars are added. |
 | Key interfaces | `Sidecar.Manager.status/0`, `Sidecar.Manager.restart/1` |
 
@@ -475,7 +475,7 @@ Built-in hooks:
 | | |
 |---|---|
 | Type | GenServer (Port-based) |
-| Module | `OptimalSystemAgent.Go.Tokenizer` |
+| Module | `Daemon.Go.Tokenizer` |
 | Responsibility | Wraps the Go BPE tokenizer binary via Erlang Port. `Agent.Context.estimate_tokens/1` calls this for accurate token counting. Falls back to heuristic estimation when unavailable. |
 | Condition | `go_tokenizer_enabled` in application config |
 | Key interfaces | `Go.Tokenizer.count_tokens/1` |
@@ -485,7 +485,7 @@ Built-in hooks:
 | | |
 |---|---|
 | Type | Supervisor |
-| Module | `OptimalSystemAgent.Python.Supervisor` |
+| Module | `Daemon.Python.Supervisor` |
 | Responsibility | Manages Python sidecar processes for ML inference tasks (embeddings, classification) that are not available in Elixir. Communicates via Port or HTTP. |
 | Condition | `python_sidecar_enabled` in application config |
 
@@ -494,7 +494,7 @@ Built-in hooks:
 | | |
 |---|---|
 | Type | GenServer (Port-based) |
-| Module | `OptimalSystemAgent.Go.Git` |
+| Module | `Daemon.Go.Git` |
 | Responsibility | Wraps a Go-based git operations binary. Provides higher-performance git operations than shelling out to the `git` CLI. |
 | Condition | `go_git_enabled` in application config |
 
@@ -503,7 +503,7 @@ Built-in hooks:
 | | |
 |---|---|
 | Type | GenServer (Port-based) |
-| Module | `OptimalSystemAgent.Go.Sysmon` |
+| Module | `Daemon.Go.Sysmon` |
 | Responsibility | System monitor sidecar. Collects CPU, memory, and disk metrics from Go-side and exposes them to the agent for environment awareness. |
 | Condition | `go_sysmon_enabled` in application config |
 
@@ -512,7 +512,7 @@ Built-in hooks:
 | | |
 |---|---|
 | Type | GenServer |
-| Module | `OptimalSystemAgent.WhatsAppWeb` |
+| Module | `Daemon.WhatsAppWeb` |
 | Responsibility | WhatsApp Web protocol handler (browser automation). Operates independently from the WhatsApp Business API channel adapter. |
 | Condition | `whatsapp_web_enabled` in application config |
 
@@ -521,7 +521,7 @@ Built-in hooks:
 | | |
 |---|---|
 | Type | Supervisor |
-| Module | `OptimalSystemAgent.Sandbox.Supervisor` |
+| Module | `Daemon.Sandbox.Supervisor` |
 | Responsibility | Manages isolated code execution environments. Used by the `code_sandbox` and `compute_vm` tools to run untrusted code with resource limits. |
 | Condition | `sandbox_enabled` in application config |
 
@@ -530,7 +530,7 @@ Built-in hooks:
 | | |
 |---|---|
 | Type | GenServer |
-| Module | `OptimalSystemAgent.Integrations.Wallet` |
+| Module | `Daemon.Integrations.Wallet` |
 | Responsibility | Cryptocurrency wallet integration for the `wallet_ops` tool. Manages key storage and transaction signing. Starts alongside a `Mock` provider for testing. |
 | Condition | `wallet_enabled` in application config |
 
@@ -539,8 +539,8 @@ Built-in hooks:
 | | |
 |---|---|
 | Type | GenServer |
-| Module | `OptimalSystemAgent.System.Updater` |
-| Responsibility | OTA self-update manager. Polls for new OSA releases, downloads update bundles, and triggers hot code reload or restart sequences. |
+| Module | `Daemon.System.Updater` |
+| Responsibility | OTA self-update manager. Polls for new Daemon releases, downloads update bundles, and triggers hot code reload or restart sequences. |
 | Condition | `update_enabled` in application config |
 
 ### Platform.AMQP
@@ -548,6 +548,6 @@ Built-in hooks:
 | | |
 |---|---|
 | Type | GenServer |
-| Module | `OptimalSystemAgent.Platform.AMQP` |
+| Module | `Daemon.Platform.AMQP` |
 | Responsibility | AMQP publisher for integration with RabbitMQ or compatible brokers. Publishes `agent_response` and `system_event` events to configured exchanges. |
 | Condition | `AMQP_URL` environment variable set |

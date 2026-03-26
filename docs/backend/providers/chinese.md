@@ -2,7 +2,7 @@
 
 > Qwen, Zhipu, Moonshot, VolcEngine, Baichuan
 
-OSA is the only Western-built AI agent with native Chinese LLM provider support.
+Daemon is the only Western-built AI agent with native Chinese LLM provider support.
 
 ---
 

@@ -2,7 +2,7 @@
 
 > **Severity:** UX
 > **Status:** Open
-> **Component:** `lib/optimal_system_agent/providers/registry.ex`, `lib/optimal_system_agent/channels/http.ex`
+> **Component:** `lib/daemon/providers/registry.ex`, `lib/daemon/channels/http.ex`
 > **Reported:** 2026-03-14
 
 ---
@@ -17,7 +17,7 @@ actionable guidance on which key is missing or how to set it.
 
 ## Symptom
 
-User starts OSA, types a message, and receives:
+User starts Daemon, types a message, and receives:
 
 ```
 Error: Provider error: HTTP 401: {"error": {"message": "Invalid API Key"}}
@@ -34,7 +34,7 @@ of a key:
 ```elixir
 def provider_configured?(provider) do
   key = :"#{provider}_api_key"
-  case Application.get_env(:optimal_system_agent, key) do
+  case Application.get_env(:daemon, key) do
     nil -> false
     "" -> false
     _ -> true
@@ -83,5 +83,5 @@ end)
 ## Workaround
 
 Check `GET /api/v1/models` — the `configured?` field per provider indicates
-whether a key is present. Also run `mix osa.chat /doctor` which calls
+whether a key is present. Also run `mix daemon.chat /doctor` which calls
 `cmd_doctor/2` and includes provider key status.

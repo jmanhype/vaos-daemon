@@ -1,6 +1,6 @@
 # Extending the Runtime
 
-Audience: developers implementing new tools, skills, channels, or hooks for OSA.
+Audience: developers implementing new tools, skills, channels, or hooks for Daemon.
 
 This guide covers the behaviour contracts you must implement and the patterns
 that make extensions work correctly in the OTP runtime.
@@ -19,7 +19,7 @@ call; `Agent.Loop` executes the call and returns the result.
 defmodule MyApp.Tools.WeatherTool do
   @moduledoc "Fetches current weather for a location."
 
-  @behaviour OptimalSystemAgent.Tools.Behaviour
+  @behaviour Daemon.Tools.Behaviour
 
   @impl true
   def name, do: "get_weather"
@@ -102,7 +102,7 @@ to the LLM.
 ### Register the tool
 
 ```elixir
-OptimalSystemAgent.Tools.Registry.register(MyApp.Tools.WeatherTool)
+Daemon.Tools.Registry.register(MyApp.Tools.WeatherTool)
 ```
 
 ---
@@ -117,7 +117,7 @@ instructions into the agent's reasoning context.
 ```markdown
 ---
 name: code_review
-description: Perform a thorough code review following OSA standards
+description: Perform a thorough code review following Daemon standards
 tools:
   - file_read
   - file_glob
@@ -145,7 +145,7 @@ you examine:
 Report findings grouped by severity: CRITICAL, MAJOR, MINOR.
 ```
 
-Place the file in `~/.osa/skills/code_review.md`. It is loaded at boot and
+Place the file in `~/.daemon/skills/code_review.md`. It is loaded at boot and
 on `/reload`.
 
 ---
@@ -153,7 +153,7 @@ on `/reload`.
 ## Adding a Channel
 
 A channel adapter connects an external messaging platform (Telegram, Discord,
-Slack, a custom webhook, etc.) to the OSA agent pipeline.
+Slack, a custom webhook, etc.) to the Daemon agent pipeline.
 
 ### Implement Channels.Behaviour
 
@@ -162,20 +162,20 @@ defmodule MyApp.Channels.MyAdapter do
   @moduledoc "Channel adapter for MyPlatform."
 
   use GenServer
-  @behaviour OptimalSystemAgent.Channels.Behaviour
+  @behaviour Daemon.Channels.Behaviour
   require Logger
 
-  alias OptimalSystemAgent.Agent.Loop
+  alias Daemon.Agent.Loop
 
   # ── Behaviour ────────────────────────────────────────────────────
 
-  @impl OptimalSystemAgent.Channels.Behaviour
+  @impl Daemon.Channels.Behaviour
   def channel_name, do: :my_platform
 
-  @impl OptimalSystemAgent.Channels.Behaviour
+  @impl Daemon.Channels.Behaviour
   def start_link(opts) do
     token = Keyword.get(opts, :token) ||
-      Application.get_env(:optimal_system_agent, :my_platform_token)
+      Application.get_env(:daemon, :my_platform_token)
 
     if is_nil(token) do
       Logger.info("[MyAdapter] No token configured — skipping")
@@ -185,12 +185,12 @@ defmodule MyApp.Channels.MyAdapter do
     end
   end
 
-  @impl OptimalSystemAgent.Channels.Behaviour
+  @impl Daemon.Channels.Behaviour
   def send_message(chat_id, message, _opts \\ []) do
     GenServer.call(__MODULE__, {:send, chat_id, message})
   end
 
-  @impl OptimalSystemAgent.Channels.Behaviour
+  @impl Daemon.Channels.Behaviour
   def connected? do
     case Process.whereis(__MODULE__) do
       nil -> false
@@ -248,7 +248,7 @@ end
 
 ```elixir
 DynamicSupervisor.start_child(
-  OptimalSystemAgent.Channels.Supervisor,
+  Daemon.Channels.Supervisor,
   {MyApp.Channels.MyAdapter, token: "my-token"}
 )
 ```
@@ -261,7 +261,7 @@ Hooks are closures registered against a lifecycle event. They can observe,
 transform, or block the payload.
 
 ```elixir
-alias OptimalSystemAgent.Agent.Hooks
+alias Daemon.Agent.Hooks
 
 Hooks.register(%{
   name: "rate_limiter",

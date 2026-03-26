@@ -1,15 +1,15 @@
 # Debugging Core
 
-Audience: developers diagnosing problems in a running OSA instance.
+Audience: developers diagnosing problems in a running Daemon instance.
 
 All techniques here assume you have IEx access to the running node or that
-you can start OSA in development mode with `iex -S mix`.
+you can start Daemon in development mode with `iex -S mix`.
 
 ---
 
 ## Enable Debug Logging
 
-OSA uses `Logger` throughout. The default level in development is `:info`.
+Daemon uses `Logger` throughout. The default level in development is `:info`.
 Switching to `:debug` exposes per-module trace output.
 
 ```elixir
@@ -36,7 +36,7 @@ To suppress noisy modules while keeping others at debug:
 config :logger,
   backends: [:console],
   compile_time_purge_matching: [
-    [module: OptimalSystemAgent.Telemetry.Metrics, level_lower_than: :info]
+    [module: Daemon.Telemetry.Metrics, level_lower_than: :info]
   ]
 ```
 
@@ -44,32 +44,32 @@ config :logger,
 
 ## Inspect ETS Tables
 
-OSA stores hot-path state in ETS tables. Inspect them directly from IEx.
+Daemon stores hot-path state in ETS tables. Inspect them directly from IEx.
 
 ```elixir
 # Cancel flags — are any sessions cancelling?
-:ets.tab2list(:osa_cancel_flags)
+:ets.tab2list(:daemon_cancel_flags)
 
 # Read-before-write tracking
-:ets.tab2list(:osa_files_read)
+:ets.tab2list(:daemon_files_read)
 
 # Session provider overrides
-:ets.tab2list(:osa_session_provider_overrides)
+:ets.tab2list(:daemon_session_provider_overrides)
 
 # Pending ask_user questions
-:ets.tab2list(:osa_pending_questions)
+:ets.tab2list(:daemon_pending_questions)
 
 # Hooks registered by event type
-:ets.tab2list(:osa_hooks)
+:ets.tab2list(:daemon_hooks)
 
 # Hook metrics (call counts, timing)
-:ets.tab2list(:osa_hooks_metrics)
+:ets.tab2list(:daemon_hooks_metrics)
 
 # DLQ entries (failed event handlers awaiting retry)
-:ets.tab2list(:osa_dlq)
+:ets.tab2list(:daemon_dlq)
 
 # Registered slash commands
-:ets.tab2list(:osa_commands)
+:ets.tab2list(:daemon_commands)
 ```
 
 ---
@@ -83,19 +83,19 @@ The full OTP supervision tree is visible in `:observer`:
 ```
 
 `:observer` opens a GUI. Navigate to the **Applications** tab, select
-`optimal_system_agent`, and expand the supervision tree.
+`daemon`, and expand the supervision tree.
 
 From the command line:
 
 ```elixir
 # List all processes supervised by the session supervisor
-DynamicSupervisor.which_children(OptimalSystemAgent.SessionSupervisor)
+DynamicSupervisor.which_children(Daemon.SessionSupervisor)
 
 # List all channel adapters
-DynamicSupervisor.which_children(OptimalSystemAgent.Channels.Supervisor)
+DynamicSupervisor.which_children(Daemon.Channels.Supervisor)
 
 # Inspect the registry (all active sessions)
-Registry.select(OptimalSystemAgent.SessionRegistry, [{{:"$1", :"$2", :"$3"}, [], [{{:"$1", :"$2", :"$3"}}]}])
+Registry.select(Daemon.SessionRegistry, [{{:"$1", :"$2", :"$3"}, [], [{{:"$1", :"$2", :"$3"}}]}])
 ```
 
 ---
@@ -104,13 +104,13 @@ Registry.select(OptimalSystemAgent.SessionRegistry, [{{:"$1", :"$2", :"$3"}, [],
 
 ```elixir
 # Get the state of any named GenServer
-:sys.get_state(OptimalSystemAgent.Agent.Hooks)
-:sys.get_state(OptimalSystemAgent.Events.Bus)
-:sys.get_state(OptimalSystemAgent.Agent.Memory)
-:sys.get_state(OptimalSystemAgent.Tools.Registry)
+:sys.get_state(Daemon.Agent.Hooks)
+:sys.get_state(Daemon.Events.Bus)
+:sys.get_state(Daemon.Agent.Memory)
+:sys.get_state(Daemon.Tools.Registry)
 
 # Get the state of a session's Agent.Loop
-pid = Registry.lookup(OptimalSystemAgent.SessionRegistry, "cli:my_session_id")
+pid = Registry.lookup(Daemon.SessionRegistry, "cli:my_session_id")
       |> List.first()
       |> elem(0)
 :sys.get_state(pid)
@@ -129,10 +129,10 @@ state. This can block if the GenServer is busy — use a timeout:
 
 ```elixir
 # List all registered event handlers
-OptimalSystemAgent.Events.Bus.list_handlers()
+Daemon.Events.Bus.list_handlers()
 
 # Check which handlers are registered for a specific event type
-OptimalSystemAgent.Events.Bus.list_handlers()
+Daemon.Events.Bus.list_handlers()
 |> Map.get(:tool_call, [])
 ```
 
@@ -142,11 +142,11 @@ OptimalSystemAgent.Events.Bus.list_handlers()
 
 ```elixir
 # List all tools visible to the LLM
-OptimalSystemAgent.Tools.Registry.list_tools()
+Daemon.Tools.Registry.list_tools()
 |> Enum.map(& &1.name)
 
 # List via direct ETS read (non-blocking, no GenServer call)
-OptimalSystemAgent.Tools.Registry.list_tools_direct()
+Daemon.Tools.Registry.list_tools_direct()
 |> Enum.map(& &1.name)
 ```
 
@@ -156,10 +156,10 @@ OptimalSystemAgent.Tools.Registry.list_tools_direct()
 
 ```elixir
 # Hook execution metrics (call count, block count, avg timing)
-OptimalSystemAgent.Agent.Hooks.metrics()
+Daemon.Agent.Hooks.metrics()
 
 # List registered hooks with priorities
-OptimalSystemAgent.Agent.Hooks.list_hooks()
+Daemon.Agent.Hooks.list_hooks()
 ```
 
 ---
@@ -181,16 +181,16 @@ MiosaLLM.HealthChecker.status()
 
 ```elixir
 # Are any events stuck in the dead letter queue?
-OptimalSystemAgent.Events.DLQ.list()
+Daemon.Events.DLQ.list()
 
 # How many entries?
-OptimalSystemAgent.Events.DLQ.size()
+Daemon.Events.DLQ.size()
 
 # Force retry all entries now
-OptimalSystemAgent.Events.DLQ.retry_all()
+Daemon.Events.DLQ.retry_all()
 
 # Flush the DLQ (drop all entries)
-OptimalSystemAgent.Events.DLQ.flush()
+Daemon.Events.DLQ.flush()
 ```
 
 ---
@@ -202,13 +202,13 @@ OptimalSystemAgent.Events.DLQ.flush()
 recompile()
 
 # Reload a specific module
-:code.purge(OptimalSystemAgent.Agent.Hooks)
-:code.load_file(OptimalSystemAgent.Agent.Hooks)
+:code.purge(Daemon.Agent.Hooks)
+:code.load_file(Daemon.Agent.Hooks)
 
 # Trace calls to a function (printed to console)
 :dbg.tracer()
 :dbg.p(:all, :c)
-:dbg.tpl(OptimalSystemAgent.Agent.Loop, :process_message, :x)
+:dbg.tpl(Daemon.Agent.Loop, :process_message, :x)
 
 # Stop tracing
 :dbg.stop()
@@ -227,7 +227,7 @@ Process.info(pid, :message_queue_len)
 
 ## Common Log Prefixes
 
-OSA uses `[ModuleName]` prefixes in log messages. Filter by prefix to isolate
+Daemon uses `[ModuleName]` prefixes in log messages. Filter by prefix to isolate
 a subsystem:
 
 | Prefix | Subsystem |

@@ -1,10 +1,10 @@
 # Channel Guides
 
-> Setup and configuration for each of OSA's 12+ messaging channels
+> Setup and configuration for each of Daemon's 12+ messaging channels
 
 ## Overview
 
-Channels are GenServers implementing `OptimalSystemAgent.Channels.Behaviour`. They auto-start when their credentials are configured.
+Channels are GenServers implementing `Daemon.Channels.Behaviour`. They auto-start when their credentials are configured.
 
 ## Channel Status Commands
 
@@ -21,7 +21,7 @@ Channels are GenServers implementing `OptimalSystemAgent.Channels.Behaviour`. Th
 | Channel | Guide | Configuration |
 |---------|-------|---------------|
 | CLI | [cli.md](cli.md) | None required |
-| HTTP API | [http.md](http.md) | `OSA_HTTP_PORT` (default 8089) |
+| HTTP API | [http.md](http.md) | `DAEMON_HTTP_PORT` (default 8089) |
 
 ## Western Platforms
 
@@ -45,4 +45,4 @@ Channels are GenServers implementing `OptimalSystemAgent.Channels.Behaviour`. Th
 
 ## Writing a Custom Channel
 
-See the [custom channel guide](../../architecture/README.md) for implementing `OptimalSystemAgent.Channels.Behaviour`.
+See the [custom channel guide](../../architecture/README.md) for implementing `Daemon.Channels.Behaviour`.

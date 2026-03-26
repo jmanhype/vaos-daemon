@@ -1,13 +1,13 @@
 # Connecting to Core Events
 
 Audience: developers who need to observe, react to, or publish events in the
-OSA runtime.
+Daemon runtime.
 
 ---
 
 ## Subscription Model
 
-OSA uses two complementary mechanisms for event distribution:
+Daemon uses two complementary mechanisms for event distribution:
 
 | Mechanism | Use case |
 |-----------|----------|
@@ -22,10 +22,10 @@ External clients and SSE endpoints use `Phoenix.PubSub`.
 ## Subscribing via Events.Bus
 
 ```elixir
-alias OptimalSystemAgent.Events.Bus
+alias Daemon.Events.Bus
 
 Bus.subscribe(:tool_call, fn event ->
-  # event is %OptimalSystemAgent.Events.Event{}
+  # event is %Daemon.Events.Event{}
   IO.puts("Tool called: #{event.payload[:tool]}")
 end)
 ```
@@ -60,7 +60,7 @@ Emitted when a user sends a message through any channel.
 %{
   type: :user_message,
   payload: %{
-    content: "Hello, OSA!",
+    content: "Hello, Daemon!",
     session_id: "cli:abc123",
     user_id: "user_1",
     channel: :cli
@@ -215,11 +215,11 @@ Reasons: `:budget_exceeded`, `:dlq_overflow`, `:provider_unavailable`,
 
 ```elixir
 # In a GenServer or LiveView
-Phoenix.PubSub.subscribe(OptimalSystemAgent.PubSub, "session:#{session_id}")
+Phoenix.PubSub.subscribe(Daemon.PubSub, "session:#{session_id}")
 
 # Handle in handle_info
 def handle_info({:event, event}, state) do
-  # event is %OptimalSystemAgent.Events.Event{}
+  # event is %Daemon.Events.Event{}
   process_event(event)
   {:noreply, state}
 end
@@ -236,7 +236,7 @@ Accept: text/event-stream
 ```
 
 Each SSE message is a JSON-encoded `Event` struct. The stream is backed by
-`OptimalSystemAgent.EventStream`, which buffers up to 1,000 events per session
+`Daemon.EventStream`, which buffers up to 1,000 events per session
 in a circular buffer. Late subscribers receive recent history before live events.
 
 ---
@@ -247,7 +247,7 @@ Custom events must use an existing event type. Use `:system_event` for
 subsystem-internal notifications:
 
 ```elixir
-OptimalSystemAgent.Events.Bus.emit(:system_event, %{
+Daemon.Events.Bus.emit(:system_event, %{
   subsystem: :my_subsystem,
   action: :initialized,
   detail: "MySubsystem ready with 3 workers"

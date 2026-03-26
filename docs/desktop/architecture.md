@@ -18,7 +18,7 @@ The window starts hidden (`"visible": false` in `tauri.conf.json`) and is shown 
 4. In `.setup()`, calls `tray::setup_tray()` synchronously, then spawns the sidecar lifecycle on the Tokio async runtime in a non-blocking task.
 5. In `.on_window_event()`, intercepts `CloseRequested` to kill the sidecar process and hide the window to the tray instead of quitting.
 
-The window is hidden on quit, not destroyed. A real exit happens only via the tray "Quit OSA" menu item or `app.exit(0)`.
+The window is hidden on quit, not destroyed. A real exit happens only via the tray "Quit Daemon" menu item or `app.exit(0)`.
 
 ### `sidecar.rs` — Elixir Sidecar Lifecycle
 
@@ -34,12 +34,12 @@ pub static SIDECAR_RUNNING: AtomicBool = AtomicBool::new(false);
 
 1. Show the main window immediately (`window.show()` + `window.set_focus()`).
 2. Check if port 9089 is already responding (`port_in_use()`). If yes, set `SIDECAR_RUNNING = true`, emit `backend-ready`, and return — this is the dev-mode path.
-3. Spawn `shell.sidecar("osagent")` with env vars `OSA_HTTP_PORT`, `OSA_LOG_LEVEL=warn`, `OSA_HEADLESS=true` and args `["serve", "--port", "9089"]`.
+3. Spawn `shell.sidecar("daemon")` with env vars `DAEMON_HTTP_PORT`, `DAEMON_LOG_LEVEL=warn`, `DAEMON_HEADLESS=true` and args `["serve", "--port", "9089"]`.
 4. Store the `CommandChild` handle in `SidecarState`.
 5. Spawn a log monitor thread (via `std::thread::spawn` + a single-threaded Tokio runtime) that reads `CommandEvent::Stdout`, `Stderr`, and `Terminated` from the sidecar's output channel. On `Terminated`, sets `SIDECAR_RUNNING = false` and emits `backend-crashed`.
 6. Call `wait_for_healthy(30)` — exponential backoff from 100 ms to 2 s, timeout 30 seconds. On success emits `backend-ready`. On timeout emits `backend-unavailable` and continues (app remains usable in offline mode).
 
-The sidecar binary must be placed at `binaries/osagent` (declared in `tauri.conf.json` under `bundle.externalBin`).
+The sidecar binary must be placed at `binaries/daemon` (declared in `tauri.conf.json` under `bundle.externalBin`).
 
 Health check backoff sequence: 100 ms, 200 ms, 400 ms, 800 ms, 1.6 s, 2 s (capped), 2 s, ...
 
@@ -69,7 +69,7 @@ All commands are registered in `lib.rs` and callable from the frontend via `@tau
 
 ### `tray.rs` — System Tray
 
-Menu items: **Open Dashboard**, **Open Terminal**, separator, **Status: Starting...** (disabled, informational), **Quit OSA**.
+Menu items: **Open Dashboard**, **Open Terminal**, separator, **Status: Starting...** (disabled, informational), **Quit Daemon**.
 
 Left-click on the tray icon toggles window visibility (show/hide). Right-click shows the menu.
 
@@ -142,7 +142,7 @@ The `restart_backend` IPC command calls `start_sidecar` again. It does not kill 
 4. Health check loop runs. Emits `backend-ready` or `backend-unavailable` to the WebView.
 5. Frontend receives `backend-ready` Tauri event → `connectionStore.onBackendReady()` → starts 10-second health poll loop.
 6. User closes window → `CloseRequested` event → sidecar killed → window hidden (not destroyed).
-7. Tray "Quit OSA" → `app.exit(0)` → OS cleanup.
+7. Tray "Quit Daemon" → `app.exit(0)` → OS cleanup.
 
 ## Tauri Config Highlights (`tauri.conf.json`)
 
@@ -151,5 +151,5 @@ The `restart_backend` IPC command calls `start_sidecar` again. It does not kill 
 - Frontend dist: `../build` (SvelteKit static adapter output).
 - CSP: `connect-src 'self' http://localhost:9089 http://127.0.0.1:9089` — only the local backend is allowed.
 - macOS minimum: 12.0 (Monterey).
-- External binary: `binaries/osagent`.
+- External binary: `binaries/daemon`.
 - Bundle targets: all (DMG, MSI, deb, AppImage).

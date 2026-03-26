@@ -1,6 +1,6 @@
 # Knowledge Explorer (Planned)
 
-The Knowledge Explorer is the planned frontend for `miosa_knowledge` — OSA's semantic knowledge graph. It gives developers and power users a visual and interactive interface over the SPARQL-capable triple store without touching Elixir code or a terminal.
+The Knowledge Explorer is the planned frontend for `miosa_knowledge` — Daemon's semantic knowledge graph. It gives developers and power users a visual and interactive interface over the SPARQL-capable triple store without touching Elixir code or a terminal.
 
 This document describes the intended design. Implementation has not started as of March 2026.
 
@@ -93,10 +93,10 @@ GET  /api/v1/knowledge/reasoner/log?limit=100
 
 | Option | Rationale |
 |--------|-----------|
-| **Svelte 5** | Preferred for OSA frontends — minimal bundle, fine-grained reactivity, no virtual DOM overhead |
+| **Svelte 5** | Preferred for Daemon frontends — minimal bundle, fine-grained reactivity, no virtual DOM overhead |
 | React + Vite | Larger ecosystem, more graph library examples available |
 
-Svelte is recommended for consistency with other OSA frontend work. The graph explorer and SPARQL workbench are predominantly view logic with little shared component state, which plays to Svelte's strengths.
+Svelte is recommended for consistency with other Daemon frontend work. The graph explorer and SPARQL workbench are predominantly view logic with little shared component state, which plays to Svelte's strengths.
 
 ### Editor
 
@@ -110,15 +110,15 @@ Svelte is recommended for consistency with other OSA frontend work. The graph ex
 
 ### Styling
 
-Match the existing OSA HTTP dashboard — dark theme, monospace accents, minimal chrome.
+Match the existing Daemon HTTP dashboard — dark theme, monospace accents, minimal chrome.
 
 ---
 
 ## Connection to the Backend
 
-The frontend communicates with the Elixir HTTP channel (`OptimalSystemAgent.Channels.HTTP`). Knowledge-specific routes live under `/api/v1/knowledge/`.
+The frontend communicates with the Elixir HTTP channel (`Daemon.Channels.HTTP`). Knowledge-specific routes live under `/api/v1/knowledge/`.
 
-Authentication uses the same JWT bearer token scheme as all other OSA API routes. In development, authentication is disabled by default.
+Authentication uses the same JWT bearer token scheme as all other Daemon API routes. In development, authentication is disabled by default.
 
 For live updates (new triples added by the agent, reasoner completing a run), see [WebSocket / SSE](websocket.md).
 

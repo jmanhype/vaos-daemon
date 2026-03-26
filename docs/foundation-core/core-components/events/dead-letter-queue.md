@@ -6,14 +6,14 @@ Engineers debugging failed event handlers, monitoring DLQ health, and tuning ret
 
 ## Overview
 
-`OptimalSystemAgent.Events.DLQ` is a GenServer that catches failed event handler invocations and retries them with exponential backoff. It is backed by an ETS table (`:osa_dlq`) for in-process speed. Events are not persisted across restarts — OSA treats events as ephemeral; durable patterns are captured by the learning engine.
+`Daemon.Events.DLQ` is a GenServer that catches failed event handler invocations and retries them with exponential backoff. It is backed by an ETS table (`:daemon_dlq`) for in-process speed. Events are not persisted across restarts — Daemon treats events as ephemeral; durable patterns are captured by the learning engine.
 
 ## When Events Enter the DLQ
 
 `Events.Bus.dispatch_with_dlq/3` wraps each handler invocation in a supervised task. If the handler raises an exception or throws:
 
 ```elixir
-Task.Supervisor.start_child(OptimalSystemAgent.Events.TaskSupervisor, fn ->
+Task.Supervisor.start_child(Daemon.Events.TaskSupervisor, fn ->
   try do
     handler.(payload)
   rescue
@@ -33,7 +33,7 @@ Every handler crash results in a DLQ entry. The handler itself is stored — or 
 ## DLQ Entry Structure
 
 ```elixir
-%OptimalSystemAgent.Events.DLQ{
+%Daemon.Events.DLQ{
   id: "base64url-16-bytes",       # crypto-random ID
   event_type: :tool_result,       # atom
   payload: %{...},                # original event payload map
@@ -150,6 +150,6 @@ Key log messages:
 
 ## Operational Notes
 
-- The `:osa_dlq` ETS table is created by `DLQ.init/1`, not at application boot. If `Events.DLQ` crashes and restarts, all in-flight DLQ entries are lost. This is acceptable because the DLQ holds ephemeral retry state, not source-of-truth data.
+- The `:daemon_dlq` ETS table is created by `DLQ.init/1`, not at application boot. If `Events.DLQ` crashes and restarts, all in-flight DLQ entries are lost. This is acceptable because the DLQ holds ephemeral retry state, not source-of-truth data.
 - Algedonic alerts emitted for exhausted handlers can cause handler feedback loops if an algedonic handler also crashes. `DLQ.enqueue` wraps the algedonic emission in a `rescue / catch` to prevent this.
 - The DLQ operates on monotonic time (`System.monotonic_time(:millisecond)`) for backoff calculations to avoid system clock adjustments interfering with retry scheduling.

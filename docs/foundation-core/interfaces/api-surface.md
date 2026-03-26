@@ -1,24 +1,24 @@
 # HTTP API Surface
 
-All endpoints are served by Bandit on the configured port (`OSA_HTTP_PORT`, default 4000).
-The API router is `OptimalSystemAgent.Channels.HTTP.API` (Plug.Router), mounted at `/api/v1`.
+All endpoints are served by Bandit on the configured port (`DAEMON_HTTP_PORT`, default 4000).
+The API router is `Daemon.Channels.HTTP.API` (Plug.Router), mounted at `/api/v1`.
 
 ## Global Plug Pipeline
 
 Every request passes through these plugs in order:
 
 1. `cors` — injects `Access-Control-Allow-Origin` (configurable via `:cors_origin`, default `*`); OPTIONS returns 204
-2. `OptimalSystemAgent.Channels.HTTP.RateLimiter` — token-bucket ETS-backed, per client IP
+2. `Daemon.Channels.HTTP.RateLimiter` — token-bucket ETS-backed, per client IP
 3. `validate_content_type` — POST/PUT/PATCH must send `Content-Type: application/json` (415 on violation)
 4. `authenticate` — JWT HS256 verification (bypassed for `/auth/*`, `/channels/*`, `/platform/auth/*`)
-5. `OptimalSystemAgent.Channels.HTTP.Integrity` — optional HMAC-SHA256 body integrity (enabled when `require_auth: true`)
+5. `Daemon.Channels.HTTP.Integrity` — optional HMAC-SHA256 body integrity (enabled when `require_auth: true`)
 6. `Plug.Parsers` — JSON body parsing, 1 MB limit
 
 ## Authentication
 
 **Scheme:** JWT Bearer (`Authorization: Bearer <token>`)
 
-**Algorithm:** HS256 signed with `OSA_SHARED_SECRET` (or `JWT_SECRET`).
+**Algorithm:** HS256 signed with `DAEMON_SHARED_SECRET` (or `JWT_SECRET`).
 
 **Token lifetimes:**
 - Access token: 15 minutes (`exp = iat + 900`)
@@ -26,7 +26,7 @@ Every request passes through these plugs in order:
 
 **Auth mode:**
 - `require_auth: false` (default) — missing or invalid tokens are accepted; `user_id` is set to `"anonymous"`. A warning is logged.
-- `require_auth: true` (set `OSA_REQUIRE_AUTH=true`) — missing or invalid token returns `401`.
+- `require_auth: true` (set `DAEMON_REQUIRE_AUTH=true`) — missing or invalid token returns `401`.
 
 **Claims injected into conn.assigns:**
 - `user_id` — from JWT `user_id` claim
@@ -71,7 +71,7 @@ Obtain access and refresh tokens.
 
 ```
 Request
-{ "user_id": "alice", "secret": "<OSA_SHARED_SECRET>" }
+{ "user_id": "alice", "secret": "<DAEMON_SHARED_SECRET>" }
 
 Response 200
 { "token": "<jwt>", "refresh_token": "<jwt>", "expires_in": 900 }
@@ -80,7 +80,7 @@ Response 401 — wrong secret
 { "error": "unauthorized", "details": "Invalid or missing secret" }
 ```
 
-When `OSA_REQUIRE_AUTH=false` and no shared secret is configured, the `secret` field is optional (dev mode; warning is logged).
+When `DAEMON_REQUIRE_AUTH=false` and no shared secret is configured, the `secret` field is optional (dev mode; warning is logged).
 
 **POST /api/v1/auth/logout**
 

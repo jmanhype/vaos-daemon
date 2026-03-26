@@ -10,7 +10,7 @@ Accepted
 
 ## Context
 
-OSA generates a high volume of events during normal operation: every user
+Daemon generates a high volume of events during normal operation: every user
 message, LLM request, LLM response, tool call, tool result, and agent response
 produces one or more events on the event bus. At 10–20 tool calls per agent turn
 and multiple concurrent sessions, the event bus can process thousands of events
@@ -52,14 +52,14 @@ Use goldrush to compile event routing predicates to BEAM bytecode at startup.
 
 Two compiled modules are produced:
 
-- **`:osa_event_router`**: Routes typed events to registered handler functions.
+- **`:daemon_event_router`**: Routes typed events to registered handler functions.
   Compiled from `glc:any([glc:eq(type, T) || T <- @event_types])` predicates
   with `glc:with/2` output handlers.
 
-- **`:osa_provider_router`** (via `MiosaProviders.Registry`): Routes LLM
+- **`:daemon_provider_router`** (via `MiosaProviders.Registry`): Routes LLM
   requests to the appropriate provider module based on provider atom.
 
-- **`:osa_tool_dispatcher`** (via `Tools.Registry`): Routes tool calls to
+- **`:daemon_tool_dispatcher`** (via `Tools.Registry`): Routes tool calls to
   registered tool modules based on tool name.
 
 Compilation occurs in the `GenServer.init/1` callback of `Events.Bus`,
@@ -89,7 +89,7 @@ glc:handle(ModuleName, gre:make(Proplist, [list]))
 ### Fork Rationale
 
 The upstream `extend/goldrush` repository has not been maintained since 2017.
-OSA uses `robertohluna/goldrush` (fork, branch `main`) which applies patches
+Daemon uses `robertohluna/goldrush` (fork, branch `main`) which applies patches
 for:
 - Elixir 1.17+ compatibility (removed deprecated Erlang APIs)
 - BEAM OTP 26+ compatibility (updated `compile` semantics)
@@ -114,14 +114,14 @@ conflicts.
 
 ### Costs
 
-- **Opaque compiled modules**: The `:osa_event_router` module is generated at
+- **Opaque compiled modules**: The `:daemon_event_router` module is generated at
   runtime and is not visible in the source tree. Debugging routing logic
   requires understanding goldrush internals. `glc:handle/2` does not return
   useful information if a predicate fails to match.
 - **Startup compilation**: `glc:compile/2` adds approximately 5–20 ms to
   Infrastructure startup time. This is negligible for a long-lived process
   but would matter for function-as-a-service use.
-- **Erlang-only API**: goldrush uses pure Erlang APIs. OSA wraps these in the
+- **Erlang-only API**: goldrush uses pure Erlang APIs. Daemon wraps these in the
   `Events.Bus` GenServer to present an Elixir-idiomatic interface.
 - **Fork maintenance risk**: The goldrush fork must be maintained if upstream
   BEAM or Erlang OTP changes break compatibility again.
@@ -132,14 +132,14 @@ The compiled router is observable at runtime:
 
 ```elixir
 # Verify the compiled module exists
-:code.is_loaded(:osa_event_router)
+:code.is_loaded(:daemon_event_router)
 
 # Inspect module attributes
-:osa_event_router.module_info()
+:daemon_event_router.module_info()
 
 # Check DLQ for routing failures
-OptimalSystemAgent.Events.DLQ.entries()
-OptimalSystemAgent.Events.DLQ.depth()
+Daemon.Events.DLQ.entries()
+Daemon.Events.DLQ.depth()
 ```
 
 Telemetry events are emitted for every event dispatched through `Events.Bus`,

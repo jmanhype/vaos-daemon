@@ -1,19 +1,19 @@
 # System Boundaries
 
-**Audience:** Engineers integrating OSA, operators deploying it, anyone trying to
-understand what OSA is responsible for and what it delegates to other systems.
+**Audience:** Engineers integrating Daemon, operators deploying it, anyone trying to
+understand what Daemon is responsible for and what it delegates to other systems.
 
 ---
 
-## What OSA Is
+## What Daemon Is
 
-OSA is an **AI agent orchestration system**. It receives input from users and
+Daemon is an **AI agent orchestration system**. It receives input from users and
 external systems, classifies that input, selects and invokes the appropriate LLM
 provider, manages multi-agent collaboration, maintains memory across sessions,
 executes tools in sandboxed environments, and delivers structured output through
 a variety of channel adapters.
 
-Concretely, OSA owns:
+Concretely, Daemon owns:
 
 - The agent reasoning loop (bounded ReAct with strategies)
 - Signal Theory classification and routing logic
@@ -30,34 +30,34 @@ Concretely, OSA owns:
 
 ---
 
-## What OSA Is Not
+## What Daemon Is Not
 
-Understanding what OSA does not do is as important as understanding what it does.
+Understanding what Daemon does not do is as important as understanding what it does.
 
-**OSA is not a web framework.** Bandit and Plug are present for a narrow purpose:
+**Daemon is not a web framework.** Bandit and Plug are present for a narrow purpose:
 exposing the HTTP API on port 8089 and receiving inbound webhooks from messaging
 platforms. There is no routing DSL, no middleware stack for end-user web
 applications, no template rendering, no cookie management for user sessions in
-the web sense. Do not build a web application on top of Bandit/OSA directly —
-use a proper Phoenix application that calls the OSA API.
+the web sense. Do not build a web application on top of Bandit/Daemon directly —
+use a proper Phoenix application that calls the Daemon API.
 
-**OSA is not a database.** SQLite (via `ecto_sqlite3`) is used for durable local
+**Daemon is not a database.** SQLite (via `ecto_sqlite3`) is used for durable local
 storage of conversations, memory, vault entries, and telemetry. PostgreSQL (via
 `postgrex`) is used for multi-tenant platform data when running as a hosted
-service. OSA does not expose a general-purpose queryable data layer to callers.
+service. Daemon does not expose a general-purpose queryable data layer to callers.
 It manages its own storage internally.
 
-**OSA is not an LLM.** OSA does not perform inference. It calls LLM provider
+**Daemon is not an LLM.** Daemon does not perform inference. It calls LLM provider
 APIs. Adding a new LLM capability means adding or updating a provider adapter —
-OSA's role is always orchestration, never inference.
+Daemon's role is always orchestration, never inference.
 
-**OSA is not a message broker.** Phoenix.PubSub and the goldrush event bus are
+**Daemon is not a message broker.** Phoenix.PubSub and the goldrush event bus are
 internal subsystems. They are not a general-purpose message queue for external
 applications to publish to or subscribe from. External systems communicate with
-OSA through the REST API or channel-specific webhooks.
+Daemon through the REST API or channel-specific webhooks.
 
-**OSA is not a container orchestrator.** Docker support is present for the
-sandbox subsystem — isolated code execution. OSA does not manage production
+**Daemon is not a container orchestrator.** Docker support is present for the
+sandbox subsystem — isolated code execution. Daemon does not manage production
 container deployments, health checks for its own replicas, or service meshes.
 That is the job of the operator's infrastructure (Kubernetes, Nomad, ECS, etc.).
 
@@ -92,7 +92,7 @@ Exposes:
   - Health endpoint at /health
 ```
 
-### Rust TUI Binary (`bin/osa`, `bin/osagent`)
+### Rust TUI Binary (`bin/osa`, `bin/daemon`)
 
 A standalone Rust binary that provides a terminal interface. It is not a library
 embedded in the Elixir backend — it is a separate process that connects to the
@@ -155,15 +155,15 @@ Stores:
 
 Does NOT store:
   - Multi-tenant user accounts (PostgreSQL)
-  - Provider API keys (environment variables or ~/.osa/.env)
+  - Provider API keys (environment variables or ~/.daemon/.env)
   - Binary artifacts or uploaded files
 ```
 
 ### PostgreSQL (Optional — Multi-Tenant)
 
-Used when OSA runs as a hosted platform (MIOSA Cloud or self-hosted multi-tenant
+Used when Daemon runs as a hosted platform (MIOSA Cloud or self-hosted multi-tenant
 deployment). Conditional: the `Platform.Repo` child in the root supervisor is
-only started when `OSA_PLATFORM_MODE=true` and `DATABASE_URL` is set.
+only started when `DAEMON_PLATFORM_MODE=true` and `DATABASE_URL` is set.
 
 ```
 Stores:
@@ -184,7 +184,7 @@ Not required for:
 
 ### LLM Provider APIs
 
-OSA calls 18 external APIs for inference. These are outside OSA's control. OSA's
+Daemon calls 18 external APIs for inference. These are outside Daemon's control. Daemon's
 response to provider unreliability:
 
 - `MiosaLLM.HealthChecker` — continuous health monitoring with circuit breaker
@@ -193,24 +193,24 @@ response to provider unreliability:
   provider is tried
 - Per-provider rate limiting and retry budgets in the provider adapters
 
-OSA does not cache LLM responses (beyond the classification ETS cache for Signal
+Daemon does not cache LLM responses (beyond the classification ETS cache for Signal
 Theory results). Every agent turn makes a live API call.
 
 ### Ollama (Local Inference)
 
 Ollama is the default provider for new installations. It runs as a separate
-process (typically on port 11434) and is not managed by OSA's supervision tree.
-OSA connects to Ollama via HTTP. If Ollama is unavailable, OSA falls back to the
+process (typically on port 11434) and is not managed by Daemon's supervision tree.
+Daemon connects to Ollama via HTTP. If Ollama is unavailable, Daemon falls back to the
 next configured provider or notifies the user during setup.
 
-Dynamic tier detection: at boot, OSA queries Ollama's `/api/tags` endpoint, sorts
+Dynamic tier detection: at boot, Daemon queries Ollama's `/api/tags` endpoint, sorts
 installed models by file size descending, and maps largest→elite,
 middle→specialist, smallest→utility. This mapping is cached in `persistent_term`.
 
 ### Docker (Sandbox Execution)
 
 The Docker daemon must be running on the host for the Docker sandbox backend to
-function. OSA does not start or manage Docker — it calls the Docker API to create
+function. Daemon does not start or manage Docker — it calls the Docker API to create
 containers with specific security constraints:
 
 ```
@@ -226,9 +226,9 @@ Wasm backend is used as fallback.
 
 ### MCP Servers
 
-Model Context Protocol servers are external processes managed by OSA's
+Model Context Protocol servers are external processes managed by Daemon's
 `MCP.Supervisor` (a `DynamicSupervisor`). Each MCP server entry in
-`~/.osa/mcp.json` gets its own supervised GenServer in OSA. OSA is responsible
+`~/.daemon/mcp.json` gets its own supervised GenServer in Daemon. Daemon is responsible
 for starting, monitoring, and restarting MCP server processes. MCP servers are
 responsible for their own tool implementations.
 
@@ -255,7 +255,7 @@ These are not Elixir NIFs. They are external processes managed by
 │  Host Machine                                                       │
 │                                                                     │
 │  ┌─────────────────────────────┐   ┌──────────────────────────────┐│
-│  │  OSA Elixir Backend         │   │  Tauri Desktop App           ││
+│  │  Daemon Elixir Backend         │   │  Tauri Desktop App           ││
 │  │  Port 8089                  │   │  Port 9089 (dev sidecar)     ││
 │  │                             │   │                              ││
 │  │  SQLite (local)             │◄──│  SvelteKit UI                ││
@@ -302,7 +302,7 @@ These constraints hold across all deployment configurations:
    never write state independently — all state changes go through the backend API.
 
 2. Provider API keys never travel through client processes. They are held by the
-   backend in environment variables or `~/.osa/.env`. The TUI and desktop app
+   backend in environment variables or `~/.daemon/.env`. The TUI and desktop app
    receive only rendered responses.
 
 3. Sandboxed code execution never shares a process with the Elixir runtime. Docker
@@ -317,7 +317,7 @@ These constraints hold across all deployment configurations:
 
 ## Next
 
-- [Dependency Rules](dependency-rules.md) — How OSA's internal layers are
+- [Dependency Rules](dependency-rules.md) — How Daemon's internal layers are
   allowed to depend on each other
 - [Architecture Principles](architecture-principles.md) — Why these boundaries
   were drawn where they are

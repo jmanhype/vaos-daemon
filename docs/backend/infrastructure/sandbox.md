@@ -1,6 +1,6 @@
 # Infrastructure: Sandbox
 
-The sandbox system provides isolated execution environments for agent-generated code. OSA supports three sandbox backends: Docker containers, BEAM Tasks (in-process isolation), and WASM runtimes. Sandboxes are managed by a pool, provisioner, and registry.
+The sandbox system provides isolated execution environments for agent-generated code. Daemon supports three sandbox backends: Docker containers, BEAM Tasks (in-process isolation), and WASM runtimes. Sandboxes are managed by a pool, provisioner, and registry.
 
 ---
 
@@ -33,7 +33,7 @@ Runs code in isolated Docker containers. Each container:
 **Configuration:**
 
 ```elixir
-config :optimal_system_agent,
+config :daemon,
   sandbox_backend: :docker,
   sandbox_docker_image: "osa-sandbox:latest",
   sandbox_timeout_ms: 30_000,
@@ -52,7 +52,7 @@ Runs code in an isolated BEAM `Task` under a dedicated supervisor with a restric
 **Configuration:**
 
 ```elixir
-config :optimal_system_agent,
+config :daemon,
   sandbox_backend: :beam_task,
   sandbox_timeout_ms: 10_000
 ```
@@ -64,7 +64,7 @@ Runs code in a WebAssembly runtime (e.g. Wasmtime). Provides the strongest isola
 **Configuration:**
 
 ```elixir
-config :optimal_system_agent,
+config :daemon,
   sandbox_backend: :wasm,
   sandbox_wasm_runtime: :wasmtime,
   sandbox_timeout_ms: 15_000
@@ -77,7 +77,7 @@ config :optimal_system_agent,
 `Sandbox.Pool` maintains a pool of warm sandbox instances per backend type. Configuration:
 
 ```elixir
-config :optimal_system_agent,
+config :daemon,
   sandbox_pool_size: 4,          # max concurrent sandboxes
   sandbox_pool_overflow: 2       # allow up to 2 overflow instances
 ```

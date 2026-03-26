@@ -3,7 +3,7 @@
 Audience: operators configuring multi-tenant deployments and developers
 implementing authorization checks in custom channel adapters or tools.
 
-OSA uses role-based access control (RBAC) via `OptimalSystemAgent.Platform.Grants`
+Daemon uses role-based access control (RBAC) via `Daemon.Platform.Grants`
 and JWT-embedded roles. For single-user local deployments, authorization is
 effectively bypassed. For multi-tenant platform deployments, every request is
 checked against the grants table.
@@ -76,7 +76,7 @@ endpoint and `/auth/*` routes are exempt from authentication.
 
 ## Grants (Multi-Tenant)
 
-`OptimalSystemAgent.Platform.Grants` manages cross-OS-instance permissions.
+`Daemon.Platform.Grants` manages cross-OS-instance permissions.
 This is relevant for fleet deployments where one OS instance needs to invoke
 or query another.
 
@@ -96,7 +96,7 @@ or query another.
 ### Grant Operations
 
 ```elixir
-alias OptimalSystemAgent.Platform.Grants
+alias Daemon.Platform.Grants
 
 # List all active grants for an OS instance
 grants = Grants.list("osi_abc")
@@ -127,7 +127,7 @@ has_access = Grants.check("osi_abc", "osi_xyz", "read")
 
 ## Multi-Tenancy Isolation
 
-OSA's platform supports multi-tenant deployments. Tenant isolation is enforced
+Daemon's platform supports multi-tenant deployments. Tenant isolation is enforced
 at three levels:
 
 ### Hierarchy
@@ -159,7 +159,7 @@ authenticated within a specific tenant context.
 
 ```elixir
 # Include in token generation
-{:ok, tokens} = OptimalSystemAgent.Platform.Auth.generate_tokens(user,
+{:ok, tokens} = Daemon.Platform.Auth.generate_tokens(user,
   tenant_id: "ten_01jn...",
   os_id:     "osi_01jn..."
 )
@@ -168,11 +168,11 @@ authenticated within a specific tenant context.
 ### Tenant Configuration
 
 Tenant-level configuration (models, budget limits, enabled channels) is stored
-in `OptimalSystemAgent.Tenant.Config` and loaded per-request from the JWT claims:
+in `Daemon.Tenant.Config` and loaded per-request from the JWT claims:
 
 ```elixir
 tenant_id = get_in(claims, ["tenant_id"])
-{:ok, config} = OptimalSystemAgent.Tenant.Config.get(tenant_id)
+{:ok, config} = Daemon.Tenant.Config.get(tenant_id)
 ```
 
 ### Session Isolation

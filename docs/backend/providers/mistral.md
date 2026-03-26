@@ -38,7 +38,7 @@ Get a key at [console.mistral.ai](https://console.mistral.ai).
 ## Configuration
 
 ```elixir
-config :optimal_system_agent, :mistral,
+config :daemon, :mistral,
   api_key: System.get_env("MISTRAL_API_KEY"),
   model: "mistral-large-latest",
   url: "https://api.mistral.ai/v1"

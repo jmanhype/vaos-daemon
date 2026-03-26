@@ -2,7 +2,7 @@
 
 ## Overview
 
-OSA uses Semantic Versioning 2.0.0 (`MAJOR.MINOR.PATCH`). The version is
+Daemon uses Semantic Versioning 2.0.0 (`MAJOR.MINOR.PATCH`). The version is
 stored in a single file at the project root and read by the build system,
 release tooling, and runtime introspection.
 
@@ -25,7 +25,7 @@ No trailing newline. No `v` prefix. This file is read by `mix.exs`:
 And available at runtime:
 
 ```elixir
-Application.spec(:optimal_system_agent, :vsn) |> to_string()
+Application.spec(:daemon, :vsn) |> to_string()
 # => "0.2.6"
 ```
 
@@ -37,7 +37,7 @@ of truth.
 
 ## Current Version: 0.2.6 (Pre-1.0)
 
-OSA is pre-1.0. The public API surface — environment variables, HTTP endpoints,
+Daemon is pre-1.0. The public API surface — environment variables, HTTP endpoints,
 hook signatures, tool behaviour callbacks, channel protocols — is not yet
 frozen. Users should expect breaking changes in minor version bumps.
 
@@ -89,7 +89,7 @@ visible to users, it is a minor version bump, not a patch.
 
 ## Pre-Release and Build Metadata
 
-OSA does not currently publish pre-release versions (`0.3.0-rc.1`) or use
+Daemon does not currently publish pre-release versions (`0.3.0-rc.1`) or use
 build metadata (`0.3.0+20250601`). If pre-release versions are needed in the
 future, they will follow SemVer 2.0.0 conventions with `-` separating the
 pre-release identifier.
@@ -101,18 +101,18 @@ pre-release identifier.
 Before tagging a new version:
 
 - [ ] Update `/VERSION` to the new version string
-- [ ] Verify `mix.exs` reads the new version correctly: `mix run -e "IO.puts Application.spec(:optimal_system_agent, :vsn)"`
+- [ ] Verify `mix.exs` reads the new version correctly: `mix run -e "IO.puts Application.spec(:daemon, :vsn)"`
 - [ ] Add changelog entry to `docs/operations/changelog.md`
 - [ ] For breaking changes: ADR written and merged
 - [ ] All tests pass: `mix test`
-- [ ] Release build succeeds: `MIX_ENV=prod mix release osagent`
+- [ ] Release build succeeds: `MIX_ENV=prod mix release daemon`
 - [ ] Git tag created: `git tag v0.2.6`
 
 ---
 
 ## Dependency Versioning
 
-OSA pins all direct dependencies with version constraints in `mix.exs`. The
+Daemon pins all direct dependencies with version constraints in `mix.exs`. The
 `mix.lock` file is committed to the repository and must be updated when
 dependencies change.
 

@@ -1,4 +1,4 @@
-# OSA Recipe System — Reference Guide
+# Daemon Recipe System — Reference Guide
 
 > Recipes are multi-step guided workflows that run in a **fresh session** with full context available.  
 > Run any recipe with: `/recipe <slug>`  
@@ -9,7 +9,7 @@
 ## How Recipes Work
 
 1. You type `/recipe <slug>` in the TUI
-2. OSA creates a **brand-new session** (0% context) so history never bleeds in
+2. Daemon creates a **brand-new session** (0% context) so history never bleeds in
 3. The recipe prompt is submitted — compact single-line format, ~50 tokens
 4. The agent works through each step using the tools defined in the recipe JSON
 5. Each step has an **acceptance criteria** — the agent knows when a step is done before moving on
@@ -28,9 +28,9 @@ Recipes are resolved in priority order (first match wins):
 
 | Priority | Location | Purpose |
 |---|---|---|
-| 1 | `~/.osa/recipes/` | Your personal custom recipes |
-| 2 | `.osa/recipes/` | Project-specific recipes |
-| 3 | `priv/recipes/` | OSA built-in canonical recipes |
+| 1 | `~/.daemon/recipes/` | Your personal custom recipes |
+| 2 | `.daemon/recipes/` | Project-specific recipes |
+| 3 | `priv/recipes/` | Daemon built-in canonical recipes |
 | 4 | `examples/workflows/` | Example/demo recipes (fallback) |
 
 ---
@@ -167,7 +167,7 @@ Each step declares a signal mode that controls how the agent reasons:
 ```
 /recipe-create my-recipe-name
 ```
-This generates a starter JSON in `.osa/recipes/my-recipe-name.json` which you edit.
+This generates a starter JSON in `.daemon/recipes/my-recipe-name.json` which you edit.
 
 ### Manually
 Drop a `.json` file in any of the resolution directories with this structure:
@@ -226,7 +226,7 @@ Rename recipes to **Playbooks** in all UI surfaces. This is a known term in DevO
 Right now the user only sees the flat prompt. Add a live step tracker in the sidebar or status bar: `[■■□□□] Step 2/5: Check Correctness`. The `recipe_step_started` and `recipe_step_completed` bus events are already emitted — wire them to a new `RecipeProgress` TUI component. This is the single biggest perceived quality upgrade.
 
 ### 3. Playbook Marketplace / Share Command
-Add `/playbook publish` that packages a recipe JSON + metadata and pushes to a shared registry (even a GitHub Gist or your own S3). Add `/playbook install <url-or-slug>` to pull one down. This creates a community loop — users build and share playbooks, which drives retention and word-of-mouth. Call the registry **OSA Playbook Hub**.
+Add `/playbook publish` that packages a recipe JSON + metadata and pushes to a shared registry (even a GitHub Gist or your own S3). Add `/playbook install <url-or-slug>` to pull one down. This creates a community loop — users build and share playbooks, which drives retention and word-of-mouth. Call the registry **Daemon Playbook Hub**.
 
 ### 4. Conditional Steps — `if` in JSON
 Add an optional `"condition"` field to each step:
@@ -239,4 +239,4 @@ The runner checks the condition before executing the step, skipping it if false.
 Add top-level `"max_retries": 2` and `"step_timeout_seconds": 120` fields to the JSON schema. The `run_step` function already runs an agent loop — wrapping it in a retry with exponential backoff takes ~20 lines. This closes the biggest production reliability gap: transient tool failures (shell timeouts, network blips) currently kill the whole recipe.
 
 ### 6. Playbook Templates via `/playbook-create --from <template>`
-Pre-bake 5–6 blueprint templates (web-api, cli-tool, data-pipeline, microservice, mobile-app). When a user runs `/playbook-create my-api --from web-api`, they get a customized multi-step playbook pre-filled for their stack. Pair this with the `"author": "OSA"` branding on built-ins so users can clearly distinguish official playbooks from community ones.
+Pre-bake 5–6 blueprint templates (web-api, cli-tool, data-pipeline, microservice, mobile-app). When a user runs `/playbook-create my-api --from web-api`, they get a customized multi-step playbook pre-filled for their stack. Pair this with the `"author": "Daemon"` branding on built-ins so users can clearly distinguish official playbooks from community ones.

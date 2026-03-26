@@ -1,6 +1,6 @@
-# OSA Documentation
+# Daemon Documentation
 
-> **OSA v0.2.6** — Optimal System Agent
+> **Daemon v0.2.6** — Optimal System Agent
 > Elixir/OTP + Rust TUI + Tauri/SvelteKit. Signal Theory-based AI agent orchestration.
 > 154,000 lines · 287 modules · 18 LLM providers · 12 chat channels · Apache 2.0
 
@@ -15,7 +15,7 @@ osa serve
 
 # Or from source
 git clone https://github.com/miosa-osa/osa.git
-cd osa && mix setup && mix osa.serve
+cd osa && mix setup && mix daemon.serve
 ```
 
 See [Getting Started](getting-started/) for installation, configuration, and first run.
@@ -27,24 +27,24 @@ See [Getting Started](getting-started/) for installation, configuration, and fir
 ### [Learning](learning/) — New to the Tech Stack?
 
 If you've never used Elixir, don't know what the BEAM VM is, or want to understand
-why OSA is built the way it is — start here.
+why Daemon is built the way it is — start here.
 
 | Guide | What You'll Learn |
 |---|---|
 | [BEAM & OTP](learning/beam-and-otp.md) | What makes Elixir/OTP special — processes, supervisors, fault tolerance |
-| [Supervision Trees](learning/supervision-trees.md) | How OSA's process hierarchy works and why it matters |
-| [ETS & persistent_term](learning/ets-and-persistent-term.md) | In-memory storage — why it's fast and when OSA uses it |
+| [Supervision Trees](learning/supervision-trees.md) | How Daemon's process hierarchy works and why it matters |
+| [ETS & persistent_term](learning/ets-and-persistent-term.md) | In-memory storage — why it's fast and when Daemon uses it |
 | [goldrush Events](learning/goldrush-events.md) | Compiled event routing — how events dispatch at BEAM instruction speed |
-| [Signal Theory](learning/signal-theory-explained.md) | The 5-tuple classification that makes OSA different from every other agent |
+| [Signal Theory](learning/signal-theory-explained.md) | The 5-tuple classification that makes Daemon different from every other agent |
 | [ReAct Pattern](learning/react-pattern.md) | How AI agents reason: think → act → observe → repeat |
 | [Desktop Stack](learning/tauri-sveltekit.md) | Tauri + SvelteKit — how the desktop app is built |
-| [LLM Providers](learning/llm-providers.md) | How OSA talks to 18 different AI model providers |
+| [LLM Providers](learning/llm-providers.md) | How Daemon talks to 18 different AI model providers |
 
 ---
 
 ### [Foundation Core](foundation-core/) — Architecture & Principles
 
-The architectural foundation: why OSA exists, how it's designed, and the rules
+The architectural foundation: why Daemon exists, how it's designed, and the rules
 that govern module interaction.
 
 | Section | What It Covers |
@@ -132,7 +132,7 @@ The Tauri 2 + SvelteKit 5 desktop application.
 
 ---
 
-### [Operations](operations/) — Running OSA in Production
+### [Operations](operations/) — Running Daemon in Production
 
 | Doc | What It Covers |
 |---|---|
@@ -142,7 +142,7 @@ The Tauri 2 + SvelteKit 5 desktop application.
 
 ---
 
-### [How-To Guides](foundation-core/how-to/) — Extending & Debugging OSA
+### [How-To Guides](foundation-core/how-to/) — Extending & Debugging Daemon
 
 | Section | What It Covers |
 |---|---|
@@ -154,7 +154,7 @@ The Tauri 2 + SvelteKit 5 desktop application.
 
 ---
 
-### [Development](foundation-core/development/) — Contributing to OSA
+### [Development](foundation-core/development/) — Contributing to Daemon
 
 | Doc | What It Covers |
 |---|---|

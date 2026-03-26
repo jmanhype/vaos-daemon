@@ -2,7 +2,7 @@
 
 > **Severity:** CRITICAL (Security)
 > **Status:** Open
-> **Component:** `lib/optimal_system_agent/agent/loop.ex`, `lib/optimal_system_agent/agent/loop/guardrails.ex`
+> **Component:** `lib/daemon/agent/loop.ex`, `lib/daemon/agent/loop/guardrails.ex`
 > **Reported:** 2026-03-14
 
 ---
@@ -76,5 +76,5 @@ conservative to avoid false positives on legitimate responses. However:
 ## Workaround
 
 Use a model with strong instruction-following capabilities (Claude, GPT-4.1, or
-any RLHF-tuned Ollama model ≥ 14B). Avoid running OSA with system prompt
+any RLHF-tuned Ollama model ≥ 14B). Avoid running Daemon with system prompt
 inspection enabled on untrusted networks.

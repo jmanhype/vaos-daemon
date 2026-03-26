@@ -28,7 +28,7 @@ Auto-detected as priority 2 (after Anthropic).
 ## Configuration
 
 ```elixir
-config :optimal_system_agent, :openai,
+config :daemon, :openai,
   api_key: System.get_env("OPENAI_API_KEY"),
   model: "gpt-4o",
   url: "https://api.openai.com/v1"

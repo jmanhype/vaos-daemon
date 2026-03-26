@@ -1,6 +1,6 @@
 # Module Ownership
 
-This document maps OSA subsystems to their ownership status and the appropriate
+This document maps Daemon subsystems to their ownership status and the appropriate
 contact for questions or architectural changes.
 
 All subsystems are maintained by the MIOSA team. The distinctions here reflect
@@ -29,7 +29,7 @@ entire project.
 
 | Module(s) | Category | Contact | Notes |
 |---|---|---|---|
-| `OptimalSystemAgent.Application` | Core | Project lead | Supervision tree root — any change affects boot order |
+| `Daemon.Application` | Core | Project lead | Supervision tree root — any change affects boot order |
 | `Supervisors.Infrastructure` | Core | Project lead | Core dependency ordering |
 | `Supervisors.Sessions` | Core | Project lead | Session lifecycle |
 | `Supervisors.AgentServices` | Core | Project lead | Agent service ordering |

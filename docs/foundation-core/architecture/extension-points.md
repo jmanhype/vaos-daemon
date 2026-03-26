@@ -1,6 +1,6 @@
 # Extension Points
 
-Audience: engineers adding new capabilities to OSA — custom tools, providers,
+Audience: engineers adding new capabilities to Daemon — custom tools, providers,
 channels, hooks, or swarm patterns. Each section shows the exact behaviour or
 struct the new implementation must satisfy, with a working skeleton.
 
@@ -30,7 +30,7 @@ end
 ### Minimal Implementation
 
 ```elixir
-defmodule OptimalSystemAgent.Tools.Builtins.MyTool do
+defmodule Daemon.Tools.Builtins.MyTool do
   use MiosaTools.Behaviour
   require Logger
 
@@ -72,11 +72,11 @@ end
 **At boot** — add the tool to the `load_builtin_tools/0` map in `Tools.Registry`:
 
 ```elixir
-# lib/optimal_system_agent/tools/registry.ex
+# lib/daemon/tools/registry.ex
 defp load_builtin_tools do
   %{
     # ... existing tools ...
-    "my_tool" => OptimalSystemAgent.Tools.Builtins.MyTool
+    "my_tool" => Daemon.Tools.Builtins.MyTool
   }
 end
 ```
@@ -84,7 +84,7 @@ end
 **At runtime** (hot reload, no restart required):
 
 ```elixir
-OptimalSystemAgent.Tools.Registry.register(MyApp.MyTool)
+Daemon.Tools.Registry.register(MyApp.MyTool)
 ```
 
 This triggers a goldrush dispatcher recompile. The tool is immediately available
@@ -114,12 +114,12 @@ end
 ## 2. Custom LLM Providers
 
 A provider adapter wraps an external LLM API. All providers implement
-`OptimalSystemAgent.Providers.Behaviour`.
+`Daemon.Providers.Behaviour`.
 
 ### Behaviour Contract
 
 ```elixir
-# lib/optimal_system_agent/providers/behaviour.ex
+# lib/daemon/providers/behaviour.ex
 @callback chat(messages :: list(message()), opts :: keyword()) :: chat_result()
 @callback chat_stream(messages :: list(message()), callback :: function(), opts :: keyword()) ::
             :ok | {:error, String.t()}
@@ -145,7 +145,7 @@ Canonical response shape:
 
 ```elixir
 defmodule MyApp.Providers.MyLLM do
-  @behaviour OptimalSystemAgent.Providers.Behaviour
+  @behaviour Daemon.Providers.Behaviour
 
   @base_url "https://api.myllm.example.com/v1"
 
@@ -160,7 +160,7 @@ defmodule MyApp.Providers.MyLLM do
 
   @impl true
   def chat(messages, opts \\ []) do
-    api_key = Application.get_env(:optimal_system_agent, :myllm_api_key)
+    api_key = Application.get_env(:daemon, :myllm_api_key)
     model = Keyword.get(opts, :model, default_model())
 
     body = %{
@@ -216,7 +216,7 @@ end
 **Runtime** (no restart):
 
 ```elixir
-OptimalSystemAgent.Providers.Registry.register_provider(:myllm, MyApp.Providers.MyLLM)
+Daemon.Providers.Registry.register_provider(:myllm, MyApp.Providers.MyLLM)
 ```
 
 **Config-time** — the registry's `@providers` compile-time map is the canonical
@@ -237,7 +237,7 @@ A channel adapter connects a messaging platform to the agent loop.
 ### Behaviour Contract
 
 ```elixir
-# lib/optimal_system_agent/channels/behaviour.ex
+# lib/daemon/channels/behaviour.ex
 @callback channel_name() :: atom()
 @callback start_link(opts :: keyword()) :: GenServer.on_start()
 @callback send_message(chat_id :: String.t(), message :: String.t(), opts :: keyword()) ::
@@ -250,28 +250,28 @@ A channel adapter connects a messaging platform to the agent loop.
 ```elixir
 defmodule MyApp.Channels.MyPlatform do
   use GenServer
-  @behaviour OptimalSystemAgent.Channels.Behaviour
+  @behaviour Daemon.Channels.Behaviour
   require Logger
 
-  alias OptimalSystemAgent.Channels.Session
-  alias OptimalSystemAgent.Agent.Loop
+  alias Daemon.Channels.Session
+  alias Daemon.Agent.Loop
 
   # ── Behaviour Callbacks ──
 
-  @impl OptimalSystemAgent.Channels.Behaviour
+  @impl Daemon.Channels.Behaviour
   def channel_name, do: :my_platform
 
-  @impl OptimalSystemAgent.Channels.Behaviour
+  @impl Daemon.Channels.Behaviour
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  @impl OptimalSystemAgent.Channels.Behaviour
+  @impl Daemon.Channels.Behaviour
   def send_message(chat_id, message, _opts \\ []) do
     GenServer.call(__MODULE__, {:send, chat_id, message})
   end
 
-  @impl OptimalSystemAgent.Channels.Behaviour
+  @impl Daemon.Channels.Behaviour
   def connected? do
     case Process.whereis(__MODULE__) do
       nil -> false
@@ -283,7 +283,7 @@ defmodule MyApp.Channels.MyPlatform do
 
   @impl true
   def init(_opts) do
-    api_key = Application.get_env(:optimal_system_agent, :my_platform_api_key)
+    api_key = Application.get_env(:daemon, :my_platform_api_key)
     if is_nil(api_key) do
       Logger.info("[MyPlatform] Not configured — skipping")
       :ignore
@@ -342,7 +342,7 @@ or block execution.
 ### Hook Function Type
 
 ```elixir
-# lib/optimal_system_agent/agent/hooks.ex
+# lib/daemon/agent/hooks.ex
 @type hook_fn :: (map() -> {:ok, map()} | {:block, String.t()} | :skip)
 
 @type hook_event ::
@@ -365,7 +365,7 @@ or block execution.
 ### Registration
 
 ```elixir
-OptimalSystemAgent.Agent.Hooks.register(
+Daemon.Agent.Hooks.register(
   :pre_tool_use,
   "my_audit_hook",
   fn payload ->
@@ -379,7 +379,7 @@ OptimalSystemAgent.Agent.Hooks.register(
 ### Blocking Example
 
 ```elixir
-OptimalSystemAgent.Agent.Hooks.register(
+Daemon.Agent.Hooks.register(
   :pre_tool_use,
   "production_lock",
   fn %{tool_name: tool, arguments: args} = payload ->
@@ -403,7 +403,7 @@ Pre-hooks can modify `arguments` before execution. This is useful for parameter
 injection (e.g., always prepending a working directory to file paths):
 
 ```elixir
-OptimalSystemAgent.Agent.Hooks.register(
+Daemon.Agent.Hooks.register(
   :pre_tool_use,
   "path_prefix",
   fn %{tool_name: "file_read", arguments: args} = payload ->
@@ -425,8 +425,8 @@ Swarms coordinate multiple `Agent.Loop` processes. The four built-in patterns ar
 ### Built-in Pattern Invocation
 
 ```elixir
-# lib/optimal_system_agent/swarm/orchestrator.ex
-{:ok, swarm_id} = OptimalSystemAgent.Swarm.Orchestrator.launch(
+# lib/daemon/swarm/orchestrator.ex
+{:ok, swarm_id} = Daemon.Swarm.Orchestrator.launch(
   "Analyze the codebase for security vulnerabilities and generate a fix plan",
   pattern: :pipeline,     # optional — auto-selected by Planner if omitted
   max_agents: 5,
@@ -454,7 +454,7 @@ From within an agent session, the `orchestrate` tool invokes swarm execution:
 
 Patterns are selected by `Swarm.Planner.select_pattern/1`. To add a custom pattern:
 
-1. Add a clause to `OptimalSystemAgent.Swarm.Patterns` (or a new module that
+1. Add a clause to `Daemon.Swarm.Patterns` (or a new module that
    `Swarm.Orchestrator` can dispatch to).
 2. Add the pattern atom to `@valid_patterns` in `Swarm.Orchestrator`.
 3. Implement the coordination logic that spawns `Swarm.Worker` processes and
@@ -471,7 +471,7 @@ Pattern selection heuristics in `Swarm.Planner`:
 ## 6. Custom Skills (No-Code Extension)
 
 Skills are the simplest extension point — no Elixir code required. Create a
-`SKILL.md` file at `~/.osa/skills/<name>/SKILL.md`:
+`SKILL.md` file at `~/.daemon/skills/<name>/SKILL.md`:
 
 ```markdown
 ---
@@ -498,26 +498,26 @@ When a user message contains "deploy", "deployment", or "release", the skill
 instructions are injected into the system prompt for that turn. The LLM follows
 the instructions without any code change.
 
-Skill files are loaded at boot from `priv/skills/` (bundled) and `~/.osa/skills/`
+Skill files are loaded at boot from `priv/skills/` (bundled) and `~/.daemon/skills/`
 (user). User skills override bundled skills with the same name.
 
 Skills are reloadable at runtime:
 
 ```elixir
-OptimalSystemAgent.Tools.Registry.reload_skills()
+Daemon.Tools.Registry.reload_skills()
 ```
 
 ---
 
 ## 7. Custom MCP Servers
 
-MCP (Model Context Protocol) servers expose tools to OSA via JSON-RPC over stdio.
-No Elixir code is needed — OSA manages server lifecycle and tool registration
+MCP (Model Context Protocol) servers expose tools to Daemon via JSON-RPC over stdio.
+No Elixir code is needed — Daemon manages server lifecycle and tool registration
 automatically.
 
 ### Configuration
 
-Add a server entry to `~/.osa/mcp.json`:
+Add a server entry to `~/.daemon/mcp.json`:
 
 ```json
 {
@@ -535,7 +535,7 @@ Add a server entry to `~/.osa/mcp.json`:
 
 ### Runtime Registration
 
-OSA calls `Tools.Registry.register_mcp_tools/0` after all MCP servers initialize.
+Daemon calls `Tools.Registry.register_mcp_tools/0` after all MCP servers initialize.
 Registered tools appear with the `mcp_` prefix (e.g., `mcp_my_tool`). They are
 visible to the LLM and callable through the same tool execution path as built-in
 tools.
@@ -543,9 +543,9 @@ tools.
 To reload after changing `mcp.json` at runtime:
 
 ```elixir
-OptimalSystemAgent.MCP.Client.start_servers()
-OptimalSystemAgent.MCP.Client.list_tools()
-OptimalSystemAgent.Tools.Registry.register_mcp_tools()
+Daemon.MCP.Client.start_servers()
+Daemon.MCP.Client.list_tools()
+Daemon.Tools.Registry.register_mcp_tools()
 ```
 
 ---
@@ -556,7 +556,7 @@ Slash commands run when a user types `/command-name` in any channel.
 
 ### Markdown commands (no-code)
 
-Create `~/.osa/commands/<name>.md`:
+Create `~/.daemon/commands/<name>.md`:
 
 ```markdown
 ---
@@ -577,7 +577,7 @@ The markdown body becomes additional system context for the agent turn triggered
 
 ```elixir
 defmodule MyApp.Commands.Status do
-  @behaviour OptimalSystemAgent.Commands.Behaviour
+  @behaviour Daemon.Commands.Behaviour
 
   @impl true
   def name, do: "mystatus"
@@ -593,7 +593,7 @@ defmodule MyApp.Commands.Status do
 end
 
 # Register at boot or runtime:
-OptimalSystemAgent.Commands.register("mystatus", MyApp.Commands.Status)
+Daemon.Commands.register("mystatus", MyApp.Commands.Status)
 ```
 
 ---
@@ -602,7 +602,7 @@ OptimalSystemAgent.Commands.register("mystatus", MyApp.Commands.Status)
 
 OS templates define pre-configured environment shapes the agent can instantiate or connect to.
 
-**Configuration:** `~/.osa/machines/<name>.json`
+**Configuration:** `~/.daemon/machines/<name>.json`
 
 ```json
 {
@@ -628,13 +628,13 @@ environments. Templates can be hot-reloaded without restart.
 
 ## 10. Custom Sidecar Processes
 
-Sidecars are OS-level subprocesses managed by `OptimalSystemAgent.Sidecar.Manager`.
+Sidecars are OS-level subprocesses managed by `Daemon.Sidecar.Manager`.
 They communicate with the Elixir runtime via stdio or TCP sockets.
 
 The built-in sidecars (`Go.Tokenizer`, `Go.Git`, `Go.Sysmon`, `Python.Supervisor`)
 follow this pattern:
 
-1. Implement `OptimalSystemAgent.Sidecar.Behaviour`
+1. Implement `Daemon.Sidecar.Behaviour`
 2. Register with `Sidecar.Manager` at startup
 3. Add to the `Extensions` supervisor with the appropriate config flag
 
@@ -651,11 +651,11 @@ failures and re-enables it after a recovery period.
 | Custom provider | `.ex` module | Yes | Yes (`Providers.Registry.register_provider/2`) |
 | Custom channel | `.ex` module | Yes | Yes (`DynamicSupervisor.start_child/2`) |
 | Custom hook | None (runtime register) | Yes | Yes (`Hooks.register/4`) |
-| Custom command (markdown) | `~/.osa/commands/*.md` | No | Yes (on next invocation) |
+| Custom command (markdown) | `~/.daemon/commands/*.md` | No | Yes (on next invocation) |
 | Custom command (Elixir) | `.ex` module | Yes | Yes (`Commands.register/2`) |
-| Custom skill (SKILL.md) | `~/.osa/skills/*/SKILL.md` | No | Yes (`Tools.Registry.reload_skills/0`) |
-| MCP server | `~/.osa/mcp.json` | No | Yes (`MCP.Client.start_servers/0`) |
-| OS template (Machine) | `~/.osa/machines/*.json` | No | Yes (Machines GenServer) |
+| Custom skill (SKILL.md) | `~/.daemon/skills/*/SKILL.md` | No | Yes (`Tools.Registry.reload_skills/0`) |
+| MCP server | `~/.daemon/mcp.json` | No | Yes (`MCP.Client.start_servers/0`) |
+| OS template (Machine) | `~/.daemon/machines/*.json` | No | Yes (Machines GenServer) |
 | Custom sidecar | `.ex` + binary | Yes | Via Sidecar.Manager restart |
 | Custom swarm pattern | `.ex` clause | Yes | Requires recompile |
 
@@ -664,9 +664,9 @@ failures and re-enables it after a recovery period.
 ## Cross-References
 
 - Tool behaviour source: `lib/miosa/shims.ex` (`MiosaTools.Behaviour`)
-- Provider behaviour source: `lib/optimal_system_agent/providers/behaviour.ex`
-- Channel behaviour source: `lib/optimal_system_agent/channels/behaviour.ex`
-- Hook registration: `lib/optimal_system_agent/agent/hooks.ex`
-- Swarm orchestration: `lib/optimal_system_agent/swarm/orchestrator.ex`
+- Provider behaviour source: `lib/daemon/providers/behaviour.ex`
+- Channel behaviour source: `lib/daemon/channels/behaviour.ex`
+- Hook registration: `lib/daemon/agent/hooks.ex`
+- Swarm orchestration: `lib/daemon/swarm/orchestrator.ex`
 - Dependency rules: [dependency-rules.md](../overview/dependency-rules.md)
 - Component model: [component-model.md](component-model.md)

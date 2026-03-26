@@ -2,11 +2,11 @@
 
 ## Audience
 
-Developers and operators setting up OSA for the first time or moving between dev, test, and production deployments.
+Developers and operators setting up Daemon for the first time or moving between dev, test, and production deployments.
 
 ## Environment Detection
 
-OSA uses the standard Mix environment variable `MIX_ENV` (default: `dev`). There is no `OSA_ENV` variable. The value of `MIX_ENV` is not checked at runtime beyond determining which `config/<env>.exs` file is overlaid during build.
+Daemon uses the standard Mix environment variable `MIX_ENV` (default: `dev`). There is no `DAEMON_ENV` variable. The value of `MIX_ENV` is not checked at runtime beyond determining which `config/<env>.exs` file is overlaid during build.
 
 ```bash
 # Development (default)
@@ -49,13 +49,13 @@ Set at least one of these or ensure Ollama is running locally:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OSA_DEFAULT_PROVIDER` | auto-detected | One of: `ollama`, `anthropic`, `openai`, `groq`, `openrouter`, `together`, `fireworks`, `deepseek`, `mistral`, `cerebras`, `google`, `cohere`, `perplexity`, `xai`, `sambanova`, `hyperbolic`, `lmstudio`, `llamacpp` |
-| `OSA_MODEL` | provider default | Override model for the active provider (e.g. `claude-opus-4-5`) |
+| `DAEMON_DEFAULT_PROVIDER` | auto-detected | One of: `ollama`, `anthropic`, `openai`, `groq`, `openrouter`, `together`, `fireworks`, `deepseek`, `mistral`, `cerebras`, `google`, `cohere`, `perplexity`, `xai`, `sambanova`, `hyperbolic`, `lmstudio`, `llamacpp` |
+| `DAEMON_MODEL` | provider default | Override model for the active provider (e.g. `claude-opus-4-5`) |
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama endpoint URL |
 | `OLLAMA_MODEL` | `qwen2.5:7b` | Ollama model name |
 | `OLLAMA_API_KEY` | none | Required for cloud-hosted Ollama instances |
 | `OLLAMA_THINK` | auto | `true` / `false` to force extended reasoning mode |
-| `OSA_FALLBACK_CHAIN` | auto-built | Comma-separated provider list: `anthropic,openai,ollama` |
+| `DAEMON_FALLBACK_CHAIN` | auto-built | Comma-separated provider list: `anthropic,openai,ollama` |
 
 Per-provider model overrides: `ANTHROPIC_MODEL`, `OPENAI_MODEL`, `GROQ_MODEL`, `OPENROUTER_MODEL`, `GOOGLE_MODEL`, `DEEPSEEK_MODEL`, `MISTRAL_MODEL`, `TOGETHER_MODEL`, `FIREWORKS_MODEL`, `COHERE_MODEL`, `XAI_MODEL`, `CEREBRAS_MODEL`, `LMSTUDIO_MODEL`, `LLAMACPP_MODEL`.
 
@@ -63,27 +63,27 @@ Per-provider model overrides: `ANTHROPIC_MODEL`, `OPENAI_MODEL`, `GROQ_MODEL`, `
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OSA_HTTP_PORT` | `8089` | HTTP server port |
-| `OSA_REQUIRE_AUTH` | `false` | Require JWT on all API routes when `true` |
-| `OSA_SHARED_SECRET` | none | JWT signing secret; required when `OSA_REQUIRE_AUTH=true` |
+| `DAEMON_HTTP_PORT` | `8089` | HTTP server port |
+| `DAEMON_REQUIRE_AUTH` | `false` | Require JWT on all API routes when `true` |
+| `DAEMON_SHARED_SECRET` | none | JWT signing secret; required when `DAEMON_REQUIRE_AUTH=true` |
 
 ### Budget
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OSA_DAILY_BUDGET_USD` | `50.0` | Maximum daily API spend |
-| `OSA_MONTHLY_BUDGET_USD` | `500.0` | Maximum monthly API spend |
-| `OSA_PER_CALL_LIMIT_USD` | `5.0` | Maximum cost per LLM call |
+| `DAEMON_DAILY_BUDGET_USD` | `50.0` | Maximum daily API spend |
+| `DAEMON_MONTHLY_BUDGET_USD` | `500.0` | Maximum monthly API spend |
+| `DAEMON_PER_CALL_LIMIT_USD` | `5.0` | Maximum cost per LLM call |
 
 ### Agent Behavior
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OSA_PLAN_MODE` | `false` | When `true`, agent makes a single LLM call with no tool calls |
-| `OSA_THINKING_ENABLED` | `false` | Enable extended thinking for supported models |
-| `OSA_THINKING_BUDGET` | `5000` | Token budget for thinking blocks |
-| `OSA_WORKING_DIR` | none | Default working directory for file operations (e.g. `~/Desktop/MyProject`) |
-| `OSA_QUIET_HOURS` | none | Suppress heartbeat during hours (format: `"22:00-08:00"`) |
+| `DAEMON_PLAN_MODE` | `false` | When `true`, agent makes a single LLM call with no tool calls |
+| `DAEMON_THINKING_ENABLED` | `false` | Enable extended thinking for supported models |
+| `DAEMON_THINKING_BUDGET` | `5000` | Token budget for thinking blocks |
+| `DAEMON_WORKING_DIR` | none | Default working directory for file operations (e.g. `~/Desktop/MyProject`) |
+| `DAEMON_QUIET_HOURS` | none | Suppress heartbeat during hours (format: `"22:00-08:00"`) |
 
 ### Channels
 
@@ -107,29 +107,29 @@ Per-provider model overrides: `ANTHROPIC_MODEL`, `OPENAI_MODEL`, `GROQ_MODEL`, `
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OSA_PYTHON_SIDECAR` | `false` | Enable Python sidecar for semantic memory search |
-| `OSA_PYTHON_PATH` | `python3` | Path to Python binary |
-| `OSA_GO_TOKENIZER` | `false` | Enable Go sidecar for accurate BPE token counting |
-| `OSA_SANDBOX_ENABLED` | `false` | Enable Docker sandbox for skill execution |
+| `DAEMON_PYTHON_SIDECAR` | `false` | Enable Python sidecar for semantic memory search |
+| `DAEMON_PYTHON_PATH` | `python3` | Path to Python binary |
+| `DAEMON_GO_TOKENIZER` | `false` | Enable Go sidecar for accurate BPE token counting |
+| `DAEMON_SANDBOX_ENABLED` | `false` | Enable Docker sandbox for skill execution |
 
 ### Optional Extensions
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OSA_TREASURY_ENABLED` | `false` | Enable financial governance with transaction ledger |
-| `OSA_FLEET_ENABLED` | `false` | Enable remote agent fleet registry |
-| `OSA_WALLET_ENABLED` | `false` | Enable crypto wallet integration |
-| `OSA_UPDATE_ENABLED` | `false` | Enable OTA updater |
+| `DAEMON_TREASURY_ENABLED` | `false` | Enable financial governance with transaction ledger |
+| `DAEMON_FLEET_ENABLED` | `false` | Enable remote agent fleet registry |
+| `DAEMON_WALLET_ENABLED` | `false` | Enable crypto wallet integration |
+| `DAEMON_UPDATE_ENABLED` | `false` | Enable OTA updater |
 
 ## .env File Location
 
-Place `.env` at the project root or at `~/.osa/.env`. Project root takes priority. Format:
+Place `.env` at the project root or at `~/.daemon/.env`. Project root takes priority. Format:
 
 ```bash
 ANTHROPIC_API_KEY=sk-ant-...
-OSA_DEFAULT_PROVIDER=anthropic
-OSA_HTTP_PORT=8089
-OSA_WORKING_DIR=~/Desktop/MyProject
+DAEMON_DEFAULT_PROVIDER=anthropic
+DAEMON_HTTP_PORT=8089
+DAEMON_WORKING_DIR=~/Desktop/MyProject
 ```
 
 Comments (`# ...`) and blank lines are ignored. Values are stripped of surrounding quotes.
@@ -138,7 +138,7 @@ Comments (`# ...`) and blank lines are ignored. Values are stripped of surroundi
 
 ```bash
 # 1. Clone and install dependencies
-git clone <repo> && cd OSA
+git clone <repo> && cd Daemon
 mix deps.get
 
 # 2. Set API key (or start Ollama locally)
@@ -147,7 +147,7 @@ echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
 # 3. Create the SQLite database
 mix ecto.create && mix ecto.migrate
 
-# 4. Start OSA
+# 4. Start Daemon
 mix run --no-halt
 # or for interactive shell:
 iex -S mix
@@ -160,7 +160,7 @@ When running via Docker (`docker-compose.yml`), environment variables are passed
 Key differences:
 
 - `OLLAMA_URL` should point to the host or a sibling container (e.g. `http://ollama:11434`) rather than `localhost`
-- `OSA_WORKING_DIR` must use a path that exists inside the container (typically a mounted volume)
+- `DAEMON_WORKING_DIR` must use a path that exists inside the container (typically a mounted volume)
 - `DATABASE_URL` uses the Docker network hostname of the PostgreSQL container
 
 The `Dockerfile` sets `MIX_ENV=prod` and runs `mix release`. The release binary reads runtime config from `rel/env.sh.eex` if present, and from the environment at startup.

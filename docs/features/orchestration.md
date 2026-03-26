@@ -4,7 +4,7 @@
 
 ## Overview
 
-OSA's orchestration system coordinates up to 10 parallel agents across 9 specialized roles, executing in 5 dependency-aware waves. The swarm system provides 4 execution patterns and 10 presets for common workflows.
+Daemon's orchestration system coordinates up to 10 parallel agents across 9 specialized roles, executing in 5 dependency-aware waves. The swarm system provides 4 execution patterns and 10 presets for common workflows.
 
 ## Architecture
 

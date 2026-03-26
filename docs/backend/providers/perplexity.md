@@ -34,7 +34,7 @@ Get a key at [perplexity.ai](https://perplexity.ai).
 ## Configuration
 
 ```elixir
-config :optimal_system_agent, :perplexity,
+config :daemon, :perplexity,
   api_key: System.get_env("PERPLEXITY_API_KEY"),
   model: "sonar",
   url: "https://api.perplexity.ai"

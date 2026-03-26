@@ -1,6 +1,6 @@
 # Storage Architecture
 
-OSA's storage design is driven by two constraints: it must run fully offline on a
+Daemon's storage design is driven by two constraints: it must run fully offline on a
 developer's laptop with zero external dependencies, and it must scale to fleet-mode
 multi-tenant deployments without architectural changes. The result is a layered
 architecture where each layer has a clear role and can be used independently.
@@ -23,26 +23,26 @@ This document describes the architecture — why each layer exists and how they 
 │  In-process shared memory                                       │
 │  ┌───────────────────────────────────────────────────────────┐  │
 │  │  ETS tables                                              │  │
-│  │  :osa_cancel_flags  :osa_hooks  :osa_rate_limits         │  │
-│  │  :osa_memory_index  :osa_episodic_memory  :osa_pending_* │  │
+│  │  :daemon_cancel_flags  :daemon_hooks  :daemon_rate_limits         │  │
+│  │  :daemon_memory_index  :daemon_episodic_memory  :daemon_pending_* │  │
 │  └───────────────────────────────────────────────────────────┘  │
 ├─────────────────────────────────────────────────────────────────┤
 │  Filesystem (durable, unstructured)                             │
 │  ┌────────────────┐ ┌──────────────┐ ┌──────────────────────┐  │
 │  │ JSONL sessions │ │ MEMORY.md    │ │ Vault (.md files)    │  │
-│  │ ~/.osa/sessions│ │ ~/.osa/      │ │ ~/.osa/vault/        │  │
+│  │ ~/.daemon/sessions│ │ ~/.daemon/      │ │ ~/.daemon/vault/        │  │
 │  └────────────────┘ └──────────────┘ └──────────────────────┘  │
 ├─────────────────────────────────────────────────────────────────┤
 │  SQLite (durable, queryable)                                    │
 │  ┌────────────────────────────────────────────────────────────┐ │
-│  │  OptimalSystemAgent.Store.Repo (~/.osa/osa.db)            │ │
+│  │  Daemon.Store.Repo (~/.daemon/osa.db)            │ │
 │  │  messages  conversations  task_queue  budget_ledger        │ │
 │  │  budget_config  treasury  treasury_transactions            │ │
 │  └────────────────────────────────────────────────────────────┘ │
 ├─────────────────────────────────────────────────────────────────┤
 │  PostgreSQL (optional, multi-tenant platform only)              │
 │  ┌────────────────────────────────────────────────────────────┐ │
-│  │  OptimalSystemAgent.Platform.Repo (DATABASE_URL)          │ │
+│  │  Daemon.Platform.Repo (DATABASE_URL)          │ │
 │  │  platform_users  tenants  os_instances  cross_os_grants   │ │
 │  └────────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────┘
@@ -68,28 +68,28 @@ This document describes the architecture — why each layer exists and how they 
 
 **Contents:** Anything that must be read by multiple processes with microsecond latency.
 
-**Rationale:** The rate limiter (`RateLimiter`) serves every HTTP request and must not block on a GenServer mailbox. The hook system (`Hooks`) runs in the caller's process context and needs lock-free reads. The cancel flag table (`:osa_cancel_flags`) is checked at every agent loop iteration — a GenServer round-trip here would add 10–50µs per iteration, accumulated over 30 iterations per turn.
+**Rationale:** The rate limiter (`RateLimiter`) serves every HTTP request and must not block on a GenServer mailbox. The hook system (`Hooks`) runs in the caller's process context and needs lock-free reads. The cancel flag table (`:daemon_cancel_flags`) is checked at every agent loop iteration — a GenServer round-trip here would add 10–50µs per iteration, accumulated over 30 iterations per turn.
 
 **ETS table catalog:**
 
 | Table | Owner | Access | Contents |
 |---|---|---|---|
-| `:osa_cancel_flags` | Application | public set | `{session_id, true}` cancellation markers |
-| `:osa_hooks` | `Agent.Hooks` | public bag, read_concurrency | Hook registrations `{event_type, ref, fn}` |
-| `:osa_hooks_metrics` | `Agent.Hooks` | public set, write_concurrency | Hook timing counters |
-| `:osa_rate_limits` | `RateLimiter` | public set, write_concurrency | `{ip, token_count, last_refill_seconds}` |
-| `:osa_memory_index` | `MiosaMemory.Store` | public set | Keyword → entry_id inverted index |
-| `:osa_memory_entries` | `MiosaMemory.Store` | public set | Entry ID → memory entry struct |
-| `:osa_episodic_memory` | `Memory.Episodic` | public bag | Per-session event records |
-| `:osa_integrity_nonces` | `HTTP.Integrity` | public set | `{nonce, timestamp_seconds}` replay prevention |
-| `:osa_survey_answers` | `SessionRoutes` | public set | `{{session_id, survey_id}, answers}` |
-| `:osa_pending_questions` | Loop | public set | `{ref, %{session_id, question, options}}` |
+| `:daemon_cancel_flags` | Application | public set | `{session_id, true}` cancellation markers |
+| `:daemon_hooks` | `Agent.Hooks` | public bag, read_concurrency | Hook registrations `{event_type, ref, fn}` |
+| `:daemon_hooks_metrics` | `Agent.Hooks` | public set, write_concurrency | Hook timing counters |
+| `:daemon_rate_limits` | `RateLimiter` | public set, write_concurrency | `{ip, token_count, last_refill_seconds}` |
+| `:daemon_memory_index` | `MiosaMemory.Store` | public set | Keyword → entry_id inverted index |
+| `:daemon_memory_entries` | `MiosaMemory.Store` | public set | Entry ID → memory entry struct |
+| `:daemon_episodic_memory` | `Memory.Episodic` | public bag | Per-session event records |
+| `:daemon_integrity_nonces` | `HTTP.Integrity` | public set | `{nonce, timestamp_seconds}` replay prevention |
+| `:daemon_survey_answers` | `SessionRoutes` | public set | `{{session_id, survey_id}, answers}` |
+| `:daemon_pending_questions` | Loop | public set | `{ref, %{session_id, question, options}}` |
 
 ### Layer 3: Filesystem (Durable Unstructured)
 
 **Who uses it:** `MiosaMemory.Store` (sessions, MEMORY.md), `Vault.Store` (vault entries), `Tools.Registry` (SKILL.md files).
 
-**Contents:** Human-readable data that may be edited outside OSA.
+**Contents:** Human-readable data that may be edited outside Daemon.
 
 **Rationale:** Conversation history as JSONL allows incremental append without locking. MEMORY.md is markdown so operators can read and edit it directly. Vault entries are markdown with YAML frontmatter so they are both machine-parseable and human-readable. SKILL.md files can be written by the agent or by a developer — the same file format serves both cases.
 
@@ -133,7 +133,7 @@ messages = messages ++ [%{role: "user", content: "..."}]
         │
         ▼
 MiosaMemory.Store.append/2 (dual write)
-        ├── JSONL file append → ~/.osa/sessions/{id}.jsonl  (Layer 3)
+        ├── JSONL file append → ~/.daemon/sessions/{id}.jsonl  (Layer 3)
         └── Memory.SQLiteBridge.append/2 → messages table (Layer 4)
         │
         ▼
@@ -158,10 +158,10 @@ Events emitted to Bus → PubSub → SSE clients
 The Vault is a separate structured memory system layered on top of the filesystem:
 
 ```
-OptimalSystemAgent.Vault (facade)
+Daemon.Vault (facade)
         │
         ├── Vault.Store        → filesystem read/write (Layer 3)
-        │   ~/.osa/vault/{category}/{slug}.md
+        │   ~/.daemon/vault/{category}/{slug}.md
         │
         ├── Vault.FactExtractor → extracts factual claims from content
         │
@@ -172,7 +172,7 @@ OptimalSystemAgent.Vault (facade)
         ├── Vault.ContextProfile → builds prompt-injection context strings
         │
         ├── Vault.SessionLifecycle → wake/sleep/checkpoint lifecycle
-        │   checkpoints → ~/.osa/vault/.vault/checkpoints/{session_id}.md
+        │   checkpoints → ~/.daemon/vault/.vault/checkpoints/{session_id}.md
         │
         └── Vault.Inject       → keyword-matched auto-injection into prompts
 ```
@@ -191,5 +191,5 @@ Each vault memory is a self-contained markdown file. The slug is a URL-safe vers
 | Rarely-changing config loaded at boot | `:persistent_term` |
 | Conversation history (append + full scan) | JSONL + SQLite dual-write |
 | Structured queries (budget, task status) | SQLite via Ecto |
-| Human-readable memories (editable outside OSA) | Filesystem markdown |
+| Human-readable memories (editable outside Daemon) | Filesystem markdown |
 | Multi-tenant identity and access control | PostgreSQL (platform only) |

@@ -29,7 +29,7 @@ lookups defensively:
 
 ```elixir
 def cancel(session_id) do
-  :ets.insert(:osa_cancel_flags, {session_id, true})
+  :ets.insert(:daemon_cancel_flags, {session_id, true})
 rescue
   ArgumentError ->
     Logger.warning("[loop] Cancel table not found — agent may not be running")
@@ -44,7 +44,7 @@ sites so their absence or crash does not affect core flow:
 
 ```elixir
 try do
-  OptimalSystemAgent.Sandbox.execute(cmd)
+  Daemon.Sandbox.execute(cmd)
 rescue
   _ -> {:error, "Sandbox unavailable"}
 catch
@@ -137,7 +137,7 @@ For truly optional subsystems, the degradation follows this pattern:
 
 ```elixir
 defp maybe_sandbox_execute(cmd, opts) do
-  if Application.get_env(:optimal_system_agent, :sandbox_enabled, false) do
+  if Application.get_env(:daemon, :sandbox_enabled, false) do
     Sandbox.execute(cmd, opts)
   else
     {:error, "Sandbox not enabled"}

@@ -1,6 +1,6 @@
 # Coding Standards
 
-Audience: all developers contributing Elixir code to OSA.
+Audience: all developers contributing Elixir code to Daemon.
 
 These standards reflect the patterns used throughout the codebase. Consistency
 matters more than personal preference — follow these even when you disagree.
@@ -14,8 +14,8 @@ matters more than personal preference — follow these even when you disagree.
 `PascalCase`. Every path segment is a module segment:
 
 ```elixir
-# lib/optimal_system_agent/agent/loop/tool_executor.ex
-defmodule OptimalSystemAgent.Agent.Loop.ToolExecutor do
+# lib/daemon/agent/loop/tool_executor.ex
+defmodule Daemon.Agent.Loop.ToolExecutor do
 ```
 
 ### Functions and variables
@@ -36,7 +36,7 @@ def process(input), do: ...
 ```elixir
 @max_retries 3
 @base_backoff_ms 1_000
-@cancel_table :osa_cancel_flags
+@cancel_table :daemon_cancel_flags
 @failure_mode_sample_rate 10
 ```
 
@@ -45,7 +45,7 @@ def process(input), do: ...
 `snake_case.ex`. Must match the last segment of the module name:
 
 ```
-OptimalSystemAgent.Channels.NoiseFilter → channels/noise_filter.ex
+Daemon.Channels.NoiseFilter → channels/noise_filter.ex
 ```
 
 ---
@@ -59,7 +59,7 @@ Every public module requires `@moduledoc`. Every public function requires
 any public API surface.
 
 ```elixir
-defmodule OptimalSystemAgent.Events.Bus do
+defmodule Daemon.Events.Bus do
   @moduledoc """
   One-sentence summary.
 
@@ -87,7 +87,7 @@ defmodule OptimalSystemAgent.Events.Bus do
   ## Examples
 
       iex> Bus.emit(:system_event, %{message: "test"})
-      {:ok, %OptimalSystemAgent.Events.Event{}}
+      {:ok, %Daemon.Events.Event{}}
 
   """
   @spec emit(atom(), map(), keyword()) :: {:ok, Events.Event.t()} | {:error, term()}
@@ -256,7 +256,7 @@ Sections within a module, in order:
 
 1. `@moduledoc`
 2. `use`, `require`, `import`
-3. `alias` (external libs first, then internal OSA modules)
+3. `alias` (external libs first, then internal Daemon modules)
 4. `@behaviour`
 5. Module attributes and struct definitions
 6. Public API functions (with `@doc` + `@spec`)
@@ -284,9 +284,9 @@ Prefer `alias` over `import`. Use `import` only for macros (e.g.,
 alias Req
 alias Jason
 
-alias OptimalSystemAgent.Events.Bus
-alias OptimalSystemAgent.Agent.Memory
-alias OptimalSystemAgent.Tools.Registry, as: Tools
+alias Daemon.Events.Bus
+alias Daemon.Agent.Memory
+alias Daemon.Tools.Registry, as: Tools
 ```
 
 ---
@@ -298,10 +298,10 @@ are frozen at compile time; configuration may change at runtime:
 
 ```elixir
 # Correct: reads current value on each call
-defp max_iterations, do: Application.get_env(:optimal_system_agent, :max_iterations, 30)
+defp max_iterations, do: Application.get_env(:daemon, :max_iterations, 30)
 
 # Incorrect: frozen at compile time
-@max_iterations Application.get_env(:optimal_system_agent, :max_iterations, 30)
+@max_iterations Application.get_env(:daemon, :max_iterations, 30)
 ```
 
 ---

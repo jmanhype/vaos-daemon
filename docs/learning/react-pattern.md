@@ -1,6 +1,6 @@
 # The ReAct Pattern: How AI Agents Reason
 
-When you ask OSA to "find the bug in this file and fix it," OSA does not send
+When you ask Daemon to "find the bug in this file and fix it," Daemon does not send
 that message to an LLM and return whatever comes back. It runs a structured
 loop: think about the problem, act to gather information or make a change,
 observe the result, then think again. This is the ReAct pattern.
@@ -73,7 +73,7 @@ what to do next. This is a call to the LLM. The LLM either returns a tool
 call request (the agent needs more information or to take an action) or a
 final response (the task is complete).
 
-**Act** — The agent executes the tool the LLM requested. Tools in OSA include
+**Act** — The agent executes the tool the LLM requested. Tools in Daemon include
 reading files, writing files, running shell commands, searching the web, querying
 memory, asking the user a question, and dozens more. The tool executes and
 returns a result.
@@ -83,10 +83,10 @@ returns a result.
 
 ---
 
-## How OSA Implements ReAct
+## How Daemon Implements ReAct
 
-OSA's ReAct implementation lives in
-`OptimalSystemAgent.Agent.Strategies.ReAct`. It is one of five pluggable
+Daemon's ReAct implementation lives in
+`Daemon.Agent.Strategies.ReAct`. It is one of five pluggable
 reasoning strategies:
 
 | Strategy | Module | Best for |
@@ -157,8 +157,8 @@ response. For example, the Anthropic API returns something like:
 }
 ```
 
-OSA's agent loop receives this, extracts the tool name and input, routes the call
-through the goldrush-compiled `:osa_tool_dispatcher`, gets the result, and adds
+Daemon's agent loop receives this, extracts the tool name and input, routes the call
+through the goldrush-compiled `:daemon_tool_dispatcher`, gets the result, and adds
 it to the conversation history as a tool result message. Then the loop calls the
 LLM again with the updated context.
 
@@ -167,7 +167,7 @@ that some turns contain tool results rather than user messages.
 
 Not all LLM providers support tool calling equally well. Some providers require
 that tools be described in every request. Some parse tool calls from the text
-output. OSA's provider adapters handle these differences so the agent loop does
+output. Daemon's provider adapters handle these differences so the agent loop does
 not need to know.
 
 ---
@@ -204,13 +204,13 @@ To make the difference concrete, here is how each strategy would approach
 - Better for optimization problems where you need to find the best path among
   many possibilities
 
-OSA selects the strategy automatically based on signal classification. You can
+Daemon selects the strategy automatically based on signal classification. You can
 override it by specifying `strategy: :reflection` in your request if you want
 a specific approach.
 
 ---
 
-## The Agent Loop in OSA's Architecture
+## The Agent Loop in Daemon's Architecture
 
 The ReAct loop runs inside an `Agent.Loop` process. Each active session has its
 own Loop process (under the `SessionSupervisor` DynamicSupervisor).
@@ -244,6 +244,6 @@ memory store before the crash.
 
 ## Next Steps
 
-Read [llm-providers.md](./llm-providers.md) to understand how OSA talks to the
+Read [llm-providers.md](./llm-providers.md) to understand how Daemon talks to the
 AI models that power the Think phase — the 18 supported providers, how fallback
 chains work, and how streaming returns responses token by token.

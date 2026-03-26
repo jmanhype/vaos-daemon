@@ -1,7 +1,7 @@
 # Message Contracts
 
 Audience: developers building channel adapters, providers, or tools that
-produce or consume messages in the OSA agent loop.
+produce or consume messages in the Daemon agent loop.
 
 This document defines the canonical message format that flows through the system
 and the Signal Theory classification overlay applied to every message.
@@ -83,7 +83,7 @@ User input
 
 ### Database Representation
 
-Messages are persisted to SQLite via `OptimalSystemAgent.Store.Message`.
+Messages are persisted to SQLite via `Daemon.Store.Message`.
 
 ```elixir
 schema "messages" do
@@ -207,7 +207,7 @@ tool sequences for low-information inputs like "ok" or "lol".
 Every event emitted via `Events.Bus.emit/3` carries the Signal overlay:
 
 ```elixir
-{:ok, event} = OptimalSystemAgent.Events.Bus.emit(
+{:ok, event} = Daemon.Events.Bus.emit(
   :user_message,
   %{content: "Deploy to production"},
   signal_mode: :execute,
@@ -235,7 +235,7 @@ a consistent canonical output regardless of which provider is used.
 
 ```elixir
 [
-  %{role: "system",    content: "You are OSA, a capable AI assistant..."},
+  %{role: "system",    content: "You are Daemon, a capable AI assistant..."},
   %{role: "user",      content: "Read config.json"},
   %{role: "assistant", content: "", tool_calls: [
     %{id: "call_1", name: "file_read", arguments: %{"path" => "config.json"}}

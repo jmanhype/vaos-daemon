@@ -10,7 +10,7 @@ Accepted
 
 ## Context
 
-OSA needs to run as a long-lived, continuously available AI agent process. The
+Daemon needs to run as a long-lived, continuously available AI agent process. The
 core requirements driving the architecture decision were:
 
 - **Fault tolerance**: Individual component failures must not crash the entire
@@ -93,7 +93,7 @@ child. No raw `Task.async` calls exist outside `Task.Supervisor` contexts.
   indirection.
 - **Single-node by default**: OTP clustering (`:distributed_supervisor`,
   `Horde`) is not used. Multi-node deployment requires explicit design work.
-  OSA is currently designed for single-node operation.
+  Daemon is currently designed for single-node operation.
 
 ## Compliance
 

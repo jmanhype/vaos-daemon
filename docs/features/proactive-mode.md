@@ -1,6 +1,6 @@
 # Proactive Mode
 
-Proactive mode is the primary orchestrator of autonomous work in OSA. When enabled, OSA operates independently — greeting users on session start, reacting to system alerts with autonomous LLM calls, executing scheduled cron jobs, and maintaining an activity log accessible at any time.
+Proactive mode is the primary orchestrator of autonomous work in Daemon. When enabled, Daemon operates independently — greeting users on session start, reacting to system alerts with autonomous LLM calls, executing scheduled cron jobs, and maintaining an activity log accessible at any time.
 
 Disabled by default. Toggle with `/proactive on|off` or via the HTTP API.
 
@@ -15,7 +15,7 @@ Disabled by default. Toggle with `/proactive on|off` or via the HTTP API.
 | Cron scheduling | Creates and manages time-based recurring jobs |
 | Heartbeat tasks | Registers persistent background tasks |
 | Event triggers | Fires autonomous work in response to bus events |
-| Activity log | Persisted to `~/.osa/data/proactive_log.jsonl` |
+| Activity log | Persisted to `~/.daemon/data/proactive_log.jsonl` |
 
 ---
 
@@ -51,12 +51,12 @@ The tier is stored in the GenServer state as `autonomous_permission_tier` and ca
 /proactive off
 
 # Elixir API
-OptimalSystemAgent.Agent.ProactiveMode.enable()
-OptimalSystemAgent.Agent.ProactiveMode.disable()
-OptimalSystemAgent.Agent.ProactiveMode.toggle()
+Daemon.Agent.ProactiveMode.enable()
+Daemon.Agent.ProactiveMode.disable()
+Daemon.Agent.ProactiveMode.toggle()
 ```
 
-The enabled state persists across restarts. It is stored in `~/.osa/config.json`:
+The enabled state persists across restarts. It is stored in `~/.daemon/config.json`:
 
 ```json
 {
@@ -169,7 +169,7 @@ Greeting only fires when:
 
 ## Activity Log
 
-All activity is logged to `~/.osa/data/proactive_log.jsonl` — one JSON object per line. The last 100 entries are kept in memory.
+All activity is logged to `~/.daemon/data/proactive_log.jsonl` — one JSON object per line. The last 100 entries are kept in memory.
 
 ```json
 {"ts": "2026-03-08T10:05:00Z", "type": "autonomous_complete", "message": "Autonomous fix for: Memory usage..."}

@@ -1,11 +1,11 @@
 # Provider Guides
 
-> Setup and configuration for each of OSA's 18 LLM providers
+> Setup and configuration for each of Daemon's 18 LLM providers
 
 ## Auto-Detection Priority
 
 ```
-1. OSA_DEFAULT_PROVIDER=<name>   → Explicit override
+1. DAEMON_DEFAULT_PROVIDER=<name>   → Explicit override
 2. ANTHROPIC_API_KEY present     → Anthropic
 3. OPENAI_API_KEY present        → OpenAI
 4. GROQ_API_KEY present          → Groq

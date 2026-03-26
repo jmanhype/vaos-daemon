@@ -2,7 +2,7 @@
 
 > **Severity:** MEDIUM
 > **Status:** Open
-> **Component:** `lib/optimal_system_agent/commands.ex`, `lib/optimal_system_agent/commands/agents.ex`
+> **Component:** `lib/daemon/commands.ex`, `lib/daemon/commands/agents.ex`
 > **Reported:** 2026-03-14
 
 ---
@@ -30,7 +30,7 @@ impression of working functionality.
 The commands are registered in `builtin_commands/0`:
 
 ```elixir
-# lib/optimal_system_agent/commands.ex lines 291–295
+# lib/daemon/commands.ex lines 291–295
 {"budget",    "Token and cost budget status",  &Agents.cmd_budget/2},
 {"thinking",  "Toggle extended thinking mode", &Agents.cmd_thinking/2},
 {"export",    "Export session to file",        &Data.cmd_export/2},
@@ -41,10 +41,10 @@ The commands are registered in `builtin_commands/0`:
 The underlying handler modules (`Commands.Agents`, `Commands.Data`,
 `Commands.Model`) define these functions but the implementations are either empty
 or call GenServer APIs that have not been connected to a data source. For example,
-`cmd_budget/2` calls `OptimalSystemAgent.Agent.Treasury` which exists but
+`cmd_budget/2` calls `Daemon.Agent.Treasury` which exists but
 `Treasury.budget_summary/0` returns `{:error, :not_implemented}`.
 
-`cmd_machines/2` calls `OptimalSystemAgent.Machines.list/0` which queries the
+`cmd_machines/2` calls `Daemon.Machines.list/0` which queries the
 machines ETS table. The table exists, but if no machines have registered
 (fleet is empty), the output is `"No machines connected"` — which is technically
 correct but not clearly communicated to the user.
@@ -54,7 +54,7 @@ correct but not clearly communicated to the user.
 - Users cannot check their token/cost budget from the CLI.
 - `/thinking` cannot be toggled from the CLI; users must restart with environment
   config.
-- `/providers` gives no output, forcing users to check `mix osa.chat --help`.
+- `/providers` gives no output, forcing users to check `mix daemon.chat --help`.
 - Session export is not accessible from the CLI.
 
 ## Suggested Fix
@@ -75,7 +75,7 @@ end
 
 **`/budget`**: Connect to `Agent.Treasury` or `Telemetry.Metrics` for cost data.
 
-**`/thinking`**: Toggle `Application.put_env(:optimal_system_agent, :thinking_enabled, ...)`.
+**`/thinking`**: Toggle `Application.put_env(:daemon, :thinking_enabled, ...)`.
 
 ## Workaround
 

@@ -2,13 +2,13 @@
 
 ## Design Philosophy: Local-First
 
-OSA is designed as a local-first agent. The default operational model assumes the HTTP server is only reachable from the local machine or a trusted private network. This shapes every security decision:
+Daemon is designed as a local-first agent. The default operational model assumes the HTTP server is only reachable from the local machine or a trusted private network. This shapes every security decision:
 
 - Authentication is optional by default (`require_auth: false`)
 - No auth means no barrier to tooling, scripting, or local TUI connections
 - Security features exist and work correctly — they are just not enforced unless explicitly enabled
 
-When running exposed to a network (hosted mode, fleet, platform), operators must set `OSA_REQUIRE_AUTH=true` and configure `OSA_SHARED_SECRET`.
+When running exposed to a network (hosted mode, fleet, platform), operators must set `DAEMON_REQUIRE_AUTH=true` and configure `DAEMON_SHARED_SECRET`.
 
 ---
 
@@ -16,30 +16,30 @@ When running exposed to a network (hosted mode, fleet, platform), operators must
 
 ### LLM Provider Keys
 
-Provider API keys (Anthropic, OpenAI, Groq, etc.) are read from environment variables at startup in `config/runtime.exs`. They are stored in the Elixir application environment under `:optimal_system_agent`:
+Provider API keys (Anthropic, OpenAI, Groq, etc.) are read from environment variables at startup in `config/runtime.exs`. They are stored in the Elixir application environment under `:daemon`:
 
 ```
-Application.get_env(:optimal_system_agent, :anthropic_api_key)
+Application.get_env(:daemon, :anthropic_api_key)
 ```
 
 The lookup order for each key:
 1. Shell environment variable (e.g. `ANTHROPIC_API_KEY`)
 2. `.env` file in the project root (loaded at startup, does not override existing env)
-3. `~/.osa/.env` (loaded if project root `.env` is absent, lower priority)
+3. `~/.daemon/.env` (loaded if project root `.env` is absent, lower priority)
 
-Keys are **never** written to disk by OSA and **never** included in log output. They exist only in the BEAM application environment for the lifetime of the process.
+Keys are **never** written to disk by Daemon and **never** included in log output. They exist only in the BEAM application environment for the lifetime of the process.
 
 ### JWT Signing Secret
 
 The JWT HS256 signing secret is resolved in this order (`Auth.shared_secret/0`):
 
 1. `:jwt_secret` application env (from `JWT_SECRET` env var)
-2. `:shared_secret` application env (from `OSA_SHARED_SECRET` env var)
+2. `:shared_secret` application env (from `DAEMON_SHARED_SECRET` env var)
 3. `JWT_SECRET` env var
-4. `OSA_SHARED_SECRET` env var
+4. `DAEMON_SHARED_SECRET` env var
 5. **Ephemeral generated secret** — if no secret is configured, a cryptographically random 32-byte secret is generated once per process lifetime using `:crypto.strong_rand_bytes/1` and stored in `persistent_term`. A warning is logged. Tokens signed with an ephemeral secret are invalid after a restart.
 
-**Production requirement:** Always set `OSA_SHARED_SECRET` (or `JWT_SECRET`) to a persistent secret when `OSA_REQUIRE_AUTH=true`. Using ephemeral secrets in production causes all sessions to be invalidated on restart.
+**Production requirement:** Always set `DAEMON_SHARED_SECRET` (or `JWT_SECRET`) to a persistent secret when `DAEMON_REQUIRE_AUTH=true`. Using ephemeral secrets in production causes all sessions to be invalidated on restart.
 
 ### Channel Bot Tokens
 
@@ -52,7 +52,7 @@ Telegram, Discord, Slack, and other bot tokens are stored in application env und
 ### Dev Mode (default: `require_auth: false`)
 
 ```
-OSA_REQUIRE_AUTH=false   # default
+DAEMON_REQUIRE_AUTH=false   # default
 ```
 
 - Missing or invalid JWT is accepted. `user_id` is set to `"anonymous"`.
@@ -64,29 +64,29 @@ OSA_REQUIRE_AUTH=false   # default
 ### Enforced Mode (`require_auth: true`)
 
 ```
-OSA_REQUIRE_AUTH=true
-OSA_SHARED_SECRET=<random 32+ bytes>
+DAEMON_REQUIRE_AUTH=true
+DAEMON_SHARED_SECRET=<random 32+ bytes>
 ```
 
 - Missing token → 401 `MISSING_TOKEN`
 - Invalid or expired token → 401 `INVALID_TOKEN`
-- Login requires `{ "secret": "<OSA_SHARED_SECRET>" }` in the POST body
+- Login requires `{ "secret": "<DAEMON_SHARED_SECRET>" }` in the POST body
 - Routes still bypassed: `/api/v1/auth/*`, `/api/v1/channels/*` (webhook verification is handled per-channel), `/api/v1/platform/auth/*`
 
 ---
 
 ## Request Integrity (HMAC-SHA256)
 
-When `require_auth: true`, the `OptimalSystemAgent.Channels.HTTP.Integrity` plug enforces request body integrity on all non-auth, non-health paths.
+When `require_auth: true`, the `Daemon.Channels.HTTP.Integrity` plug enforces request body integrity on all non-auth, non-health paths.
 
 Required headers:
-- `X-OSA-Signature: <hex>` — HMAC-SHA256 of `timestamp + "\n" + nonce + "\n" + body`
-- `X-OSA-Timestamp: <unix_seconds>` — must be within 5 minutes of server time
-- `X-OSA-Nonce: <string>` — unique per-request; replay prevention via ETS
+- `X-Daemon-Signature: <hex>` — HMAC-SHA256 of `timestamp + "\n" + nonce + "\n" + body`
+- `X-Daemon-Timestamp: <unix_seconds>` — must be within 5 minutes of server time
+- `X-Daemon-Nonce: <string>` — unique per-request; replay prevention via ETS
 
-Nonces are stored in `:osa_integrity_nonces` ETS table and expired after 5 minutes. The HMAC key is `OSA_SHARED_SECRET`.
+Nonces are stored in `:daemon_integrity_nonces` ETS table and expired after 5 minutes. The HMAC key is `DAEMON_SHARED_SECRET`.
 
-Fleet paths (`/api/v1/fleet/*`) can independently require integrity checks via `OSA_REQUIRE_FLEET_INTEGRITY=true` without enabling full auth.
+Fleet paths (`/api/v1/fleet/*`) can independently require integrity checks via `DAEMON_REQUIRE_FLEET_INTEGRITY=true` without enabling full auth.
 
 ---
 
@@ -96,7 +96,7 @@ The system prompt (`SYSTEM.md`) is the agent's core behavioral specification. Tw
 
 ### Input Guard (Prompt Injection Detection)
 
-`OptimalSystemAgent.Agent.Loop.Guardrails.prompt_injection?/1` runs before every user message is processed. Three-tier detection:
+`Daemon.Agent.Loop.Guardrails.prompt_injection?/1` runs before every user message is processed. Three-tier detection:
 
 1. **Tier 1 (Regex, raw input):** 20+ regex patterns covering common extraction and jailbreak attempts (`show me your system prompt`, `ignore all instructions`, DAN activation, `verbatim`, XML boundary tags, etc.)
 
@@ -124,12 +124,12 @@ Both guards use no LLM calls — all detection is deterministic regex/string mat
 
 ## Rate Limiting
 
-`OptimalSystemAgent.Channels.HTTP.RateLimiter` enforces per-IP token-bucket limits:
+`Daemon.Channels.HTTP.RateLimiter` enforces per-IP token-bucket limits:
 
 - General endpoints: 60 requests per 60-second window
 - Auth endpoints (`/api/v1/auth/`, `/api/v1/platform/auth/`): 10 requests per 60-second window
 
-State is stored in `:osa_rate_limits` ETS table (`:public`, `:set`, `:write_concurrency true`). Stale entries are purged every 5 minutes by a background process.
+State is stored in `:daemon_rate_limits` ETS table (`:public`, `:set`, `:write_concurrency true`). Stale entries are purged every 5 minutes by a background process.
 
 Exceeded requests return 429 with `Retry-After: 60`.
 

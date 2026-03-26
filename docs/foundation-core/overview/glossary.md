@@ -1,7 +1,7 @@
 # Glossary
 
 **Audience:** Everyone. These are the canonical definitions for terms used
-throughout all OSA documentation. When a term appears capitalized in OSA docs,
+throughout all Daemon documentation. When a term appears capitalized in Daemon docs,
 it refers to the definition here.
 
 Definitions are organized by conceptual cluster, not alphabetically.
@@ -13,7 +13,7 @@ Definitions are organized by conceptual cluster, not alphabetically.
 ### Signal
 
 A classified input tuple produced by the Signal Theory classifier. Every user
-message, system event, and channel input that enters OSA is transformed into a
+message, system event, and channel input that enters Daemon is transformed into a
 Signal before routing.
 
 ```
@@ -24,7 +24,7 @@ Signals are not the raw messages — they are the result of classifying the raw
 message. The Signal is what the routing layer acts on; the original text is what
 the agent reasons about.
 
-Reference: `OptimalSystemAgent.Signal.Classifier`
+Reference: `Daemon.Signal.Classifier`
 
 ---
 
@@ -59,7 +59,7 @@ concurrent sub-agents can be spawned.
 | Specialist | 0.35 – 0.65 | 70B local, Sonnet, GPT-4o-mini | 200K | 30 |
 | Elite | 0.65 – 1.00 | Frontier: Opus, GPT-4o, Gemini Pro | 250K | 50 |
 
-Reference: `OptimalSystemAgent.Agent.Tier`
+Reference: `Daemon.Agent.Tier`
 
 ---
 
@@ -119,7 +119,7 @@ depending on channel configuration.
 
 A `GenServer` process that manages one agent session. Each active session has
 exactly one Agent Loop process, identified by session ID in the
-`OptimalSystemAgent.SessionRegistry`.
+`Daemon.SessionRegistry`.
 
 The loop's turn cycle: build context → call LLM provider → parse response →
 execute tool calls (if any) → check halt conditions → emit response → repeat
@@ -129,7 +129,7 @@ The loop is bounded: a maximum iteration count per turn prevents runaway
 reasoning. When the limit is reached, the loop emits whatever partial result is
 available and halts.
 
-Reference: `OptimalSystemAgent.Agent.Loop`
+Reference: `Daemon.Agent.Loop`
 
 ---
 
@@ -146,7 +146,7 @@ selected based on Signal Mode, Weight, and turn history.
 | MCTS | High Weight, open-ended | Monte Carlo Tree Search over response branches |
 | Tree of Thoughts | Critical Weight | Deliberate exploration of solution trees |
 
-Reference: `OptimalSystemAgent.Agent.Strategy`
+Reference: `Daemon.Agent.Strategy`
 
 ---
 
@@ -167,7 +167,7 @@ result. Halt conditions include:
 
 ### Orchestrator
 
-A `GenServer` (`OptimalSystemAgent.Agent.Orchestrator`) that decomposes complex
+A `GenServer` (`Daemon.Agent.Orchestrator`) that decomposes complex
 tasks into sub-agent work units and manages their execution. The Orchestrator is
 invoked when a Signal's Mode is BUILD or EXECUTE and its Weight is above the
 orchestration threshold (typically 0.65).
@@ -182,7 +182,7 @@ The Orchestrator's lifecycle per task:
 5. Track progress via Events.Bus
 6. Synthesize results from all sub-agents into a final response
 
-Reference: `OptimalSystemAgent.Agent.Orchestrator`
+Reference: `Daemon.Agent.Orchestrator`
 
 ---
 
@@ -202,7 +202,7 @@ with defined interaction patterns:
 Agents in a swarm communicate via the mailbox pattern: each sub-agent's output
 is posted to a named mailbox in ETS; the swarm coordinator reads and routes.
 
-Reference: `OptimalSystemAgent.Swarm.*`
+Reference: `Daemon.Swarm.*`
 
 ---
 
@@ -228,7 +228,7 @@ emitted until the Testing phase completes or the budget is exhausted.
 
 The catalog of named agent roles available for sub-agent dispatch. The Roster
 maps role names to tier, description, and system prompt template. 31 named roles
-are defined in `OptimalSystemAgent.Agent.Roster`, plus 17 specialized roles for
+are defined in `Daemon.Agent.Roster`, plus 17 specialized roles for
 swarm patterns.
 
 Examples: `researcher`, `builder`, `reviewer`, `tester`, `writer`, `debugger`,
@@ -238,7 +238,7 @@ Examples: `researcher`, `builder`, `reviewer`, `tester`, `writer`, `debugger`,
 
 ### DLQ
 
-Dead Letter Queue. A supervised `GenServer` (`OptimalSystemAgent.Events.DLQ`)
+Dead Letter Queue. A supervised `GenServer` (`Daemon.Events.DLQ`)
 that receives events that fail routing or processing in `Events.Bus`. Failed
 events are stored in ETS with their error reason and a retry count. The DLQ
 exposes a manual retry API and periodic automatic retry for transient failures.
@@ -247,7 +247,7 @@ Events that exceed the maximum retry count are logged and discarded. The DLQ
 ensures that event processing failures are observable and recoverable rather
 than silently lost.
 
-Reference: `OptimalSystemAgent.Events.DLQ`
+Reference: `Daemon.Events.DLQ`
 
 ---
 
@@ -255,9 +255,9 @@ Reference: `OptimalSystemAgent.Events.DLQ`
 
 ### Vault
 
-OSA's structured memory system. The Vault stores typed facts, decisions, lessons,
+Daemon's structured memory system. The Vault stores typed facts, decisions, lessons,
 preferences, commitments, relationships, projects, and observations as files on
-disk under `~/.osa/vault/`.
+disk under `~/.daemon/vault/`.
 
 The Vault goes beyond flat-file memory:
 
@@ -276,7 +276,7 @@ The Vault goes beyond flat-file memory:
 6 tools expose the Vault to the agent: `vault_remember`, `vault_context`,
 `vault_wake`, `vault_sleep`, `vault_checkpoint`, `vault_inject`.
 
-Reference: `OptimalSystemAgent.Vault.*`
+Reference: `Daemon.Vault.*`
 
 ---
 
@@ -291,7 +291,7 @@ assembly.
 The Cortex does not store data — it reads from Memory, Vault, and Episodic and
 produces a synthesized view.
 
-Reference: `OptimalSystemAgent.Agent.Cortex`
+Reference: `Daemon.Agent.Cortex`
 
 ---
 
@@ -307,7 +307,7 @@ Episodic memory bridges the gap between the session-scoped conversation log
 and the cross-session long-term memory: it allows retrieval of specific past
 events without loading all historical context.
 
-Reference: `OptimalSystemAgent.Agent.Memory.Episodic`
+Reference: `Daemon.Agent.Memory.Episodic`
 
 ---
 
@@ -321,7 +321,7 @@ The Knowledge Graph stores learned patterns, solutions, and entity relationships
 across sessions. It is populated by the Learning subsystem when the agent
 completes tasks successfully. The `semantic_search` tool queries it at runtime.
 
-Reference: `MiosaKnowledge.*`, `OptimalSystemAgent.Agent.Memory.KnowledgeBridge`
+Reference: `MiosaKnowledge.*`, `Daemon.Agent.Memory.KnowledgeBridge`
 
 ---
 
@@ -330,37 +330,37 @@ Reference: `MiosaKnowledge.*`, `OptimalSystemAgent.Agent.Memory.KnowledgeBridge`
 ### ETS
 
 Erlang Term Storage. In-memory, concurrent key-value store provided by the BEAM
-runtime. ETS tables in OSA are owned by GenServers (which are the sole writers)
+runtime. ETS tables in Daemon are owned by GenServers (which are the sole writers)
 and read directly by caller processes (no GenServer bottleneck on reads).
 
-Key ETS tables in OSA:
+Key ETS tables in Daemon:
 
 | Table | Owner | Contents |
 |---|---|---|
-| `:osa_hooks` | `Agent.Hooks` | Registered hook entries (bag) |
-| `:osa_hooks_metrics` | `Agent.Hooks` | Atomic execution counters |
-| `:osa_signal_cache` | Signal Classifier | Classification results, 10-min TTL |
-| `:osa_tool_cache` | `Tools.Cache` | Tool schema cache |
-| `:osa_episodic` | `Memory.Episodic` | Keyword → session inverted index |
+| `:daemon_hooks` | `Agent.Hooks` | Registered hook entries (bag) |
+| `:daemon_hooks_metrics` | `Agent.Hooks` | Atomic execution counters |
+| `:daemon_signal_cache` | Signal Classifier | Classification results, 10-min TTL |
+| `:daemon_tool_cache` | `Tools.Cache` | Tool schema cache |
+| `:daemon_episodic` | `Memory.Episodic` | Keyword → session inverted index |
 
 ---
 
 ### goldrush
 
-A compiled Erlang event routing library (OSA fork of extend/goldrush). goldrush
+A compiled Erlang event routing library (Daemon fork of extend/goldrush). goldrush
 compiles event-matching predicates into real Erlang bytecode modules at startup.
 This means event routing at runtime is a BEAM function call — no hash lookups, no
 ETS reads, no pattern dispatch at the routing layer.
 
-Three goldrush-compiled modules in OSA:
+Three goldrush-compiled modules in Daemon:
 
 | Module | Compiled by | Purpose |
 |---|---|---|
-| `:osa_event_router` | `Events.Bus` | Route events to subscribers |
-| `:osa_tool_dispatcher` | `Tools.Registry` | Route tool calls to handlers |
-| `:osa_provider_router` | `Providers.Registry` | Route LLM calls to adapters |
+| `:daemon_event_router` | `Events.Bus` | Route events to subscribers |
+| `:daemon_tool_dispatcher` | `Tools.Registry` | Route tool calls to handlers |
+| `:daemon_provider_router` | `Providers.Registry` | Route LLM calls to adapters |
 
-Reference: `OptimalSystemAgent.Events.Bus`, `OptimalSystemAgent.Tools.Registry`
+Reference: `Daemon.Events.Bus`, `Daemon.Tools.Registry`
 
 ---
 
@@ -387,17 +387,17 @@ Built-in hooks: `security_check` (p10), `spend_guard` (p8), `mcp_cache` (p15),
 Registration goes through a GenServer (serialized writes). Execution reads from
 ETS in the caller's process (no bottleneck).
 
-Reference: `OptimalSystemAgent.Agent.Hooks`
+Reference: `Daemon.Agent.Hooks`
 
 ---
 
 ### Channel
 
 An I/O adapter that translates between a communication platform's format and
-OSA's internal event representation. Each channel is a supervised process (or
+Daemon's internal event representation. Each channel is a supervised process (or
 process group) under `Channels.Supervisor`.
 
-All channels implement `OptimalSystemAgent.Channels.Behaviour`:
+All channels implement `Daemon.Channels.Behaviour`:
 
 ```elixir
 @callback start_link(opts :: keyword()) :: GenServer.on_start()
@@ -412,8 +412,8 @@ Matrix, Email, QQ, DingTalk, Feishu/Lark.
 
 ### Soul
 
-The identity and personality configuration for an OSA deployment. A Soul is a
-set of files in `~/.osa/soul/` (or the default bundled soul) that define:
+The identity and personality configuration for an Daemon deployment. A Soul is a
+set of files in `~/.daemon/soul/` (or the default bundled soul) that define:
 
 - `SYSTEM.md` — the base system prompt template
 - `RULES.md` — behavioral constraints
@@ -424,15 +424,15 @@ The Soul's `SYSTEM.md` is interpolated once at session start and cached in
 mechanism that enables ~90% prompt cache hit rates on Anthropic: the static base
 is marked `cache_control: ephemeral`.
 
-Reference: `OptimalSystemAgent.Soul`
+Reference: `Daemon.Soul`
 
 ---
 
 ### Machine
 
 A composable set of skills, tools, and prompts grouped into a named capability
-bundle. Machines are loaded from `~/.osa/machines/` and registered with
-`OptimalSystemAgent.Machines` at startup. A Machine might bundle a set of tools
+bundle. Machines are loaded from `~/.daemon/machines/` and registered with
+`Daemon.Machines` at startup. A Machine might bundle a set of tools
 with a set of instructions for using them together — for example, a `code-review`
 Machine that includes `file_read`, `file_grep`, `shell_execute`, and a set of
 review heuristics.
@@ -447,12 +447,12 @@ configuration.
 A single callable capability exposed to the agent as a tool call. Skills are the
 atomic unit of agent capability. Two kinds:
 
-**Elixir module skills** — implement `OptimalSystemAgent.Skills.Behaviour`, define
+**Elixir module skills** — implement `Daemon.Skills.Behaviour`, define
 a JSON Schema for parameters, and return `{:ok, result}` or `{:error, reason}`.
 Registered programmatically at startup or runtime.
 
 **SKILL.md skills** — a markdown file with YAML frontmatter declaring the skill
-name, description, and available tools. Loaded dynamically from `~/.osa/skills/`.
+name, description, and available tools. Loaded dynamically from `~/.daemon/skills/`.
 No code required. Available immediately after dropping the file — no restart.
 
 ```markdown
@@ -471,14 +471,14 @@ tools:
 
 ### MCP (Model Context Protocol)
 
-An open protocol for connecting external tool servers to AI agents. OSA's
+An open protocol for connecting external tool servers to AI agents. Daemon's
 `MCP.Supervisor` manages a pool of MCP server processes. Each server entry in
-`~/.osa/mcp.json` gets a supervised GenServer that manages the server's lifecycle,
-discovers its available tools, and bridges those tools into OSA's tool registry.
+`~/.daemon/mcp.json` gets a supervised GenServer that manages the server's lifecycle,
+discovers its available tools, and bridges those tools into Daemon's tool registry.
 
 MCP tools are treated identically to built-in skills from the agent's perspective.
 
-Reference: `OptimalSystemAgent.MCP.*`
+Reference: `Daemon.MCP.*`
 
 ---
 
@@ -502,18 +502,18 @@ SQLite, so an Agent Loop process restart does not lose conversation history.
 
 ### Platform Mode
 
-An optional operating mode where OSA runs as a multi-tenant hosted service.
-Activated by `OSA_PLATFORM_MODE=true`. Adds:
+An optional operating mode where Daemon runs as a multi-tenant hosted service.
+Activated by `DAEMON_PLATFORM_MODE=true`. Adds:
 
 - `Platform.Repo` (PostgreSQL) for tenant data
 - JWT-based multi-tenant authentication
 - RabbitMQ AMQP publisher for cross-instance events
-- Fleet coordination across multiple OSA instances
+- Fleet coordination across multiple Daemon instances
 
 Platform Mode is not required for single-user local deployments.
 
 ---
 
-*This glossary is the authoritative reference for OSA terminology. If a term is
-used in OSA documentation but not defined here, that is a documentation gap —
+*This glossary is the authoritative reference for Daemon terminology. If a term is
+used in Daemon documentation but not defined here, that is a documentation gap —
 add it.*

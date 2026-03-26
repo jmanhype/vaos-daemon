@@ -1,7 +1,7 @@
 # Extension Interfaces
 
-Audience: developers who want to extend OSA with custom tools, skills, channels,
-hooks, commands, or MCP servers without modifying OSA's core code.
+Audience: developers who want to extend Daemon with custom tools, skills, channels,
+hooks, commands, or MCP servers without modifying Daemon's core code.
 
 All extension mechanisms are hot-reloadable or file-drop — no recompilation or
 restart required for most extension types.
@@ -97,7 +97,7 @@ to all active sessions:
 
 ```elixir
 # In your application.ex or an initializer:
-OptimalSystemAgent.Tools.Registry.register(MyApp.Tools.PagerDutyAlert)
+Daemon.Tools.Registry.register(MyApp.Tools.PagerDutyAlert)
 ```
 
 ### Safety Levels
@@ -123,7 +123,7 @@ the skill's trigger keywords.
 ### Directory Structure
 
 ```
-~/.osa/skills/
+~/.daemon/skills/
 └── incident-response/
     └── SKILL.md
 ```
@@ -181,12 +181,12 @@ Multi-word triggers should be quoted in YAML. The wildcard `"*"` is supported
 but avoided — it injects the skill on every message.
 
 Skills are disabled (not deleted) by creating a `.disabled` file in the skill
-directory: `~/.osa/skills/incident-response/.disabled`.
+directory: `~/.daemon/skills/incident-response/.disabled`.
 
 ### Reloading Skills
 
 ```elixir
-OptimalSystemAgent.Tools.Registry.reload_skills()
+Daemon.Tools.Registry.reload_skills()
 ```
 
 Or from the CLI:
@@ -206,19 +206,19 @@ A channel adapter integrates a new messaging platform.
 ```elixir
 defmodule MyApp.Channels.MattermostChannel do
   use GenServer
-  @behaviour OptimalSystemAgent.Channels.Behaviour
+  @behaviour Daemon.Channels.Behaviour
 
   require Logger
 
-  @impl OptimalSystemAgent.Channels.Behaviour
+  @impl Daemon.Channels.Behaviour
   def channel_name, do: :mattermost
 
-  @impl OptimalSystemAgent.Channels.Behaviour
+  @impl Daemon.Channels.Behaviour
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  @impl OptimalSystemAgent.Channels.Behaviour
+  @impl Daemon.Channels.Behaviour
   def send_message(chat_id, message, _opts) do
     token    = Application.get_env(:my_app, :mattermost_token)
     base_url = Application.get_env(:my_app, :mattermost_url)
@@ -235,7 +235,7 @@ defmodule MyApp.Channels.MattermostChannel do
     end
   end
 
-  @impl OptimalSystemAgent.Channels.Behaviour
+  @impl Daemon.Channels.Behaviour
   def connected? do
     case Process.whereis(__MODULE__) do
       nil -> false
@@ -263,7 +263,7 @@ defmodule MyApp.Channels.MattermostChannel do
     messages = Mattermost.get_new_messages()
     Enum.each(messages, fn msg ->
       session_id = "mattermost-#{msg.channel_id}"
-      OptimalSystemAgent.Agent.Loop.process_message(session_id, msg.text)
+      Daemon.Agent.Loop.process_message(session_id, msg.text)
     end)
     schedule_poll()
     {:noreply, state}
@@ -303,7 +303,7 @@ modify, or block actions in the agent loop.
 ### Register a Hook
 
 ```elixir
-OptimalSystemAgent.Agent.Hooks.register(
+Daemon.Agent.Hooks.register(
   :pre_tool_use,
   "audit-log",
   fn payload ->
@@ -348,12 +348,12 @@ unless there is a deliberate reason to run before them.
 ## Custom Commands
 
 Commands are slash-command shortcuts available in the CLI and desktop app.
-They are markdown files with YAML frontmatter in `~/.osa/commands/`.
+They are markdown files with YAML frontmatter in `~/.daemon/commands/`.
 
 ### Command File Format
 
 ```
-~/.osa/commands/
+~/.daemon/commands/
 └── standup.md
 ```
 
@@ -401,13 +401,13 @@ to the agent loop as a user message.
 
 ## MCP Servers
 
-OSA integrates with Model Context Protocol (MCP) servers. MCP tools are
+Daemon integrates with Model Context Protocol (MCP) servers. MCP tools are
 auto-discovered and registered with the prefix `mcp_`.
 
 ### Configuration File
 
 ```json
-// ~/.osa/mcp.json
+// ~/.daemon/mcp.json
 {
   "servers": [
     {
@@ -448,7 +448,7 @@ server wins. Use distinct server-level tool naming to avoid conflicts.
 ### Reloading MCP Tools
 
 ```elixir
-OptimalSystemAgent.Tools.Registry.register_mcp_tools()
+Daemon.Tools.Registry.register_mcp_tools()
 ```
 
 ### Environment Variable Interpolation

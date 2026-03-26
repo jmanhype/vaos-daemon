@@ -61,7 +61,7 @@ Type-scoped recalls search for the type string in the `"episodic"` collection, t
 
 ## Temporal Decay
 
-`OptimalSystemAgent.Agent.Memory.Episodic.temporal_decay/2` computes a relevance weight for an episode given its age:
+`Daemon.Agent.Memory.Episodic.temporal_decay/2` computes a relevance weight for an episode given its age:
 
 ```elixir
 # Returns a float in [0.0, 1.0]
@@ -80,7 +80,7 @@ Default half-life is 168 hours (7 days). Adjust per use-case:
 
 ## Context Injection
 
-The OSA agent loop injects episodic memory into context through `MiosaMemory.Context.inject/2`:
+The Daemon agent loop injects episodic memory into context through `MiosaMemory.Context.inject/2`:
 
 ```elixir
 # Loop builds context before LLM call
@@ -93,12 +93,12 @@ context = MiosaMemory.Context.inject(base_messages,
 
 Matching episodes appear as system-role messages prefixed `[memory:<key>]`, placed before the conversation history. The agent loop limits injections to avoid consuming too much of the token budget.
 
-## OSA Alias
+## Daemon Alias
 
-`OptimalSystemAgent.Agent.Memory.Episodic` delegates all functions to `MiosaMemory.Episodic`:
+`Daemon.Agent.Memory.Episodic` delegates all functions to `MiosaMemory.Episodic`:
 
 ```elixir
-alias OptimalSystemAgent.Agent.Memory.Episodic
+alias Daemon.Agent.Memory.Episodic
 
 Episodic.record(event_type, data, session_id)   # wraps record_episode/2
 Episodic.recall(query, opts)                    # wraps recall_similar/1
@@ -108,7 +108,7 @@ Episodic.clear_session(session_id)              # remove session-scoped events
 Episodic.temporal_decay(timestamp, half_life)   # compute decay weight
 ```
 
-Note: `recent/2` and `clear_session/1` are OSA extensions layered on top of the base `MiosaMemory.Episodic` API; they filter by `session_id` in the episode's metadata.
+Note: `recent/2` and `clear_session/1` are Daemon extensions layered on top of the base `MiosaMemory.Episodic` API; they filter by `session_id` in the episode's metadata.
 
 ## Persistence
 

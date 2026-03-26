@@ -1,12 +1,12 @@
 # Events: Telemetry
 
-OSA instruments key operations through the standard Elixir `:telemetry` library, the event Bus, and ETS atomic counters in hook metrics. This document catalogs the instrumentation points, metric names, and what each measures.
+Daemon instruments key operations through the standard Elixir `:telemetry` library, the event Bus, and ETS atomic counters in hook metrics. This document catalogs the instrumentation points, metric names, and what each measures.
 
 ---
 
 ## Hook Metrics (ETS Atomic Counters)
 
-Hook execution is tracked via the `:osa_hook_metrics` ETS table. Counters use `:atomics` for lock-free increments — no GenServer bottleneck.
+Hook execution is tracked via the `:daemon_hook_metrics` ETS table. Counters use `:atomics` for lock-free increments — no GenServer bottleneck.
 
 Each hook execution records:
 
@@ -81,10 +81,10 @@ Track these counts to assess filter calibration effectiveness. Calibration requi
 
 ## Rate Limiter Metrics
 
-The `RateLimiter` ETS table `:osa_rate_limits` can be queried for current state:
+The `RateLimiter` ETS table `:daemon_rate_limits` can be queried for current state:
 
 ```elixir
-:ets.tab2list(:osa_rate_limits)
+:ets.tab2list(:daemon_rate_limits)
 # => [{ip_string, token_count, last_refill_unix_seconds}, ...]
 ```
 

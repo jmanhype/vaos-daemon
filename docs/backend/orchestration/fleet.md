@@ -1,6 +1,6 @@
 # Fleet
 
-Fleet manages the registry, monitoring, and remote administration of OSA agent instances. A "fleet" in OSA is the collection of active agent sessions, running tasks, and orchestration state visible across a deployment.
+Fleet manages the registry, monitoring, and remote administration of Daemon agent instances. A "fleet" in Daemon is the collection of active agent sessions, running tasks, and orchestration state visible across a deployment.
 
 ---
 
@@ -13,13 +13,13 @@ Fleet-level concerns sit above individual sessions and orchestrated tasks:
 - **Dashboard** — aggregated view of all active agents, tasks, and swarms
 - **Remote management** — start, stop, or redirect agent instances
 
-This functionality is exposed through the HTTP fleet API routes at `lib/optimal_system_agent/channels/http/api/fleet_routes.ex`.
+This functionality is exposed through the HTTP fleet API routes at `lib/daemon/channels/http/api/fleet_routes.ex`.
 
 ---
 
 ## Fleet Registry
 
-The fleet registry tracks active OSA instances. Each entry describes a running agent identified by node, session, and metadata.
+The fleet registry tracks active Daemon instances. Each entry describes a running agent identified by node, session, and metadata.
 
 ### Registration
 

@@ -10,15 +10,15 @@ Each user interaction runs inside a session. A session maps one-to-one to an
 `SessionSupervisor` is a `DynamicSupervisor` under `Supervisors.Sessions`:
 
 ```elixir
-{DynamicSupervisor, name: OptimalSystemAgent.SessionSupervisor, strategy: :one_for_one}
+{DynamicSupervisor, name: Daemon.SessionSupervisor, strategy: :one_for_one}
 ```
 
 When a channel (CLI, HTTP, Telegram, etc.) receives a new connection, it calls:
 
 ```elixir
 DynamicSupervisor.start_child(
-  OptimalSystemAgent.SessionSupervisor,
-  {OptimalSystemAgent.Agent.Loop, [session_id: id, channel: channel, ...]}
+  Daemon.SessionSupervisor,
+  {Daemon.Agent.Loop, [session_id: id, channel: channel, ...]}
 )
 ```
 
@@ -26,7 +26,7 @@ DynamicSupervisor.start_child(
 
 ```elixir
 GenServer.start_link(__MODULE__, opts,
-  name: {:via, Registry, {OptimalSystemAgent.SessionRegistry, session_id, user_id}})
+  name: {:via, Registry, {Daemon.SessionRegistry, session_id, user_id}})
 ```
 
 The `child_spec` uses `:transient` restart so the process only restarts on
@@ -85,16 +85,16 @@ cancellation mechanism is needed. The cancel flag is written to the
 
 ```elixir
 def cancel(session_id) do
-  :ets.insert(:osa_cancel_flags, {session_id, true})
+  :ets.insert(:daemon_cancel_flags, {session_id, true})
 end
 ```
 
 Inside the loop:
 
 ```elixir
-case :ets.lookup(:osa_cancel_flags, session_id) do
+case :ets.lookup(:daemon_cancel_flags, session_id) do
   [{^session_id, true}] ->
-    :ets.delete(:osa_cancel_flags, session_id)
+    :ets.delete(:daemon_cancel_flags, session_id)
     {:cancelled, "Loop cancelled by user request"}
   [] ->
     continue_loop(state)
@@ -107,9 +107,9 @@ The `telemetry` hook at priority 90 fires on `post_tool_use` events. Session
 teardown purges related ETS entries:
 
 ```elixir
-:ets.delete(:osa_cancel_flags, session_id)
-:ets.delete(:osa_files_read, session_id)
-:ets.delete(:osa_session_provider_overrides, session_id)
+:ets.delete(:daemon_cancel_flags, session_id)
+:ets.delete(:daemon_files_read, session_id)
+:ets.delete(:daemon_session_provider_overrides, session_id)
 ```
 
 The per-session `Events.Stream` GenServer is stopped via the
@@ -147,8 +147,8 @@ sleep(session_id, context)
 
 ### Dirty Death Detection
 
-Flag files in `~/.osa/.vault/dirty/<session_id>` signal that a session is
-currently running. If OSA crashes, the flag file persists. On the next `wake/1`
+Flag files in `~/.daemon/.vault/dirty/<session_id>` signal that a session is
+currently running. If Daemon crashes, the flag file persists. On the next `wake/1`
 call, any flag files from different session IDs are treated as dirty deaths:
 
 ```elixir
@@ -177,7 +177,7 @@ observations and refresh the dirty flag timestamp.
 ### Handoff Document
 
 On clean sleep, `Vault.Handoff.create/2` writes a Markdown document to
-`~/.osa/.vault/handoffs/<session_id>.md` summarizing:
+`~/.daemon/.vault/handoffs/<session_id>.md` summarizing:
 
 - Key decisions made during the session
 - Open tasks and next steps
@@ -209,9 +209,9 @@ MCP servers start asynchronously after the supervision tree is up:
 
 ```elixir
 Task.start(fn ->
-  OptimalSystemAgent.MCP.Client.start_servers()
-  OptimalSystemAgent.MCP.Client.list_tools()
-  OptimalSystemAgent.Tools.Registry.register_mcp_tools()
+  Daemon.MCP.Client.start_servers()
+  Daemon.MCP.Client.list_tools()
+  Daemon.Tools.Registry.register_mcp_tools()
 end)
 ```
 

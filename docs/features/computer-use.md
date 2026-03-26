@@ -1,6 +1,6 @@
 # Computer Use — Desktop & Browser Control
 
-OSA's computer use tool gives agents the ability to see and interact with any desktop environment — local or remote. It follows the same adapter pattern used across OSA: a single tool interface backed by platform-specific implementations that are auto-detected at runtime.
+Daemon's computer use tool gives agents the ability to see and interact with any desktop environment — local or remote. It follows the same adapter pattern used across Daemon: a single tool interface backed by platform-specific implementations that are auto-detected at runtime.
 
 ## Architecture
 
@@ -180,7 +180,7 @@ Forwards all commands over SSH to a remote Linux machine. The agent controls the
 **Configuration:**
 
 ```elixir
-config :optimal_system_agent, :computer_use_remote,
+config :daemon, :computer_use_remote,
   host: "192.168.1.100",        # required
   port: 22,                      # default: 22
   user: "ubuntu",                # default: "root"
@@ -210,7 +210,7 @@ Forwards commands into a running Docker container via `docker exec`. Designed fo
 **Configuration:**
 
 ```elixir
-config :optimal_system_agent, :computer_use_docker,
+config :daemon, :computer_use_docker,
   container: "osa-desktop",          # container name or ID (required)
   display: ":1",                     # DISPLAY inside container (default: ":1")
   screenshot_path: "/tmp/screenshots" # screenshot dir inside container
@@ -237,7 +237,7 @@ Forwards commands into Firecracker microVMs managed by the Sprites.dev sandbox b
 **Configuration:**
 
 ```elixir
-config :optimal_system_agent, :computer_use_vm,
+config :daemon, :computer_use_vm,
   sprite_id: "abc123",    # Sprites.dev VM identifier (required)
   display: ":1"           # DISPLAY inside VM (default: ":1")
 ```
@@ -260,7 +260,7 @@ PlatformVM.test_connection()
 Computer use is gated by a config flag (default `false`):
 
 ```elixir
-config :optimal_system_agent, :computer_use_enabled, true
+config :daemon, :computer_use_enabled, true
 ```
 
 ### Platform Override
@@ -286,7 +286,7 @@ For local use, the platform is auto-detected. For remote/container/VM targets, s
 ### Permission Gating
 
 - Safety level: `:write_destructive`
-- Every action except `screenshot` requires user confirmation through OSA's permission system
+- Every action except `screenshot` requires user confirmation through Daemon's permission system
 - Tool disabled by default (`computer_use_enabled: false`)
 
 ## Workflow: How the Agent Uses Computer Use

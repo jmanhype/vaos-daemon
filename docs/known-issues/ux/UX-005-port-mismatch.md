@@ -16,11 +16,11 @@ The desktop Tauri application hard-codes the backend URL as
 export const BASE_URL = "http://127.0.0.1:9089";
 ```
 
-The backend default port, set in `mix osa.serve` (line 27 of `osa.serve.ex`)
+The backend default port, set in `mix daemon.serve` (line 27 of `osa.serve.ex`)
 and `config.exs`, is `8089`:
 
 ```elixir
-port = Application.get_env(:optimal_system_agent, :http_port, 8089)
+port = Application.get_env(:daemon, :http_port, 8089)
 ```
 
 The desktop app and the backend are therefore out-of-sync by default. A fresh
@@ -78,7 +78,7 @@ allowing users to configure a non-default port in the Settings page.
 
 Start the backend on port 9089 explicitly:
 ```bash
-OSA_HTTP_PORT=9089 mix osa.serve
+DAEMON_HTTP_PORT=9089 mix daemon.serve
 ```
 Or change `BASE_URL` in `client.ts` to `http://127.0.0.1:8089` and rebuild
 the desktop app.

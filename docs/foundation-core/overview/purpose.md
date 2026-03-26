@@ -1,6 +1,6 @@
-# Purpose — Why OSA Exists
+# Purpose — Why Daemon Exists
 
-**Audience:** Engineers evaluating OSA, contributors understanding design intent,
+**Audience:** Engineers evaluating Daemon, contributors understanding design intent,
 researchers studying applied Signal Theory.
 
 ---
@@ -28,7 +28,7 @@ thing. Mixing those concerns makes both worse.
 
 ## The Solution: Classify Before You Route
 
-OSA separates classification from execution. Every input passes through a Signal
+Daemon separates classification from execution. Every input passes through a Signal
 Theory classifier that produces a structured 5-tuple before anything else happens:
 
 ```
@@ -118,7 +118,7 @@ and task complexity:
 Weight directly determines which tier of model handles the request:
 
 ```elixir
-# From OptimalSystemAgent.Agent.Tier
+# From Daemon.Agent.Tier
 def tier_for_complexity(complexity) when complexity <= 3, do: :utility
 def tier_for_complexity(complexity) when complexity <= 6, do: :specialist
 def tier_for_complexity(_complexity),                     do: :elite
@@ -134,7 +134,7 @@ def tier_for_complexity(_complexity),                     do: :elite
 
 ## Theoretical Grounding
 
-OSA's architecture is grounded in four principles from communication and systems
+Daemon's architecture is grounded in four principles from communication and systems
 theory. These are not decorative citations — they directly shaped design decisions.
 
 ### Shannon — Channel Capacity
@@ -142,7 +142,7 @@ theory. These are not decorative citations — they directly shaped design decis
 Shannon's theorem establishes that every communication channel has finite
 information-carrying capacity. Exceeding that capacity degrades signal quality.
 
-**Applied to OSA:** Every LLM call has a token budget. Filling that budget with
+**Applied to Daemon:** Every LLM call has a token budget. Filling that budget with
 low-relevance context degrades response quality. The two-tier context assembly
 system (static cached base + dynamic budgeted context) and the three-zone
 compactor (HOT / WARM / COLD) are direct applications of Shannon's insight: match
@@ -154,9 +154,9 @@ Ashby's Law states that a controller must possess at least as much variety as th
 system it controls. A controller with insufficient variety cannot maintain
 stability across all system states.
 
-**Applied to OSA:** A single model at a single tier cannot adequately handle the
+**Applied to Daemon:** A single model at a single tier cannot adequately handle the
 full variety of inputs an agent receives — from trivial greetings to multi-week
-engineering projects. OSA's variety-matching response: 18 providers, 3 tiers per
+engineering projects. Daemon's variety-matching response: 18 providers, 3 tiers per
 provider, 12 channel adapters, 5 reasoning strategies (CoT, Reflection, MCTS,
 Tree of Thoughts, ReAct), 4 swarm collaboration patterns, 34 tools, and unlimited
 custom skills. The system's variety matches its input space.
@@ -167,7 +167,7 @@ Beer's Viable System Model (VSM) identifies five subsystems that any viable
 autonomous system must possess: operations, coordination, control, intelligence,
 and policy. Each mode in Signal Theory maps to one of these subsystems:
 
-| VSM Subsystem | OSA Mode |
+| VSM Subsystem | Daemon Mode |
 |---|---|
 | System 1 — Operations | EXECUTE |
 | System 2 — Coordination | MAINTAIN |
@@ -176,7 +176,7 @@ and policy. Each mode in Signal Theory maps to one of these subsystems:
 | System 5 — Policy | ASSIST |
 
 This is not coincidental. The five modes were derived from the VSM to ensure that
-OSA can function as a genuinely viable autonomous system — not just a chatbot with
+Daemon can function as a genuinely viable autonomous system — not just a chatbot with
 tool access.
 
 ### Wiener — Feedback Loops
@@ -184,7 +184,7 @@ tool access.
 Wiener established that stable systems require negative feedback loops: the
 output of a system is measured and fed back as input to correct future behavior.
 
-**Applied to OSA:** Every agent action produces feedback that updates system
+**Applied to Daemon:** Every agent action produces feedback that updates system
 state. Tool execution results are fed back into the agent loop. Learning patterns
 are captured by the episodic memory system and scored by the knowledge graph.
 Vault observations decay exponentially over time (temporal scoring) — the system
@@ -195,23 +195,23 @@ the orchestration level.
 
 ---
 
-## What OSA Is Not Trying to Do
+## What Daemon Is Not Trying to Do
 
 Understanding scope is as important as understanding purpose.
 
-OSA is not trying to be the fastest possible inference layer. Inference speed is
-a provider concern — OSA's job is to send the right request to the right provider
+Daemon is not trying to be the fastest possible inference layer. Inference speed is
+a provider concern — Daemon's job is to send the right request to the right provider
 with the right context.
 
-OSA is not trying to replace existing chat interfaces. It sits behind them. The
-12 channel adapters translate between platform-specific formats and OSA's internal
+Daemon is not trying to replace existing chat interfaces. It sits behind them. The
+12 channel adapters translate between platform-specific formats and Daemon's internal
 signal representation.
 
-OSA is not trying to be a general-purpose web framework. Bandit and Plug are
+Daemon is not trying to be a general-purpose web framework. Bandit and Plug are
 present for the HTTP API surface and webhook reception only. There is no routing
 DSL, no template engine, no session middleware.
 
-OSA is not trying to prevent all failure. OTP's "let it crash" philosophy means
+Daemon is not trying to prevent all failure. OTP's "let it crash" philosophy means
 the system is designed to recover from failure automatically, not to avoid it at
 all costs. See [Architecture Principles](architecture-principles.md) for how this
 shapes every supervision decision.
@@ -222,6 +222,6 @@ shapes every supervision decision.
 
 - [Architecture Principles](architecture-principles.md) — The design rules that
   follow from this purpose
-- [System Boundaries](system-boundaries.md) — Concrete scope: what OSA owns,
+- [System Boundaries](system-boundaries.md) — Concrete scope: what Daemon owns,
   what it delegates
 - [Glossary](glossary.md) — Canonical definitions for all terms used above

@@ -8,7 +8,7 @@ Execution tools run code and commands in controlled environments. They range fro
 
 Execute a shell command in a controlled workspace environment.
 
-**Module:** `OptimalSystemAgent.Tools.Builtins.ShellExecute`
+**Module:** `Daemon.Tools.Builtins.ShellExecute`
 **Safety:** `:terminal`
 
 ### Parameters
@@ -16,7 +16,7 @@ Execute a shell command in a controlled workspace environment.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `command` | string | yes | Shell command to execute |
-| `cwd` | string | no | Working directory (default: `~/.osa/workspace`) |
+| `cwd` | string | no | Working directory (default: `~/.daemon/workspace`) |
 
 ### Security
 
@@ -37,14 +37,14 @@ The shell policy maintains a blocklist of dangerous operations. Blocked commands
 
 **3. `cd` restriction**
 
-`cd` outside `~/.osa/` is blocked. Relative paths are resolved against the workspace (`~/.osa/workspace/`), not the Elixir process CWD.
+`cd` outside `~/.daemon/` is blocked. Relative paths are resolved against the workspace (`~/.daemon/workspace/`), not the Elixir process CWD.
 
 ### Execution
 
-Dispatches to `OptimalSystemAgent.Sandbox.Executor` which wraps `System.cmd` with the configured working directory and timeout.
+Dispatches to `Daemon.Sandbox.Executor` which wraps `System.cmd` with the configured working directory and timeout.
 
 - Default timeout: 300,000ms (5 minutes)
-- Override: `OSA_SHELL_TIMEOUT_MS` environment variable
+- Override: `DAEMON_SHELL_TIMEOUT_MS` environment variable
 - Output cap: 100KB (controlled by `ShellPolicy.max_output_bytes/0`)
 
 ### Exit codes
@@ -58,7 +58,7 @@ Dispatches to `OptimalSystemAgent.Sandbox.Executor` which wraps `System.cmd` wit
 
 Execute code in an isolated Docker container with strict resource limits.
 
-**Module:** `OptimalSystemAgent.Tools.Builtins.CodeSandbox`
+**Module:** `Daemon.Tools.Builtins.CodeSandbox`
 **Safety:** `:write_safe`
 
 ### Parameters
@@ -120,7 +120,7 @@ Go, Ruby, and Rust have no fallback — they require Docker.
 
 Automate a real browser (Chromium via Playwright) for web interaction and scraping.
 
-**Module:** `OptimalSystemAgent.Tools.Builtins.Browser`
+**Module:** `Daemon.Tools.Builtins.Browser`
 **Safety:** `:write_safe`
 
 ### Parameters
@@ -160,7 +160,7 @@ Requires Playwright to be installed. Returns `{:error, "Browser automation unava
 
 Control the desktop: mouse, keyboard, and screen capture.
 
-**Module:** `OptimalSystemAgent.Tools.Builtins.ComputerUse`
+**Module:** `Daemon.Tools.Builtins.ComputerUse`
 **Safety:** `:write_destructive`
 
 ### Parameters
@@ -181,7 +181,7 @@ Computer use requires system-level accessibility permissions. It is disabled by 
 
 Read and modify Jupyter notebooks (`.ipynb` files).
 
-**Module:** `OptimalSystemAgent.Tools.Builtins.NotebookEdit`
+**Module:** `Daemon.Tools.Builtins.NotebookEdit`
 **Safety:** `:write_safe`
 
 ### Parameters

@@ -1,13 +1,13 @@
 # Understanding the Core
 
-Audience: developers who want to build on OSA or debug its internals. This
+Audience: developers who want to build on Daemon or debug its internals. This
 document gives you the mental model you need before reading any source code.
 
 ---
 
-## OSA is a Supervised Process Tree
+## Daemon is a Supervised Process Tree
 
-OSA is an OTP application. Every piece of state lives inside a supervised
+Daemon is an OTP application. Every piece of state lives inside a supervised
 process. If a process crashes, the supervisor restarts it according to a
 defined strategy. Nothing is global mutable state. Nothing is a singleton
 that can silently corrupt.
@@ -16,7 +16,7 @@ The top-level supervisor uses `:rest_for_one`. This means a crash in any
 child takes down every child that was started after it. The ordering is:
 
 ```
-OptimalSystemAgent.Supervisor  (rest_for_one)
+Daemon.Supervisor  (rest_for_one)
 ├── Platform.Repo              (optional, PostgreSQL)
 ├── Task.Supervisor            (fire-and-forget async work)
 ├── Supervisors.Infrastructure (rest_for_one — core layer)
@@ -38,8 +38,8 @@ it does not affect other sessions or the infrastructure layer.
 
 When a user connects — via CLI, HTTP, Telegram, Discord, or any other channel
 — the channel adapter calls `Agent.Loop.start_link/1`. This spawns a GenServer
-under `OptimalSystemAgent.SessionSupervisor` (a DynamicSupervisor) and
-registers it by session ID in `OptimalSystemAgent.SessionRegistry`.
+under `Daemon.SessionSupervisor` (a DynamicSupervisor) and
+registers it by session ID in `Daemon.SessionRegistry`.
 
 The Loop GenServer holds all per-session state:
 
@@ -115,7 +115,7 @@ Steps 5–6 repeat until the LLM returns a message with no tool calls, or
 
 ## Everything is an Event
 
-`OptimalSystemAgent.Events.Bus` is the central nervous system. It uses
+`Daemon.Events.Bus` is the central nervous system. It uses
 goldrush — compiled Erlang bytecode — for zero-overhead event routing. There
 are no hash lookups at dispatch time; the routing logic is compiled to real
 BEAM instruction sequences.
@@ -155,7 +155,7 @@ end)
 
 ## Hooks Intercept at Lifecycle Points
 
-`OptimalSystemAgent.Agent.Hooks` is a middleware pipeline that intercepts
+`Daemon.Agent.Hooks` is a middleware pipeline that intercepts
 agent actions at defined lifecycle points. Each hook is a function that
 receives a payload map and returns `{:ok, payload}`, `{:block, reason}`,
 or `:skip`.
@@ -192,16 +192,16 @@ bottleneck on the hot path.
 ## Phoenix.PubSub Fan-out
 
 In addition to goldrush routing (point-to-point handlers registered on the
-Bus), OSA uses `Phoenix.PubSub` for fan-out to multiple subscribers on
+Bus), Daemon uses `Phoenix.PubSub` for fan-out to multiple subscribers on
 named topics. This is the mechanism that feeds the SSE event stream and
 external WebSocket clients.
 
 ```elixir
 # Subscribe to a session's events
-Phoenix.PubSub.subscribe(OptimalSystemAgent.PubSub, "session:#{session_id}")
+Phoenix.PubSub.subscribe(Daemon.PubSub, "session:#{session_id}")
 
 # Broadcast to all subscribers
-Phoenix.PubSub.broadcast(OptimalSystemAgent.PubSub, "session:#{session_id}", {:event, event})
+Phoenix.PubSub.broadcast(Daemon.PubSub, "session:#{session_id}", {:event, event})
 ```
 
 ---
@@ -213,21 +213,21 @@ restarts (they are owned by supervisors, not by the processes that read them).
 
 | Table name | Type | Purpose |
 |------------|------|---------|
-| `:osa_cancel_flags` | set, public | Per-session loop cancellation flags |
-| `:osa_files_read` | set, public | Read-before-write tracking per session |
-| `:osa_survey_answers` | set, public | Answers to `ask_user_question` polls |
-| `:osa_context_cache` | set, public | Ollama model context window sizes |
-| `:osa_hooks` | bag, read_concurrency | Registered hooks by event type |
-| `:osa_hooks_metrics` | set, write_concurrency | Hook call counts and timing |
-| `:osa_commands` | — | Registered slash commands |
-| `:osa_dlq` | — | Dead letter queue entries |
-| `:osa_session_provider_overrides` | set, public | Per-session provider/model hot-swap |
+| `:daemon_cancel_flags` | set, public | Per-session loop cancellation flags |
+| `:daemon_files_read` | set, public | Read-before-write tracking per session |
+| `:daemon_survey_answers` | set, public | Answers to `ask_user_question` polls |
+| `:daemon_context_cache` | set, public | Ollama model context window sizes |
+| `:daemon_hooks` | bag, read_concurrency | Registered hooks by event type |
+| `:daemon_hooks_metrics` | set, write_concurrency | Hook call counts and timing |
+| `:daemon_commands` | — | Registered slash commands |
+| `:daemon_dlq` | — | Dead letter queue entries |
+| `:daemon_session_provider_overrides` | set, public | Per-session provider/model hot-swap |
 
 ---
 
 ## Summary
 
-- OSA is a supervised process tree. Processes crash safely; supervisors restart them.
+- Daemon is a supervised process tree. Processes crash safely; supervisors restart them.
 - Every session is one `Agent.Loop` GenServer, isolated from all other sessions.
 - A message flows: Channel → Guardrails → NoiseFilter → Memory → Context → LLM → Tools → Response.
 - Everything observable emits an event. Events route through goldrush at BEAM speed.

@@ -1,12 +1,12 @@
 # Memory System — Architecture Overview
 
-The OSA memory system provides agents with durable, queryable knowledge across five distinct layers that span from within-request immediacy to cross-session synthesis.
+The Daemon memory system provides agents with durable, queryable knowledge across five distinct layers that span from within-request immediacy to cross-session synthesis.
 
 ## 5-Layer Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        OSA Memory Stack                         │
+│                        Daemon Memory Stack                         │
 │                                                                 │
 │  Layer 5 ──── SYNTHESIZED ──────────────────────────────────   │
 │               Cortex (MiosaMemory.Cortex)                       │
@@ -88,7 +88,7 @@ graph TB
 
 ## Supervision Tree (AgentServices)
 
-All memory processes start under `OptimalSystemAgent.Supervisors.AgentServices` with `:one_for_one` restart strategy:
+All memory processes start under `Daemon.Supervisors.AgentServices` with `:one_for_one` restart strategy:
 
 ```
 AgentServices Supervisor
@@ -102,11 +102,11 @@ AgentServices Supervisor
 
 Session GenServers are started on demand under `MiosaMemory.SessionSupervisor` (a `DynamicSupervisor`), registered via `MiosaMemory.SessionRegistry`.
 
-## OSA Alias Modules
+## Daemon Alias Modules
 
-OSA exposes compatibility aliases under its own namespace that delegate to `miosa_memory`. These exist for backward compatibility and to provide a stable OSA-scoped API surface:
+Daemon exposes compatibility aliases under its own namespace that delegate to `miosa_memory`. These exist for backward compatibility and to provide a stable OSA-scoped API surface:
 
-| OSA alias | Delegates to |
+| Daemon alias | Delegates to |
 |-----------|-------------|
 | `Agent.Memory` | `MiosaMemory.Store` |
 | `Agent.Learning` | `MiosaMemory.Learning` |
@@ -133,7 +133,7 @@ config :miosa_memory, MiosaMemory.Session,
   auto_persist_interval: 10      # persist every N messages
 
 # SQLite secondary store (layer 1)
-config :miosa_memory, secondary_store: OptimalSystemAgent.Agent.Memory.SQLiteBridge
+config :miosa_memory, secondary_store: Daemon.Agent.Memory.SQLiteBridge
 
 # Context compaction thresholds (layer 5)
 config :miosa_memory, MiosaMemory.Compactor,

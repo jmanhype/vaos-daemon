@@ -1,16 +1,16 @@
 # Module Dependencies
 
-Dependency graph for OSA's major module groups. Arrows indicate "depends on"
+Dependency graph for Daemon's major module groups. Arrows indicate "depends on"
 (calls functions in, uses types from, is supervised by). The diagram enforces
 the layering rules that prevent circular dependencies.
 
-Source files: `lib/optimal_system_agent/` (287+ modules).
+Source files: `lib/daemon/` (287+ modules).
 
 ---
 
 ## Layer Model
 
-OSA is organized into 5 dependency layers. Higher layers depend on lower layers;
+Daemon is organized into 5 dependency layers. Higher layers depend on lower layers;
 lower layers must not depend on higher layers.
 
 ```
@@ -36,12 +36,12 @@ graph TB
     end
 
     subgraph L2["Layer 2 — Services"]
-        EventsBus["Events.Bus<br/>goldrush :osa_event_router"]
+        EventsBus["Events.Bus<br/>goldrush :daemon_event_router"]
         EventsDLQ["Events.DLQ"]
         BridgePubSub["Bridge.PubSub"]
         HealthChecker["Providers.HealthChecker<br/>circuit breaker"]
         ProvReg["Providers.Registry<br/>18 providers + fallback chain"]
-        ToolsReg["Tools.Registry<br/>goldrush :osa_tool_dispatcher"]
+        ToolsReg["Tools.Registry<br/>goldrush :daemon_tool_dispatcher"]
         ToolsCache["Tools.Cache"]
         SignalClassifier["Signal.Classifier<br/>5-tuple classification"]
         StoreMsg["Store.Message<br/>Ecto schema"]

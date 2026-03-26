@@ -1,12 +1,12 @@
 # Signal Theory
 
-> The intelligence framework that makes OSA different from every other AI agent
+> The intelligence framework that makes Daemon different from every other AI agent
 
 ## What Is Signal Theory?
 
-Signal Theory is OSA's governing framework for communication quality. Every input and output is treated as a **Signal** — a structured unit of communication that can be classified, filtered, and optimized.
+Signal Theory is Daemon's governing framework for communication quality. Every input and output is treated as a **Signal** — a structured unit of communication that can be classified, filtered, and optimized.
 
-While other AI agents blindly process every message, OSA **understands** messages before acting on them.
+While other AI agents blindly process every message, Daemon **understands** messages before acting on them.
 
 > Source: Roberto H Luna, "Signal Theory: The Architecture of Optimal Intent Encoding" (MIOSA Research, Feb 2026)
 
@@ -73,7 +73,7 @@ This eliminates 40-60% of messages that would waste LLM tokens on other agents.
 
 ## Communication Intelligence
 
-OSA has 5 communication intelligence modules:
+Daemon has 5 communication intelligence modules:
 
 ### 1. CommProfiler
 Learns per-contact communication patterns:
@@ -138,7 +138,7 @@ As a user, Signal Theory means:
 - **Less noise** in responses — no filler phrases, no unnecessary hedging
 - **Right format** — tables when tables are needed, code when code is needed
 - **Right depth** — brief for simple questions, detailed for complex ones
-- **Proactive intelligence** — OSA notices when you're frustrated or drifting
+- **Proactive intelligence** — Daemon notices when you're frustrated or drifting
 - **Efficient token use** — noise is filtered before it reaches the LLM
 
 ## Modules

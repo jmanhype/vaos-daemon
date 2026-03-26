@@ -1,8 +1,8 @@
-# How OSA Talks to AI Models
+# How Daemon Talks to AI Models
 
-OSA supports 18 different AI model providers out of the box. This guide explains
-what a provider is, how OSA's provider abstraction works, how fallback chains
-keep OSA running when a provider is down, and how local models with Ollama let
+Daemon supports 18 different AI model providers out of the box. This guide explains
+what a provider is, how Daemon's provider abstraction works, how fallback chains
+keep Daemon running when a provider is down, and how local models with Ollama let
 you run AI without any API key.
 
 ---
@@ -26,9 +26,9 @@ for each one.
 
 ---
 
-## OSA's 18 Supported Providers
+## Daemon's 18 Supported Providers
 
-OSA organizes its providers into three categories:
+Daemon organizes its providers into three categories:
 
 ### Local
 
@@ -38,7 +38,7 @@ OSA organizes its providers into three categories:
 
 ### OpenAI-Compatible APIs
 
-These providers all use an API format that matches OpenAI's API. OSA handles all
+These providers all use an API format that matches OpenAI's API. Daemon handles all
 of them through a single shared adapter (`OpenAICompatProvider`):
 
 | Provider | Models / Notes |
@@ -72,7 +72,7 @@ These providers have their own API format and require dedicated adapters:
 
 ## Provider Abstraction: One Interface for All
 
-OSA's `Providers.Registry` is the single entry point for all LLM calls. The rest
+Daemon's `Providers.Registry` is the single entry point for all LLM calls. The rest
 of the system does not know which provider is in use:
 
 ```elixir
@@ -92,14 +92,14 @@ This abstraction means:
 - You can test with a fast cheap model (Groq Llama) and deploy with a powerful
   expensive one (Claude 3.5 Sonnet) without changing behavior.
 
-Internally, `Providers.Registry` uses a goldrush-compiled `:osa_provider_router`
+Internally, `Providers.Registry` uses a goldrush-compiled `:daemon_provider_router`
 to dispatch calls to the correct provider module at BEAM instruction speed.
 
 ---
 
 ## 4-Tier Model Routing
 
-OSA uses a 4-tier routing system to select the right model for each task:
+Daemon uses a 4-tier routing system to select the right model for each task:
 
 **Tier 1** (Best/Thinking): Used for complex reasoning, architecture decisions,
 and tasks that benefit from Claude's extended thinking mode or GPT-4o. Typically
@@ -126,26 +126,26 @@ The tier selection follows this priority:
 ## Fallback Chains
 
 A **fallback chain** is an ordered list of providers to try. If the first
-provider fails (rate limit, API error, timeout), OSA tries the next one, and
+provider fails (rate limit, API error, timeout), Daemon tries the next one, and
 so on:
 
 ```elixir
 # Example fallback chain configuration
-config :optimal_system_agent, :fallback_chain, [:anthropic, :openai, :groq, :ollama]
+config :daemon, :fallback_chain, [:anthropic, :openai, :groq, :ollama]
 ```
 
 With this configuration:
-1. OSA tries Anthropic first.
-2. If Anthropic returns an error (rate limit, service outage), OSA tries OpenAI.
-3. If OpenAI fails, OSA tries Groq.
-4. If Groq fails, OSA tries Ollama (local model).
+1. Daemon tries Anthropic first.
+2. If Anthropic returns an error (rate limit, service outage), Daemon tries OpenAI.
+3. If OpenAI fails, Daemon tries Groq.
+4. If Groq fails, Daemon tries Ollama (local model).
 5. If Ollama is not running, the request fails with a meaningful error.
 
 The fallback chain is transparent to the agent loop. The loop calls
 `Providers.Registry.chat/2` and gets a response. It does not know whether
 that response came from Anthropic or Ollama.
 
-OSA's `MiosaLLM.HealthChecker` acts as a circuit breaker. It tracks provider
+Daemon's `MiosaLLM.HealthChecker` acts as a circuit breaker. It tracks provider
 health and skips providers that have been consistently failing, rather than
 wasting time on every request retrying a provider that is clearly down.
 
@@ -157,20 +157,20 @@ wasting time on every request retrying a provider that is clearly down.
 machine. No API key, no subscription, no usage limits, no data leaving your
 computer.
 
-To use Ollama with OSA:
+To use Ollama with Daemon:
 
 1. Install Ollama from [ollama.ai](https://ollama.ai)
 2. Pull a model: `ollama pull llama3.2` or `ollama pull mistral`
 3. Ollama starts an HTTP server on `localhost:11434`
-4. OSA's Ollama provider connects to this local server
+4. Daemon's Ollama provider connects to this local server
 
-OSA automatically detects which Ollama models you have installed and assigns
+Daemon automatically detects which Ollama models you have installed and assigns
 them to appropriate tiers based on their capabilities. It does this at boot time
 by querying Ollama's local API, so the banner shows the correct model from the
 first interaction.
 
-One Ollama-specific detail: OSA caches each model's context window size in the
-`:osa_context_cache` ETS table. This avoids a network call to Ollama's
+One Ollama-specific detail: Daemon caches each model's context window size in the
+`:daemon_context_cache` ETS table. This avoids a network call to Ollama's
 `/api/show` endpoint on every new session.
 
 ---
@@ -189,11 +189,11 @@ Not all providers support tool calling equally:
 - **Google**: Supports function calling for Gemini models
 - **Ollama**: Depends on the model — Llama 3 supports it, smaller models may not
 
-When a provider does not support structured tool calling, OSA's provider adapter
+When a provider does not support structured tool calling, Daemon's provider adapter
 falls back to asking the LLM to output its tool call as JSON in the text, then
 parses it. This works less reliably than native tool calling.
 
-OSA describes available tools to the LLM in a standard format that all adapters
+Daemon describes available tools to the LLM in a standard format that all adapters
 translate into whatever format their provider expects. The agent loop does not
 need to know the difference.
 
@@ -204,7 +204,7 @@ need to know the difference.
 When you interact with an AI assistant and see the text appear word by word
 rather than all at once, that is streaming.
 
-LLMs generate text one token at a time. Without streaming, OSA would wait for
+LLMs generate text one token at a time. Without streaming, Daemon would wait for
 the entire response to be generated, then send it all at once. For a long
 response, that could be 10–30 seconds of the user staring at a blank screen.
 
@@ -212,7 +212,7 @@ With streaming, each token is sent to the user as soon as it is generated.
 The user sees the response building up in real time, which is much better UX
 and also allows the user to interrupt long responses early.
 
-OSA implements streaming via Server-Sent Events (SSE). The Elixir provider
+Daemon implements streaming via Server-Sent Events (SSE). The Elixir provider
 adapter opens a streaming HTTP connection to the LLM API, receives tokens,
 and immediately forwards each one to the SSE stream. The frontend subscribes
 to this stream and appends tokens to the displayed message as they arrive.
@@ -243,7 +243,7 @@ the full response appears at once.
 
 ## Per-Session Provider Hot-Swap
 
-OSA supports changing which provider a session uses mid-conversation without
+Daemon supports changing which provider a session uses mid-conversation without
 restarting the session:
 
 ```
@@ -251,7 +251,7 @@ PUT /sessions/:id/provider
 {"provider": "groq", "model": "llama-3.1-70b-versatile"}
 ```
 
-The new provider and model are stored in the `:osa_session_provider_overrides`
+The new provider and model are stored in the `:daemon_session_provider_overrides`
 ETS table. The agent loop reads this table on each LLM call to resolve the active
 provider. The change takes effect immediately on the next message.
 
@@ -266,4 +266,4 @@ This is useful for:
 
 Return to [README.md](./README.md) for the full list of learning guides, or
 move on to the [operations docs](../operations/) to configure providers, set API
-keys, and deploy OSA in different environments.
+keys, and deploy Daemon in different environments.

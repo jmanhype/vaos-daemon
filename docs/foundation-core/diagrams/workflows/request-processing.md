@@ -95,7 +95,7 @@ sequenceDiagram
 
         Channel->>EventBus: Events.Bus.emit(:llm_request, ...)
         Channel->>LLM: Providers.Registry.chat_stream(messages, callback, opts)
-        note right of LLM: goldrush :osa_provider_router\nfallback chain: Anthropic → OpenAI → Groq → Ollama\nHealthChecker.is_available?(provider) per attempt
+        note right of LLM: goldrush :daemon_provider_router\nfallback chain: Anthropic → OpenAI → Groq → Ollama\nHealthChecker.is_available?(provider) per attempt
         LLM-->>Channel: {:ok, response}
         Channel->>EventBus: Events.Bus.emit(:llm_response, ...)
 
@@ -119,7 +119,7 @@ sequenceDiagram
 
                 ToolExec->>EventBus: Events.Bus.emit(:tool_call, ...)
                 ToolExec->>Tool: Tools.Registry.execute(tool_name, params)
-                note right of Tool: goldrush :osa_tool_dispatcher\nroutes to: built-in tools | MCP tools | sidecar tools
+                note right of Tool: goldrush :daemon_tool_dispatcher\nroutes to: built-in tools | MCP tools | sidecar tools
                 alt Tool success
                     Tool-->>ToolExec: {:ok, result}
                 else Tool error

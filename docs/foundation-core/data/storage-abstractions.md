@@ -3,7 +3,7 @@
 Audience: contributors working on the agent loop, memory system, or any
 component that reads or writes persistent or cached data.
 
-OSA uses four distinct storage abstractions, each chosen for different
+Daemon uses four distinct storage abstractions, each chosen for different
 access patterns. Understanding which layer to use for a given piece of data
 is critical to both correctness and performance.
 
@@ -24,17 +24,17 @@ is critical to both correctness and performance.
 ## ETS (Hot Data)
 
 ETS (Erlang Term Storage) tables are in-memory hash tables accessible from
-any process. OSA uses ETS for data that must be read at high frequency with
+any process. Daemon uses ETS for data that must be read at high frequency with
 minimal latency.
 
 ### Tables and Their Contents
 
 | Table | Type | Contents |
 |---|---|---|
-| `:osa_cancel_flags` | `set` | `{session_id, true}` entries for in-progress loop cancellation. Written by `Agent.Loop.cancel/1`, read at each loop iteration. |
-| `:osa_hooks` | `bag, read_concurrency: true` | Hook entries `{event_type, ref, handler_fn}`. Written by `Hooks.register/4`, read by `Hooks.run/2` in caller's process. |
-| `:osa_hooks_metrics` | `set, write_concurrency: true` | Atomic counters for hook timing. Written after each hook execution. |
-| `:osa_event_handlers` | `bag, public` | Event bus handler entries `{event_type, ref, handler_fn}`. Written by `Events.Bus.register_handler/2`. |
+| `:daemon_cancel_flags` | `set` | `{session_id, true}` entries for in-progress loop cancellation. Written by `Agent.Loop.cancel/1`, read at each loop iteration. |
+| `:daemon_hooks` | `bag, read_concurrency: true` | Hook entries `{event_type, ref, handler_fn}`. Written by `Hooks.register/4`, read by `Hooks.run/2` in caller's process. |
+| `:daemon_hooks_metrics` | `set, write_concurrency: true` | Atomic counters for hook timing. Written after each hook execution. |
+| `:daemon_event_handlers` | `bag, public` | Event bus handler entries `{event_type, ref, handler_fn}`. Written by `Events.Bus.register_handler/2`. |
 | Context cache | Application-specific | Compiled context maps per session (built context avoids recomputation). |
 | Provider overrides | Application-specific | Per-session provider or model overrides set during a session. |
 | Survey answers | Application-specific | Buffered answers to `ask_user` prompts before returning to the loop. |
@@ -43,16 +43,16 @@ minimal latency.
 
 ```elixir
 # Writing to ETS (e.g. cancel flag)
-:ets.insert(:osa_cancel_flags, {session_id, true})
+:ets.insert(:daemon_cancel_flags, {session_id, true})
 
 # Reading from ETS (lock-free, concurrent)
-case :ets.lookup(:osa_cancel_flags, session_id) do
+case :ets.lookup(:daemon_cancel_flags, session_id) do
   [{^session_id, true}] -> :cancel
   []                    -> :continue
 end
 
 # Deleting from ETS
-:ets.delete(:osa_cancel_flags, session_id)
+:ets.delete(:daemon_cancel_flags, session_id)
 ```
 
 ### ETS Table Creation
@@ -62,7 +62,7 @@ process must be started before any reader tries to access the table.
 
 ```elixir
 # In Hooks.init/1:
-:ets.new(:osa_hooks, [:named_table, :bag, :public, read_concurrency: true])
+:ets.new(:daemon_hooks, [:named_table, :bag, :public, read_concurrency: true])
 ```
 
 Named public tables (`:public`) are accessible from any process. The owning
@@ -88,7 +88,7 @@ by reference, not copied to the reader's heap.
 | Soul prompt | The agent's soul/system prompt string, loaded at boot |
 | Static context base | Baseline context string injected into every session |
 | Provider configs | API base URLs, default models per provider |
-| `:osa_dev_secret` | Ephemeral JWT secret (when `OSA_SHARED_SECRET` is unset) |
+| `:daemon_dev_secret` | Ephemeral JWT secret (when `DAEMON_SHARED_SECRET` is unset) |
 
 ### Usage Pattern
 
@@ -120,8 +120,8 @@ config = :persistent_term.get({__MODULE__, :config}, %{})
 SQLite via `ecto_sqlite3` provides ACID-compliant durable storage for data
 that must survive process restarts.
 
-**Repo:** `OptimalSystemAgent.Store.Repo`
-**Database:** `~/.osa/osa.db`
+**Repo:** `Daemon.Store.Repo`
+**Database:** `~/.daemon/osa.db`
 
 ### Access Pattern
 
@@ -129,7 +129,7 @@ All database access goes through Ecto — never raw SQL strings in application
 code. Use `Repo.all/1`, `Repo.get/2`, `Repo.insert/1`, `Repo.update/1`.
 
 ```elixir
-alias OptimalSystemAgent.Store.{Repo, Message}
+alias Daemon.Store.{Repo, Message}
 import Ecto.Query
 
 # Insert a message
@@ -158,8 +158,8 @@ results =
 ### Configuration
 
 ```elixir
-config :optimal_system_agent, OptimalSystemAgent.Store.Repo,
-  database:     "~/.osa/osa.db",
+config :daemon, Daemon.Store.Repo,
+  database:     "~/.daemon/osa.db",
   pool_size:    5,
   journal_mode: :wal,      # WAL mode for concurrent reads
   cache_size:   -64_000,   # 64MB page cache
@@ -186,7 +186,7 @@ the full history may need to be scanned but the common operation is append.
 ### Session Files
 
 ```
-~/.osa/sessions/<session_id>.jsonl
+~/.daemon/sessions/<session_id>.jsonl
 ```
 
 Each line is one conversation turn (message entry). The agent memory system
@@ -202,7 +202,7 @@ File.write!(session_path, entry_line, [:append])
 ### Memory File
 
 ```
-~/.osa/memory.jsonl
+~/.daemon/memory.jsonl
 ```
 
 Long-term cross-session memories. One entry per `remember/2` call.
@@ -210,7 +210,7 @@ Long-term cross-session memories. One entry per `remember/2` call.
 ```elixir
 # Read all memories
 entries =
-  "~/.osa/memory.jsonl"
+  "~/.daemon/memory.jsonl"
   |> Path.expand()
   |> File.stream!()
   |> Enum.flat_map(fn line ->
@@ -224,7 +224,7 @@ entries =
 ### Learning Files
 
 ```
-~/.osa/learning/
+~/.daemon/learning/
 ├── interactions.jsonl   # Observed patterns from successful interactions
 ├── corrections.jsonl    # User-provided corrections
 └── errors.jsonl         # Tool errors for pattern analysis
@@ -234,12 +234,12 @@ entries =
 
 ## Filesystem (Structured Directories)
 
-OSA uses the filesystem for human-authored content and large binary assets.
+Daemon uses the filesystem for human-authored content and large binary assets.
 
 ### Directory Layout
 
 ```
-~/.osa/
+~/.daemon/
 ├── skills/                    # Custom SKILL.md files
 │   └── <skill-name>/
 │       └── SKILL.md
@@ -264,11 +264,11 @@ OSA uses the filesystem for human-authored content and large binary assets.
 - Always use `Path.expand/1` to resolve `~` in paths.
 - Always call `File.mkdir_p/1` before writing to ensure the directory exists.
 - Skills loaded from `priv/skills/` (built-in) take lower priority than
-  skills in `~/.osa/skills/` (user). The Tools.Registry merges both with
+  skills in `~/.daemon/skills/` (user). The Tools.Registry merges both with
   user skills overriding built-ins of the same name.
 
 ```elixir
-skills_dir = Path.expand("~/.osa/skills")
+skills_dir = Path.expand("~/.daemon/skills")
 File.mkdir_p!(skills_dir)
 
 skill_path = Path.join([skills_dir, skill_name, "SKILL.md"])

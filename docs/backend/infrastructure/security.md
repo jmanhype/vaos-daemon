@@ -1,6 +1,6 @@
 # Infrastructure: Security
 
-`Security.ShellPolicy` is the single source of truth for shell command validation across all OSA callers. Any subsystem that executes shell commands — the `shell_execute` tool, the Scheduler job runner, and the pre-tool-use security hook — delegates to this module.
+`Security.ShellPolicy` is the single source of truth for shell command validation across all Daemon callers. Any subsystem that executes shell commands — the `shell_execute` tool, the Scheduler job runner, and the pre-tool-use security hook — delegates to this module.
 
 ---
 

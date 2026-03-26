@@ -1,9 +1,9 @@
 # Permission Model
 
 Audience: operators configuring tool execution policies and developers
-integrating the OSA desktop app or building custom channel adapters.
+integrating the Daemon desktop app or building custom channel adapters.
 
-OSA uses a layered permission model for tool execution. The layers are:
+Daemon uses a layered permission model for tool execution. The layers are:
 shell command policy (always enforced), hook-level security checks, and
 optional user-facing permission dialogs (desktop app only).
 
@@ -42,7 +42,7 @@ Note: Lower priority number runs first. `spend_guard` (p8) and
 
 ### What security_check Blocks
 
-The `OptimalSystemAgent.Security.ShellPolicy` module defines the consolidated
+The `Daemon.Security.ShellPolicy` module defines the consolidated
 blocklist applied by `security_check` to any `shell_execute` call.
 
 **Blocked command names** (checked against the first token of each pipeline segment):
@@ -101,7 +101,7 @@ safe commands, configure an allowlist in the application config:
 
 ```elixir
 # config/runtime.exs
-config :optimal_system_agent, :shell_allowlist, [
+config :daemon, :shell_allowlist, [
   "ls", "cat", "echo", "pwd", "date",
   "git status", "git log", "git diff",
   "mix test", "mix compile",
@@ -117,7 +117,7 @@ Blocklist checks remain active and are applied in addition to the allowlist.
 
 ## Desktop App Permission Dialog
 
-The OSA desktop app displays a permission dialog when a tool with
+The Daemon desktop app displays a permission dialog when a tool with
 `:write_safe`, `:write_destructive`, or `:terminal` safety level is about
 to execute. The dialog shows:
 
@@ -149,7 +149,7 @@ YOLO mode does not bypass the security hook.
 
 ```bash
 # Via environment variable
-export OSA_YOLO=true
+export DAEMON_YOLO=true
 
 # Or via CLI at runtime
 /yolo on
@@ -157,7 +157,7 @@ export OSA_YOLO=true
 
 ```elixir
 # Programmatically
-Application.put_env(:optimal_system_agent, :yolo_mode, true)
+Application.put_env(:daemon, :yolo_mode, true)
 ```
 
 ### When to Use YOLO Mode
@@ -190,12 +190,12 @@ The agent loop tracks a `permission_tier` per session:
 | Tier | Tools Available | Description |
 |---|---|---|
 | `:full` | All tools | Default for trusted sessions. |
-| `:workspace` | File and shell tools scoped to `~/.osa/workspace/` | For sandboxed sessions. |
+| `:workspace` | File and shell tools scoped to `~/.daemon/workspace/` | For sandboxed sessions. |
 | `:read_only` | Read-only tools only | For viewer-role sessions or untrusted input. |
 
 ```elixir
 # Set tier when starting a session
-OptimalSystemAgent.Agent.Loop.process_message(session_id, message,
+Daemon.Agent.Loop.process_message(session_id, message,
   permission_tier: :workspace
 )
 ```

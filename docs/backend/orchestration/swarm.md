@@ -25,7 +25,7 @@ Patterns.parallel | pipeline | debate | review_loop
 SwarmMode synthesises all agent results  →  {:ok, swarm_id}
 ```
 
-`SwarmMode` is a GenServer (`OptimalSystemAgent.Agent.Orchestrator.SwarmMode`) with limits:
+`SwarmMode` is a GenServer (`Daemon.Agent.Orchestrator.SwarmMode`) with limits:
 - Maximum 10 concurrent swarms
 - Maximum 5 agents per swarm (configurable via `:max_agents`)
 - Default timeout 5 minutes per swarm

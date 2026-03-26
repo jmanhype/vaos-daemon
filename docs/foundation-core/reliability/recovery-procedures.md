@@ -7,7 +7,7 @@ with symptoms, explains what went wrong, and provides step-by-step recovery.
 
 ## Corrupted SQLite Database
 
-**Affected component:** `OptimalSystemAgent.Store.Repo` (Ecto/SQLite3)
+**Affected component:** `Daemon.Store.Repo` (Ecto/SQLite3)
 
 **Symptoms:**
 - `[SQLiteBridge] Failed to persist message:` errors in logs
@@ -20,10 +20,10 @@ during a write, disk full condition, or filesystem error.
 
 **Recovery:**
 
-1. Stop OSA:
+1. Stop Daemon:
    ```bash
    # If running as a release:
-   bin/osagent stop
+   bin/daemon stop
    # Or kill the Mix process if running in development
    ```
 
@@ -31,7 +31,7 @@ during a write, disk full condition, or filesystem error.
    ```bash
    # Default path (check config/config.exs for custom paths):
    ls -la priv/repo/osa.db
-   ls -la ~/.osa/data/osa.db
+   ls -la ~/.daemon/data/osa.db
    ```
 
 3. Attempt SQLite repair:
@@ -53,24 +53,24 @@ during a write, disk full condition, or filesystem error.
    rm priv/repo/osa.db
    mix ecto.setup
    ```
-   Session message history will be lost. Long-term memory in JSONL files (`~/.osa/memory/`)
+   Session message history will be lost. Long-term memory in JSONL files (`~/.daemon/memory/`)
    is stored separately and is not affected.
 
-6. Restart OSA and verify:
+6. Restart Daemon and verify:
    ```bash
    mix run --no-halt
    # Or for release:
-   bin/osagent start
+   bin/daemon start
    ```
 
 7. Verify the database:
    ```elixir
    # In IEx or via mix eval:
-   OptimalSystemAgent.Store.Repo.query!("SELECT count(*) FROM messages")
+   Daemon.Store.Repo.query!("SELECT count(*) FROM messages")
    ```
 
-**Prevention:** Ensure the OSA process receives a SIGTERM (not SIGKILL) on shutdown
-so Ecto can close connections cleanly. Avoid storing OSA data on network filesystems.
+**Prevention:** Ensure the Daemon process receives a SIGTERM (not SIGKILL) on shutdown
+so Ecto can close connections cleanly. Avoid storing Daemon data on network filesystems.
 
 ---
 
@@ -99,10 +99,10 @@ end)
 |> Enum.map(&Process.info(&1, [:registered_name, :message_queue_len, :current_function]))
 
 # Get info on a specific registered process:
-Process.info(Process.whereis(OptimalSystemAgent.Agent.Memory), [:message_queue_len, :current_function, :status])
+Process.info(Process.whereis(Daemon.Agent.Memory), [:message_queue_len, :current_function, :status])
 
 # Check if a GenServer responds:
-GenServer.call(OptimalSystemAgent.Agent.Memory, :ping, 2_000)
+GenServer.call(Daemon.Agent.Memory, :ping, 2_000)
 ```
 
 **Recovery — Option A: Kill and let supervisor restart**
@@ -112,11 +112,11 @@ kill the stuck process. The supervisor restarts it automatically:
 
 ```elixir
 # Find and kill a stuck GenServer:
-pid = Process.whereis(OptimalSystemAgent.Agent.Memory)
+pid = Process.whereis(Daemon.Agent.Memory)
 Process.exit(pid, :kill)
 
 # Verify it restarted:
-Process.whereis(OptimalSystemAgent.Agent.Memory) != pid
+Process.whereis(Daemon.Agent.Memory) != pid
 ```
 
 Wait 1–2 seconds for the supervisor to restart the process. Verify the new PID differs
@@ -129,13 +129,13 @@ to free resources and unblock the user:
 
 ```elixir
 # List all sessions:
-Registry.select(OptimalSystemAgent.SessionRegistry, [{{:"$1", :"$2", :"$3"}, [], [{{:"$1", :"$2", :"$3"}}]}])
+Registry.select(Daemon.SessionRegistry, [{{:"$1", :"$2", :"$3"}, [], [{{:"$1", :"$2", :"$3"}}]}])
 
 # Cancel a session's loop (signals the loop's cancel flag in ETS):
-OptimalSystemAgent.Agent.Loop.cancel("session_id_here")
+Daemon.Agent.Loop.cancel("session_id_here")
 
 # If cancel doesn't work, kill the process:
-case Registry.lookup(OptimalSystemAgent.SessionRegistry, "session_id_here") do
+case Registry.lookup(Daemon.SessionRegistry, "session_id_here") do
   [{pid, _}] -> Process.exit(pid, :kill)
   [] -> :not_found
 end
@@ -147,8 +147,8 @@ If multiple GenServers in a subsystem are stuck, restart the subsystem superviso
 
 ```elixir
 # Restart AgentServices subsystem (all agent services):
-Supervisor.terminate_child(OptimalSystemAgent.Supervisor, OptimalSystemAgent.Supervisors.AgentServices)
-Supervisor.restart_child(OptimalSystemAgent.Supervisor, OptimalSystemAgent.Supervisors.AgentServices)
+Supervisor.terminate_child(Daemon.Supervisor, Daemon.Supervisors.AgentServices)
+Supervisor.restart_child(Daemon.Supervisor, Daemon.Supervisors.AgentServices)
 ```
 
 Note: This approach is destructive — all sessions and agent state will be reset.
@@ -164,7 +164,7 @@ Use it only if individual process kills are insufficient.
 - BEAM memory grows over hours without recovery
 - `:observer` shows increasing memory in a specific process or ETS table
 - `Process.info(pid, :memory)` returns values over 100 MB for a single process
-- `:osa_event_handlers` ETS table grows unboundedly
+- `:daemon_event_handlers` ETS table grows unboundedly
 
 **Diagnosis:**
 
@@ -192,25 +192,25 @@ summary. If compaction is not occurring:
 
 ```elixir
 # Force compaction on a session:
-OptimalSystemAgent.Agent.Compactor.compact_session("session_id_here")
+Daemon.Agent.Compactor.compact_session("session_id_here")
 
 # Or restart the session (user will lose conversation history in memory):
-OptimalSystemAgent.Agent.Loop.cancel("session_id_here")
+Daemon.Agent.Loop.cancel("session_id_here")
 ```
 
 **Recovery — ETS table leaks**
 
-If `:osa_event_handlers` grows unboundedly, orphaned handlers may not be deregistered:
+If `:daemon_event_handlers` grows unboundedly, orphaned handlers may not be deregistered:
 
 ```elixir
 # Inspect handlers registered for a type:
-:ets.lookup(:osa_event_handlers, :user_message)
+:ets.lookup(:daemon_event_handlers, :user_message)
 
 # Clear all handlers for a type (use with caution):
-:ets.delete(:osa_event_handlers, :user_message)
+:ets.delete(:daemon_event_handlers, :user_message)
 
 # Restart Events.Bus to recompile the router:
-pid = Process.whereis(OptimalSystemAgent.Events.Bus)
+pid = Process.whereis(Daemon.Events.Bus)
 Process.exit(pid, :kill)
 ```
 
@@ -245,7 +245,7 @@ MiosaLLM.HealthChecker.state()
 MiosaLLM.HealthChecker.is_available?(:anthropic)
 
 # Test a provider directly:
-OptimalSystemAgent.Providers.Registry.chat(
+Daemon.Providers.Registry.chat(
   [%{role: "user", content: "ping"}],
   provider: :anthropic,
   max_tokens: 5
@@ -270,7 +270,7 @@ If a provider is experiencing a prolonged outage:
 
 ```bash
 # Set a different default provider via environment variable:
-export OSA_DEFAULT_PROVIDER=groq
+export DAEMON_DEFAULT_PROVIDER=groq
 export GROQ_API_KEY=your_key_here
 
 # Or via the /model command at runtime:
@@ -281,7 +281,7 @@ export GROQ_API_KEY=your_key_here
 
 ```elixir
 # Override provider for a session via ETS (no restart needed):
-:ets.insert(:osa_session_provider_overrides, {"session_id", :groq, "llama-3.3-70b-versatile"})
+:ets.insert(:daemon_session_provider_overrides, {"session_id", :groq, "llama-3.3-70b-versatile"})
 ```
 
 Or via the HTTP API:
@@ -295,7 +295,7 @@ curl -X POST http://localhost:8089/sessions/{id}/provider \
 
 ```elixir
 # Update the fallback chain without restart:
-Application.put_env(:optimal_system_agent, :fallback_chain, [:groq, :openai, :ollama])
+Application.put_env(:daemon, :fallback_chain, [:groq, :openai, :ollama])
 ```
 
 This takes effect immediately. The next LLM call that fails its primary provider
@@ -310,13 +310,13 @@ clean restart:
 
 ```bash
 # Graceful shutdown (sends SIGTERM, allows Ecto to close cleanly):
-bin/osagent stop
+bin/daemon stop
 
 # Wait for shutdown:
 sleep 5
 
 # Restart:
-bin/osagent start
+bin/daemon start
 
 # Or in development:
 pkill -f "beam.smp"  # Kill BEAM
@@ -332,5 +332,5 @@ curl http://localhost:8089/health
 curl http://localhost:8089/providers
 
 # Run the doctor command:
-mix run -e "OptimalSystemAgent.CLI.doctor()"
+mix run -e "Daemon.CLI.doctor()"
 ```

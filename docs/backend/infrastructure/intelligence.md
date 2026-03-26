@@ -1,6 +1,6 @@
 # Infrastructure: Intelligence (Proactive Mode)
 
-`Agent.ProactiveMode` is the central coordinator for OSA's autonomous behaviour. It gates all background-initiated LLM calls through rate limiting, budget enforcement, and permission tier checks, and delivers notifications to the active user session.
+`Agent.ProactiveMode` is the central coordinator for Daemon's autonomous behaviour. It gates all background-initiated LLM calls through rate limiting, budget enforcement, and permission tier checks, and delivers notifications to the active user session.
 
 ---
 
@@ -28,13 +28,13 @@ Disabled by default. Enable with `/proactive on` or `ProactiveMode.enable/0`.
 ## Configuration
 
 ```elixir
-config :optimal_system_agent,
-  proactive_mode: false    # initial enabled state (overridden by ~/.osa/config.json)
+config :daemon,
+  proactive_mode: false    # initial enabled state (overridden by ~/.daemon/config.json)
 ```
 
-Enabled state is persisted to `~/.osa/config.json` under the key `"proactive_mode"`. On restart, the GenServer reads this file to restore the previous state.
+Enabled state is persisted to `~/.daemon/config.json` under the key `"proactive_mode"`. On restart, the GenServer reads this file to restore the previous state.
 
-Activity is logged to `~/.osa/data/proactive_log.jsonl` in newline-delimited JSON. Up to 100 entries are kept in memory; the log file grows unbounded until cleared.
+Activity is logged to `~/.daemon/data/proactive_log.jsonl` in newline-delimited JSON. Up to 100 entries are kept in memory; the log file grows unbounded until cleared.
 
 ---
 
@@ -177,7 +177,7 @@ At startup, ProactiveMode registers a Bus handler for `:system_event` to transla
 When active, the greeting combines three parts:
 
 1. **Time greeting** — "Good morning/afternoon/evening" based on UTC hour.
-2. **"While you were away" summary** — activity log entries since the most recently modified session file in `~/.osa/sessions/`. Groups entries by type with counts.
+2. **"While you were away" summary** — activity log entries since the most recently modified session file in `~/.daemon/sessions/`. Groups entries by type with counts.
 3. **Scheduler hint** — active cron count, pending heartbeat count, active trigger count from `Scheduler.status/0`.
 
 Example output:
@@ -190,7 +190,7 @@ Good morning. While you were away: 2 autonomous_complete, 1 heartbeat. Active: 3
 
 ## Activity Log Format
 
-Each entry in `~/.osa/data/proactive_log.jsonl`:
+Each entry in `~/.daemon/data/proactive_log.jsonl`:
 
 ```json
 {"ts": "2026-03-08T10:30:00Z", "type": "autonomous_complete", "message": "Autonomous fix for: Disk at 95%"}

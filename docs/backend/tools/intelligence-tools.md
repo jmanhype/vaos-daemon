@@ -8,7 +8,7 @@ Intelligence tools give agents access to memory, learned patterns, semantic sear
 
 Search and retrieve information from long-term memory.
 
-**Module:** `OptimalSystemAgent.Tools.Builtins.MemoryRecall`
+**Module:** `Daemon.Tools.Builtins.MemoryRecall`
 **Safety:** `:read_only`
 
 ### Parameters
@@ -35,7 +35,7 @@ Returns the formatted memory text, or `"No relevant memories found for: <query>"
 
 Save important information to long-term memory.
 
-**Module:** `OptimalSystemAgent.Tools.Builtins.MemorySave`
+**Module:** `Daemon.Tools.Builtins.MemorySave`
 **Safety:** `:write_safe`
 
 ### Parameters
@@ -47,7 +47,7 @@ Save important information to long-term memory.
 
 ### Categories
 
-Common categories used across OSA:
+Common categories used across Daemon:
 - `preference` — user preferences and settings
 - `fact` — factual information about the project or domain
 - `decision` — architectural or design decisions
@@ -62,7 +62,7 @@ Calls `Memory.remember/2` which appends to `MEMORY.md` under the appropriate sec
 
 Search across long-term memory and learned patterns using keyword-based semantic matching.
 
-**Module:** `OptimalSystemAgent.Tools.Builtins.SemanticSearch`
+**Module:** `Daemon.Tools.Builtins.SemanticSearch`
 **Safety:** `:read_only`
 
 ### Parameters
@@ -100,7 +100,7 @@ Pattern output format:
 
 Full-text search across past conversation sessions using SQLite FTS5.
 
-**Module:** `OptimalSystemAgent.Tools.Builtins.SessionSearch`
+**Module:** `Daemon.Tools.Builtins.SessionSearch`
 **Safety:** `:read_only`
 
 ### Parameters
@@ -147,7 +147,7 @@ SessionSearch.index_session(session_id, %{
 
 MCTS-powered codebase indexer that uses Monte Carlo Tree Search to intelligently explore a directory and rank files by relevance to a goal.
 
-**Module:** `OptimalSystemAgent.Tools.Builtins.MCTSIndex`
+**Module:** `Daemon.Tools.Builtins.MCTSIndex`
 **Safety:** `:read_only`
 
 ### Parameters
@@ -183,7 +183,7 @@ Explored 847 nodes across 203 files in 50 iterations.
    → defmodule Users.Session | create_session | invalidate
 ```
 
-Delegates to `OptimalSystemAgent.MCTS.Indexer.run/3`.
+Delegates to `Daemon.MCTS.Indexer.run/3`.
 
 ---
 
@@ -191,7 +191,7 @@ Delegates to `OptimalSystemAgent.MCTS.Indexer.run/3`.
 
 Query or modify the semantic knowledge graph backed by MiosaKnowledge.
 
-**Module:** `OptimalSystemAgent.Tools.Builtins.Knowledge`
+**Module:** `Daemon.Tools.Builtins.Knowledge`
 **Safety:** `:write_safe`
 
 ### Parameters

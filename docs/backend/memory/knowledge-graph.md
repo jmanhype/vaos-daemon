@@ -1,17 +1,17 @@
 # Knowledge Graph Integration
 
-This document describes how `miosa_knowledge` integrates into OptimalSystemAgent (OSA). It covers supervision placement, context injection, the learning bridge, the tool interface, and the HTTP API. It does not describe the knowledge library itself — see `miosa_knowledge/README.md` for that.
+This document describes how `miosa_knowledge` integrates into Daemon (Daemon). It covers supervision placement, context injection, the learning bridge, the tool interface, and the HTTP API. It does not describe the knowledge library itself — see `miosa_knowledge/README.md` for that.
 
 ---
 
 ## Overview
 
-OSA maintains four independent knowledge layers:
+Daemon maintains four independent knowledge layers:
 
 | Layer | Module | Persistence | Scope |
 |---|---|---|---|
 | Long-term Memory | `Agent.Memory` | File (`tasks/memory.md`) | Global, append-only |
-| Learning Engine | `Agent.Learning` | ETS (`:osa_learning`) | Session, patterns + solutions |
+| Learning Engine | `Agent.Learning` | ETS (`:daemon_learning`) | Session, patterns + solutions |
 | Episodic Memory | `Agent.Memory.Episodic` | ETS | Session, event timeline |
 | Session Search | session search via tool | In-memory | Session, semantic similarity |
 
@@ -455,7 +455,7 @@ Returns all known errors and their solutions.
 ### Manual sync
 
 ```elixir
-OptimalSystemAgent.Agent.Memory.KnowledgeBridge.sync_now()
+Daemon.Agent.Memory.KnowledgeBridge.sync_now()
 ```
 
 Useful in tests or after bulk learning updates.

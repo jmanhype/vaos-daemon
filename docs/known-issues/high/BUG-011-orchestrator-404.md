@@ -2,7 +2,7 @@
 
 > **Severity:** HIGH
 > **Status:** Open
-> **Component:** `lib/optimal_system_agent/channels/http/api.ex`, `lib/optimal_system_agent/channels/http/api/orchestration_routes.ex`
+> **Component:** `lib/daemon/channels/http/api.ex`, `lib/daemon/channels/http/api/orchestration_routes.ex`
 > **Reported:** 2026-03-14
 
 ---

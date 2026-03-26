@@ -1,17 +1,17 @@
-# Extending OSA Services
+# Extending Daemon Services
 
 How to add new LLM providers, new tools, and new channel adapters. Each follows a
 behaviour contract. The system discovers and routes to your implementation automatically.
 
 ## Audience
 
-Elixir developers adding integrations to a running OSA instance.
+Elixir developers adding integrations to a running Daemon instance.
 
 ---
 
 ## Adding a New LLM Provider
 
-All providers implement `OptimalSystemAgent.Providers.Behaviour`:
+All providers implement `Daemon.Providers.Behaviour`:
 
 ```elixir
 @callback chat(messages :: list(message()), opts :: keyword()) :: chat_result()
@@ -29,7 +29,7 @@ If your provider speaks the OpenAI `/chat/completions` wire format, add it to
 compat providers (groq, deepseek, mistral, etc.) work.
 
 Add a config entry to `@provider_configs` in
-`lib/optimal_system_agent/providers/openai_compat_provider.ex`:
+`lib/daemon/providers/openai_compat_provider.ex`:
 
 ```elixir
 my_provider: %{
@@ -53,7 +53,7 @@ Set the environment variable at runtime:
 MY_PROVIDER_API_KEY=sk-...
 ```
 
-OSA reads `Application.get_env(:optimal_system_agent, :my_provider_api_key)` automatically
+Daemon reads `Application.get_env(:daemon, :my_provider_api_key)` automatically
 via the `:"#{provider}_api_key"` pattern in `OpenAICompatProvider.chat/3`.
 
 ### Option B: Native Protocol Provider
@@ -61,9 +61,9 @@ via the `:"#{provider}_api_key"` pattern in `OpenAICompatProvider.chat/3`.
 When the provider has a non-OpenAI wire format (like Anthropic or Google), create a module:
 
 ```elixir
-defmodule OptimalSystemAgent.Providers.MyProvider do
+defmodule Daemon.Providers.MyProvider do
   @moduledoc "MyProvider native API integration."
-  @behaviour OptimalSystemAgent.Providers.Behaviour
+  @behaviour Daemon.Providers.Behaviour
   require Logger
 
   @impl true
@@ -77,7 +77,7 @@ defmodule OptimalSystemAgent.Providers.MyProvider do
 
   @impl true
   def chat(messages, opts) do
-    api_key = Application.get_env(:optimal_system_agent, :my_provider_api_key)
+    api_key = Application.get_env(:daemon, :my_provider_api_key)
 
     unless api_key do
       {:error, "MY_PROVIDER_API_KEY not configured"}
@@ -126,7 +126,7 @@ end
 Register in `Providers.Registry`:
 
 ```elixir
-my_provider: OptimalSystemAgent.Providers.MyProvider,
+my_provider: Daemon.Providers.MyProvider,
 ```
 
 ### Registering a Provider at Runtime
@@ -134,7 +134,7 @@ my_provider: OptimalSystemAgent.Providers.MyProvider,
 For dynamic registration (e.g., in tests or plugins):
 
 ```elixir
-OptimalSystemAgent.Providers.Registry.register_provider(:my_provider, MyModule)
+Daemon.Providers.Registry.register_provider(:my_provider, MyModule)
 ```
 
 The module must export `chat/2`, `name/0`, and `default_model/0` or registration is rejected.
@@ -143,7 +143,7 @@ The module must export `chat/2`, `name/0`, and `default_model/0` or registration
 
 ## Adding a New Tool
 
-Tools implement `MiosaTools.Behaviour` (or `OptimalSystemAgent.Tools.Behaviour` in older paths).
+Tools implement `MiosaTools.Behaviour` (or `Daemon.Tools.Behaviour` in older paths).
 The registry discovers tools by name and exposes them to the LLM via function calling.
 
 ### Tool Behaviour
@@ -160,7 +160,7 @@ The registry discovers tools by name and exposes them to the LLM via function ca
 ### Minimal Tool Example
 
 ```elixir
-defmodule OptimalSystemAgent.Tools.Builtins.MyTool do
+defmodule Daemon.Tools.Builtins.MyTool do
   @moduledoc "Brief description for tool registry docs."
   @behaviour MiosaTools.Behaviour
 
@@ -219,13 +219,13 @@ end
 ```
 
 Register the tool in `Tools.Registry.load_builtin_tools/0` in
-`lib/optimal_system_agent/tools/registry.ex`:
+`lib/daemon/tools/registry.ex`:
 
 ```elixir
 defp load_builtin_tools do
   %{
     # ... existing tools ...
-    "my_tool" => OptimalSystemAgent.Tools.Builtins.MyTool,
+    "my_tool" => Daemon.Tools.Builtins.MyTool,
   }
 end
 ```
@@ -234,7 +234,7 @@ The tool becomes immediately available after the next app start. To register at 
 without a restart:
 
 ```elixir
-OptimalSystemAgent.Tools.Registry.register(OptimalSystemAgent.Tools.Builtins.MyTool)
+Daemon.Tools.Registry.register(Daemon.Tools.Builtins.MyTool)
 ```
 
 ### SKILL.md Tools (No Elixir Required)
@@ -242,7 +242,7 @@ OptimalSystemAgent.Tools.Registry.register(OptimalSystemAgent.Tools.Builtins.MyT
 For prompt-only tools (workflows, not code execution), create a SKILL.md file:
 
 ```
-~/.osa/skills/my-skill/SKILL.md
+~/.daemon/skills/my-skill/SKILL.md
 ```
 
 ```markdown
@@ -262,7 +262,7 @@ When this skill is active, follow these steps:
 2. Second step
 ```
 
-OSA loads user skills from `~/.osa/skills/` at boot. Built-in skills live in `priv/skills/`.
+Daemon loads user skills from `~/.daemon/skills/` at boot. Built-in skills live in `priv/skills/`.
 Skills trigger by keyword match against the user's message and inject instructions into the
 system prompt for that turn.
 
@@ -270,7 +270,7 @@ system prompt for that turn.
 
 ## Adding a New Channel Adapter
 
-Channel adapters implement `OptimalSystemAgent.Channels.Behaviour`:
+Channel adapters implement `Daemon.Channels.Behaviour`:
 
 ```elixir
 @callback channel_name() :: atom()
@@ -285,7 +285,7 @@ Channel adapters implement `OptimalSystemAgent.Channels.Behaviour`:
 The pattern from `Channels.Telegram` and `Channels.Discord` is consistent across all adapters:
 
 ```elixir
-defmodule OptimalSystemAgent.Channels.MyChannel do
+defmodule Daemon.Channels.MyChannel do
   @moduledoc """
   MyPlatform channel adapter.
 
@@ -296,26 +296,26 @@ defmodule OptimalSystemAgent.Channels.MyChannel do
     MY_CHANNEL_TOKEN — bot token for authentication
   """
   use GenServer
-  @behaviour OptimalSystemAgent.Channels.Behaviour
+  @behaviour Daemon.Channels.Behaviour
   require Logger
 
-  alias OptimalSystemAgent.Agent.Loop
-  alias OptimalSystemAgent.Channels.Session
+  alias Daemon.Agent.Loop
+  alias Daemon.Channels.Session
 
   @api_base "https://api.myplatform.com/v1"
   @send_timeout 10_000
 
   defstruct [:token, connected: false]
 
-  @impl OptimalSystemAgent.Channels.Behaviour
+  @impl Daemon.Channels.Behaviour
   def channel_name, do: :my_channel
 
-  @impl OptimalSystemAgent.Channels.Behaviour
+  @impl Daemon.Channels.Behaviour
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  @impl OptimalSystemAgent.Channels.Behaviour
+  @impl Daemon.Channels.Behaviour
   def send_message(chat_id, message, opts \\ []) do
     case Process.whereis(__MODULE__) do
       nil -> {:error, :not_started}
@@ -323,7 +323,7 @@ defmodule OptimalSystemAgent.Channels.MyChannel do
     end
   end
 
-  @impl OptimalSystemAgent.Channels.Behaviour
+  @impl Daemon.Channels.Behaviour
   def connected? do
     case Process.whereis(__MODULE__) do
       nil -> false
@@ -333,7 +333,7 @@ defmodule OptimalSystemAgent.Channels.MyChannel do
 
   @impl true
   def init(_opts) do
-    token = Application.get_env(:optimal_system_agent, :my_channel_token)
+    token = Application.get_env(:daemon, :my_channel_token)
 
     unless token do
       Logger.info("[MyChannel] MY_CHANNEL_TOKEN not set — adapter inactive")
@@ -384,8 +384,8 @@ end
 Add the adapter to `Channels.Starter` so it starts with the configured channels:
 
 ```elixir
-# In lib/optimal_system_agent/channels/starter.ex, add to the channel list:
-{OptimalSystemAgent.Channels.MyChannel, []}
+# In lib/daemon/channels/starter.ex, add to the channel list:
+{Daemon.Channels.MyChannel, []}
 ```
 
 Add a webhook route in `Channels.HTTP` following the pattern of existing channel routes.

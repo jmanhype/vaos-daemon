@@ -24,7 +24,7 @@ where relevant.
 ## Reproduction Steps
 
 ```
-1. Start OSA with `mix osa.serve`
+1. Start Daemon with `mix daemon.serve`
 2. Send message: "..."
 3. Observe: ...
 ```

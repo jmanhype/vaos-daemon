@@ -1,7 +1,7 @@
 # What is the BEAM VM and OTP?
 
-This guide explains the runtime that powers OSA. If you have only ever written
-Python, JavaScript, or Go, several things about OSA's architecture will seem
+This guide explains the runtime that powers Daemon. If you have only ever written
+Python, JavaScript, or Go, several things about Daemon's architecture will seem
 strange until you understand the BEAM and OTP.
 
 ---
@@ -16,7 +16,7 @@ requirement and it has been in production at telecoms companies ever since.
 
 **Elixir** is a modern language that runs on the same virtual machine as Erlang.
 It was created in 2011 and offers a friendlier syntax, better tooling, and a
-larger ecosystem while keeping everything that makes Erlang reliable. OSA is
+larger ecosystem while keeping everything that makes Erlang reliable. Daemon is
 written in Elixir.
 
 The relationship is like this: Elixir is to Erlang what Kotlin is to Java, or
@@ -49,7 +49,7 @@ This is different from OS threads (which cost megabytes each) or OS processes
 (which cost even more). Think of BEAM processes as extremely cheap actors that
 the runtime schedules for you.
 
-In OSA, each chat session runs in its own process. Crashes are isolated. One
+In Daemon, each chat session runs in its own process. Crashes are isolated. One
 broken session cannot affect another.
 
 **2. Isolated memory**
@@ -68,7 +68,7 @@ The BEAM scheduler is preemptive. It gives each process a limited number of
 "reductions" (roughly equivalent to function calls) before switching to another
 process. No process can monopolize the CPU by running an infinite loop.
 
-This is why OSA stays responsive even when the agent loop is deep in a reasoning
+This is why Daemon stays responsive even when the agent loop is deep in a reasoning
 cycle. The scheduler keeps all processes moving.
 
 **4. Fault tolerance**
@@ -81,7 +81,7 @@ them gracefully. We cover this below under OTP.
 
 You can upgrade running Elixir code without stopping the system. The BEAM
 supports two versions of a module in memory simultaneously during an upgrade.
-OSA uses a related technique with goldrush: compiled routing modules are
+Daemon uses a related technique with goldrush: compiled routing modules are
 replaced at boot and when new tools are registered.
 
 ---
@@ -122,7 +122,7 @@ receive do
 end
 ```
 
-OSA's event bus, session loops, and tool calls all work through this mechanism.
+Daemon's event bus, session loops, and tool calls all work through this mechanism.
 When the agent loop needs an LLM response, it sends a message to the provider
 process and waits for a reply.
 
@@ -164,7 +164,7 @@ defmodule Counter do
 end
 ```
 
-OSA uses GenServer extensively: the event bus, tool registry, provider registry,
+Daemon uses GenServer extensively: the event bus, tool registry, provider registry,
 memory, orchestrator, scheduler, and more are all GenServers.
 
 ---
@@ -221,11 +221,11 @@ Supervisor
 
 ---
 
-## Why OSA Chose Elixir and OTP
+## Why Daemon Chose Elixir and OTP
 
-OSA's requirements map directly onto what Elixir and OTP were built for:
+Daemon's requirements map directly onto what Elixir and OTP were built for:
 
-| OSA requirement | OTP solution |
+| Daemon requirement | OTP solution |
 |---|---|
 | Each chat session is isolated | Each session is a separate process |
 | Sessions can crash without affecting others | Process isolation + supervision |
@@ -244,6 +244,6 @@ OTP gives you by default.
 ## Next Steps
 
 Now that you understand processes, GenServer, and supervisors, read
-[supervision-trees.md](./supervision-trees.md) to see how OSA organizes all of
+[supervision-trees.md](./supervision-trees.md) to see how Daemon organizes all of
 its processes into a four-subsystem hierarchy and why each subsystem uses the
 restart strategy it does.

@@ -1,13 +1,13 @@
 # Scaling Guide
 
-Audience: operators running OSA at higher loads or tuning for resource-constrained environments.
+Audience: operators running Daemon at higher loads or tuning for resource-constrained environments.
 
 ## BEAM VM Fundamentals
 
-OSA runs on the BEAM (Erlang Virtual Machine). Key properties that affect scaling:
+Daemon runs on the BEAM (Erlang Virtual Machine). Key properties that affect scaling:
 
 - **Schedulers:** The BEAM creates one OS thread per CPU core by default. The default of `+S <cores>` is appropriate for most workloads.
-- **Process model:** Each agent session spawns several lightweight BEAM processes (GenServers). The BEAM can comfortably handle hundreds of thousands of processes; OSA's per-session overhead is low.
+- **Process model:** Each agent session spawns several lightweight BEAM processes (GenServers). The BEAM can comfortably handle hundreds of thousands of processes; Daemon's per-session overhead is low.
 - **Memory:** BEAM memory is managed per-process with per-process heaps. Garbage collection is incremental and never stops all schedulers simultaneously.
 
 ## Process Count
@@ -37,7 +37,7 @@ For CPU-bound workloads (local Ollama with large models), the default scheduler 
 export ELIXIR_ERL_OPTIONS="+SDio 16"
 ```
 
-OSA's main bottleneck is LLM API latency, not CPU. Scheduler tuning has minimal impact unless you are running many concurrent sessions with local models.
+Daemon's main bottleneck is LLM API latency, not CPU. Scheduler tuning has minimal impact unless you are running many concurrent sessions with local models.
 
 ## SQLite Connection Pool
 
@@ -61,7 +61,7 @@ For high concurrency, set `POOL_SIZE` in conjunction with PostgreSQL's `max_conn
 
 ## ETS Table Limits
 
-OSA creates 7 named ETS tables at startup. Named tables are global to the node and do not scale horizontally. They are bounded by the data OSA writes to them — entries are cleared when sessions end.
+Daemon creates 7 named ETS tables at startup. Named tables are global to the node and do not scale horizontally. They are bounded by the data Daemon writes to them — entries are cleared when sessions end.
 
 Monitor total ETS memory:
 
@@ -72,26 +72,26 @@ Monitor total ETS memory:
 If ETS memory grows unboundedly, the most likely cause is session cleanup not running (e.g., a channel adapter crash before the session end hook fires). Investigate with:
 
 ```elixir
-:ets.info(:osa_cancel_flags, :size)
-:ets.info(:osa_files_read, :size)
-:ets.info(:osa_pending_questions, :size)
+:ets.info(:daemon_cancel_flags, :size)
+:ets.info(:daemon_files_read, :size)
+:ets.info(:daemon_pending_questions, :size)
 ```
 
 ## Provider Rate Limit Management
 
-Cloud LLM providers enforce rate limits on requests per minute (RPM) and tokens per minute (TPM). OSA does not implement automatic provider-level rate limiting or backoff beyond what the HTTP client (`req`) provides.
+Cloud LLM providers enforce rate limits on requests per minute (RPM) and tokens per minute (TPM). Daemon does not implement automatic provider-level rate limiting or backoff beyond what the HTTP client (`req`) provides.
 
 ### Strategies
 
-**Provider rotation:** Set `OSA_FALLBACK_CHAIN` to list multiple providers. OSA will automatically fail over to the next provider when a call fails (including 429 rate limit responses).
+**Provider rotation:** Set `DAEMON_FALLBACK_CHAIN` to list multiple providers. Daemon will automatically fail over to the next provider when a call fails (including 429 rate limit responses).
 
 ```bash
-OSA_FALLBACK_CHAIN=anthropic,openai,groq
+DAEMON_FALLBACK_CHAIN=anthropic,openai,groq
 ```
 
-**Per-call budget limit:** Set `OSA_PER_CALL_LIMIT_USD` to a low value to prevent runaway calls during retries.
+**Per-call budget limit:** Set `DAEMON_PER_CALL_LIMIT_USD` to a low value to prevent runaway calls during retries.
 
-**Session isolation:** Each agent session is independent. Sessions do not share a rate limit pool at the OSA level — rate limits are enforced by the provider per API key.
+**Session isolation:** Each agent session is independent. Sessions do not share a rate limit pool at the Daemon level — rate limits are enforced by the provider per API key.
 
 **Multiple API keys:** If running many concurrent sessions against one provider, distribute load across multiple API keys (one per session pool) using session-level provider overrides via the hot-swap API:
 
@@ -109,14 +109,14 @@ Ollama serializes inference requests on a single GPU. Concurrent sessions sharin
 
 ## Memory Tuning
 
-The main sources of heap growth in OSA:
+The main sources of heap growth in Daemon:
 
 | Source | Mitigation |
 |--------|-----------|
 | Large tool outputs | `max_tool_output_bytes` is 50 KB by default. Reduce to 20 KB for memory-constrained environments. |
 | Long context windows | Compaction thresholds (`compaction_warn: 0.80`, `compaction_aggressive: 0.85`, `compaction_emergency: 0.95`) control when history is compressed. Lower these if memory is constrained. |
 | Vault observation buffer | `vault_observation_flush_interval: 60_000` (1 minute) controls how long observations buffer in memory before flushing to disk. |
-| Session JSONL files | Sessions accumulate on disk. Set up periodic pruning of old files in `~/.osa/sessions/`. |
+| Session JSONL files | Sessions accumulate on disk. Set up periodic pruning of old files in `~/.daemon/sessions/`. |
 
 ## Binary Memory
 
@@ -130,11 +130,11 @@ If binary memory grows steadily, check for sessions holding references to large 
 
 ## Horizontal Scaling
 
-OSA is designed as a single-node agent. The BEAM supports clustering (`Node.connect/1`) but OSA does not implement distributed state. Horizontal scaling approaches:
+Daemon is designed as a single-node agent. The BEAM supports clustering (`Node.connect/1`) but Daemon does not implement distributed state. Horizontal scaling approaches:
 
-- **Sidecar per user:** Run one OSA instance per user or team. Each instance has its own `~/.osa/` data directory and SQLite database.
-- **Fleet mode:** The optional fleet subsystem (`OSA_FLEET_ENABLED=true`) registers remote agent instances and dispatches tasks across them. See the fleet documentation for details.
-- **Load balancer + shared PostgreSQL:** Multiple OSA instances can share a PostgreSQL platform database when `DATABASE_URL` is configured, allowing session routing across instances.
+- **Sidecar per user:** Run one Daemon instance per user or team. Each instance has its own `~/.daemon/` data directory and SQLite database.
+- **Fleet mode:** The optional fleet subsystem (`DAEMON_FLEET_ENABLED=true`) registers remote agent instances and dispatches tasks across them. See the fleet documentation for details.
+- **Load balancer + shared PostgreSQL:** Multiple Daemon instances can share a PostgreSQL platform database when `DATABASE_URL` is configured, allowing session routing across instances.
 
 ## Container Resource Limits
 
@@ -148,4 +148,4 @@ services:
     cpus: "1.0"           # 0.5 minimum, 2.0 for heavy concurrent use
 ```
 
-For sandbox execution (`OSA_SANDBOX_ENABLED=true`), each sandboxed command spawns a Docker container with its own limits (`sandbox_max_memory: "256m"`, `sandbox_max_cpu: "0.5"`). Account for these in host resource planning.
+For sandbox execution (`DAEMON_SANDBOX_ENABLED=true`), each sandboxed command spawns a Docker container with its own limits (`sandbox_max_memory: "256m"`, `sandbox_max_cpu: "0.5"`). Account for these in host resource planning.

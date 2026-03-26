@@ -1,6 +1,6 @@
 # Memory Store
 
-Primary memory system for OSA. Manages conversation session history and long-term cross-session storage via the `miosa_memory` package.
+Primary memory system for Daemon. Manages conversation session history and long-term cross-session storage via the `miosa_memory` package.
 
 ## Two Storage Planes
 
@@ -53,7 +53,7 @@ Valid roles: `user`, `assistant`, `system`, `tool`.
 `summarize/1` returns a compact string for display: the first system message (if present), an omission count if messages were skipped, and the last 5 messages truncated to 200 characters each.
 
 ```
-[system] You are OSA, an AI agent...
+[system] You are Daemon, an AI agent...
 ... (42 messages omitted) ...
 [user] Run the tests
 [assistant] Running mix test...
@@ -78,12 +78,12 @@ All calls other than `start_session/1` and `load/1` are `GenServer.call` to the 
 
 ## SQLite Secondary Store (Dual-Write)
 
-`OptimalSystemAgent.Agent.Memory.SQLiteBridge` implements a secondary store contract consumed by `MiosaMemory.Store`. It writes every session message to SQLite via Ecto, enabling SQL-level queries across sessions.
+`Daemon.Agent.Memory.SQLiteBridge` implements a secondary store contract consumed by `MiosaMemory.Store`. It writes every session message to SQLite via Ecto, enabling SQL-level queries across sessions.
 
 Configured via:
 
 ```elixir
-config :miosa_memory, secondary_store: OptimalSystemAgent.Agent.Memory.SQLiteBridge
+config :miosa_memory, secondary_store: Daemon.Agent.Memory.SQLiteBridge
 ```
 
 ### SQLiteBridge Contract
@@ -209,27 +209,27 @@ Memory injections appear as system-role entries prefixed with `[memory:<key>]`.
 
 ---
 
-## OSA Agent Alias
+## Daemon Agent Alias
 
-`OptimalSystemAgent.Agent.Memory` delegates to `MiosaMemory.Store`. It is the stable OSA-scoped API surface; callers should use it rather than calling `MiosaMemory.Store` directly.
+`Daemon.Agent.Memory` delegates to `MiosaMemory.Store`. It is the stable OSA-scoped API surface; callers should use it rather than calling `MiosaMemory.Store` directly.
 
 ```elixir
 # Session operations
-OptimalSystemAgent.Agent.Memory.append(session_id, entry)
-OptimalSystemAgent.Agent.Memory.load_session(session_id)
-OptimalSystemAgent.Agent.Memory.resume_session(session_id)
-OptimalSystemAgent.Agent.Memory.list_sessions()
-OptimalSystemAgent.Agent.Memory.session_stats(session_id)
+Daemon.Agent.Memory.append(session_id, entry)
+Daemon.Agent.Memory.load_session(session_id)
+Daemon.Agent.Memory.resume_session(session_id)
+Daemon.Agent.Memory.list_sessions()
+Daemon.Agent.Memory.session_stats(session_id)
 
 # Long-term memory
-OptimalSystemAgent.Agent.Memory.remember(content, category)   # store to "general"
-OptimalSystemAgent.Agent.Memory.recall()                       # list all
-OptimalSystemAgent.Agent.Memory.recall_relevant(message)       # keyword match
-OptimalSystemAgent.Agent.Memory.search(query, opts)
+Daemon.Agent.Memory.remember(content, category)   # store to "general"
+Daemon.Agent.Memory.recall()                       # list all
+Daemon.Agent.Memory.recall_relevant(message)       # keyword match
+Daemon.Agent.Memory.search(query, opts)
 
 # Maintenance
-OptimalSystemAgent.Agent.Memory.archive(max_age_days)          # remove old entries
-OptimalSystemAgent.Agent.Memory.memory_stats()
+Daemon.Agent.Memory.archive(max_age_days)          # remove old entries
+Daemon.Agent.Memory.memory_stats()
 ```
 
 ## See Also

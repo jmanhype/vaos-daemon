@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document maps each OSA subsystem to its ownership scope, primary
+This document maps each Daemon subsystem to its ownership scope, primary
 maintainer team, and the key interfaces it exposes to other subsystems.
 Ownership means responsibility for design decisions, review authority over
 changes, and the obligation to maintain tests and documentation.
@@ -18,7 +18,7 @@ into which others.
 
 ### Core Agent Loop
 
-**Scope**: `lib/optimal_system_agent/agent/loop/`
+**Scope**: `lib/daemon/agent/loop/`
 
 **Responsible for**: The main agentic loop — receiving channel messages,
 building context, calling LLMs, executing tools, persisting results, and
@@ -42,7 +42,7 @@ returning responses.
 
 ### Providers
 
-**Scope**: `lib/optimal_system_agent/providers/`
+**Scope**: `lib/daemon/providers/`
 
 **Responsible for**: LLM provider adapters, provider health tracking, and
 the goldrush-compiled provider router.
@@ -65,7 +65,7 @@ the goldrush-compiled provider router.
 
 ### Channels
 
-**Scope**: `lib/optimal_system_agent/channels/`
+**Scope**: `lib/daemon/channels/`
 
 **Responsible for**: Channel adapters that bridge external communication
 protocols to the agent loop. Each channel adapter is a supervised GenServer.
@@ -89,7 +89,7 @@ Events.Bus (channel connected/disconnected events)
 
 ### Tools
 
-**Scope**: `lib/optimal_system_agent/tools/`
+**Scope**: `lib/daemon/tools/`
 
 **Responsible for**: Tool registration, goldrush-compiled dispatch, tool
 result caching, and the `MiosaTools.Behaviour` contract that all tools implement.
@@ -110,7 +110,7 @@ result caching, and the `MiosaTools.Behaviour` contract that all tools implement
 
 ### Memory
 
-**Scope**: `lib/optimal_system_agent/agent/memory/`
+**Scope**: `lib/daemon/agent/memory/`
 
 **Responsible for**: Working memory, episodic memory, conversation history
 persistence (SQLite), memory taxonomy, and the knowledge bridge.
@@ -133,7 +133,7 @@ persistence (SQLite), memory taxonomy, and the knowledge bridge.
 
 ### Vault
 
-**Scope**: `lib/optimal_system_agent/vault/`
+**Scope**: `lib/daemon/vault/`
 
 **Responsible for**: Secret storage, retrieval, and rotation. Provides a
 safe way for tools and integrations to access credentials without hard-coding
@@ -153,7 +153,7 @@ them.
 
 ### Events
 
-**Scope**: `lib/optimal_system_agent/events/`
+**Scope**: `lib/daemon/events/`
 
 **Responsible for**: The goldrush-compiled event bus, dead letter queue,
 event struct definitions, event classification (Signal Theory), and failure
@@ -177,7 +177,7 @@ mode detection.
 
 ### Hooks
 
-**Scope**: `lib/optimal_system_agent/agent/hooks.ex`
+**Scope**: `lib/daemon/agent/hooks.ex`
 
 **Responsible for**: The hook pipeline that intercepts pre/post LLM calls
 and pre/post tool calls. Hooks are the extension point for spend guards,
@@ -199,7 +199,7 @@ safety checks, learning capture, and telemetry.
 
 ### Commands
 
-**Scope**: `lib/optimal_system_agent/commands/`
+**Scope**: `lib/daemon/commands/`
 
 **Responsible for**: Slash command registration and dispatch. Built-in
 commands, custom commands, and agent-created commands are all registered here.
@@ -217,7 +217,7 @@ commands, custom commands, and agent-created commands are all registered here.
 
 ### Sandbox
 
-**Scope**: `lib/optimal_system_agent/sandbox/`
+**Scope**: `lib/daemon/sandbox/`
 
 **Responsible for**: Isolated code execution environments. Supports safe,
 restricted, and unrestricted execution modes.
@@ -234,7 +234,7 @@ restricted, and unrestricted execution modes.
 
 ### Intelligence
 
-**Scope**: `lib/optimal_system_agent/intelligence/`
+**Scope**: `lib/daemon/intelligence/`
 
 **Responsible for**: Signal Theory communication intelligence — conversation
 tracking, contact detection, proactive monitoring. Dormant until wired to a
@@ -249,7 +249,7 @@ session.
 
 ### Platform
 
-**Scope**: `lib/optimal_system_agent/platform/`
+**Scope**: `lib/daemon/platform/`
 
 **Responsible for**: Optional PostgreSQL-backed platform features — multi-tenant
 management, AMQP event publishing.
@@ -264,7 +264,7 @@ management, AMQP event publishing.
 
 ### Fleet
 
-**Scope**: `lib/optimal_system_agent/fleet/`
+**Scope**: `lib/daemon/fleet/`
 
 **Responsible for**: Fleet management for multi-agent deployments. Agent
 registration, sentinel monitoring, and fleet-wide coordination.
@@ -278,7 +278,7 @@ registration, sentinel monitoring, and fleet-wide coordination.
 
 ### Swarm
 
-**Scope**: `lib/optimal_system_agent/agent/orchestrator/`
+**Scope**: `lib/daemon/agent/orchestrator/`
 
 **Responsible for**: Multi-agent coordination within a single node. Mailbox,
 SwarmMode, and AgentPool for parallel agent task execution.
@@ -294,7 +294,7 @@ SwarmMode, and AgentPool for parallel agent task execution.
 
 ### MCP
 
-**Scope**: `lib/optimal_system_agent/mcp/`
+**Scope**: `lib/daemon/mcp/`
 
 **Responsible for**: Model Context Protocol client — server lifecycle,
 JSON-RPC handshake, tool enumeration, and tool call dispatch.
@@ -315,7 +315,7 @@ JSON-RPC handshake, tool enumeration, and tool call dispatch.
 
 ### Scheduler
 
-**Scope**: `lib/optimal_system_agent/agent/scheduler/`
+**Scope**: `lib/daemon/agent/scheduler/`
 
 **Responsible for**: Cron-style task scheduling and time-based agent triggers.
 

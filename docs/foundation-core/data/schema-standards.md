@@ -2,7 +2,7 @@
 
 Audience: contributors adding new database tables or modifying existing ones.
 
-This document defines the conventions used across all OSA Ecto schemas and
+This document defines the conventions used across all Daemon Ecto schemas and
 migrations. All new schema work must follow these standards.
 
 ---
@@ -12,7 +12,7 @@ migrations. All new schema work must follow these standards.
 ### Module Structure
 
 ```elixir
-defmodule OptimalSystemAgent.Store.MyResource do
+defmodule Daemon.Store.MyResource do
   @moduledoc """
   One-paragraph description of what this schema represents and why it exists.
   """
@@ -29,7 +29,7 @@ defmodule OptimalSystemAgent.Store.MyResource do
     field :notes,      :string
 
     # Associations last
-    belongs_to :session, OptimalSystemAgent.Store.Session
+    belongs_to :session, Daemon.Store.Session
 
     timestamps()
   end
@@ -199,7 +199,7 @@ Migrations use UTC timestamps in the filename:
 priv/repo/migrations/YYYYMMDDHHMMSS_description.exs
 ```
 
-Use the OSA convention of date-only precision for manual migrations:
+Use the Daemon convention of date-only precision for manual migrations:
 
 ```
 20260302000000_add_session_fts.exs
@@ -208,7 +208,7 @@ Use the OSA convention of date-only precision for manual migrations:
 ### Migration Structure
 
 ```elixir
-defmodule OptimalSystemAgent.Store.Repo.Migrations.AddMyTable do
+defmodule Daemon.Store.Repo.Migrations.AddMyTable do
   use Ecto.Migration
 
   def change do

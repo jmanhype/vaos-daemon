@@ -1,19 +1,19 @@
 # Runtime Behavior
 
-Audience: operators and developers who need to understand what OSA does at
+Audience: operators and developers who need to understand what Daemon does at
 runtime, how it recovers from failures, and what state survives restarts.
 
 ---
 
 ## OTP Supervision Guarantees
 
-OSA uses four subsystem supervisors under a top-level `:rest_for_one`
+Daemon uses four subsystem supervisors under a top-level `:rest_for_one`
 supervisor. Each subsystem has its own failure semantics.
 
 ### Top-level: rest_for_one
 
 ```
-OptimalSystemAgent.Supervisor  (rest_for_one)
+Daemon.Supervisor  (rest_for_one)
 ├── Platform.Repo              (optional)
 ├── Task.Supervisor
 ├── Supervisors.Infrastructure
@@ -120,12 +120,12 @@ survive any GenServer restart:
 
 | Table | What it holds |
 |-------|--------------|
-| `:osa_cancel_flags` | Per-session cancellation flags |
-| `:osa_files_read` | Read-before-write tracking |
-| `:osa_survey_answers` | Pending ask_user answers |
-| `:osa_context_cache` | Ollama model context sizes |
-| `:osa_session_provider_overrides` | Hot-swapped provider/model per session |
-| `:osa_pending_questions` | Questions blocking the agent loop |
+| `:daemon_cancel_flags` | Per-session cancellation flags |
+| `:daemon_files_read` | Read-before-write tracking |
+| `:daemon_survey_answers` | Pending ask_user answers |
+| `:daemon_context_cache` | Ollama model context sizes |
+| `:daemon_session_provider_overrides` | Hot-swapped provider/model per session |
+| `:daemon_pending_questions` | Questions blocking the agent loop |
 
 ETS tables created inside a GenServer's `init/1` are owned by that GenServer
 and are dropped when it crashes.
@@ -159,13 +159,13 @@ reregisters tools from the supervisor's `init/1`.
 
 ## Memory Usage
 
-OSA is designed for long-running operation on developer hardware. Memory
+Daemon is designed for long-running operation on developer hardware. Memory
 management strategies:
 
 ### ETS
 
 ETS tables use BEAM-managed memory outside of the GC heap. Large tables
-(e.g., `:osa_hooks`) grow slowly and are bounded by the number of registered
+(e.g., `:daemon_hooks`) grow slowly and are bounded by the number of registered
 hooks. Tables are not cleared between sessions — entries accumulate until
 the application restarts or an explicit delete is called.
 
@@ -208,12 +208,12 @@ sessions. Counters are persisted to SQLite after each tool call.
 ## Provider Fallback
 
 When the primary provider fails (HTTP 5xx, timeout, circuit breaker open),
-OSA automatically tries the next provider in the fallback chain:
+Daemon automatically tries the next provider in the fallback chain:
 
 1. The chain is auto-detected from configured API keys at startup.
 2. Ollama is included only if it is reachable at boot (TCP check).
 3. The active provider is removed from its own fallback chain (no self-loop).
-4. Override: `OSA_FALLBACK_CHAIN=anthropic,openai,ollama`
+4. Override: `DAEMON_FALLBACK_CHAIN=anthropic,openai,ollama`
 
 Each provider failure is recorded by `MiosaLLM.HealthChecker`. After 3
 consecutive failures, the circuit breaker opens for 30 seconds. Requests

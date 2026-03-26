@@ -1,13 +1,13 @@
 # Configuration Reference
 
-Audience: operators configuring OSA for deployment.
+Audience: operators configuring Daemon for deployment.
 
 Configuration has two layers:
 
 1. **Compile-time defaults** in `config/config.exs` — set for all environments.
 2. **Runtime overrides** in `config/runtime.exs` — read from environment variables and `.env` files at startup.
 
-OSA loads `.env` files in order: project root `.env` first, then `~/.osa/.env`. Environment variables already set in the shell take priority over both files. The `.env` format is `KEY=value`, one per line; `#` starts a comment.
+Daemon loads `.env` files in order: project root `.env` first, then `~/.daemon/.env`. Environment variables already set in the shell take priority over both files. The `.env` format is `KEY=value`, one per line; `#` starts a comment.
 
 ---
 
@@ -15,9 +15,9 @@ OSA loads `.env` files in order: project root `.env` first, then `~/.osa/.env`. 
 
 | Env Var | Type | Default | Description |
 |---------|------|---------|-------------|
-| `OSA_DEFAULT_PROVIDER` | string | auto-detected | Active LLM provider. One of: `ollama`, `anthropic`, `openai`, `groq`, `openrouter`, `together`, `fireworks`, `deepseek`, `mistral`, `cerebras`, `google`, `cohere`, `perplexity`, `xai`, `sambanova`, `hyperbolic`, `lmstudio`, `llamacpp`. If unset, the first provider with a configured API key wins; Ollama is used if reachable. |
-| `OSA_MODEL` | string | provider default | Model name for the active provider. Overrides all per-provider model env vars. |
-| `OSA_FALLBACK_CHAIN` | CSV string | auto-detected | Comma-separated provider list for failover, e.g. `anthropic,openai,ollama`. Auto-detection builds the chain from configured API keys plus Ollama if reachable. |
+| `DAEMON_DEFAULT_PROVIDER` | string | auto-detected | Active LLM provider. One of: `ollama`, `anthropic`, `openai`, `groq`, `openrouter`, `together`, `fireworks`, `deepseek`, `mistral`, `cerebras`, `google`, `cohere`, `perplexity`, `xai`, `sambanova`, `hyperbolic`, `lmstudio`, `llamacpp`. If unset, the first provider with a configured API key wins; Ollama is used if reachable. |
+| `DAEMON_MODEL` | string | provider default | Model name for the active provider. Overrides all per-provider model env vars. |
+| `DAEMON_FALLBACK_CHAIN` | CSV string | auto-detected | Comma-separated provider list for failover, e.g. `anthropic,openai,ollama`. Auto-detection builds the chain from configured API keys plus Ollama if reachable. |
 
 ## API Keys
 
@@ -49,7 +49,7 @@ OSA loads `.env` files in order: project root `.env` first, then `~/.osa/.env`. 
 
 ## Per-Provider Model Overrides
 
-Each provider has a corresponding `{PROVIDER}_MODEL` env var. These are lower priority than `OSA_MODEL`.
+Each provider has a corresponding `{PROVIDER}_MODEL` env var. These are lower priority than `DAEMON_MODEL`.
 
 Examples: `ANTHROPIC_MODEL`, `OPENAI_MODEL`, `GROQ_MODEL`, `OLLAMA_MODEL`, `GOOGLE_MODEL`.
 
@@ -64,7 +64,7 @@ Examples: `ANTHROPIC_MODEL`, `OPENAI_MODEL`, `GROQ_MODEL`, `OLLAMA_MODEL`, `GOOG
 
 ## Agent Behaviour
 
-These keys live under `:optimal_system_agent` application config. Set them in `config/config.exs` or via env in `runtime.exs`.
+These keys live under `:daemon` application config. Set them in `config/config.exs` or via env in `runtime.exs`.
 
 | Key | Config Key | Default | Description |
 |-----|-----------|---------|-------------|
@@ -77,48 +77,48 @@ These keys live under `:optimal_system_agent` application config. Set them in `c
 | Compaction emergency | `compaction_emergency` | `0.95` | Context usage fraction that triggers emergency compaction (most of history dropped). |
 | Proactive interval | `proactive_interval` | `1800000` (30 min) | Milliseconds between proactive monitor checks. |
 | Proactive mode | `proactive_mode` | `false` | Enable autonomous greetings and background work. |
-| Plan mode | `OSA_PLAN_MODE` env | `false` | When `true`, agent presents a plan for approval before executing. |
+| Plan mode | `DAEMON_PLAN_MODE` env | `false` | When `true`, agent presents a plan for approval before executing. |
 
 ## Extended Thinking
 
 | Env Var | Default | Description |
 |---------|---------|-------------|
-| `OSA_THINKING_ENABLED` | `false` | Enable extended reasoning tokens (Anthropic Claude 3.7+ only). |
-| `OSA_THINKING_BUDGET` | `5000` | Maximum thinking tokens per LLM call when thinking is enabled. |
+| `DAEMON_THINKING_ENABLED` | `false` | Enable extended reasoning tokens (Anthropic Claude 3.7+ only). |
+| `DAEMON_THINKING_BUDGET` | `5000` | Maximum thinking tokens per LLM call when thinking is enabled. |
 
 ## HTTP Channel
 
 | Env Var / Config Key | Default | Description |
 |----------------------|---------|-------------|
-| `OSA_HTTP_PORT` / `http_port` | `8089` | Port the Bandit HTTP server listens on. |
-| `OSA_REQUIRE_AUTH` / `require_auth` | `false` | When `true`, all `/api/v1/*` requests must include a Bearer token matching `OSA_SHARED_SECRET`. |
-| `OSA_SHARED_SECRET` / `shared_secret` | `nil` | Shared secret for Bearer token auth. Required when `OSA_REQUIRE_AUTH=true`. Raises at startup if missing. |
+| `DAEMON_HTTP_PORT` / `http_port` | `8089` | Port the Bandit HTTP server listens on. |
+| `DAEMON_REQUIRE_AUTH` / `require_auth` | `false` | When `true`, all `/api/v1/*` requests must include a Bearer token matching `DAEMON_SHARED_SECRET`. |
+| `DAEMON_SHARED_SECRET` / `shared_secret` | `nil` | Shared secret for Bearer token auth. Required when `DAEMON_REQUIRE_AUTH=true`. Raises at startup if missing. |
 
 ## Budget
 
 | Env Var | Default | Description |
 |---------|---------|-------------|
-| `OSA_DAILY_BUDGET_USD` | `50.0` | Maximum USD spend per calendar day. Agent refuses new LLM calls when exceeded. |
-| `OSA_MONTHLY_BUDGET_USD` | `500.0` | Maximum USD spend per calendar month. |
-| `OSA_PER_CALL_LIMIT_USD` | `5.0` | Maximum USD cost allowed for a single LLM API call. |
+| `DAEMON_DAILY_BUDGET_USD` | `50.0` | Maximum USD spend per calendar day. Agent refuses new LLM calls when exceeded. |
+| `DAEMON_MONTHLY_BUDGET_USD` | `500.0` | Maximum USD spend per calendar month. |
+| `DAEMON_PER_CALL_LIMIT_USD` | `5.0` | Maximum USD cost allowed for a single LLM API call. |
 
 ## Filesystem Paths
 
 | Config Key | Default | Description |
 |-----------|---------|-------------|
-| `config_dir` | `~/.osa` | Root directory for all OSA user data. |
-| `skills_dir` | `~/.osa/skills` | Directory scanned for user-defined SKILL.md files. |
-| `mcp_config_path` | `~/.osa/mcp.json` | Path to MCP server definitions file. |
+| `config_dir` | `~/.osa` | Root directory for all Daemon user data. |
+| `skills_dir` | `~/.daemon/skills` | Directory scanned for user-defined SKILL.md files. |
+| `mcp_config_path` | `~/.daemon/mcp.json` | Path to MCP server definitions file. |
 | `bootstrap_dir` | `~/.osa` | Directory containing `IDENTITY.md`, `SOUL.md`, `USER.md`. |
-| `data_dir` | `~/.osa/data` | Vault structured memory store. |
-| `sessions_dir` | `~/.osa/sessions` | JSONL session conversation files. |
-| `OSA_WORKING_DIR` | `nil` | Default working directory for the agent. Set to a project path to scope file operations. |
+| `data_dir` | `~/.daemon/data` | Vault structured memory store. |
+| `sessions_dir` | `~/.daemon/sessions` | JSONL session conversation files. |
+| `DAEMON_WORKING_DIR` | `nil` | Default working directory for the agent. Set to a project path to scope file operations. |
 
 ## Database
 
 | Config Key | Default | Description |
 |-----------|---------|-------------|
-| `database` (Repo) | `~/.osa/osa.db` | SQLite database file path. |
+| `database` (Repo) | `~/.daemon/osa.db` | SQLite database file path. |
 | `pool_size` | `5` | Ecto connection pool size. |
 | `journal_mode` | `:wal` | SQLite journal mode. WAL provides concurrent reads. |
 | `DATABASE_URL` (env) | — | PostgreSQL URL for platform mode. When set, enables `Platform.Repo` and multi-tenant features. |
@@ -138,24 +138,24 @@ These keys live under `:optimal_system_agent` application config. Set them in `c
 
 | Env Var / Config Key | Default | Description |
 |----------------------|---------|-------------|
-| `OSA_SANDBOX_ENABLED` | `false` | Enable Docker container isolation for skill execution. |
+| `DAEMON_SANDBOX_ENABLED` | `false` | Enable Docker container isolation for skill execution. |
 | `sandbox_mode` | `:docker` | Isolation backend: `:docker` or `:beam`. |
 | `sandbox_image` | `osa-sandbox:latest` | Default Docker image for sandboxed execution. |
 | `sandbox_network` | `false` | Allow network access inside the container. |
 | `sandbox_max_memory` | `256m` | Docker memory limit. |
 | `sandbox_max_cpu` | `0.5` | Docker CPU limit (fraction of one core). |
 | `sandbox_timeout` | `30000` | Per-command timeout in milliseconds. |
-| `sandbox_workspace_mount` | `true` | Mount `~/.osa/workspace` into the container at `/workspace`. |
+| `sandbox_workspace_mount` | `true` | Mount `~/.daemon/workspace` into the container at `/workspace`. |
 
 ## Optional Sidecars
 
 | Env Var | Default | Description |
 |---------|---------|-------------|
-| `OSA_GO_TOKENIZER` | `false` | Enable the Go BPE tokenizer binary. Requires `priv/go/tokenizer/osa-tokenizer` to exist. |
+| `DAEMON_GO_TOKENIZER` | `false` | Enable the Go BPE tokenizer binary. Requires `priv/go/tokenizer/osa-tokenizer` to exist. |
 | `go_tokenizer_encoding` | `cl100k_base` | BPE encoding used by the Go tokenizer. |
-| `OSA_PYTHON_SIDECAR` | `false` | Enable Python semantic memory search via `sentence-transformers`. |
+| `DAEMON_PYTHON_SIDECAR` | `false` | Enable Python semantic memory search via `sentence-transformers`. |
 | `python_sidecar_model` | `all-MiniLM-L6-v2` | Sentence transformer model for embedding-based memory search. |
-| `OSA_PYTHON_PATH` | `python3` | Path to the Python interpreter. |
+| `DAEMON_PYTHON_PATH` | `python3` | Path to the Python interpreter. |
 
 ## Channel Tokens
 
@@ -170,4 +170,4 @@ These keys live under `:optimal_system_agent` application config. Set them in `c
 
 | Env Var | Default | Description |
 |---------|---------|-------------|
-| `OSA_QUIET_HOURS` | `nil` | Heartbeat suppression window in `HH:MM-HH:MM` format (e.g. `23:00-07:00`). Proactive notifications are suppressed during this window. |
+| `DAEMON_QUIET_HOURS` | `nil` | Heartbeat suppression window in `HH:MM-HH:MM` format (e.g. `23:00-07:00`). Proactive notifications are suppressed during this window. |

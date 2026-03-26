@@ -2,7 +2,7 @@
 
 ## Logger Configuration
 
-OSA uses the standard Elixir `Logger` application. Configuration in
+Daemon uses the standard Elixir `Logger` application. Configuration in
 `config/config.exs`:
 
 ```elixir
@@ -65,7 +65,7 @@ Logger.warning("[Bus] Router dispatch error: #{inspect(reason)}")
 Logger.warning("[DLQ] Enqueued failed #{event_type} event: #{inspect(error)}")
 Logger.info("[vault/lifecycle] Session #{id} woke (clean)")
 Logger.warning("[loop] Cancel table not found — agent may not be running")
-Logger.info("[Telemetry.Metrics] Started — flushing to ~/.osa/metrics.json every 5m")
+Logger.info("[Telemetry.Metrics] Started — flushing to ~/.daemon/metrics.json every 5m")
 Logger.info("[Extensions] Treasury enabled — starting MiosaBudget.Treasury")
 ```
 
@@ -73,7 +73,7 @@ Prefix conventions:
 
 | Prefix | Module area |
 |--------|-------------|
-| `[Application]` | `OptimalSystemAgent.Application` |
+| `[Application]` | `Daemon.Application` |
 | `[Bus]` | `Events.Bus` |
 | `[DLQ]` | `Events.DLQ` |
 | `[loop]` | `Agent.Loop` and its submodules |
@@ -111,7 +111,7 @@ In dev with `config :logger, :console, format: "$time $metadata[$level] $message
 metadata fields are appended.
 
 For production deployments behind a log aggregator (e.g., Vector, Fluentd), set
-the Logger backend to JSON format via `:logger_json` or a custom formatter. OSA
+the Logger backend to JSON format via `:logger_json` or a custom formatter. Daemon
 does not ship a custom formatter; this is left to the deployment operator.
 
 ## Telemetry Metrics Disk Flush
@@ -127,11 +127,11 @@ case File.write(path, payload) do
 end
 ```
 
-The flush happens every 5 minutes to `~/.osa/metrics.json`. The JSON file is
+The flush happens every 5 minutes to `~/.daemon/metrics.json`. The JSON file is
 human-readable and can be tailed for debugging:
 
 ```sh
-watch -n 30 cat ~/.osa/metrics.json
+watch -n 30 cat ~/.daemon/metrics.json
 ```
 
 ## MCP Server Logging

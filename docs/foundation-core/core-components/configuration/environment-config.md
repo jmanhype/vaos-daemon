@@ -1,15 +1,15 @@
 # Environment Configuration
 
 All environment variables are read in `config/runtime.exs` at node startup.
-Values set in the shell environment take precedence over `~/.osa/.env`.
+Values set in the shell environment take precedence over `~/.daemon/.env`.
 
 ## Provider Selection
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OSA_DEFAULT_PROVIDER` | auto-detected | Primary LLM provider. Valid values: `ollama`, `anthropic`, `openai`, `groq`, `openrouter`, `together`, `fireworks`, `deepseek`, `mistral`, `cerebras`, `google`, `cohere`, `perplexity`, `xai`, `sambanova`, `hyperbolic`, `lmstudio`, `llamacpp` |
-| `OSA_MODEL` | provider default | Override the model for the active provider |
-| `OSA_FALLBACK_CHAIN` | auto-detected | Comma-separated provider fallback order, e.g. `anthropic,openai,ollama` |
+| `DAEMON_DEFAULT_PROVIDER` | auto-detected | Primary LLM provider. Valid values: `ollama`, `anthropic`, `openai`, `groq`, `openrouter`, `together`, `fireworks`, `deepseek`, `mistral`, `cerebras`, `google`, `cohere`, `perplexity`, `xai`, `sambanova`, `hyperbolic`, `lmstudio`, `llamacpp` |
+| `DAEMON_MODEL` | provider default | Override the model for the active provider |
+| `DAEMON_FALLBACK_CHAIN` | auto-detected | Comma-separated provider fallback order, e.g. `anthropic,openai,ollama` |
 
 ## LLM Provider API Keys
 
@@ -42,7 +42,7 @@ Values set in the shell environment take precedence over `~/.osa/.env`.
 ## Per-Provider Model Overrides
 
 Each provider supports a model override via an environment variable. These take
-precedence over `OSA_MODEL` for their specific provider.
+precedence over `DAEMON_MODEL` for their specific provider.
 
 | Variable | Provider |
 |----------|----------|
@@ -78,48 +78,48 @@ precedence over `OSA_MODEL` for their specific provider.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OSA_HTTP_PORT` | `8089` | Port for the Bandit HTTP server |
-| `OSA_REQUIRE_AUTH` | `false` | Require `Authorization: Bearer <secret>` on all HTTP endpoints |
-| `OSA_SHARED_SECRET` | — | Bearer token value. Required when `OSA_REQUIRE_AUTH=true` |
+| `DAEMON_HTTP_PORT` | `8089` | Port for the Bandit HTTP server |
+| `DAEMON_REQUIRE_AUTH` | `false` | Require `Authorization: Bearer <secret>` on all HTTP endpoints |
+| `DAEMON_SHARED_SECRET` | — | Bearer token value. Required when `DAEMON_REQUIRE_AUTH=true` |
 
 ## Budget Limits
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OSA_DAILY_BUDGET_USD` | `50.0` | Maximum USD spend per calendar day |
-| `OSA_MONTHLY_BUDGET_USD` | `500.0` | Maximum USD spend per calendar month |
-| `OSA_PER_CALL_LIMIT_USD` | `5.0` | Maximum USD spend per LLM call |
+| `DAEMON_DAILY_BUDGET_USD` | `50.0` | Maximum USD spend per calendar day |
+| `DAEMON_MONTHLY_BUDGET_USD` | `500.0` | Maximum USD spend per calendar month |
+| `DAEMON_PER_CALL_LIMIT_USD` | `5.0` | Maximum USD spend per LLM call |
 
 ## Feature Flags
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OSA_SANDBOX_ENABLED` | `false` | Enable Docker/WASM sandbox for tool execution isolation |
-| `OSA_PYTHON_SIDECAR` | `false` | Enable Python sidecar for semantic embedding-based memory search |
-| `OSA_GO_TOKENIZER` | `false` | Enable Go BPE tokenizer binary for accurate token counting |
-| `OSA_TREASURY_ENABLED` | `false` | Enable Treasury financial governance with transaction ledger |
-| `OSA_FLEET_ENABLED` | `false` | Enable Fleet remote agent registry with sentinel monitoring |
-| `OSA_WALLET_ENABLED` | `false` | Enable crypto wallet connectivity |
-| `OSA_UPDATE_ENABLED` | `false` | Enable OTA updater with TUF verification |
-| `OSA_PLAN_MODE` | `false` | Start sessions in plan mode (single LLM call, no tool iterations) |
-| `OSA_THINKING_ENABLED` | `false` | Enable extended thinking budget for supported providers |
+| `DAEMON_SANDBOX_ENABLED` | `false` | Enable Docker/WASM sandbox for tool execution isolation |
+| `DAEMON_PYTHON_SIDECAR` | `false` | Enable Python sidecar for semantic embedding-based memory search |
+| `DAEMON_GO_TOKENIZER` | `false` | Enable Go BPE tokenizer binary for accurate token counting |
+| `DAEMON_TREASURY_ENABLED` | `false` | Enable Treasury financial governance with transaction ledger |
+| `DAEMON_FLEET_ENABLED` | `false` | Enable Fleet remote agent registry with sentinel monitoring |
+| `DAEMON_WALLET_ENABLED` | `false` | Enable crypto wallet connectivity |
+| `DAEMON_UPDATE_ENABLED` | `false` | Enable OTA updater with TUF verification |
+| `DAEMON_PLAN_MODE` | `false` | Start sessions in plan mode (single LLM call, no tool iterations) |
+| `DAEMON_THINKING_ENABLED` | `false` | Enable extended thinking budget for supported providers |
 
 ## Treasury Settings
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OSA_TREASURY_ENABLED` | `false` | Enable Treasury subsystem |
-| `OSA_TREASURY_AUTO_DEBIT` | `true` | Auto-debit approved transactions |
-| `OSA_TREASURY_DAILY_LIMIT` | `250.0` | Treasury daily spend cap (USD) |
-| `OSA_TREASURY_MAX_SINGLE` | `50.0` | Maximum single transaction amount (USD) |
+| `DAEMON_TREASURY_ENABLED` | `false` | Enable Treasury subsystem |
+| `DAEMON_TREASURY_AUTO_DEBIT` | `true` | Auto-debit approved transactions |
+| `DAEMON_TREASURY_DAILY_LIMIT` | `250.0` | Treasury daily spend cap (USD) |
+| `DAEMON_TREASURY_MAX_SINGLE` | `50.0` | Maximum single transaction amount (USD) |
 
 ## Agent Behavior
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OSA_WORKING_DIR` | — | Default working directory for the agent (e.g. `~/Desktop/myproject`) |
-| `OSA_QUIET_HOURS` | — | Heartbeat suppression window, e.g. `22:00-08:00` |
-| `OSA_THINKING_BUDGET` | `5000` | Token budget for extended thinking (when enabled) |
+| `DAEMON_WORKING_DIR` | — | Default working directory for the agent (e.g. `~/Desktop/myproject`) |
+| `DAEMON_QUIET_HOURS` | — | Heartbeat suppression window, e.g. `22:00-08:00` |
+| `DAEMON_THINKING_BUDGET` | `5000` | Token budget for extended thinking (when enabled) |
 
 ## Platform Mode (Multi-Tenant)
 
@@ -134,7 +134,7 @@ precedence over `OSA_MODEL` for their specific provider.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OSA_PYTHON_PATH` | `python3` | Path to the Python executable used by the sidecar |
+| `DAEMON_PYTHON_PATH` | `python3` | Path to the Python executable used by the sidecar |
 
 ## Channel Tokens
 
@@ -148,9 +148,9 @@ precedence over `OSA_MODEL` for their specific provider.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OSA_WALLET_PROVIDER` | `mock` | Wallet backend: `mock` or implementation name |
-| `OSA_WALLET_ADDRESS` | — | Wallet public address |
-| `OSA_WALLET_RPC_URL` | — | Blockchain RPC endpoint |
+| `DAEMON_WALLET_PROVIDER` | `mock` | Wallet backend: `mock` or implementation name |
+| `DAEMON_WALLET_ADDRESS` | — | Wallet public address |
+| `DAEMON_WALLET_RPC_URL` | — | Blockchain RPC endpoint |
 
 ## Sprites.dev Sandbox
 
@@ -163,8 +163,8 @@ precedence over `OSA_MODEL` for their specific provider.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OSA_UPDATE_URL` | — | TUF update server URL |
-| `OSA_UPDATE_INTERVAL` | `86400000` | Check interval in milliseconds (default: 24 hours) |
+| `DAEMON_UPDATE_URL` | — | TUF update server URL |
+| `DAEMON_UPDATE_INTERVAL` | `86400000` | Check interval in milliseconds (default: 24 hours) |
 
 ## Web Search
 
@@ -190,7 +190,7 @@ Provider auto-detection runs at startup in `runtime.exs`:
 ```elixir
 default_provider =
   cond do
-    env = System.get_env("OSA_DEFAULT_PROVIDER") ->
+    env = System.get_env("DAEMON_DEFAULT_PROVIDER") ->
       Map.get(provider_map, env, :ollama)
     System.get_env("ANTHROPIC_API_KEY")  -> :anthropic
     System.get_env("OPENAI_API_KEY")     -> :openai

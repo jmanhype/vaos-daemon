@@ -2,7 +2,7 @@
 **Version:** 0.1.0-draft
 **Date:** 2026-02-24
 **Status:** Proposed
-**Author:** Architect (OSA Agent)
+**Author:** Architect (Daemon Agent)
 
 ---
 
@@ -16,7 +16,7 @@
 6. [Authentication Model](#6-authentication-model)
 7. [Feature Matrix](#7-feature-matrix)
 8. [Package Structure](#8-package-structure)
-9. [OSA HTTP API Contract](#9-osa-http-api-contract)
+9. [Daemon HTTP API Contract](#9-osa-http-api-contract)
 10. [Migration Path](#10-migration-path)
 11. [Dependency Diagram](#11-dependency-diagram)
 
@@ -24,7 +24,7 @@
 
 ## 1. Executive Summary
 
-The MIOSA SDK is the programmatic bridge between **OS Templates** (BusinessOS, ContentOS, and future custom templates built with Svelte/Go) and the **OptimalSystemAgent** (OSA) Elixir/OTP intelligence layer.
+The MIOSA SDK is the programmatic bridge between **OS Templates** (BusinessOS, ContentOS, and future custom templates built with Svelte/Go) and the **Daemon** (Daemon) Elixir/OTP intelligence layer.
 
 There are two editions:
 
@@ -53,7 +53,7 @@ BusinessOS (Go + Svelte)
         ├── auth.go             JWT HS256, issuer="BusinessOS", 15min TTL
         └── types.go            AppGenerationRequest, OrchestrateRequest
 
-OSA (Elixir/OTP)
+Daemon (Elixir/OTP)
     ├── agent/loop.ex           ReAct loop, max 30 iterations
     ├── signal/classifier.ex    S=(M,G,T,F,W) 5-tuple
     ├── skills/registry.ex      Hot-reload, SKILL.md, goldrush dispatch
@@ -62,7 +62,7 @@ OSA (Elixir/OTP)
     └── channels/cli.ex         ONLY channel today (no HTTP endpoint)
 ```
 
-**The gap:** OSA has no HTTP endpoint. All intelligence is accessible only through the CLI channel. The SDK must define what OSA exposes over the wire, and how BOS (and future OS Templates) consume it.
+**The gap:** Daemon has no HTTP endpoint. All intelligence is accessible only through the CLI channel. The SDK must define what Daemon exposes over the wire, and how BOS (and future OS Templates) consume it.
 
 ### 2.2 Target Architecture
 
@@ -91,7 +91,7 @@ OSA (Elixir/OTP)
 │  Memory (JSONL) → Events.Bus → Bridge.PubSub → SSE stream          │
 │                                                                     │
 │  MIOSA Premium adds:                                                │
-│  SORX Engine (Go) ←── CARRIER (AMQP) ──→ OSA Intelligence          │
+│  SORX Engine (Go) ←── CARRIER (AMQP) ──→ Daemon Intelligence          │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -99,13 +99,13 @@ OSA (Elixir/OTP)
 
 ## 3. Architecture Decision Records
 
-### ADR-001: OSA HTTP Transport — Plug/Bandit (not Phoenix Web)
+### ADR-001: Daemon HTTP Transport — Plug/Bandit (not Phoenix Web)
 
 **Status:** Accepted
 **Date:** 2026-02-24
 
 **Context:**
-OSA needs to expose an HTTP API. Bandit is already a compiled dependency in the OSA `_build`. Phoenix is already used for PubSub only.
+Daemon needs to expose an HTTP API. Bandit is already a compiled dependency in the Daemon `_build`. Phoenix is already used for PubSub only.
 
 **Decision:**
 Add a `Plug.Router`-based HTTP channel adapter served by Bandit on port 8089. Do not introduce Phoenix Router/LiveView. Use Phoenix.PubSub (already running) to bridge agent events to SSE connections.
@@ -135,7 +135,7 @@ Use AMQP 0-9-1 (RabbitMQ) as the CARRIER transport. Go uses `github.com/rabbitmq
 
 **Consequences:**
 - Positive: Proven in Go-Elixir interop. AMQP has durable queues for guaranteed delivery.
-- Positive: Decouples SORX Engine (Go) from OSA process lifecycle.
+- Positive: Decouples SORX Engine (Go) from Daemon process lifecycle.
 - Negative: RabbitMQ adds operational complexity (another process to run locally).
 - Neutral: For local mode, RabbitMQ runs in Docker. For cloud, managed RabbitMQ.
 
@@ -151,7 +151,7 @@ Use AMQP 0-9-1 (RabbitMQ) as the CARRIER transport. Go uses `github.com/rabbitmq
 **Date:** 2026-02-24
 
 **Context:**
-Three SDK clients are needed: Go (BOS backend), TypeScript (frontend templates), Elixir (OSA-to-OSA). They must share API type definitions and stay synchronized.
+Three SDK clients are needed: Go (BOS backend), TypeScript (frontend templates), Elixir (Daemon-to-Daemon). They must share API type definitions and stay synchronized.
 
 **Decision:**
 Three separate repositories with independent versioning. Types are defined in an OpenAPI 3.1 spec (`osa-api-spec`) and code-generated into each language. Versioning is SemVer with a shared minor version bump policy (all three SDKs cut the same minor version together; patch versions are independent).
@@ -185,7 +185,7 @@ The open-source SDK is fully functional for single-user local use. The premium l
 
 ## 4. SDK Interface Design
 
-The SDK presents a unified interface regardless of transport mode (local HTTP, cloud HTTPS, or CARRIER/AMQP). The interface is designed around the OSA's core concepts: signals, skills, machines, memory, and events.
+The SDK presents a unified interface regardless of transport mode (local HTTP, cloud HTTPS, or CARRIER/AMQP). The interface is designed around the Daemon's core concepts: signals, skills, machines, memory, and events.
 
 ### 4.1 Core Concepts (Language-Agnostic)
 
@@ -222,7 +222,7 @@ The Go SDK replaces `internal/integrations/osa/` entirely. The `ResilientClient`
 
 ```go
 // Package osa provides the MIOSA SDK Go client.
-// Open-source edition — local OSA connection.
+// Open-source edition — local Daemon connection.
 package osa
 
 import (
@@ -230,7 +230,7 @@ import (
     "iter"
 )
 
-// Client is the unified OSA interface.
+// Client is the unified Daemon interface.
 // Identical API for local and cloud modes — mode is a config concern.
 type Client interface {
     // Agent operations
@@ -260,13 +260,13 @@ type Client interface {
     Close() error
 }
 
-// NewLocalClient creates a client connected to a local OSA instance.
+// NewLocalClient creates a client connected to a local Daemon instance.
 // Uses HTTP on localhost:8089 with shared-secret JWT.
 // This replaces the current internal/integrations/osa/ package.
 func NewLocalClient(cfg LocalConfig) (Client, error)
 
 // NewCloudClient creates a client connected to MIOSA cloud.
-// Requires a MIOSA_API_KEY. Proprietary edition only.
+// Requires a MIDAEMON_API_KEY. Proprietary edition only.
 func NewCloudClient(cfg CloudConfig) (Client, error) // premium
 
 // --- Core Request/Response Types ---
@@ -321,7 +321,7 @@ type Execution struct {
     CompletedAt string                 `json:"completed_at,omitempty"`
 }
 
-// LocalConfig for connecting to a local OSA instance.
+// LocalConfig for connecting to a local Daemon instance.
 // All fields that exist in internal/integrations/osa/Config are preserved.
 type LocalConfig struct {
     BaseURL      string        // default: "http://localhost:8089"
@@ -388,7 +388,7 @@ export interface AgentStore {
 }
 
 export interface ClientConfig {
-  // Local mode: connect to localhost OSA instance
+  // Local mode: connect to localhost Daemon instance
   mode: 'local';
   baseUrl?: string;         // default: 'http://localhost:8089'
   sharedSecret: string;     // JWT shared secret
@@ -454,19 +454,19 @@ export interface Event {
 }
 ```
 
-### 4.4 Elixir Client (OSA-to-OSA Communication)
+### 4.4 Elixir Client (Daemon-to-Daemon Communication)
 
-The Elixir SDK is used when one OSA instance delegates to another — for example, a specialized OSA instance handling a specific domain while the primary OSA handles orchestration.
+The Elixir SDK is used when one Daemon instance delegates to another — for example, a specialized Daemon instance handling a specific domain while the primary Daemon handles orchestration.
 
 ```elixir
 # miosa_sdk — Elixir/Hex package
-# Enables OSA-to-OSA federation and cross-instance skill calls.
+# Enables Daemon-to-Daemon federation and cross-instance skill calls.
 
 defmodule MiosaSDK do
   @moduledoc """
   MIOSA SDK Elixir client.
 
-  Usage in another Elixir application or OSA instance:
+  Usage in another Elixir application or Daemon instance:
 
       {:ok, client} = MiosaSDK.connect(base_url: "http://localhost:8089",
                                         shared_secret: "secret")
@@ -533,7 +533,7 @@ ClientConfig.mode
 ### 5.2 Local Mode (HTTP/SSE)
 
 ```
-OS Template (Go/JS)                OSA (Elixir/Bandit)
+OS Template (Go/JS)                Daemon (Elixir/Bandit)
       │                                    │
       │  POST /api/v1/orchestrate          │
       │  Authorization: Bearer <jwt>       │
@@ -564,14 +564,14 @@ Identical API surface as local mode. The SDK automatically:
 - Replaces HS256 JWT with API key header (`X-MIOSA-Key`)
 - Adds `X-Tenant-ID` for multi-tenant isolation
 - Handles TLS certificate validation
-- Routes to the user's assigned OSA instance
+- Routes to the user's assigned Daemon instance
 
 ### 5.4 CARRIER Bridge (AMQP — Premium, Sprint 5)
 
 CARRIER is not a replacement for HTTP. It is a supplemental high-performance channel activated specifically for SORX Tier 3-4 skill executions. Standard orchestrate/classify calls always go over HTTP.
 
 ```
-BOS Backend (Go)                RabbitMQ                OSA (Elixir)
+BOS Backend (Go)                RabbitMQ                Daemon (Elixir)
       │                            │                         │
       │  SORX Tier 3-4 skill       │                         │
       │  ExecuteSkill(req)         │                         │
@@ -675,14 +675,14 @@ Continues the existing HS256 JWT approach from `internal/integrations/osa/auth.g
 ```
 
 Changes from today:
-- `issuer` changes from `"BusinessOS"` to `"miosa-sdk"` (OSA validates this)
+- `issuer` changes from `"BusinessOS"` to `"miosa-sdk"` (Daemon validates this)
 - Added `template_id` claim — identifies which OS Template is calling
 - Added `sdk_version` for compatibility tracking
 - Token TTL remains 15 minutes
 
 **Configuration:**
 ```bash
-# ~/.osa/config.json
+# ~/.daemon/config.json
 {
   "sdk": {
     "shared_secret": "your-32-byte-secret",
@@ -714,7 +714,7 @@ In cloud mode, every API request is scoped to a tenant:
 
 ```
 Tenant isolation layers:
-1. Network: Each tenant gets a dedicated OSA process (Elixir node)
+1. Network: Each tenant gets a dedicated Daemon process (Elixir node)
 2. Data: Workspace ID is enforced in every query
 3. Memory: JSONL files are partitioned by tenant_id/user_id
 4. Skills: Custom skills are tenant-scoped (private registry)
@@ -727,7 +727,7 @@ Tenant isolation layers:
 
 ### 7.1 Open-Source SDK Features
 
-All features marked here are available to anyone running OSA locally.
+All features marked here are available to anyone running Daemon locally.
 
 | Feature | Details |
 |---|---|
@@ -735,7 +735,7 @@ All features marked here are available to anyone running OSA locally.
 | Signal classification | S=(M,G,T,F,W) 5-tuple on every message |
 | Signal noise filter | Two-tier: deterministic (weight threshold) + LLM |
 | Skills: built-in (5) | file_read, file_write, shell_execute, web_search, memory_save |
-| Skills: custom SKILL.md | Drop `.md` files into `~/.osa/skills/`, hot-reloaded |
+| Skills: custom SKILL.md | Drop `.md` files into `~/.daemon/skills/`, hot-reloaded |
 | Machines | Core/Communication/Productivity/Research toggle |
 | JSONL memory | Session persistence, Cortex synthesis |
 | Local SSE streaming | Real-time agent events over HTTP SSE |
@@ -765,9 +765,9 @@ L5 — Autonomous:  Full operational independence within policies.   [PREMIUM]
 | SORX Tier 4 | Generative AI (Opus), variable uptime | L4-L5 |
 | CARRIER bridge | AMQP Go-Elixir, Tier 3-4 only | L3-L5 |
 | L3-L5 autonomy | Proactive monitor, pattern learning | L3-L5 |
-| Cross-OS reasoning | One OSA reasoning across BOS + ContentOS | L3-L5 |
-| Cloud instances | Managed OSA on MIOSA infrastructure | All |
-| Multi-tenant isolation | Workspace isolation, separate OSA processes | All |
+| Cross-OS reasoning | One Daemon reasoning across BOS + ContentOS | L3-L5 |
+| Cloud instances | Managed Daemon on MIOSA infrastructure | All |
+| Multi-tenant isolation | Workspace isolation, separate Daemon processes | All |
 | Enterprise auth | OAuth2/OIDC, SSO integration | All |
 | Audit log | Immutable log of all agent actions | All |
 | Compliance export | SOC2/GDPR data export | All |
@@ -829,7 +829,7 @@ miosa-sdk/
 ├── miosa-sdk-js/                 # TypeScript/JS SDK
 │   ├── package.json              # name: @miosa/sdk
 │   ├── src/
-│   │   ├── client.ts             # OSAClient interface
+│   │   ├── client.ts             # DaemonClient interface
 │   │   ├── local-client.ts       # HTTP/SSE implementation
 │   │   ├── cloud-client.ts       # Cloud implementation (premium)
 │   │   ├── streaming.ts          # SSE + AsyncGenerator
@@ -838,7 +838,7 @@ miosa-sdk/
 │   │   └── types.ts              # Generated from openapi.yaml
 │   └── README.md
 │
-└── miosa-sdk-ex/                 # Elixir SDK (OSA-to-OSA)
+└── miosa-sdk-ex/                 # Elixir SDK (Daemon-to-Daemon)
     ├── mix.exs                   # {:miosa_sdk, "~> 0.1"}
     ├── lib/
     │   ├── miosa_sdk.ex          # Main module
@@ -848,13 +848,13 @@ miosa-sdk/
     └── README.md
 ```
 
-### 8.2 OSA HTTP Channel (new file — to be created)
+### 8.2 Daemon HTTP Channel (new file — to be created)
 
-This is the new Elixir code that OSA needs to expose the SDK's API:
+This is the new Elixir code that Daemon needs to expose the SDK's API:
 
 ```
-OptimalSystemAgent/
-└── lib/optimal_system_agent/
+Daemon/
+└── lib/daemon/
     └── channels/
         ├── cli.ex                 # Existing
         └── http.ex                # NEW — Plug.Router for SDK
@@ -887,7 +887,7 @@ resp, _ := client.Orchestrate(ctx, req)
 import osa "github.com/miosa/sdk-go"
 client, _ := osa.NewLocalClient(osa.LocalConfig{
     BaseURL:      "http://localhost:8089",
-    SharedSecret: os.Getenv("OSA_SHARED_SECRET"),
+    SharedSecret: os.Getenv("DAEMON_SHARED_SECRET"),
     Resilience:   osa.DefaultResilienceConfig(),
 })
 resp, _ := client.Orchestrate(ctx, osa.OrchestrateRequest{
@@ -901,9 +901,9 @@ The resilience behavior (circuit breaker, backoff, cache, queue) is preserved in
 
 ---
 
-## 9. OSA HTTP API Contract
+## 9. Daemon HTTP API Contract
 
-This is the complete REST API that OSA must implement via the new `channels/http.ex` Plug adapter. This is what Sprint N (HTTP channel) must deliver.
+This is the complete REST API that Daemon must implement via the new `channels/http.ex` Plug adapter. This is what Sprint N (HTTP channel) must deliver.
 
 ### 9.1 Base URL and Versioning
 
@@ -924,7 +924,7 @@ All endpoints require:
 
 #### POST /api/v1/orchestrate
 
-Runs the full OSA ReAct loop. Synchronous — waits for final response.
+Runs the full Daemon ReAct loop. Synchronous — waits for final response.
 
 **Request:**
 ```json
@@ -1269,13 +1269,13 @@ All errors follow a consistent format:
 | 422 | Unprocessable (valid request, agent rejected — e.g., signal filtered) |
 | 429 | Rate limited |
 | 500 | Internal error |
-| 503 | OSA unavailable (circuit breaker open) |
+| 503 | Daemon unavailable (circuit breaker open) |
 
 ### 9.8 Rate Limiting
 
 ```
 Local mode (no rate limiting by default):
-  - Configurable via ~/.osa/config.json
+  - Configurable via ~/.daemon/config.json
   - "rate_limit": { "requests_per_minute": 60 }
 
 Cloud mode (enforced):
@@ -1288,12 +1288,12 @@ Cloud mode (enforced):
 
 ## 10. Migration Path
 
-### 10.1 Phase 1 — OSA HTTP Channel (Next Sprint)
+### 10.1 Phase 1 — Daemon HTTP Channel (Next Sprint)
 
 **What to build:**
-1. `lib/optimal_system_agent/channels/http.ex` — Plug.Router implementing all `/api/v1/*` endpoints
+1. `lib/daemon/channels/http.ex` — Plug.Router implementing all `/api/v1/*` endpoints
 2. Wire Bandit to serve on port 8089 in `application.ex`
-3. JWT validation middleware reading from `~/.osa/config.json`
+3. JWT validation middleware reading from `~/.daemon/config.json`
 4. SSE endpoint bridging `Bridge.PubSub.subscribe_session/1` to HTTP stream
 
 **What changes in BOS:** Nothing yet. Existing `internal/integrations/osa/` continues to work.
@@ -1331,14 +1331,14 @@ Sprint D: internal/integrations/osa/ deleted; SDK is the only path
 **What to build:**
 1. `miosa-sdk-js/` TypeScript package
 2. Svelte store integration for BOS frontend
-3. Replace any direct `fetch` calls to OSA in the Svelte frontend with SDK
+3. Replace any direct `fetch` calls to Daemon in the Svelte frontend with SDK
 
 **BOS Frontend change:**
 ```typescript
-// Before: raw fetch to backend-go which proxies to OSA
+// Before: raw fetch to backend-go which proxies to Daemon
 const response = await fetch('/api/osa/orchestrate', { ... })
 
-// After: SDK client (frontend calls OSA directly via backend proxy,
+// After: SDK client (frontend calls Daemon directly via backend proxy,
 // or directly if on same network — configurable)
 import { createClient } from '@miosa/sdk'
 const osa = createClient({ mode: 'local', baseUrl: '/api/osa-proxy', ... })
@@ -1350,7 +1350,7 @@ const response = await osa.orchestrate({ input: '...' })
 ### 10.4 Phase 4 — CARRIER Bridge (Sprint 5, Premium)
 
 **What to build:**
-1. RabbitMQ integration in OSA (`lib/optimal_system_agent/channels/carrier.ex`)
+1. RabbitMQ integration in Daemon (`lib/daemon/channels/carrier.ex`)
 2. Go CARRIER client in `miosa-sdk-go/carrier_client.go`
 3. SORX engine integration: Tier 3-4 skills routed through CARRIER instead of HTTP
 
@@ -1364,8 +1364,8 @@ After CARRIER is live, premium features are activated by license key:
 
 ```go
 client, _ := osa.NewCloudClient(osa.CloudConfig{
-    APIKey:     os.Getenv("MIOSA_API_KEY"),
-    TenantID:   os.Getenv("MIOSA_TENANT_ID"),
+    APIKey:     os.Getenv("MIDAEMON_API_KEY"),
+    TenantID:   os.Getenv("MIDAEMON_TENANT_ID"),
     AutonomyLevel: osa.AutonomyL3Proactive,
 })
 // SORX Tier 3-4, CARRIER, cross-OS reasoning all enabled automatically
@@ -1398,7 +1398,7 @@ client, _ := osa.NewCloudClient(osa.CloudConfig{
                     └──────────────────┘
                                        │
                         ┌──────────────────────────┐
-                        │   OSA (Elixir/OTP)        │
+                        │   Daemon (Elixir/OTP)        │
                         │                          │
                         │  channels/http.ex  ←NEW  │
                         │  channels/cli.ex          │
@@ -1426,7 +1426,7 @@ OS Templates (consumers of SDK):
 |---|---|---|
 | Skill engine | Skills.Registry | SORX Engine |
 | Skills | Skills | SORX Skills |
-| HTTP bridge | OSA HTTP Channel | MIOSA Gateway |
+| HTTP bridge | Daemon HTTP Channel | MIOSA Gateway |
 | Go-Elixir bridge | (not available) | CARRIER |
 | Proactive monitoring | (not available) | MIOSA Watch |
 | Cloud instances | (not available) | MIOSA Cloud |
@@ -1440,16 +1440,16 @@ The full OpenAPI spec lives at `spec/openapi.yaml`. Key metadata:
 ```yaml
 openapi: 3.1.0
 info:
-  title: OptimalSystemAgent API
+  title: Daemon API
   version: 0.1.0
   description: |
-    The OSA API is consumed by MIOSA SDK clients.
+    The Daemon API is consumed by MIOSA SDK clients.
     Open-source edition: localhost:8089
     Premium edition: api.miosa.ai
 
 servers:
   - url: http://localhost:8089/api/v1
-    description: Local OSA instance (open-source)
+    description: Local Daemon instance (open-source)
   - url: https://api.miosa.ai/v1
     description: MIOSA Cloud (premium)
 
@@ -1474,4 +1474,4 @@ security:
 
 *Document produced by the MIOSA Architect agent.*
 *Review required from: @backend-go (implementation), @devops-engineer (infra), @security-auditor (auth model).*
-*Next revision triggers: Sprint 5 CARRIER design, OSA HTTP channel implementation.*
+*Next revision triggers: Sprint 5 CARRIER design, Daemon HTTP channel implementation.*

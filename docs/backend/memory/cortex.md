@@ -1,6 +1,6 @@
 # Cortex
 
-The Cortex is the synthesis layer of the OSA memory stack. It reads from session history, long-term memory, and episodic events to produce bulletins, track active topics, and generate session summaries. It runs as a GenServer (`MiosaMemory.Cortex`) under AgentServices.
+The Cortex is the synthesis layer of the Daemon memory stack. It reads from session history, long-term memory, and episodic events to produce bulletins, track active topics, and generate session summaries. It runs as a GenServer (`MiosaMemory.Cortex`) under AgentServices.
 
 ## Responsibilities
 
@@ -11,10 +11,10 @@ The Cortex is the synthesis layer of the OSA memory stack. It reads from session
 
 ## API
 
-`OptimalSystemAgent.Agent.Cortex` delegates to `MiosaMemory.Cortex`:
+`Daemon.Agent.Cortex` delegates to `MiosaMemory.Cortex`:
 
 ```elixir
-alias OptimalSystemAgent.Agent.Cortex
+alias Daemon.Agent.Cortex
 
 # Get the latest bulletin (synthesized insight text)
 bulletin = Cortex.bulletin()
@@ -72,17 +72,17 @@ Summaries are used when the agent resumes a session or when building context for
 
 ## CortexProvider Bridge
 
-`OptimalSystemAgent.Agent.CortexProvider` is a one-function bridge module that wires `MiosaMemory.Cortex`'s LLM synthesis calls to OSA's provider registry:
+`Daemon.Agent.CortexProvider` is a one-function bridge module that wires `MiosaMemory.Cortex`'s LLM synthesis calls to Daemon's provider registry:
 
 ```elixir
-defmodule OptimalSystemAgent.Agent.CortexProvider do
+defmodule Daemon.Agent.CortexProvider do
   def chat(messages, opts) do
     MiosaProviders.Registry.chat(messages, opts)
   end
 end
 ```
 
-`MiosaMemory.Cortex` is provider-agnostic — it accepts any module that implements `chat/2`. This bridge is injected at startup so Cortex synthesis uses whatever provider OSA is configured with (Anthropic, Ollama, etc.), selected through the standard provider registry fallback chain.
+`MiosaMemory.Cortex` is provider-agnostic — it accepts any module that implements `chat/2`. This bridge is injected at startup so Cortex synthesis uses whatever provider Daemon is configured with (Anthropic, Ollama, etc.), selected through the standard provider registry fallback chain.
 
 ## Context Injection Flow
 

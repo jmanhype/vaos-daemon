@@ -5,11 +5,11 @@
 ## Setup
 
 ```bash
-# Add to ~/.osa/.env
+# Add to ~/.daemon/.env
 ANTHROPIC_API_KEY="sk-ant-api03-..."
 ```
 
-OSA auto-detects Anthropic as priority 1 when key is present.
+Daemon auto-detects Anthropic as priority 1 when key is present.
 
 ## Models
 
@@ -47,7 +47,7 @@ OSA auto-detects Anthropic as priority 1 when key is present.
 
 ```elixir
 # config.exs defaults
-config :optimal_system_agent, :anthropic,
+config :daemon, :anthropic,
   api_key: System.get_env("ANTHROPIC_API_KEY"),
   model: "claude-sonnet-4-6",
   url: "https://api.anthropic.com"

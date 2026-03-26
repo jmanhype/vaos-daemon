@@ -1,12 +1,12 @@
-# What is goldrush and Why OSA Uses It
+# What is goldrush and Why Daemon Uses It
 
-OSA routes events, tool calls, and LLM provider requests through a library called
-goldrush. If you look at the OSA codebase, you will see atoms like
-`:osa_event_router`, `:osa_tool_dispatcher`, and `:osa_provider_router`. These
+Daemon routes events, tool calls, and LLM provider requests through a library called
+goldrush. If you look at the Daemon codebase, you will see atoms like
+`:daemon_event_router`, `:daemon_tool_dispatcher`, and `:daemon_provider_router`. These
 are not configuration strings — they are names of compiled BEAM bytecode modules
 that goldrush creates at runtime.
 
-This guide explains what goldrush is, how it works, and why OSA uses it instead
+This guide explains what goldrush is, how it works, and why Daemon uses it instead
 of simpler alternatives.
 
 ---
@@ -71,16 +71,16 @@ query = :glc.with(:glc.any(type_filters), fn event ->
   dispatch_event(event)
 end)
 
-# Compile to a BEAM module named :osa_event_router
-:glc.compile(:osa_event_router, query)
+# Compile to a BEAM module named :daemon_event_router
+:glc.compile(:daemon_event_router, query)
 ```
 
-After `glc:compile/2` runs, `:osa_event_router` is a real loaded module in the
+After `glc:compile/2` runs, `:daemon_event_router` is a real loaded module in the
 VM. Sending an event through it looks like:
 
 ```elixir
 gre_event = :gre.make(event_fields, [:list])
-:glc.handle(:osa_event_router, gre_event)
+:glc.handle(:daemon_event_router, gre_event)
 ```
 
 The VM runs the compiled module's bytecode directly. No hash map lookup, no
@@ -88,14 +88,14 @@ function dispatch, no runtime pattern matching — just BEAM instructions.
 
 ---
 
-## goldrush in OSA: Three Compiled Modules
+## goldrush in Daemon: Three Compiled Modules
 
-OSA compiles three goldrush modules at boot. Each serves a different routing
+Daemon compiles three goldrush modules at boot. Each serves a different routing
 purpose.
 
-### 1. `:osa_event_router` — The Event Bus
+### 1. `:daemon_event_router` — The Event Bus
 
-Compiled by `OptimalSystemAgent.Events.Bus` during its `init` callback.
+Compiled by `Daemon.Events.Bus` during its `init` callback.
 
 The event bus handles these event types:
 
@@ -113,7 +113,7 @@ algedonic_alert — urgent bypass signal (VSM)
 ```
 
 The compiled filter passes events of known types to `dispatch_event/1`, which
-looks up registered handlers in the `:osa_event_handlers` ETS table and calls
+looks up registered handlers in the `:daemon_event_handlers` ETS table and calls
 each one.
 
 A key architectural decision: the goldrush module is compiled once at init and
@@ -121,9 +121,9 @@ never recompiled. Handler registration is dynamic (via ETS), but the type filter
 is static. This avoids a race condition where in-flight tasks hold references to
 old compiled bytecode while a recompile wipes the `gr_param` ETS table.
 
-### 2. `:osa_tool_dispatcher` — Tool Routing
+### 2. `:daemon_tool_dispatcher` — Tool Routing
 
-Compiled by `OptimalSystemAgent.Tools.Registry` during init.
+Compiled by `Daemon.Tools.Registry` during init.
 
 When the agent loop decides to call a tool, it sends an event through the tool
 dispatcher. The compiled module routes based on the tool name field in the event,
@@ -131,10 +131,10 @@ dispatching to the correct tool module.
 
 Unlike the event bus, the tool dispatcher is recompiled when new tools are
 registered. This is safe because tool registration is infrequent (at boot, when
-MCP servers connect, or when the operator registers a skill). OSA ensures no
+MCP servers connect, or when the operator registers a skill). Daemon ensures no
 in-flight tool calls are pending during recompilation.
 
-### 3. `:osa_provider_router` — LLM Provider Routing
+### 3. `:daemon_provider_router` — LLM Provider Routing
 
 Compiled by `MiosaProviders.Registry` during init.
 
@@ -147,7 +147,7 @@ The provider router is also recompiled when providers are dynamically registered
 
 ---
 
-## How Events Flow Through OSA
+## How Events Flow Through Daemon
 
 Here is a complete event flow for a user message arriving via HTTP:
 
@@ -161,12 +161,12 @@ Here is a complete event flow for a user message arriving via HTTP:
    Bus serializes to a goldrush proplist: :gre.make(fields, [:list])
 
 4. Bus spawns a supervised Task:
-   Task calls :glc.handle(:osa_event_router, gre_event)
+   Task calls :glc.handle(:daemon_event_router, gre_event)
 
-5. :osa_event_router (compiled BEAM module) checks: is :type == :user_message?
+5. :daemon_event_router (compiled BEAM module) checks: is :type == :user_message?
    Yes → calls dispatch_event/1
 
-6. dispatch_event/1 reads :osa_event_handlers ETS table
+6. dispatch_event/1 reads :daemon_event_handlers ETS table
    Finds handler registered for :user_message
    Spawns another supervised Task to call the handler
 
@@ -175,7 +175,7 @@ Here is a complete event flow for a user message arriving via HTTP:
 
 8. Loop calls Events.Bus.emit(:agent_response, response_payload)
 
-9. :osa_event_router dispatches :agent_response to Bridge.PubSub and SSE stream
+9. :daemon_event_router dispatches :agent_response to Bridge.PubSub and SSE stream
 ```
 
 Every step after the initial emit is asynchronous. The HTTP handler returns
@@ -185,7 +185,7 @@ immediately. The event processing continues in supervised background tasks.
 
 ## goldrush vs Phoenix.PubSub
 
-OSA uses both goldrush (via `Events.Bus`) and Phoenix.PubSub (via `Bridge.PubSub`).
+Daemon uses both goldrush (via `Events.Bus`) and Phoenix.PubSub (via `Bridge.PubSub`).
 They serve different purposes.
 
 **Phoenix.PubSub** routes messages by topic string. A subscriber says "send me
@@ -205,15 +205,15 @@ routing by event type regardless of which session it came from.
 | Recompilation needed | No | Only when filter changes |
 | Best for | Fan-out to topic subscribers | Content-filtered event routing |
 
-OSA's `Bridge.PubSub` uses Phoenix.PubSub to fan out session events to
+Daemon's `Bridge.PubSub` uses Phoenix.PubSub to fan out session events to
 connected frontends and external bridges. `Events.Bus` uses goldrush to route
 events by type across the entire system.
 
 ---
 
-## Why This Matters for OSA
+## Why This Matters for Daemon
 
-OSA's event bus processes every message, every tool call, every LLM request, and
+Daemon's event bus processes every message, every tool call, every LLM request, and
 every response. In a busy session with complex tool chains, the bus might handle
 dozens of events per second. In a multi-session setup with many concurrent users,
 that multiplies.
@@ -232,5 +232,5 @@ subsystem lives in its own compiled module.
 ## Next Steps
 
 Read [signal-theory-explained.md](./signal-theory-explained.md) to understand
-how OSA classifies every incoming message before routing it — a layer that runs
+how Daemon classifies every incoming message before routing it — a layer that runs
 even before the event hits the goldrush router.

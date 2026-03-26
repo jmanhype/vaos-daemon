@@ -1,18 +1,18 @@
 # Channels: CLI
 
-The CLI channel is an interactive terminal REPL started with `mix osa.chat`. It provides a full-featured prompt with colored output, an animated spinner, readline-style history, markdown rendering, plan review, and live task tracking.
+The CLI channel is an interactive terminal REPL started with `mix daemon.chat`. It provides a full-featured prompt with colored output, an animated spinner, readline-style history, markdown rendering, plan review, and live task tracking.
 
 ---
 
 ## Starting the CLI
 
 ```bash
-mix osa.chat
+mix daemon.chat
 ```
 
 `CLI.start/0` is the entry point. It:
 
-1. Clears the screen and prints the OSA banner (version, model, tool count, soul status, proactive mode flag).
+1. Clears the screen and prints the Daemon banner (version, model, tool count, soul status, proactive mode flag).
 2. Starts a new `Agent.Loop` session under `SessionSupervisor` with a random `cli_<hex>` session ID.
 3. Registers a `Permission` hook for the session.
 4. Registers Bus event handlers for orchestrator events and task tracker events.
@@ -164,10 +164,10 @@ The CLI registers a Bus handler for `:proactive_message` system events on sessio
 
 | Type | Prefix colour |
 |------|--------------|
-| `:alert` | `⚠ OSA` yellow |
-| `:work_complete` | `✓ OSA` dim |
-| `:work_failed` | `✗ OSA` yellow |
-| `:greeting` | `OSA` cyan |
+| `:alert` | `⚠ Daemon` yellow |
+| `:work_complete` | `✓ Daemon` dim |
+| `:work_failed` | `✗ Daemon` yellow |
+| `:greeting` | `Daemon` cyan |
 
 On startup, `ProactiveMode.greeting/1` is called asynchronously in a `TaskSupervisor` child.
 

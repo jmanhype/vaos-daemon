@@ -1,10 +1,10 @@
 # Supervision Tree
 
-Full OTP supervision tree for OSA v0.2.6. Every named supervisor, every child,
+Full OTP supervision tree for Daemon v0.2.6. Every named supervisor, every child,
 and the restart strategy at each level.
 
-Source of truth: `lib/optimal_system_agent/application.ex` and
-`lib/optimal_system_agent/supervisors/`.
+Source of truth: `lib/daemon/application.ex` and
+`lib/daemon/supervisors/`.
 
 ---
 
@@ -12,10 +12,10 @@ Source of truth: `lib/optimal_system_agent/application.ex` and
 
 ```mermaid
 graph TD
-    ROOT["OptimalSystemAgent.Supervisor<br/><b>strategy: rest_for_one</b>"]
+    ROOT["Daemon.Supervisor<br/><b>strategy: rest_for_one</b>"]
 
     ROOT --> PlatformRepo["Platform.Repo<br/><i>conditional: DATABASE_URL</i><br/>Ecto PostgreSQL"]
-    ROOT --> TaskSup["Task.Supervisor<br/>name: OptimalSystemAgent.TaskSupervisor<br/><i>fire-and-forget async work</i>"]
+    ROOT --> TaskSup["Task.Supervisor<br/>name: Daemon.TaskSupervisor<br/><i>fire-and-forget async work</i>"]
     ROOT --> Infra["Supervisors.Infrastructure<br/><b>strategy: rest_for_one</b>"]
     ROOT --> Sessions["Supervisors.Sessions<br/><b>strategy: one_for_one</b>"]
     ROOT --> AgentSvc["Supervisors.AgentServices<br/><b>strategy: one_for_one</b>"]
@@ -26,16 +26,16 @@ graph TD
     %% Infrastructure children (rest_for_one ordering matters)
     Infra --> SessReg["Registry<br/>name: SessionRegistry<br/>keys: :unique"]
     Infra --> EventsTask["Task.Supervisor<br/>name: Events.TaskSupervisor<br/>max_children: 100"]
-    Infra --> PubSub["Phoenix.PubSub<br/>name: OptimalSystemAgent.PubSub"]
-    Infra --> EventsBus["Events.Bus<br/><i>compiles :osa_event_router</i>"]
+    Infra --> PubSub["Phoenix.PubSub<br/>name: Daemon.PubSub"]
+    Infra --> EventsBus["Events.Bus<br/><i>compiles :daemon_event_router</i>"]
     Infra --> DLQ["Events.DLQ<br/><i>dead-letter queue</i>"]
     Infra --> BridgePubSub["Bridge.PubSub<br/><i>goldrush → PubSub fan-out</i>"]
     Infra --> StoreRepo["Store.Repo<br/>Ecto SQLite3"]
     Infra --> EventStream["EventStream<br/><i>SSE event stream registry</i>"]
     Infra --> Telemetry["Telemetry.Metrics"]
     Infra --> HealthChecker["MiosaLLM.HealthChecker<br/><i>circuit breaker</i>"]
-    Infra --> ProvReg["MiosaProviders.Registry<br/><i>compiles :osa_provider_router</i>"]
-    Infra --> ToolsReg["Tools.Registry<br/><i>compiles :osa_tool_dispatcher</i>"]
+    Infra --> ProvReg["MiosaProviders.Registry<br/><i>compiles :daemon_provider_router</i>"]
+    Infra --> ToolsReg["Tools.Registry<br/><i>compiles :daemon_tool_dispatcher</i>"]
     Infra --> ToolsCache["Tools.Cache<br/><i>ETS tool result cache</i>"]
     Infra --> Machines["Machines<br/><i>skill set activation</i>"]
     Infra --> Commands["Commands<br/><i>slash command registry</i>"]
@@ -77,8 +77,8 @@ graph TD
     Ext --> SwarmMode["Agent.Orchestrator.SwarmMode<br/><i>always started</i>"]
     Ext --> AgentPool["DynamicSupervisor<br/>name: SwarmMode.AgentPool<br/>max_children: 50"]
 
-    Ext --> Treasury["MiosaBudget.Treasury<br/><i>conditional: OSA_TREASURY_ENABLED</i>"]
-    Ext --> FleetSup["Fleet.Supervisor<br/><b>strategy: one_for_one</b><br/><i>conditional: OSA_FLEET_ENABLED</i>"]
+    Ext --> Treasury["MiosaBudget.Treasury<br/><i>conditional: DAEMON_TREASURY_ENABLED</i>"]
+    Ext --> FleetSup["Fleet.Supervisor<br/><b>strategy: one_for_one</b><br/><i>conditional: DAEMON_FLEET_ENABLED</i>"]
     Ext --> SidecarMgr["Sidecar.Manager<br/><i>always started when sidecars enabled</i>"]
     Ext --> GoTokenizer["Go.Tokenizer<br/><i>conditional: go_tokenizer_enabled</i>"]
     Ext --> PythonSup["Python.Supervisor<br/><b>strategy: one_for_one</b><br/><i>conditional: python_sidecar_enabled</i>"]
@@ -113,7 +113,7 @@ graph TD
 
 | Supervisor | Strategy | Rationale |
 |---|---|---|
-| `OptimalSystemAgent.Supervisor` (root) | `:rest_for_one` | Infrastructure crash must restart all downstream subsystems |
+| `Daemon.Supervisor` (root) | `:rest_for_one` | Infrastructure crash must restart all downstream subsystems |
 | `Supervisors.Infrastructure` | `:rest_for_one` | Strict child ordering — Events.Bus depends on TaskSupervisor, Registry depends on HealthChecker |
 | `Supervisors.Sessions` | `:one_for_one` | Channel adapters are independent; a crashed Telegram adapter must not restart SessionSupervisor |
 | `Supervisors.AgentServices` | `:one_for_one` | Agent services are independent; Scheduler crash must not restart Memory |
@@ -137,10 +137,10 @@ starts. They are owned by the application process and survive all child process 
 
 | Table | Options |
 |---|---|
-| `:osa_cancel_flags` | `:named_table, :public, :set` |
-| `:osa_files_read` | `:named_table, :public, :set` |
-| `:osa_survey_answers` | `:set, :public, :named_table` |
-| `:osa_context_cache` | `:set, :public, :named_table` |
-| `:osa_survey_responses` | `:bag, :public, :named_table` |
-| `:osa_session_provider_overrides` | `:named_table, :public, :set` |
-| `:osa_pending_questions` | `:named_table, :public, :set` |
+| `:daemon_cancel_flags` | `:named_table, :public, :set` |
+| `:daemon_files_read` | `:named_table, :public, :set` |
+| `:daemon_survey_answers` | `:set, :public, :named_table` |
+| `:daemon_context_cache` | `:set, :public, :named_table` |
+| `:daemon_survey_responses` | `:bag, :public, :named_table` |
+| `:daemon_session_provider_overrides` | `:named_table, :public, :set` |
+| `:daemon_pending_questions` | `:named_table, :public, :set` |

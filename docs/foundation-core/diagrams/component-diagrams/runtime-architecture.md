@@ -12,10 +12,10 @@ Process types are annotated: `[S]` = Supervisor, `[GS]` = GenServer,
 
 ```mermaid
 graph TD
-    Root["OptimalSystemAgent.Supervisor [S]\nstrategy: rest_for_one"]
+    Root["Daemon.Supervisor [S]\nstrategy: rest_for_one"]
 
     Root --> PlatformRepo["Platform.Repo [GS]\nopt-in: DATABASE_URL"]
-    Root --> TaskSup["OptimalSystemAgent.TaskSupervisor [TS]\nfire-and-forget async"]
+    Root --> TaskSup["Daemon.TaskSupervisor [TS]\nfire-and-forget async"]
     Root --> Infra["Supervisors.Infrastructure [S]\nstrategy: rest_for_one"]
     Root --> Sessions["Supervisors.Sessions [S]\nstrategy: one_for_one"]
     Root --> AgentSvc["Supervisors.AgentServices [S]\nstrategy: one_for_one"]
@@ -27,15 +27,15 @@ graph TD
         I1["SessionRegistry [R]\nunique keys"]
         I2["Events.TaskSupervisor [TS]\nmax_children: 100"]
         I3["Phoenix.PubSub [GS]\ninternal fan-out"]
-        I4["Events.Bus [GS]\ngoldrush :osa_event_router"]
+        I4["Events.Bus [GS]\ngoldrush :daemon_event_router"]
         I5["Events.DLQ [GS]\nexponential backoff retry"]
         I6["Bridge.PubSub [GS]\nSSE bridge"]
         I7["Store.Repo [GS]\nSQLite WAL mode"]
         I8["EventStream [GS]\nCommand Center SSE"]
         I9["Telemetry.Metrics [GS]\ntelemetry subscriber"]
         I10["MiosaLLM.HealthChecker [GS]\ncircuit breaker"]
-        I11["MiosaProviders.Registry [GS]\ngoldrush :osa_provider_router"]
-        I12["Tools.Registry [GS]\ngoldrush :osa_tool_dispatcher"]
+        I11["MiosaProviders.Registry [GS]\ngoldrush :daemon_provider_router"]
+        I12["Tools.Registry [GS]\ngoldrush :daemon_tool_dispatcher"]
         I13["Tools.Cache [GS]\ntool result cache"]
         I14["Machines [GS]\nmachine templates"]
         I15["Commands [GS]\nslash command registry"]
@@ -118,21 +118,21 @@ graph TD
     AgentSvc --> A16
 
     subgraph ExtChildren["Extensions Children (one_for_one)"]
-        E1["MiosaBudget.Treasury [GS]\nopt-in: OSA_TREASURY_ENABLED"]
+        E1["MiosaBudget.Treasury [GS]\nopt-in: DAEMON_TREASURY_ENABLED"]
         E2["Intelligence.Supervisor [S]\nalways started, dormant"]
         E3["Orchestrator.Mailbox [GS]\nETS-backed"]
         E4["Orchestrator.SwarmMode [GS]"]
         E5["AgentPool [DS]\nmax_children: 50"]
-        E6["Fleet.Supervisor [S]\nopt-in: OSA_FLEET_ENABLED"]
+        E6["Fleet.Supervisor [S]\nopt-in: DAEMON_FLEET_ENABLED"]
         E7["Sidecar.Manager [GS]\ncircuit breaker tables"]
-        E8["Go.Tokenizer [GS]\nopt-in: OSA_GO_TOKENIZER_ENABLED"]
-        E9["Python.Supervisor [S]\nopt-in: OSA_PYTHON_SIDECAR_ENABLED"]
-        E10["Go.Git [GS]\nopt-in: OSA_GO_GIT_ENABLED"]
-        E11["Go.Sysmon [GS]\nopt-in: OSA_GO_SYSMON_ENABLED"]
-        E12["WhatsAppWeb [GS]\nopt-in: OSA_WHATSAPP_WEB_ENABLED"]
-        E13["Sandbox.Supervisor [S]\nopt-in: OSA_SANDBOX_ENABLED"]
-        E14["Integrations.Wallet [GS]\nopt-in: OSA_WALLET_ENABLED"]
-        E15["System.Updater [GS]\nopt-in: OSA_UPDATE_ENABLED"]
+        E8["Go.Tokenizer [GS]\nopt-in: DAEMON_GO_TOKENIZER_ENABLED"]
+        E9["Python.Supervisor [S]\nopt-in: DAEMON_PYTHON_SIDECAR_ENABLED"]
+        E10["Go.Git [GS]\nopt-in: DAEMON_GO_GIT_ENABLED"]
+        E11["Go.Sysmon [GS]\nopt-in: DAEMON_GO_SYSMON_ENABLED"]
+        E12["WhatsAppWeb [GS]\nopt-in: DAEMON_WHATSAPP_WEB_ENABLED"]
+        E13["Sandbox.Supervisor [S]\nopt-in: DAEMON_SANDBOX_ENABLED"]
+        E14["Integrations.Wallet [GS]\nopt-in: DAEMON_WALLET_ENABLED"]
+        E15["System.Updater [GS]\nopt-in: DAEMON_UPDATE_ENABLED"]
         E16["Platform.AMQP [GS]\nopt-in: AMQP_URL"]
     end
 
@@ -163,15 +163,15 @@ tree starts. They persist for the lifetime of the BEAM node.
 
 | Table | Owner | Purpose |
 |---|---|---|
-| `:osa_cancel_flags` | Application | Per-session loop cancellation flags |
-| `:osa_files_read` | Application | Read-before-write tracking |
-| `:osa_survey_answers` | Application | Ask-user-question answers |
-| `:osa_context_cache` | Application | Ollama context window size cache |
-| `:osa_survey_responses` | Application | Survey responses (no platform DB) |
-| `:osa_session_provider_overrides` | Application | Hot-swap provider/model per session |
-| `:osa_pending_questions` | Application | Pending ask_user question tracking |
-| `:osa_dlq` | Events.DLQ | Dead letter queue entries |
-| `:osa_circuit_breakers` | Sidecar.Manager | Sidecar circuit breaker states |
+| `:daemon_cancel_flags` | Application | Per-session loop cancellation flags |
+| `:daemon_files_read` | Application | Read-before-write tracking |
+| `:daemon_survey_answers` | Application | Ask-user-question answers |
+| `:daemon_context_cache` | Application | Ollama context window size cache |
+| `:daemon_survey_responses` | Application | Survey responses (no platform DB) |
+| `:daemon_session_provider_overrides` | Application | Hot-swap provider/model per session |
+| `:daemon_pending_questions` | Application | Pending ask_user question tracking |
+| `:daemon_dlq` | Events.DLQ | Dead letter queue entries |
+| `:daemon_circuit_breakers` | Sidecar.Manager | Sidecar circuit breaker states |
 
 ---
 
@@ -179,7 +179,7 @@ tree starts. They persist for the lifetime of the BEAM node.
 
 | Supervisor | Strategy | Rationale |
 |---|---|---|
-| `OptimalSystemAgent.Supervisor` | `:rest_for_one` | Infrastructure crash tears down all dependents |
+| `Daemon.Supervisor` | `:rest_for_one` | Infrastructure crash tears down all dependents |
 | `Supervisors.Infrastructure` | `:rest_for_one` | Strict startup ordering between children |
 | `Supervisors.Sessions` | `:one_for_one` | Channel adapters are independent |
 | `Supervisors.AgentServices` | `:one_for_one` | Services are independent |

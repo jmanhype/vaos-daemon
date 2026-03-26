@@ -1,11 +1,11 @@
 # Test Patterns
 
-Concrete patterns for common OSA test scenarios: testing GenServers, testing event
+Concrete patterns for common Daemon test scenarios: testing GenServers, testing event
 handlers, testing tool execution, and writing integration tests.
 
 ## Audience
 
-Developers writing tests for OSA modules or ensuring new code is testable.
+Developers writing tests for Daemon modules or ensuring new code is testable.
 
 ---
 
@@ -14,10 +14,10 @@ Developers writing tests for OSA modules or ensuring new code is testable.
 Use this pattern for modules with no GenServer state — tools, providers, utilities.
 
 ```elixir
-defmodule OptimalSystemAgent.Tools.Builtins.DiffTest do
+defmodule Daemon.Tools.Builtins.DiffTest do
   use ExUnit.Case, async: true  # Safe to parallelize
 
-  alias OptimalSystemAgent.Tools.Builtins.Diff
+  alias Daemon.Tools.Builtins.Diff
 
   test "module exports the tool behaviour callbacks" do
     assert function_exported?(Diff, :name, 0)
@@ -57,10 +57,10 @@ Use `start_supervised!/2` to start the process under the test's supervisor.
 ExUnit cleans it up after the test, preventing state leaks.
 
 ```elixir
-defmodule OptimalSystemAgent.MyFeatureTest do
+defmodule Daemon.MyFeatureTest do
   use ExUnit.Case, async: false  # async: false for named processes
 
-  alias OptimalSystemAgent.MyFeature
+  alias Daemon.MyFeature
 
   setup do
     # Start the GenServer fresh for each test.
@@ -102,10 +102,10 @@ end
 Based on the approach in `test/agent/loop_test.exs`:
 
 ```elixir
-defmodule OptimalSystemAgent.Agent.LoopTest do
+defmodule Daemon.Agent.LoopTest do
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Agent.Loop
+  alias Daemon.Agent.Loop
 
   # Generate unique session IDs to prevent collisions between test runs
   defp unique_session_id do
@@ -114,10 +114,10 @@ defmodule OptimalSystemAgent.Agent.LoopTest do
 
   setup do
     # Ensure Registry is running — start it if not, skip if it is
-    case Process.whereis(OptimalSystemAgent.SessionRegistry) do
+    case Process.whereis(Daemon.SessionRegistry) do
       nil ->
         start_supervised!(
-          {Registry, keys: :unique, name: OptimalSystemAgent.SessionRegistry}
+          {Registry, keys: :unique, name: Daemon.SessionRegistry}
         )
       _pid ->
         :ok
@@ -144,7 +144,7 @@ defmodule OptimalSystemAgent.Agent.LoopTest do
       id: String.to_atom(session_id)
     )
 
-    assert [{_pid, _}] = Registry.lookup(OptimalSystemAgent.SessionRegistry, session_id)
+    assert [{_pid, _}] = Registry.lookup(Daemon.SessionRegistry, session_id)
   end
 
   test "get_owner returns the registered owner" do
@@ -167,10 +167,10 @@ end
 Based on `test/agent/hooks_test.exs`:
 
 ```elixir
-defmodule OptimalSystemAgent.Agent.HooksTest do
+defmodule Daemon.Agent.HooksTest do
   use ExUnit.Case, async: false
 
-  alias OptimalSystemAgent.Agent.Hooks
+  alias Daemon.Agent.Hooks
 
   # Check availability but don't fail if server not running — skip gracefully.
   setup do
@@ -245,11 +245,11 @@ defmodule EventHandlerTest do
   test "registered handler receives emitted events" do
     test_pid = self()
 
-    ref = OptimalSystemAgent.Events.Bus.register_handler(:system_event, fn event ->
+    ref = Daemon.Events.Bus.register_handler(:system_event, fn event ->
       send(test_pid, {:got_event, event})
     end)
 
-    OptimalSystemAgent.Events.Bus.emit(
+    Daemon.Events.Bus.emit(
       :system_event,
       %{event: :test_payload},
       source: "test",
@@ -262,19 +262,19 @@ defmodule EventHandlerTest do
     assert event[:source] == "test"
 
     # Clean up
-    OptimalSystemAgent.Events.Bus.unregister_handler(:system_event, ref)
+    Daemon.Events.Bus.unregister_handler(:system_event, ref)
   end
 
   test "handler does not receive events after unregistration" do
     test_pid = self()
 
-    ref = OptimalSystemAgent.Events.Bus.register_handler(:system_event, fn _event ->
+    ref = Daemon.Events.Bus.register_handler(:system_event, fn _event ->
       send(test_pid, :should_not_receive)
     end)
 
-    OptimalSystemAgent.Events.Bus.unregister_handler(:system_event, ref)
+    Daemon.Events.Bus.unregister_handler(:system_event, ref)
 
-    OptimalSystemAgent.Events.Bus.emit(:system_event, %{event: :ignored})
+    Daemon.Events.Bus.emit(:system_event, %{event: :ignored})
 
     refute_receive :should_not_receive, 200
   end
@@ -291,7 +291,7 @@ Based on `test/tools/schema_validation_test.exs`:
 defmodule SchemaValidationTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Tools.Registry
+  alias Daemon.Tools.Registry
 
   # Define inline test tool modules:
   defmodule StrictTool do
@@ -398,7 +398,7 @@ end
 ## Pattern 8: Integration Tests for HTTP Endpoints
 
 ```elixir
-defmodule OptimalSystemAgent.HTTPEndpointTest do
+defmodule Daemon.HTTPEndpointTest do
   use ExUnit.Case, async: false
   @moduletag :integration
 
@@ -422,7 +422,7 @@ defmodule OptimalSystemAgent.HTTPEndpointTest do
 
   defp test_token do
     # Generate a test JWT or use a configured dev token
-    Application.get_env(:optimal_system_agent, :dev_token, "dev-token")
+    Application.get_env(:daemon, :dev_token, "dev-token")
   end
 end
 ```

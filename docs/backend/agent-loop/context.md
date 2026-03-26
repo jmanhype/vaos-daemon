@@ -2,7 +2,7 @@
 
 Assembles the system prompt for each LLM call within a token budget. Operates in two tiers: a cached static base and a per-request dynamic context.
 
-**Module:** `OptimalSystemAgent.Agent.Context`
+**Module:** `Daemon.Agent.Context`
 
 ---
 
@@ -80,7 +80,7 @@ Taxonomy entries from the learning engine (patterns and solutions) are appended 
 
 ## Environment Block (git info cache)
 
-Git info (branch, modified files, recent commits) is cached in the `:osa_git_info_cache` ETS table with a 30-second TTL. The cache is keyed on the atom `:git_info`. This prevents repeated `git` subprocess invocations across iterations within the same message turn.
+Git info (branch, modified files, recent commits) is cached in the `:daemon_git_info_cache` ETS table with a 30-second TTL. The cache is keyed on the atom `:git_info`. This prevents repeated `git` subprocess invocations across iterations within the same message turn.
 
 ---
 
@@ -107,7 +107,7 @@ Truncation uses a word-count approximation: `max_words = round(target_tokens / 1
 
 ## Token Estimation
 
-`estimate_tokens/1` uses the Go tokenizer (`OptimalSystemAgent.Go.Tokenizer.count_tokens/1`) when available for accurate BPE counts. Falls back to a word + punctuation heuristic:
+`estimate_tokens/1` uses the Go tokenizer (`Daemon.Go.Tokenizer.count_tokens/1`) when available for accurate BPE counts. Falls back to a word + punctuation heuristic:
 
 ```
 words * 1.3 + punctuation_chars * 0.5

@@ -1,6 +1,6 @@
 # Contribution Guide
 
-Audience: anyone who wants to contribute code, skills, commands, agents, or documentation to OSA.
+Audience: anyone who wants to contribute code, skills, commands, agents, or documentation to Daemon.
 
 ## Contribution Types
 
@@ -25,8 +25,8 @@ No-code contributions (skills, commands, agent definitions) are the most impactf
 1. Fork the repository on GitHub.
 2. Clone your fork:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/OSA.git
-   cd OSA
+   git clone https://github.com/YOUR_USERNAME/vaos-daemon.git
+   cd Daemon
    ```
 3. Add the upstream remote:
    ```bash
@@ -142,17 +142,17 @@ CGO_ENABLED=0 go build -o osa-tokenizer .
 
 ## Adding a Skill (Elixir Module)
 
-1. Create `lib/optimal_system_agent/skills/builtins/your_skill.ex`.
-2. Implement the four callbacks from `OptimalSystemAgent.Skills.Behaviour`: `name/0`, `description/0`, `parameters/0`, `execute/1`.
-3. Register in `lib/optimal_system_agent/skills/registry.ex` → `load_builtin_skills/0`.
+1. Create `lib/daemon/skills/builtins/your_skill.ex`.
+2. Implement the four callbacks from `Daemon.Skills.Behaviour`: `name/0`, `description/0`, `parameters/0`, `execute/1`.
+3. Register in `lib/daemon/skills/registry.ex` → `load_builtin_skills/0`.
 4. Add a dispatch clause in `dispatch_builtin/2`.
-5. Write tests in `test/optimal_system_agent/skills/builtins/your_skill_test.exs`.
+5. Write tests in `test/daemon/skills/builtins/your_skill_test.exs`.
 
 The `execute/1` function must return `{:ok, String.t()}` or `{:error, String.t()}`. The agent renders these directly in conversation.
 
 ## Adding a SKILL.md (No Code)
 
-Drop a markdown file in `priv/skills/` (shipped with the application) or `~/.osa/skills/your-skill/SKILL.md` (user-local). Files in `priv/skills/` must be submitted via PR.
+Drop a markdown file in `priv/skills/` (shipped with the application) or `~/.daemon/skills/your-skill/SKILL.md` (user-local). Files in `priv/skills/` must be submitted via PR.
 
 Required frontmatter:
 
@@ -180,7 +180,7 @@ Checklist before submitting:
 
 ## Adding a Slash Command
 
-Command templates live in `priv/commands/{category}/`. The filename (without extension) becomes the slash command name. Add your `.md` file and wire the command name in `lib/optimal_system_agent/commands.ex`.
+Command templates live in `priv/commands/{category}/`. The filename (without extension) becomes the slash command name. Add your `.md` file and wire the command name in `lib/daemon/commands.ex`.
 
 Categories: `workflow/`, `context/`, `security/`, `memory/`, `utility/`.
 

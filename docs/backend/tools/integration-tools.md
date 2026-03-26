@@ -1,6 +1,6 @@
 # Integration Tools
 
-Integration tools connect OSA to the external world: the web, GitHub, git repositories, user interaction, and sub-agent delegation.
+Integration tools connect Daemon to the external world: the web, GitHub, git repositories, user interaction, and sub-agent delegation.
 
 ---
 
@@ -8,7 +8,7 @@ Integration tools connect OSA to the external world: the web, GitHub, git reposi
 
 Fetch a URL and extract text content. Optionally uses AI to extract specific information.
 
-**Module:** `OptimalSystemAgent.Tools.Builtins.WebFetch`
+**Module:** `Daemon.Tools.Builtins.WebFetch`
 **Safety:** `:read_only`
 
 ### Parameters
@@ -46,7 +46,7 @@ Private hosts are blocked at the IP level using `:inet.parse_address/1`. The fol
 
 Search the web using a configured search engine.
 
-**Module:** `OptimalSystemAgent.Tools.Builtins.WebSearch`
+**Module:** `Daemon.Tools.Builtins.WebSearch`
 **Safety:** `:read_only`
 
 ### Parameters
@@ -64,7 +64,7 @@ Returns formatted search results with title, URL, and snippet for each result. R
 
 Interact with GitHub repositories via the GitHub API.
 
-**Module:** `OptimalSystemAgent.Tools.Builtins.Github`
+**Module:** `Daemon.Tools.Builtins.Github`
 **Safety:** `:write_safe`
 
 ### Parameters
@@ -90,7 +90,7 @@ Requires `GITHUB_TOKEN` environment variable or configured OAuth token. All API 
 
 Run git operations in a repository. Safe — executes specific git subcommands only, no arbitrary shell.
 
-**Module:** `OptimalSystemAgent.Tools.Builtins.Git`
+**Module:** `Daemon.Tools.Builtins.Git`
 **Safety:** `:write_destructive`
 
 ### Parameters
@@ -98,7 +98,7 @@ Run git operations in a repository. Safe — executes specific git subcommands o
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `operation` | string | yes | Git operation name |
-| `path` | string | no | Working directory (default: `~/.osa/workspace`) |
+| `path` | string | no | Working directory (default: `~/.daemon/workspace`) |
 | `message` | string | no | Commit message |
 | `file` | string | no | File path for diff/blame |
 | `files` | array | no | Files to stage for `add` |
@@ -124,7 +124,7 @@ Run git operations in a repository. Safe — executes specific git subcommands o
 | `add` | Stage files (all if no `files` given) |
 | `push` | Push to remote, optionally set upstream |
 | `pull` | Pull from remote |
-| `clone` | Clone a repository into `~/.osa/workspace/<repo-name>` |
+| `clone` | Clone a repository into `~/.daemon/workspace/<repo-name>` |
 | `branch` | List branches or create/switch + push new branch |
 | `show` | Show commit details for a ref (default: HEAD) |
 | `stash` | Push/pop/list/drop stash |
@@ -174,7 +174,7 @@ Only `http://`, `https://`, `git://`, and `ssh://` schemes are accepted for clon
 
 Prompt the user for input during agent execution.
 
-**Module:** `OptimalSystemAgent.Tools.Builtins.AskUser`
+**Module:** `Daemon.Tools.Builtins.AskUser`
 **Safety:** `:read_only`
 
 ### Parameters
@@ -199,7 +199,7 @@ Returns the user's response as a string, or `"(no response — timeout)"` if the
 
 Spawn a focused research sub-agent that autonomously completes a scoped task.
 
-**Module:** `OptimalSystemAgent.Tools.Builtins.Delegate`
+**Module:** `Daemon.Tools.Builtins.Delegate`
 
 See [Delegation](../orchestration/delegation.md) for full documentation.
 

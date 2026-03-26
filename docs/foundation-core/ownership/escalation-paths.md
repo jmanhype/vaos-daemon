@@ -3,7 +3,7 @@
 ## Overview
 
 This document describes how to report issues, request features, disclose
-security vulnerabilities, and contribute code to OSA. Using the right channel
+security vulnerabilities, and contribute code to Daemon. Using the right channel
 ensures the fastest response and appropriate handling.
 
 ---
@@ -14,7 +14,7 @@ ensures the fastest response and appropriate handling.
 
 Use GitHub Issues for all bug reports. A good bug report includes:
 
-- OSA version (`cat VERSION` or `bin/osagent version`)
+- Daemon version (`cat VERSION` or `bin/daemon version`)
 - Operating system and architecture
 - Elixir and OTP versions (`elixir --version`)
 - Steps to reproduce (minimum reproduction case if possible)
@@ -43,12 +43,12 @@ necessarily a fix.
 **Channel**: Responsible disclosure via private contact
 
 Security vulnerabilities must NOT be reported via public GitHub Issues.
-Public disclosure of an unpatched vulnerability puts all OSA users at risk.
+Public disclosure of an unpatched vulnerability puts all Daemon users at risk.
 
 To report a security vulnerability:
 
 1. Email the MIOSA team directly (contact available on the GitHub organization
-   profile) with subject line: `[OSA SECURITY] <brief description>`
+   profile) with subject line: `[DAEMON SECURITY] <brief description>`
 2. Include a description of the vulnerability, steps to reproduce, and your
    assessment of severity
 3. Allow 14 days for an initial response and coordinated disclosure timeline
@@ -104,7 +104,7 @@ The contribution workflow:
 5. Verify locally:
    ```bash
    mix test
-   MIX_ENV=prod mix release osagent
+   MIX_ENV=prod mix release daemon
    ```
 6. Update the changelog (`docs/operations/changelog.md`)
 7. Open a pull request against `main` with a clear description of the change
@@ -138,7 +138,7 @@ established in the existing docs.
 
 **Channel**: GitHub Discussions (Q&A category)
 
-For questions about how OSA works, how to configure it, or how to extend it,
+For questions about how Daemon works, how to configure it, or how to extend it,
 open a GitHub Discussion in the Q&A category. Do not use GitHub Issues for
 questions — Issues are reserved for confirmed bugs.
 

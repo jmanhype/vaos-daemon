@@ -2,7 +2,7 @@
 
 > **Severity:** HIGH
 > **Status:** Fixed — v0.2.5
-> **Component:** `lib/optimal_system_agent/providers/openai_compat.ex`
+> **Component:** `lib/daemon/providers/openai_compat.ex`
 > **Reported:** 2026-03-14
 > **Fixed:** 2026-03-14
 

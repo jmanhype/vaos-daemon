@@ -1,10 +1,10 @@
 # Performance Tuning
 
-Audience: operators who need to optimize OSA for throughput, latency, or cost
+Audience: operators who need to optimize Daemon for throughput, latency, or cost
 efficiency.
 
 Measure before optimizing. The bottleneck is almost always the LLM network
-call, not OSA's internal processing.
+call, not Daemon's internal processing.
 
 ---
 
@@ -16,24 +16,24 @@ how many can be returned in the response.
 ```sh
 # Maximum tokens in the LLM response (default: 8192)
 # Reducing this speeds up responses but may truncate long outputs
-OSA_MAX_RESPONSE_TOKENS=4096
+DAEMON_MAX_RESPONSE_TOKENS=4096
 
 # Context window size (default: 128000)
 # Must match or be smaller than your model's actual context window
-OSA_MAX_CONTEXT_TOKENS=128000
+DAEMON_MAX_CONTEXT_TOKENS=128000
 ```
 
 In code (reads at runtime):
 
 ```elixir
-Application.get_env(:optimal_system_agent, :max_response_tokens, 8_192)
-Application.get_env(:optimal_system_agent, :max_context_tokens, 128_000)
+Application.get_env(:daemon, :max_response_tokens, 8_192)
+Application.get_env(:daemon, :max_context_tokens, 128_000)
 ```
 
 ### Per-provider token limits
 
 Each provider has a different maximum context window. Set
-`OSA_MAX_CONTEXT_TOKENS` to match the model you are using:
+`DAEMON_MAX_CONTEXT_TOKENS` to match the model you are using:
 
 | Model | Context window |
 |-------|---------------|
@@ -43,7 +43,7 @@ Each provider has a different maximum context window. Set
 | qwen2.5:7b (Ollama) | 32,768 |
 | llama3.1:8b (Ollama) | 131,072 |
 
-Setting `OSA_MAX_CONTEXT_TOKENS` higher than the model supports causes the LLM
+Setting `DAEMON_MAX_CONTEXT_TOKENS` higher than the model supports causes the LLM
 to return an error. Setting it lower than the model supports wastes capacity
 and causes unnecessary compaction.
 
@@ -89,14 +89,14 @@ disable them in config. Only truncation will be used:
 
 ```elixir
 # config/prod.exs
-config :optimal_system_agent, compactor_llm_enabled: false
+config :daemon, compactor_llm_enabled: false
 ```
 
 ---
 
 ## Token Counting
 
-OSA uses a Go binary for accurate BPE token counting:
+Daemon uses a Go binary for accurate BPE token counting:
 
 ```
 priv/go/tokenizer/osa-tokenizer
@@ -130,7 +130,7 @@ The local agent store uses a connection pool via Ecto:
 
 ```elixir
 # config/config.exs
-config :optimal_system_agent, OptimalSystemAgent.Store.Repo,
+config :daemon, Daemon.Store.Repo,
   pool_size: 5
 ```
 
@@ -159,7 +159,7 @@ POOL_SIZE=25
 Hot-path ETS tables are created with `read_concurrency: true`:
 
 ```elixir
-:ets.new(:osa_hooks, [:named_table, :bag, :public, read_concurrency: true])
+:ets.new(:daemon_hooks, [:named_table, :bag, :public, read_concurrency: true])
 ```
 
 This enables concurrent reads from multiple BEAM schedulers. It is already
@@ -170,7 +170,7 @@ cancel flags). No tuning required.
 
 ## Concurrent Tool Execution
 
-When the LLM returns multiple tool calls in a single response, OSA executes
+When the LLM returns multiple tool calls in a single response, Daemon executes
 them in parallel using `Task.async_stream`:
 
 ```elixir
@@ -191,7 +191,7 @@ the LLM. Thresholds are configurable:
 
 ```elixir
 # config/prod.exs (or runtime.exs)
-config :optimal_system_agent,
+config :daemon,
   noise_filter_thresholds: %{
     definitely_noise: 0.15,   # below this → filtered with ack (no LLM)
     likely_noise: 0.35,       # below this → filtered with ack (no LLM)
@@ -241,14 +241,14 @@ The ReAct loop runs at most `max_iterations` times before forcing a response:
 
 ```elixir
 # Default: 30
-Application.get_env(:optimal_system_agent, :max_iterations, 30)
+Application.get_env(:daemon, :max_iterations, 30)
 ```
 
 Override via application config:
 
 ```elixir
 # config/prod.exs
-config :optimal_system_agent, max_iterations: 15
+config :daemon, max_iterations: 15
 ```
 
 Reducing iterations limits runaway tool chains but may cause the agent to

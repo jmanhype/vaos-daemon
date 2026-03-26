@@ -2,7 +2,7 @@
 
 > **Severity:** CRITICAL
 > **Status:** Partial Fix
-> **Component:** `lib/optimal_system_agent/providers/ollama.ex`
+> **Component:** `lib/daemon/providers/ollama.ex`
 > **Reported:** 2026-03-14
 
 ---
@@ -63,7 +63,7 @@ defp maybe_add_tools(body, model, opts) do
   case Keyword.get(opts, :tools) do
     tools when tools in [nil, []] -> body
     tools ->
-      force = Application.get_env(:optimal_system_agent, :ollama_force_tools, false)
+      force = Application.get_env(:daemon, :ollama_force_tools, false)
       if force or model_supports_tools?(model) do
         Map.put(body, :tools, format_tools(tools))
       else
@@ -80,5 +80,5 @@ Also expose `OLLAMA_FORCE_TOOLS=true` in `.env.example`.
 ## Workaround
 
 Add the model name prefix to `@tool_capable_prefixes` in
-`lib/optimal_system_agent/providers/ollama.ex` line 25 and recompile. For
+`lib/daemon/providers/ollama.ex` line 25 and recompile. For
 models already in the list the partial fix (v0.2.6 adding `llama3.2`) applies.

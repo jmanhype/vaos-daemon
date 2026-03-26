@@ -1,6 +1,6 @@
 # Deployment Guide
 
-Audience: operators deploying OSA in a persistent or production environment.
+Audience: operators deploying Daemon in a persistent or production environment.
 
 ## Deployment Options
 
@@ -16,13 +16,13 @@ Audience: operators deploying OSA in a persistent or production environment.
 
 ```bash
 brew tap Miosa-osa/tap
-brew install osagent
+brew install daemon
 
-osagent setup     # configure provider and API key
-osagent           # start interactive chat
+daemon setup     # configure provider and API key
+daemon           # start interactive chat
 ```
 
-Homebrew installs the release tarball into `libexec/` and symlinks `bin/osagent`.
+Homebrew installs the release tarball into `libexec/` and symlinks `bin/daemon`.
 
 ## Pre-built Tarball (Linux / macOS)
 
@@ -38,14 +38,14 @@ Available targets: `linux-amd64`, `linux-arm64`, `darwin-arm64`, `darwin-amd64`.
 VERSION=0.2.6
 PLATFORM=linux-amd64   # adjust as needed
 
-curl -fsSL "https://github.com/Miosa-osa/OSA/releases/download/v${VERSION}/osagent-${VERSION}-${PLATFORM}.tar.gz" \
-  | tar -xz -C /opt/osagent
+curl -fsSL "https://github.com/Miosa-osa/OSA/releases/download/v${VERSION}/daemon-${VERSION}-${PLATFORM}.tar.gz" \
+  | tar -xz -C /opt/daemon
 
 # Add to PATH
-export PATH="/opt/osagent/bin:$PATH"
+export PATH="/opt/daemon/bin:$PATH"
 
-osagent setup
-osagent serve     # headless HTTP API mode
+daemon setup
+daemon serve     # headless HTTP API mode
 ```
 
 Runtime dependencies on Linux (install if not present):
@@ -73,7 +73,7 @@ docker run -d \
   --name osa \
   -p 8089:8089 \
   -e ANTHROPIC_API_KEY=sk-ant-... \
-  -e OSA_DEFAULT_PROVIDER=anthropic \
+  -e DAEMON_DEFAULT_PROVIDER=anthropic \
   -v osa_data:/root/.osa \
   osa:latest
 ```
@@ -84,7 +84,7 @@ Health check: `GET http://localhost:8089/health` returns `{"status":"ok"}`. The 
 
 ## Docker Compose (with Ollama)
 
-The `docker-compose.yml` in the repository root starts both OSA and Ollama:
+The `docker-compose.yml` in the repository root starts both Daemon and Ollama:
 
 ```bash
 # Copy and populate the environment file
@@ -94,10 +94,10 @@ docker compose up -d
 ```
 
 The compose file:
-- Configures `OLLAMA_URL=http://ollama:11434` and `OSA_DEFAULT_PROVIDER=ollama` for the `osa` service.
+- Configures `OLLAMA_URL=http://ollama:11434` and `DAEMON_DEFAULT_PROVIDER=ollama` for the `osa` service.
 - Mounts `osa_data` volume to `/root/.osa` in the `osa` container and `ollama_data` volume to `/root/.ollama` in the `ollama` container.
 - Sets `restart: unless-stopped` on both services.
-- Waits for Ollama's health check to pass before starting OSA (`depends_on: condition: service_healthy`).
+- Waits for Ollama's health check to pass before starting Daemon (`depends_on: condition: service_healthy`).
 
 After startup, pull a model into Ollama:
 
@@ -111,15 +111,15 @@ Requires Elixir 1.17+ and OTP 27+ on the host.
 
 ```bash
 git clone https://github.com/Miosa-osa/OSA.git
-cd OSA
+cd Daemon
 MIX_ENV=prod mix setup
-MIX_ENV=prod mix release osagent
+MIX_ENV=prod mix release daemon
 ```
 
 Start the release:
 
 ```bash
-./_build/prod/rel/osagent/bin/osagent serve
+./_build/prod/rel/daemon/bin/daemon serve
 ```
 
 Or build and run in one step without a release:
@@ -130,23 +130,23 @@ MIX_ENV=prod mix run --no-halt
 
 ## Production Environment Configuration
 
-OSA reads configuration from environment variables at startup. Set these before starting the release binary or Docker container.
+Daemon reads configuration from environment variables at startup. Set these before starting the release binary or Docker container.
 
 **Minimum for cloud provider use:**
 
 ```bash
 ANTHROPIC_API_KEY=sk-ant-...          # or OPENAI_API_KEY, GROQ_API_KEY, etc.
-OSA_DEFAULT_PROVIDER=anthropic        # explicit provider selection
+DAEMON_DEFAULT_PROVIDER=anthropic        # explicit provider selection
 ```
 
 **Recommended for production:**
 
 ```bash
-OSA_REQUIRE_AUTH=true
-OSA_SHARED_SECRET=change-this-to-a-long-random-string
-OSA_HTTP_PORT=8089
-OSA_DAILY_BUDGET_USD=50.0
-OSA_MONTHLY_BUDGET_USD=500.0
+DAEMON_REQUIRE_AUTH=true
+DAEMON_SHARED_SECRET=change-this-to-a-long-random-string
+DAEMON_HTTP_PORT=8089
+DAEMON_DAILY_BUDGET_USD=50.0
+DAEMON_MONTHLY_BUDGET_USD=500.0
 ```
 
 **Platform mode (multi-tenant, optional):**
@@ -162,25 +162,25 @@ The full list of environment variables is in `configuration-reference.md`.
 
 ## Systemd Service (Linux)
 
-To run OSA as a systemd service:
+To run Daemon as a systemd service:
 
 ```ini
-# /etc/systemd/system/osagent.service
+# /etc/systemd/system/daemon.service
 [Unit]
-Description=OSA Agent
+Description=Daemon Agent
 After=network.target
 
 [Service]
 Type=exec
 User=osa
 Group=osa
-WorkingDirectory=/opt/osagent
-ExecStart=/opt/osagent/bin/osagent serve
+WorkingDirectory=/opt/daemon
+ExecStart=/opt/daemon/bin/daemon serve
 Restart=on-failure
 RestartSec=5
-Environment=OSA_HTTP_PORT=8089
-Environment=OSA_REQUIRE_AUTH=true
-Environment=OSA_SHARED_SECRET=your-secret
+Environment=DAEMON_HTTP_PORT=8089
+Environment=DAEMON_REQUIRE_AUTH=true
+Environment=DAEMON_SHARED_SECRET=your-secret
 EnvironmentFile=/etc/osa/env
 
 [Install]
@@ -189,8 +189,8 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now osagent
-sudo systemctl status osagent
+sudo systemctl enable --now daemon
+sudo systemctl status daemon
 ```
 
 ## Post-Deployment Verification
@@ -201,9 +201,9 @@ curl http://localhost:8089/health
 # Expected: {"status":"ok"}
 
 # Version
-curl http://localhost:8089/api/v1/version   # or: osagent version
+curl http://localhost:8089/api/v1/version   # or: daemon version
 
-# Send a test message (unauthenticated if OSA_REQUIRE_AUTH=false)
+# Send a test message (unauthenticated if DAEMON_REQUIRE_AUTH=false)
 curl -X POST http://localhost:8089/api/v1/sessions \
   -H "Content-Type: application/json" \
   -d '{"message": "hello"}'

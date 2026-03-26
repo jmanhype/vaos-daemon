@@ -2,7 +2,7 @@
 
 ## Overview
 
-Extensions are optional subsystems that add capability to OSA without being
+Extensions are optional subsystems that add capability to Daemon without being
 required for core agent functionality. The core agent — receiving messages,
 calling LLMs, executing tools, persisting memory — must work correctly when
 all extensions are disabled.
@@ -16,7 +16,7 @@ An extension is any subsystem that:
 1. Is started conditionally based on an environment variable or configuration
    flag
 2. Has a dependency on an external service, process, or binary not bundled
-   with the OSA release
+   with the Daemon release
 3. Adds functionality that is not required for a minimal agent session
 
 Examples of current extensions: Sandbox, Treasury, Fleet, Wallet, OTA Updater,
@@ -33,8 +33,8 @@ condition in `Supervisors.Extensions.init/1` before adding children:
 
 ```elixir
 defp sandbox_children do
-  if Application.get_env(:optimal_system_agent, :sandbox_enabled, false) do
-    [OptimalSystemAgent.Sandbox.Supervisor]
+  if Application.get_env(:daemon, :sandbox_enabled, false) do
+    [Daemon.Sandbox.Supervisor]
   else
     []
   end
@@ -44,7 +44,7 @@ end
 The default must be `false`. An extension must never start unless explicitly
 configured.
 
-Environment variable naming convention: `OSA_<FEATURE>_ENABLED=true`.
+Environment variable naming convention: `DAEMON_<FEATURE>_ENABLED=true`.
 For extensions activated by a connection URL (AMQP, PostgreSQL), the presence
 of the URL is the enabling condition.
 
@@ -55,8 +55,8 @@ must handle its absence gracefully. Acceptable patterns:
 
 - Check for the extension process before calling:
   ```elixir
-  if Process.whereis(OptimalSystemAgent.Fleet.Supervisor) do
-    OptimalSystemAgent.Fleet.register(session_id)
+  if Process.whereis(Daemon.Fleet.Supervisor) do
+    Daemon.Fleet.register(session_id)
   end
   ```
 - Return a default value from the extension's public API when its GenServer
@@ -102,8 +102,8 @@ may spawn unsupervised processes. The supervision strategy for Extensions is
 `:one_for_one` — a crashed extension does not restart other extensions.
 
 Extensions that manage child processes internally must use their own named
-Supervisor or DynamicSupervisor (e.g., `OptimalSystemAgent.Fleet.Supervisor`,
-`OptimalSystemAgent.Python.Supervisor`). These internal supervisors are the
+Supervisor or DynamicSupervisor (e.g., `Daemon.Fleet.Supervisor`,
+`Daemon.Python.Supervisor`). These internal supervisors are the
 children of `Supervisors.Extensions`, not their individual workers.
 
 ### 5. Extension Restart Behavior
@@ -123,17 +123,17 @@ other enabled extensions.
 
 | Extension | Environment Variable | External Dependency | Supervisor |
 |---|---|---|---|
-| Sandbox | `OSA_SANDBOX_ENABLED=true` | Docker or OS process group | `Sandbox.Supervisor` |
-| Treasury | `OSA_TREASURY_ENABLED=true` | None (in-process) | GenServer |
-| Fleet | `OSA_FLEET_ENABLED=true` | None (in-process) | `Fleet.Supervisor` |
-| Wallet | `OSA_WALLET_ENABLED=true` | External wallet API | GenServer |
-| OTA Updater | `OSA_UPDATE_ENABLED=true` | GitHub Releases API | GenServer |
+| Sandbox | `DAEMON_SANDBOX_ENABLED=true` | Docker or OS process group | `Sandbox.Supervisor` |
+| Treasury | `DAEMON_TREASURY_ENABLED=true` | None (in-process) | GenServer |
+| Fleet | `DAEMON_FLEET_ENABLED=true` | None (in-process) | `Fleet.Supervisor` |
+| Wallet | `DAEMON_WALLET_ENABLED=true` | External wallet API | GenServer |
+| OTA Updater | `DAEMON_UPDATE_ENABLED=true` | GitHub Releases API | GenServer |
 | AMQP Publisher | `AMQP_URL` present | RabbitMQ / AMQP broker | GenServer |
-| Go Tokenizer | `OSA_GO_TOKENIZER_ENABLED=true` | Go binary | GenServer (Port) |
-| Go Git | `OSA_GO_GIT_ENABLED=true` | Go binary + git | GenServer (Port) |
-| Go Sysmon | `OSA_GO_SYSMON_ENABLED=true` | Go binary | GenServer (Port) |
-| Python Sidecar | `OSA_PYTHON_SIDECAR_ENABLED=true` | Python 3.x | `Python.Supervisor` |
-| WhatsApp Web | `OSA_WHATSAPP_WEB_ENABLED=true` | Node.js, Puppeteer | GenServer (Port) |
+| Go Tokenizer | `DAEMON_GO_TOKENIZER_ENABLED=true` | Go binary | GenServer (Port) |
+| Go Git | `DAEMON_GO_GIT_ENABLED=true` | Go binary + git | GenServer (Port) |
+| Go Sysmon | `DAEMON_GO_SYSMON_ENABLED=true` | Go binary | GenServer (Port) |
+| Python Sidecar | `DAEMON_PYTHON_SIDECAR_ENABLED=true` | Python 3.x | `Python.Supervisor` |
+| WhatsApp Web | `DAEMON_WHATSAPP_WEB_ENABLED=true` | Node.js, Puppeteer | GenServer (Port) |
 | Intelligence | Always started | None (dormant until wired) | `Intelligence.Supervisor` |
 | Swarm | Always started | None (in-process) | DynamicSupervisor |
 | Platform DB | `DATABASE_URL` present | PostgreSQL | `Platform.Repo` (root level) |
@@ -147,7 +147,7 @@ unconditionally keeps the code simple and avoids conditional call-site checks.
 ## Adding a New Extension
 
 1. Implement the extension as a GenServer or Supervisor under a descriptive
-   namespace (e.g., `OptimalSystemAgent.MyFeature`)
+   namespace (e.g., `Daemon.MyFeature`)
 2. Add a private function `defp my_feature_children do ... end` to
    `Supervisors.Extensions`
 3. Call the function in `Extensions.init/1` and concatenate its result to

@@ -2,7 +2,7 @@
 
 Iterative test/lint/typecheck/compile fix loop. Runs a check command, parses failures, dispatches a mini agent loop to apply fixes, and repeats until all checks pass or the iteration limit is reached.
 
-**Module:** `OptimalSystemAgent.Agent.AutoFixer`
+**Module:** `Daemon.Agent.AutoFixer`
 
 ---
 
@@ -108,7 +108,7 @@ The fix agent is given a type-specific system prompt:
 
 ## Error Pattern Cache
 
-Successful fixes are cached in the `:osa_autofix_cache` ETS table (`:set`, `:public`, `:named_table`). The cache key is an `:erlang.phash2` of the error type + normalized error patterns. Normalization strips line/column numbers, numeric literals, and string literals to make keys stable across minor code changes:
+Successful fixes are cached in the `:daemon_autofix_cache` ETS table (`:set`, `:public`, `:named_table`). The cache key is an `:erlang.phash2` of the error type + normalized error patterns. Normalization strips line/column numbers, numeric literals, and string literals to make keys stable across minor code changes:
 
 ```
 "lib/foo.ex:42:5: undefined variable x"

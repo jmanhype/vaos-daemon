@@ -1,9 +1,9 @@
 # Event Contracts
 
-OSA uses a two-layer event system:
+Daemon uses a two-layer event system:
 
-1. **goldrush bus** (`OptimalSystemAgent.Events.Bus`) — in-process compiled-bytecode dispatch, zero-copy, sub-microsecond routing.
-2. **Phoenix.PubSub** (`OptimalSystemAgent.PubSub`) — cross-process fan-out via the `Bridge.PubSub` GenServer.
+1. **goldrush bus** (`Daemon.Events.Bus`) — in-process compiled-bytecode dispatch, zero-copy, sub-microsecond routing.
+2. **Phoenix.PubSub** (`Daemon.PubSub`) — cross-process fan-out via the `Bridge.PubSub` GenServer.
 
 Producers call `Bus.emit(event_type, payload)`. The bridge subscribes to all event types and fans each event out to four PubSub topics. Consumers (SSE handlers, TUI, monitoring) subscribe to PubSub topics, not to goldrush directly.
 
@@ -21,7 +21,7 @@ Every event map carries:
 }
 ```
 
-PubSub subscribers receive `{:osa_event, event_map}` tuples.
+PubSub subscribers receive `{:daemon_event, event_map}` tuples.
 
 ---
 
@@ -343,7 +343,7 @@ Events have no explicit version field. The implicit versioning contract is:
 
 - **Addition is backward compatible.** New fields can be added to any event payload without incrementing a version. All consumers must handle unknown fields gracefully (pattern match on required fields only, ignore extras).
 
-- **Removal or rename is a breaking change.** Any removal or rename of an existing field requires a coordinated update of all consumers before the producer changes. Because OSA is a single-deployment system with no external consumers of the internal bus, this is coordinated at the code level.
+- **Removal or rename is a breaking change.** Any removal or rename of an existing field requires a coordinated update of all consumers before the producer changes. Because Daemon is a single-deployment system with no external consumers of the internal bus, this is coordinated at the code level.
 
 - **New event types are additive.** Adding a new event type to the bus does not break existing consumers. PubSub subscribers that do not know about a type simply receive and discard the message.
 

@@ -3,9 +3,9 @@
 How a provider and model are selected for an LLM call, from signal weight through
 tier mapping, provider availability, and fallback chain execution.
 
-Source: `lib/optimal_system_agent/providers/registry.ex`,
-`lib/optimal_system_agent/providers/health_checker.ex`,
-`lib/optimal_system_agent/agent/tier.ex`.
+Source: `lib/daemon/providers/registry.ex`,
+`lib/daemon/providers/health_checker.ex`,
+`lib/daemon/agent/tier.ex`.
 
 ---
 
@@ -15,7 +15,7 @@ Source: `lib/optimal_system_agent/providers/registry.ex`,
 flowchart TD
     A([Agent.Loop requests LLM call]) --> B{Session has provider override?}
 
-    B -->|Yes: :osa_session_provider_overrides ETS| C[Use override provider + model]
+    B -->|Yes: :daemon_session_provider_overrides ETS| C[Use override provider + model]
     B -->|No| D{Signal weight available?}
 
     D -->|weight present| E{Determine tier from weight}
@@ -32,7 +32,7 @@ flowchart TD
 
     J --> K{Provider is :ollama?}
 
-    K -->|Yes| L{:persistent_term :osa_ollama_tiers available?}
+    K -->|Yes| L{:persistent_term :daemon_ollama_tiers available?}
     L -->|Yes: Ollama probed at boot| M[Use auto-detected model for tier<br/>largest=elite, mid=specialist, small=utility]
     L -->|No: Ollama not probed or no models| N[Use app config :ollama_model or default]
     M --> O[Resolved: provider + model]
@@ -141,7 +141,7 @@ Full mapping for all 18 providers is in `Agent.Tier.@tier_models`.
 
 Ollama tier assignment is dynamic: `detect_ollama_tiers/0` queries `GET /api/tags`,
 sorts installed models by file size, and assigns tiers. Result is cached in
-`persistent_term :osa_ollama_tiers` and survives GenServer restarts.
+`persistent_term :daemon_ollama_tiers` and survives GenServer restarts.
 
 ---
 
@@ -150,7 +150,7 @@ sorts installed models by file size, and assigns tiers. Result is cached in
 During `Providers.Registry.init/1`, Ollama reachability is probed via
 `Providers.Ollama.reachable?/0`. If Ollama is not reachable:
 
-1. `Process.put(:osa_ollama_excluded, true)` is set in the Registry process.
+1. `Process.put(:daemon_ollama_excluded, true)` is set in the Registry process.
 2. `filter_boot_excluded_providers/1` removes `:ollama` from all fallback chains.
 3. No `:econnrefused` log lines appear for subsequent LLM calls.
 
@@ -166,7 +166,7 @@ A per-session provider and model can be overridden at runtime without restarting
 
 **Via ETS (internal):**
 ```elixir
-:ets.insert(:osa_session_provider_overrides, {session_id, :groq, "llama-3.3-70b-versatile"})
+:ets.insert(:daemon_session_provider_overrides, {session_id, :groq, "llama-3.3-70b-versatile"})
 ```
 
 **Via HTTP API:**

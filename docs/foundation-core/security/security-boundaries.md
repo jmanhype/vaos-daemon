@@ -1,9 +1,9 @@
 # Security Boundaries
 
 Audience: operators configuring production deployments and developers
-understanding OSA's sandboxing architecture.
+understanding Daemon's sandboxing architecture.
 
-OSA runs untrusted code — LLM-generated tool arguments and shell commands —
+Daemon runs untrusted code — LLM-generated tool arguments and shell commands —
 and uses multiple layers of sandboxing to contain the blast radius of any
 mistake or adversarial prompt.
 
@@ -11,7 +11,7 @@ mistake or adversarial prompt.
 
 ## Layer 1: Shell Policy (All Deployments)
 
-The first and always-active boundary is `OptimalSystemAgent.Security.ShellPolicy`.
+The first and always-active boundary is `Daemon.Security.ShellPolicy`.
 It validates every command before execution regardless of sandbox type.
 
 The policy runs in the `security_check` hook at priority 10 (the first hook
@@ -43,12 +43,12 @@ configured execution backend. Three backends are supported:
 
 ### Native (No Sandbox)
 
-The default for development. Commands execute directly in the OSA process
+The default for development. Commands execute directly in the Daemon process
 user's environment.
 
 ```bash
 # config/runtime.exs (default)
-config :optimal_system_agent, :sandbox_backend, :native
+config :daemon, :sandbox_backend, :native
 ```
 
 Suitable for: local development on a trusted machine.
@@ -60,7 +60,7 @@ Full OS-level isolation via Docker containers. Each tool call spawns a
 short-lived container.
 
 ```bash
-config :optimal_system_agent,
+config :daemon,
   sandbox_backend: :docker,
   docker_image: "osa-sandbox:latest",
   docker_options: [
@@ -87,7 +87,7 @@ WebAssembly execution via wasmtime for language runtimes that support WASM
 compilation (Python, JavaScript, Rust, Go, C).
 
 ```bash
-config :optimal_system_agent,
+config :daemon,
   sandbox_backend: :wasm,
   wasm_fuel_limit: 1_000_000_000,   # Instruction limit (~1B ops)
   wasm_memory_pages: 256            # 256 * 64KB = 16MB
@@ -106,7 +106,7 @@ Cloud-based execution via Sprites.dev, which uses Firecracker microVMs for
 hardware-isolated execution. Suitable for high-throughput multi-tenant workloads.
 
 ```bash
-config :optimal_system_agent,
+config :daemon,
   sandbox_backend: :sprites,
   sprites_endpoint: "https://api.sprites.dev",
   sprites_api_key: System.get_env("SPRITES_API_KEY")
@@ -141,7 +141,7 @@ See [permission-model.md](./permission-model.md) for hook registration.
 
 ## Layer 4: Input and Output Guardrails
 
-`OptimalSystemAgent.Agent.Loop.Guardrails` applies checks at the LLM boundary:
+`Daemon.Agent.Loop.Guardrails` applies checks at the LLM boundary:
 
 **Input (before calling the LLM):**
 - `Guardrails.prompt_injection?/1`: Detects prompt injection attempts in
@@ -168,7 +168,7 @@ Known limitation: see [secret-handling.md Bug 17](./secret-handling.md).
 | Container escape | CAP_DROP ALL, read-only rootfs, seccomp |
 | Lateral movement between sessions | Session-keyed storage; no cross-session memory |
 | System prompt extraction | Output guardrail (partial; see Bug 17) |
-| Unauthenticated API access | JWT authentication when `OSA_REQUIRE_AUTH=true` |
+| Unauthenticated API access | JWT authentication when `DAEMON_REQUIRE_AUTH=true` |
 | Budget exhaustion attacks | spend_guard hook at p8 |
 
 ### Out of Scope (Current Version)
@@ -204,12 +204,12 @@ and Sprites API parameters respectively.
 
 ## Workspace Isolation
 
-All file operations default to `~/.osa/workspace/` as the working directory.
+All file operations default to `~/.daemon/workspace/` as the working directory.
 The shell_execute tool resolves relative paths within this directory:
 
 ```elixir
 # In ShellExecute.execute/1:
-workspace = Path.expand("~/.osa/workspace")
+workspace = Path.expand("~/.daemon/workspace")
 File.mkdir_p(workspace)
 
 effective_cwd = case params["cwd"] do

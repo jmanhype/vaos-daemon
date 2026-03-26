@@ -7,11 +7,11 @@ The HTTP channel is a Plug.Router application served by Bandit on port 8089. It 
 ## Server Configuration
 
 ```elixir
-config :optimal_system_agent,
+config :daemon,
   http_port: 8089,                  # default
   require_auth: false,              # set true in production
   jwt_secret: System.get_env("JWT_SECRET"),
-  shared_secret: System.get_env("OSA_SHARED_SECRET"),
+  shared_secret: System.get_env("DAEMON_SHARED_SECRET"),
   cors_origin: "*"
 ```
 
@@ -109,10 +109,10 @@ Classifies a message using `Signal.Classifier`. Returns signal dimensions:
 
 HS256 JWT authentication. The shared secret is resolved from (in order):
 
-1. `Application.get_env(:optimal_system_agent, :jwt_secret)`
-2. `Application.get_env(:optimal_system_agent, :shared_secret)`
+1. `Application.get_env(:daemon, :jwt_secret)`
+2. `Application.get_env(:daemon, :shared_secret)`
 3. `JWT_SECRET` environment variable
-4. `OSA_SHARED_SECRET` environment variable
+4. `DAEMON_SHARED_SECRET` environment variable
 5. Auto-generated ephemeral secret (logged as a warning — not suitable for production)
 
 **Token claims:**
@@ -153,7 +153,7 @@ ETS-backed token bucket, no external dependencies.
 | `/api/v1/platform/auth/*` | 10 req/min |
 | All other paths | 60 req/min |
 
-ETS table `:osa_rate_limits` stores `{ip_string, token_count, last_refill_unix_seconds}`. Refill is proportional to elapsed time within the window. A background cleanup process runs every 5 minutes and removes entries older than 10 minutes.
+ETS table `:daemon_rate_limits` stores `{ip_string, token_count, last_refill_unix_seconds}`. Refill is proportional to elapsed time within the window. A background cleanup process runs every 5 minutes and removes entries older than 10 minutes.
 
 Response headers: `X-RateLimit-Limit`, `X-RateLimit-Remaining`. On 429: `Retry-After`.
 
@@ -169,15 +169,15 @@ Bypassed for `/api/v1/auth/*` and `/health` — clients cannot sign before authe
 
 | Header | Format | Description |
 |--------|--------|-------------|
-| `X-OSA-Signature` | hex string | HMAC-SHA256 of payload |
-| `X-OSA-Timestamp` | Unix seconds | Request timestamp |
-| `X-OSA-Nonce` | any string | One-time nonce |
+| `X-Daemon-Signature` | hex string | HMAC-SHA256 of payload |
+| `X-Daemon-Timestamp` | Unix seconds | Request timestamp |
+| `X-Daemon-Nonce` | any string | One-time nonce |
 
 **Payload signed:** `timestamp + "\n" + nonce + "\n" + body`
 
 **Timestamp window:** 300 seconds (5 min).
 
-**Nonce deduplication:** ETS table `:osa_integrity_nonces`, reaped every 60 seconds via `:timer.apply_interval`.
+**Nonce deduplication:** ETS table `:daemon_integrity_nonces`, reaped every 60 seconds via `:timer.apply_interval`.
 
 Returns `401` with `integrity_check_failed` error on any violation.
 

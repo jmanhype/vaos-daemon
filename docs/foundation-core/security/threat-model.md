@@ -1,7 +1,7 @@
 # Threat Model
 
 This document identifies threat vectors specific to an AI agent system,
-analyzes their likelihood in OSA's operating context, and describes the
+analyzes their likelihood in Daemon's operating context, and describes the
 mitigations in place.
 
 ---
@@ -66,7 +66,7 @@ mitigations in place.
 
 - **Doom loop detection:** The agent loop limits iterations (`max_iterations`, default 30). A loop stuck on repeated identical tool failures is detected and cancelled.
 
-**Residual risk:** The `shell_execute` tool is inherently powerful. In fully local mode with `require_auth: false`, any process that can reach the HTTP port can cause arbitrary command execution. Operators running OSA in multi-user or network-exposed environments must enable auth and consider sandboxing (Sprites.dev sandbox or Docker container).
+**Residual risk:** The `shell_execute` tool is inherently powerful. In fully local mode with `require_auth: false`, any process that can reach the HTTP port can cause arbitrary command execution. Operators running Daemon in multi-user or network-exposed environments must enable auth and consider sandboxing (Sprites.dev sandbox or Docker container).
 
 ---
 
@@ -84,9 +84,9 @@ mitigations in place.
 
 - **Keys not in responses:** No HTTP endpoint returns API key values. The `/api/v1/agent` state route reports provider and model name only.
 
-- **Ephemeral secret warning:** If no `OSA_SHARED_SECRET` is configured, the auto-generated ephemeral secret is stored only in `persistent_term` — never written to disk, never logged (only a warning that no secret is configured).
+- **Ephemeral secret warning:** If no `DAEMON_SHARED_SECRET` is configured, the auto-generated ephemeral secret is stored only in `persistent_term` — never written to disk, never logged (only a warning that no secret is configured).
 
-- **`.env` not committed:** `.gitignore` patterns exclude `.env` and `~/.osa/.env`. The `.env` loading code reads from disk at startup only; it does not write.
+- **`.env` not committed:** `.gitignore` patterns exclude `.env` and `~/.daemon/.env`. The `.env` loading code reads from disk at startup only; it does not write.
 
 **Residual risk:** If an operator accidentally includes an API key in a user message (e.g. `"test with key sk-abc123..."`), the agent may include it verbatim in a tool call or response. No automatic redaction of key-shaped strings exists.
 
@@ -106,9 +106,9 @@ mitigations in place.
 
 - **Explore-before-act guard:** `Guardrails.complex_coding_task?/1` detects coding-related messages and injects an explore-first directive that causes the agent to read relevant files before writing. This is a behavior guide, not a security boundary.
 
-- **Auth requirement for network exposure:** When `OSA_REQUIRE_AUTH=true`, tool execution requires a valid JWT, limiting the attack surface to authenticated users.
+- **Auth requirement for network exposure:** When `DAEMON_REQUIRE_AUTH=true`, tool execution requires a valid JWT, limiting the attack surface to authenticated users.
 
-**Residual risk:** In `:full` permission tier, there is no hard file system boundary. An authenticated but malicious user can read any file the OSA process has access to. For sensitive environments, run OSA under a restricted OS user account.
+**Residual risk:** In `:full` permission tier, there is no hard file system boundary. An authenticated but malicious user can read any file the Daemon process has access to. For sensitive environments, run Daemon under a restricted OS user account.
 
 ---
 
@@ -116,7 +116,7 @@ mitigations in place.
 
 **Description:** One session's conversation history or memory is exposed to a different session via shared memory, ETS tables, or the orchestrator's shared task state.
 
-**Attack surface:** `Memory.load_session/1`, ETS tables (`:osa_episodic_memory`, `:osa_rate_limits`), Vault filesystem.
+**Attack surface:** `Memory.load_session/1`, ETS tables (`:daemon_episodic_memory`, `:daemon_rate_limits`), Vault filesystem.
 
 **Likelihood:** Low. Sessions are isolated by session_id. The Memory store returns only entries for the requested session_id.
 
@@ -124,11 +124,11 @@ mitigations in place.
 
 - **Session registry ownership:** `AgentRoutes.validate_session_owner/2` checks that the requesting `user_id` matches the session owner stored in the Registry. Mismatches return 404 (not 403) to avoid information disclosure about session existence.
 
-- **JSONL isolation:** Each session's conversation history is stored in a separate JSONL file (`~/.osa/sessions/{session_id}.jsonl`). There is no shared conversation table.
+- **JSONL isolation:** Each session's conversation history is stored in a separate JSONL file (`~/.daemon/sessions/{session_id}.jsonl`). There is no shared conversation table.
 
 - **ETS table keying:** ETS tables used for episodic memory and rate limiting are keyed by session_id or IP address. Cross-session access requires knowing the target session_id.
 
-**Residual risk:** Long-term memory (`MEMORY.md`) and Vault memories are global — they are shared across all sessions of the same OSA instance. Sensitive information stored by the agent during one session can be recalled and injected into subsequent sessions.
+**Residual risk:** Long-term memory (`MEMORY.md`) and Vault memories are global — they are shared across all sessions of the same Daemon instance. Sensitive information stored by the agent during one session can be recalled and injected into subsequent sessions.
 
 ---
 
@@ -144,10 +144,10 @@ mitigations in place.
 
 - **Rate limiting:** 60 requests/minute per IP. Multi-agent tasks are long-running but the launch call counts as one request.
 
-- **Budget controls:** `OSA_DAILY_BUDGET_USD` and `OSA_MONTHLY_BUDGET_USD` limits enforced by the Treasury GenServer. Budget alerts are emitted on the event bus. Per-call limit via `OSA_PER_CALL_LIMIT_USD`.
+- **Budget controls:** `DAEMON_DAILY_BUDGET_USD` and `DAEMON_MONTHLY_BUDGET_USD` limits enforced by the Treasury GenServer. Budget alerts are emitted on the event bus. Per-call limit via `DAEMON_PER_CALL_LIMIT_USD`.
 
 - **Swarm limits:** Max 10 concurrent swarms, max 5 agents per swarm.
 
-- **Auth enforcement:** When `OSA_REQUIRE_AUTH=true`, orchestration endpoints require a valid JWT.
+- **Auth enforcement:** When `DAEMON_REQUIRE_AUTH=true`, orchestration endpoints require a valid JWT.
 
 **Residual risk:** Budget limits are advisory — the Treasury blocks calls that would exceed the per-call limit but relies on the agent loop checking before calling the LLM. A race condition or misconfiguration could allow a brief overshoot.

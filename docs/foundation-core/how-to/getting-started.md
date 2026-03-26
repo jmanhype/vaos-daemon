@@ -1,6 +1,6 @@
 # Getting Started
 
-Audience: developers and operators setting up OSA for the first time.
+Audience: developers and operators setting up Daemon for the first time.
 
 This guide takes you from zero to a running agent in under ten minutes.
 
@@ -51,7 +51,7 @@ elixir --version
 
 ```sh
 git clone https://github.com/Miosa-osa/OSA.git
-cd OSA
+cd Daemon
 ```
 
 ### mix setup
@@ -69,7 +69,7 @@ mix setup
 Expected output ends with something like:
 
 ```
-Generated optimal_system_agent app
+Generated daemon app
 ```
 
 If you see compilation errors, check that your Elixir and Erlang/OTP versions
@@ -91,14 +91,14 @@ Alternatively, using the Mix alias:
 mix chat
 ```
 
-On the very first launch, OSA detects that no provider is configured and opens
+On the very first launch, Daemon detects that no provider is configured and opens
 the interactive setup wizard automatically. The wizard asks:
 
 1. Which LLM provider to use (Anthropic, OpenAI, Groq, Ollama, etc.)
 2. The API key for that provider
 3. (Optional) A default model name
 
-The wizard writes your answers to `~/.osa/.env`. You can edit that file
+The wizard writes your answers to `~/.daemon/.env`. You can edit that file
 directly at any time.
 
 ---
@@ -108,13 +108,13 @@ directly at any time.
 ### Option A: Interactive wizard
 
 ```sh
-bin/osa setup
+bin/daemon setup
 ```
 
 or, if you are running from source:
 
 ```sh
-./bin/osagent setup
+./bin/daemon setup
 ```
 
 The wizard prompts for the provider and API key, then validates the key with a
@@ -122,9 +122,9 @@ lightweight ping before saving.
 
 ### Option B: Environment variables
 
-Set the relevant key before starting OSA. The runtime reads from the shell
+Set the relevant key before starting Daemon. The runtime reads from the shell
 environment first, then from `.env` in the project root, then from
-`~/.osa/.env`.
+`~/.daemon/.env`.
 
 ```sh
 # Anthropic
@@ -141,11 +141,11 @@ export OLLAMA_URL=http://localhost:11434
 export OLLAMA_MODEL=qwen2.5:7b
 
 # Override the active provider explicitly
-export OSA_DEFAULT_PROVIDER=anthropic
-export OSA_MODEL=claude-opus-4-5
+export DAEMON_DEFAULT_PROVIDER=anthropic
+export DAEMON_MODEL=claude-opus-4-5
 ```
 
-Provider auto-detection order when `OSA_DEFAULT_PROVIDER` is not set:
+Provider auto-detection order when `DAEMON_DEFAULT_PROVIDER` is not set:
 
 1. `ANTHROPIC_API_KEY` present → `:anthropic`
 2. `OPENAI_API_KEY` present → `:openai`
@@ -155,12 +155,12 @@ Provider auto-detection order when `OSA_DEFAULT_PROVIDER` is not set:
 
 ### Option C: .env file
 
-Create `.env` in the project root or `~/.osa/.env`:
+Create `.env` in the project root or `~/.daemon/.env`:
 
 ```
 ANTHROPIC_API_KEY=sk-ant-...
-OSA_DEFAULT_PROVIDER=anthropic
-OSA_MODEL=claude-opus-4-5
+DAEMON_DEFAULT_PROVIDER=anthropic
+DAEMON_MODEL=claude-opus-4-5
 ```
 
 Lines starting with `#` are ignored. Variables already in the shell environment
@@ -170,7 +170,7 @@ take precedence and are never overwritten by `.env`.
 
 ## Verify the Installation
 
-Once OSA is running you should see the startup banner followed by the chat
+Once Daemon is running you should see the startup banner followed by the chat
 prompt. Run a quick health check from a second terminal:
 
 ```sh
@@ -189,16 +189,16 @@ Expected response:
 }
 ```
 
-If the HTTP port is in use, set `OSA_HTTP_PORT` to a free port:
+If the HTTP port is in use, set `DAEMON_HTTP_PORT` to a free port:
 
 ```sh
-OSA_HTTP_PORT=9000 bin/osa
+DAEMON_HTTP_PORT=9000 bin/osa
 ```
 
 ---
 
 ## Next Steps
 
-- [Understanding the Core](./understanding-the-core.md) — mental model of how OSA processes messages
+- [Understanding the Core](./understanding-the-core.md) — mental model of how Daemon processes messages
 - [Building on Core](./building-on-core/creating-a-service.md) — add your own GenServer to the supervision tree
 - [Debugging Core](./debugging/debugging-core.md) — inspect the running system

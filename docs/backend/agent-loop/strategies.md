@@ -2,7 +2,7 @@
 
 Pluggable modules that shape how the agent loop reasons about a task. The active strategy injects guidance into each loop iteration and tracks progress in its own state.
 
-**Behaviour:** `OptimalSystemAgent.Agent.Strategy`
+**Behaviour:** `Daemon.Agent.Strategy`
 **Registry function:** `Strategy.resolve/1`, `Strategy.resolve_by_name/1`
 
 ---
@@ -68,7 +68,7 @@ The default (no context) is ReAct. Strategy can be changed at runtime via `Loop.
 
 ## ReAct
 
-**Module:** `OptimalSystemAgent.Agent.Strategies.ReAct`
+**Module:** `Daemon.Agent.Strategies.ReAct`
 **Name:** `:react`
 **Best for:** Simple tasks, tool-heavy workflows, action-oriented goals.
 
@@ -101,7 +101,7 @@ The default strategy. Cycles through Think → Act → Observe phases.
 
 ## Chain of Thought
 
-**Module:** `OptimalSystemAgent.Agent.Strategies.ChainOfThought`
+**Module:** `Daemon.Agent.Strategies.ChainOfThought`
 **Name:** `:chain_of_thought`
 **Best for:** Analysis tasks, research, reasoning-heavy problems.
 
@@ -144,7 +144,7 @@ Prompts numbered step-by-step reasoning with an optional self-verification pass.
 
 ## Reflection
 
-**Module:** `OptimalSystemAgent.Agent.Strategies.Reflection`
+**Module:** `Daemon.Agent.Strategies.Reflection`
 **Name:** `:reflection`
 **Best for:** Debugging, code review, refactoring tasks.
 
@@ -190,7 +190,7 @@ Iteratively improves a response through Generate → Critique → Revise cycles.
 
 ## Tree of Thoughts
 
-**Module:** `OptimalSystemAgent.Agent.Strategies.TreeOfThoughts`
+**Module:** `Daemon.Agent.Strategies.TreeOfThoughts`
 **Name:** `:tree_of_thoughts`
 **Best for:** Planning, design, architecture decisions.
 
@@ -235,7 +235,7 @@ Generates multiple candidate approaches, evaluates and ranks them, then executes
 
 ## MCTS
 
-**Module:** `OptimalSystemAgent.Agent.Strategies.MCTS`
+**Module:** `Daemon.Agent.Strategies.MCTS`
 **Name:** `:mcts`
 **Best for:** Exploration tasks, optimization problems, complex search spaces.
 

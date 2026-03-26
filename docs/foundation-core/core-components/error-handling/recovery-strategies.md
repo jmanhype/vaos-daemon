@@ -2,11 +2,11 @@
 
 ## Audience
 
-Engineers understanding OSA's fault tolerance model and operators diagnosing degraded-mode operation.
+Engineers understanding Daemon's fault tolerance model and operators diagnosing degraded-mode operation.
 
 ## Overview
 
-OSA uses layered recovery: retry within a provider, then fall back across providers, then degrade gracefully if all providers are unavailable. The OTP supervision tree handles process crashes automatically. Circuit breakers prevent cascading failures across provider calls.
+Daemon uses layered recovery: retry within a provider, then fall back across providers, then degrade gracefully if all providers are unavailable. The OTP supervision tree handles process crashes automatically. Circuit breakers prevent cascading failures across provider calls.
 
 ---
 
@@ -19,7 +19,7 @@ The primary recovery mechanism for LLM failures. `Providers.Registry` maintains 
 Built at boot in `runtime.exs` from configured API keys, excluding the default provider:
 
 ```
-OSA_FALLBACK_CHAIN=anthropic,openai,ollama   ← explicit override
+DAEMON_FALLBACK_CHAIN=anthropic,openai,ollama   ← explicit override
 OR (auto-built):
   All providers with configured API keys + Ollama if TCP-reachable
   → default provider removed from chain
@@ -104,7 +104,7 @@ Non-rate-limit errors are not retried — they go directly to the fallback chain
 
 ## Circuit Breaker
 
-`OptimalSystemAgent.Providers.HealthChecker` implements a circuit breaker per provider.
+`Daemon.Providers.HealthChecker` implements a circuit breaker per provider.
 
 | State | Entry condition | Exit condition |
 |-------|----------------|----------------|
@@ -163,7 +163,7 @@ The supervision tree provides automatic process restart on crash. Restart strate
 
 | Supervisor | Strategy | Implication |
 |------------|----------|-------------|
-| `OptimalSystemAgent.Supervisor` (root) | `:rest_for_one` | Infrastructure crash restarts all children above it |
+| `Daemon.Supervisor` (root) | `:rest_for_one` | Infrastructure crash restarts all children above it |
 | `Supervisors.Infrastructure` | `:rest_for_one` | Events.Bus crash restarts DLQ, Bridge.PubSub, Telemetry, and everything above |
 | `Supervisors.Sessions` | `:one_for_one` | Channel adapter crash does not affect session supervisor |
 | `Supervisors.AgentServices` | `:one_for_one` | Scheduler crash does not restart Memory or Budget |
@@ -176,7 +176,7 @@ The supervision tree provides automatic process restart on crash. Restart strate
 
 ## Graceful Degradation
 
-When optional features are unavailable, OSA falls back to simpler implementations:
+When optional features are unavailable, Daemon falls back to simpler implementations:
 
 | Feature | Failure | Fallback |
 |---------|---------|---------|
@@ -197,4 +197,4 @@ Failed event handlers are recovered by `Events.DLQ` (see [Dead Letter Queue](dea
 
 ## Sidecar Circuit Breaker
 
-`Sidecar.Manager` maintains circuit breaker ETS tables for each sidecar process (Go tokenizer, Python semantic search, etc.). When a sidecar becomes unresponsive, its circuit opens and OSA falls back to the BEAM-native implementation. The sidecar continues running — the circuit closes automatically when it responds successfully again.
+`Sidecar.Manager` maintains circuit breaker ETS tables for each sidecar process (Go tokenizer, Python semantic search, etc.). When a sidecar becomes unresponsive, its circuit opens and Daemon falls back to the BEAM-native implementation. The sidecar continues running — the circuit closes automatically when it responds successfully again.

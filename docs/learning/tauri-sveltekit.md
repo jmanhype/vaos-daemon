@@ -1,6 +1,6 @@
 # Understanding the Desktop App Stack
 
-OSA's desktop application is built with Tauri, SvelteKit, and Svelte 5. This
+Daemon's desktop application is built with Tauri, SvelteKit, and Svelte 5. This
 guide explains what each piece is, how they fit together, and how the desktop
 app communicates with the Elixir backend.
 
@@ -29,7 +29,7 @@ similar in concept but very different in implementation.
 Tauri uses whatever webview the operating system provides. On macOS, that is
 WebKit (the same engine that powers Safari). This keeps the binary small and
 memory usage low. The tradeoff is that rendering can vary slightly across
-platforms — but for OSA's chat UI, this is not a concern.
+platforms — but for Daemon's chat UI, this is not a concern.
 
 Tauri's backend is written in Rust, which means the desktop shell is fast,
 memory-safe, and produces tiny binaries.
@@ -55,7 +55,7 @@ that directly updates the DOM when state changes.
 - API routes (server-side code that handles requests)
 - Build tooling (Vite under the hood)
 
-For OSA's desktop app, SvelteKit is used primarily for its component system
+For Daemon's desktop app, SvelteKit is used primarily for its component system
 and routing — not for server-side rendering, since the app talks to the Elixir
 backend over HTTP rather than rendering on a Node.js server.
 
@@ -63,7 +63,7 @@ backend over HTTP rather than rendering on a Node.js server.
 
 ## What is Svelte 5?
 
-OSA uses **Svelte 5**, which introduced a new reactivity system called **runes**.
+Daemon uses **Svelte 5**, which introduced a new reactivity system called **runes**.
 
 In Svelte 4, reactivity was implicit. Declaring a variable with `let` inside a
 component made it reactive. Assignments triggered updates automatically.
@@ -92,7 +92,7 @@ has no runtime overhead from the reactivity system itself.
 
 ---
 
-## How OSA's Desktop App Works
+## How Daemon's Desktop App Works
 
 The desktop app has three distinct layers:
 
@@ -109,7 +109,7 @@ The desktop app has three distinct layers:
 │  • SSE client for real-time streaming                   │
 ├─────────────────────────────────────────────────────────┤
 │              Elixir Backend (Sidecar)                   │
-│  • OSA's full OTP application                           │
+│  • Daemon's full OTP application                           │
 │  • HTTP API on port 9089                               │
 │  • Agent loop, tools, providers, memory, etc.           │
 └─────────────────────────────────────────────────────────┘
@@ -126,12 +126,12 @@ process managed by Tauri.
 A **sidecar** is a process that runs alongside the main application, managed by
 the main application's lifecycle.
 
-When you launch OSA's desktop app:
+When you launch Daemon's desktop app:
 
 1. Tauri starts and opens the native window
 2. Tauri checks whether something is already running on port 9089
    (this handles the development case where you started the backend manually)
-3. If port 9089 is empty, Tauri spawns the `osagent` binary as a child process
+3. If port 9089 is empty, Tauri spawns the `daemon` binary as a child process
 4. Tauri waits for the backend to become healthy (polls `GET /health` with
    exponential backoff, up to 30 seconds)
 5. When the backend responds healthy, Tauri emits a `backend-ready` event to
@@ -143,7 +143,7 @@ If the backend crashes during a session:
 2. Tauri emits `backend-crashed` to the frontend
 3. The frontend shows an error state and can prompt the user to restart
 
-When the user closes OSA:
+When the user closes Daemon:
 1. Tauri calls the graceful shutdown sequence on the Elixir sidecar
 2. The Elixir application runs its cleanup (flushes memory, closes connections)
 3. The Tauri process exits
@@ -156,11 +156,11 @@ inside the application bundle and Tauri knows how to find it.
 
 ## Development Mode vs Production Mode
 
-**Development**: You run the Elixir backend manually with `mix osa.serve`, and
+**Development**: You run the Elixir backend manually with `mix daemon.serve`, and
 the frontend with `npm run dev` inside the `desktop/` directory. Tauri connects
 to the existing backend because it detects port 9089 is already in use.
 
-**Production**: The Elixir backend is compiled to a release binary (`osagent`)
+**Production**: The Elixir backend is compiled to a release binary (`daemon`)
 and bundled inside the `.app` or `.exe`. Tauri spawns it as a sidecar. Users
 do not need Elixir, Erlang, or mix installed.
 
@@ -207,7 +207,7 @@ agent is using and why), tool results, errors, and session lifecycle events.
 
 ## The UI Components
 
-OSA's desktop UI is structured as Svelte 5 components in `desktop/src/`:
+Daemon's desktop UI is structured as Svelte 5 components in `desktop/src/`:
 
 ```
 src/
@@ -246,12 +246,12 @@ tauri build
      ↓
 Rust compiler builds Tauri shell
      ↓
-Elixir release binary (osagent) bundled as sidecar
+Elixir release binary (daemon) bundled as sidecar
      ↓
 Platform-specific app bundle:
-  macOS: OSA.app
-  Windows: OSA.exe installer
-  Linux: OSA.deb / OSA.AppImage
+  macOS: Daemon.app
+  Windows: Daemon.exe installer
+  Linux: Daemon.deb / Daemon.AppImage
 ```
 
 ---
@@ -261,9 +261,9 @@ Platform-specific app bundle:
 With the desktop app stack understood, return to the other learning guides if
 you skipped any:
 
-- [signal-theory-explained.md](./signal-theory-explained.md) — How OSA classifies messages
+- [signal-theory-explained.md](./signal-theory-explained.md) — How Daemon classifies messages
 - [react-pattern.md](./react-pattern.md) — How the agent reasons
-- [llm-providers.md](./llm-providers.md) — How OSA talks to AI models
+- [llm-providers.md](./llm-providers.md) — How Daemon talks to AI models
 
 Or move on to the [reference docs](../reference/) for API details and
 configuration options.

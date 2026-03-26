@@ -2,9 +2,9 @@
 
 ## Overview
 
-This document describes the failure modes that OSA is designed to handle,
+This document describes the failure modes that Daemon is designed to handle,
 the detection mechanism for each, and the recovery path. Understanding these
-failure modes is prerequisite to operating OSA in production.
+failure modes is prerequisite to operating Daemon in production.
 
 ---
 
@@ -12,7 +12,7 @@ failure modes is prerequisite to operating OSA in production.
 
 ### Detection
 
-`OptimalSystemAgent.Providers.HealthChecker` (exposed as `MiosaLLM.HealthChecker`)
+`Daemon.Providers.HealthChecker` (exposed as `MiosaLLM.HealthChecker`)
 is a GenServer that tracks per-provider health state. It is started before
 `MiosaProviders.Registry` in the Infrastructure supervisor, ensuring the circuit
 breaker is in place before any requests flow.
@@ -54,7 +54,7 @@ message to the user rather than hanging.
 
 ### Detection
 
-Each agent session runs as a supervised child of `OptimalSystemAgent.SessionSupervisor`
+Each agent session runs as a supervised child of `Daemon.SessionSupervisor`
 (a `DynamicSupervisor`). OTP detects a crash immediately when the `Agent.Loop`
 process exits abnormally.
 
@@ -93,7 +93,7 @@ raises or returns an error, the Bus catches it and calls
 
 ### Recovery
 
-`Events.DLQ` stores failed events in an ETS table (`:osa_dlq`). A retry
+`Events.DLQ` stores failed events in an ETS table (`:daemon_dlq`). A retry
 scheduler runs periodically and re-dispatches events whose `next_retry_at`
 timestamp has passed.
 
@@ -120,7 +120,7 @@ successfully processed events.
 
 ### Detection
 
-`OptimalSystemAgent.Sandbox.Supervisor` manages sandboxed code execution
+`Daemon.Sandbox.Supervisor` manages sandboxed code execution
 processes. Each sandbox task runs with an OS-level timeout enforced by the
 sandbox runtime (Docker or native process group).
 
@@ -174,7 +174,7 @@ configurable via application environment.
 
 ### Detection
 
-`OptimalSystemAgent.Store.Repo` uses Ecto with the `ecto_sqlite3` adapter.
+`Daemon.Store.Repo` uses Ecto with the `ecto_sqlite3` adapter.
 SQLite is configured in WAL (Write-Ahead Logging) mode, which prevents database
 corruption on crash and allows concurrent reads during writes.
 
@@ -207,7 +207,7 @@ at crash time are rolled back.
 ### Detection
 
 MCP (Model Context Protocol) server processes run as individual GenServers under
-`OptimalSystemAgent.MCP.Supervisor` (a DynamicSupervisor under Infrastructure).
+`Daemon.MCP.Supervisor` (a DynamicSupervisor under Infrastructure).
 Each server's GenServer monitors its OS process via `Port` monitoring. A dead
 OS process causes the GenServer to receive a `:DOWN` message.
 
@@ -233,8 +233,8 @@ result for self-correction.
 
 ### Detection
 
-`OptimalSystemAgent.Sidecar.Manager` maintains circuit breaker state for each
-sidecar in ETS table `:osa_circuit_breakers`. The circuit breaker is a
+`Daemon.Sidecar.Manager` maintains circuit breaker state for each
+sidecar in ETS table `:daemon_circuit_breakers`. The circuit breaker is a
 three-state machine: `:closed`, `:open`, `:half_open`.
 
 Sidecar-level thresholds:

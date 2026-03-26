@@ -35,7 +35,7 @@ Get a key at [dashboard.cohere.com](https://dashboard.cohere.com).
 ## Configuration
 
 ```elixir
-config :optimal_system_agent, :cohere,
+config :daemon, :cohere,
   api_key: System.get_env("COHERE_API_KEY"),
   model: "command-r-plus",
   url: "https://api.cohere.ai/v1"

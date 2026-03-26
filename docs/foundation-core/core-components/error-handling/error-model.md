@@ -2,7 +2,7 @@
 
 ## OTP "Let It Crash" Philosophy
 
-OSA follows the OTP principle that processes should crash on unexpected errors
+Daemon follows the OTP principle that processes should crash on unexpected errors
 rather than defensively handling every possible failure. Supervisors detect
 crashes and restart failed processes, restoring system invariants automatically.
 

@@ -10,7 +10,7 @@ You need three runtimes installed:
 
 **Tauri CLI** — installed as a local npm devDependency (`@tauri-apps/cli@^2`). You do not need to install it globally; `npm run tauri:dev` invokes it via the local `node_modules/.bin` path.
 
-**Elixir sidecar binary** — the compiled `osagent` binary must be placed at `src-tauri/binaries/osagent` (the path declared in `tauri.conf.json` under `bundle.externalBin`). In development you can skip this by running the Elixir backend manually on port 9089 — the sidecar spawn is skipped when the port is already in use.
+**Elixir sidecar binary** — the compiled `daemon` binary must be placed at `src-tauri/binaries/daemon` (the path declared in `tauri.conf.json` under `bundle.externalBin`). In development you can skip this by running the Elixir backend manually on port 9089 — the sidecar spawn is skipped when the port is already in use.
 
 **Platform-specific system dependencies:**
 
@@ -32,7 +32,7 @@ npm run tauri:dev
 2. Compiles the Rust `src-tauri` crate. On the first run this compiles all dependencies and takes 3–5 minutes.
 3. Opens a native window pointing to `http://localhost:5199`.
 
-The Rust layer runs `sidecar::start_sidecar`. If `binaries/osagent` is not present, it logs a warning and emits `backend-unavailable`. The window still opens. If you have the Elixir backend running separately on port 9089, the sidecar check finds the port in use and connects to it instead.
+The Rust layer runs `sidecar::start_sidecar`. If `binaries/daemon` is not present, it logs a warning and emits `backend-unavailable`. The window still opens. If you have the Elixir backend running separately on port 9089, the sidecar check finds the port in use and connects to it instead.
 
 To run the backend manually:
 
@@ -87,7 +87,7 @@ This runs:
 2. `tauri build` — compiles the Rust crate in release mode, bundles `build/` into the native app, and packages installers.
 
 Output locations:
-- macOS: `src-tauri/target/release/bundle/dmg/OSA_*.dmg` and `.app`
+- macOS: `src-tauri/target/release/bundle/dmg/DAEMON_*.dmg` and `.app`
 - Linux: `src-tauri/target/release/bundle/deb/*.deb` and `.AppImage`
 - Windows: `src-tauri/target/release/bundle/msi/*.msi`
 
@@ -99,7 +99,7 @@ npm run tauri:build:debug
 
 Useful for profiling native performance without the slow Rust dev-mode binary.
 
-**Before building for distribution**, the `osagent` binary must be in `src-tauri/binaries/` and it must be compiled for the target platform. On macOS with Apple Silicon you need a universal binary or an arm64 binary.
+**Before building for distribution**, the `daemon` binary must be in `src-tauri/binaries/` and it must be compiled for the target platform. On macOS with Apple Silicon you need a universal binary or an arm64 binary.
 
 ## Debugging
 
@@ -112,8 +112,8 @@ To enable DevTools in a production build, add `"devtools": true` to the window c
 Alternatively:
 
 ```bash
-# macOS — open Safari, enable Develop menu, then attach to OSA
-# Safari → Develop → OSA → main
+# macOS — open Safari, enable Develop menu, then attach to Daemon
+# Safari → Develop → Daemon → main
 ```
 
 ### Rust / Tauri Layer
@@ -128,7 +128,7 @@ RUST_LOG=debug npm run tauri:dev
 RUST_LOG=osa_desktop=debug,tauri=warn npm run tauri:dev
 ```
 
-Sidecar stdout/stderr is logged at `debug` level prefixed with `[osagent]` and `[osagent stderr]`.
+Sidecar stdout/stderr is logged at `debug` level prefixed with `[daemon]` and `[daemon stderr]`.
 
 ### Checking Backend Connection
 
@@ -147,7 +147,7 @@ await invoke("detect_hardware");             // { cpu_brand, cpu_cores, ... }
 
 **Window opens but shows a blank white page.** Vite did not start before Tauri. Check that port 5199 is free before running `npm run tauri:dev`. Kill any stale Vite processes with `lsof -ti:5199 | xargs kill`.
 
-**"Backend offline" banner is always shown.** The sidecar binary is missing from `src-tauri/binaries/osagent`. Either build and copy the binary, or run the Elixir backend manually on port 9089.
+**"Backend offline" banner is always shown.** The sidecar binary is missing from `src-tauri/binaries/daemon`. Either build and copy the binary, or run the Elixir backend manually on port 9089.
 
 **Hot reload stops working.** Restart `npm run tauri:dev`. This sometimes happens when the Rust watcher and the Vite watcher get out of sync.
 

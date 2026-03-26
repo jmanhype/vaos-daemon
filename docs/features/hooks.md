@@ -9,13 +9,13 @@ The hook pipeline intercepts key moments in the agent lifecycle. Hooks can inspe
 Registration is serialized through a GenServer to prevent race conditions. Execution reads from ETS in the caller's process — no GenServer bottleneck at runtime.
 
 ```
-Registration: GenServer (serialized write) → ETS :osa_hooks (bag, read_concurrency)
-Execution:    Caller process reads ETS → runs chain → updates ETS :osa_hooks_metrics
+Registration: GenServer (serialized write) → ETS :daemon_hooks (bag, read_concurrency)
+Execution:    Caller process reads ETS → runs chain → updates ETS :daemon_hooks_metrics
 ```
 
 ETS tables:
-- `:osa_hooks` — bag table, stores `{event, name, priority, handler_fn}` tuples
-- `:osa_hooks_metrics` — set table with write_concurrency, holds atomic call/block/timing counters
+- `:daemon_hooks` — bag table, stores `{event, name, priority, handler_fn}` tuples
+- `:daemon_hooks_metrics` — set table with write_concurrency, holds atomic call/block/timing counters
 
 ---
 
@@ -42,10 +42,10 @@ ETS tables:
 | `read_before_write` | `pre_tool_use` | 12 | Adds a nudge flag when editing an unread file (max 2 nudges per file per session) |
 | `mcp_cache` | `pre_tool_use` | 15 | Injects cached MCP schema if cached within the last hour |
 | `mcp_cache_post` | `post_tool_use` | 15 | Populates the MCP schema cache from tool results |
-| `track_files_read` | `post_tool_use` | 5 | Records file paths in `:osa_files_read` ETS after `file_read`, `dir_list`, `glob` |
+| `track_files_read` | `post_tool_use` | 5 | Records file paths in `:daemon_files_read` ETS after `file_read`, `dir_list`, `glob` |
 | `cost_tracker` | `post_tool_use` | 25 | Records provider, model, and token counts in MiosaBudget |
 | `telemetry` | `post_tool_use` | 90 | Emits `tool_telemetry` bus event with tool name, duration, and timestamp |
-| `session_cleanup` | `session_end` | 90 | Deletes all `:osa_files_read` ETS entries for the ended session |
+| `session_cleanup` | `session_end` | 90 | Deletes all `:daemon_files_read` ETS entries for the ended session |
 
 ---
 
@@ -64,7 +64,7 @@ A crashed hook is caught, logged, and skipped — it does not halt the pipeline.
 ## Registering a Custom Hook
 
 ```elixir
-alias OptimalSystemAgent.Agent.Hooks
+alias Daemon.Agent.Hooks
 
 # Logging hook (pass-through)
 Hooks.register(:pre_tool_use, "my_logger", fn payload ->

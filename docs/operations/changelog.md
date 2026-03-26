@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to OptimalSystemAgent are documented here.
+All notable changes to Daemon are documented here.
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
@@ -64,7 +64,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Changelog structure
 
 ### Changed
-- `mix osa.serve` no longer runs interactive onboarding — logs hint to use TUI or `mix osa.setup`
+- `mix daemon.serve` no longer runs interactive onboarding — logs hint to use TUI or `mix daemon.setup`
 
 ---
 
@@ -135,7 +135,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - **18 LLM providers**: Anthropic, OpenAI, Google, Ollama, Groq, Fireworks, Together, Replicate, DeepSeek, OpenRouter, Perplexity, Qwen, Zhipu, Moonshot, VolcEngine, Baichuan
 - **Provider auto-detection**: env vars → API keys → Ollama fallback
 - **Tool gating**: model size and capability-aware tool dispatch
-- **.env loading**: project root + `~/.osa/.env`
+- **.env loading**: project root + `~/.daemon/.env`
 - **Ollama integration**: auto-detect largest tool-capable model
 
 ---

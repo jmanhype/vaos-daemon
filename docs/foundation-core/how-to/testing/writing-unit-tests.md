@@ -1,6 +1,6 @@
 # Writing Unit Tests
 
-Audience: developers writing ExUnit tests for OSA modules.
+Audience: developers writing ExUnit tests for Daemon modules.
 
 ---
 
@@ -11,23 +11,23 @@ Audience: developers writing ExUnit tests for OSA modules.
 Test files mirror the source tree under `test/`:
 
 ```
-lib/optimal_system_agent/agent/hooks.ex
-  → test/optimal_system_agent/agent/hooks_test.exs
+lib/daemon/agent/hooks.ex
+  → test/daemon/agent/hooks_test.exs
 
-lib/optimal_system_agent/events/bus.ex
-  → test/optimal_system_agent/events/bus_test.exs
+lib/daemon/events/bus.ex
+  → test/daemon/events/bus_test.exs
 
-lib/optimal_system_agent/channels/noise_filter.ex
-  → test/optimal_system_agent/channels/noise_filter_test.exs
+lib/daemon/channels/noise_filter.ex
+  → test/daemon/channels/noise_filter_test.exs
 ```
 
 ### Module naming
 
 ```elixir
-defmodule OptimalSystemAgent.Agent.HooksTest do
+defmodule Daemon.Agent.HooksTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Agent.Hooks
+  alias Daemon.Agent.Hooks
   # ...
 end
 ```
@@ -39,8 +39,8 @@ database, or any named process that runs as a singleton. Most pure unit tests
 qualify.
 
 Use `async: false` when:
-- The test reads or writes global ETS tables (`:osa_hooks`, `:osa_cancel_flags`, etc.)
-- The test starts the full application (`OptimalSystemAgent.Application`)
+- The test reads or writes global ETS tables (`:daemon_hooks`, `:daemon_cancel_flags`, etc.)
+- The test starts the full application (`Daemon.Application`)
 - The test sends messages to a named GenServer
 
 ---
@@ -50,10 +50,10 @@ Use `async: false` when:
 Follow the Arrange-Act-Assert pattern:
 
 ```elixir
-defmodule OptimalSystemAgent.Channels.NoiseFilterTest do
+defmodule Daemon.Channels.NoiseFilterTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Channels.NoiseFilter
+  alias Daemon.Channels.NoiseFilter
 
   describe "check/2" do
     test "passes substantive messages" do
@@ -100,8 +100,8 @@ LLM calls are disabled in the test environment. The test configuration sets:
 
 ```elixir
 # config/test.exs
-config :optimal_system_agent, classifier_llm_enabled: false
-config :optimal_system_agent, compactor_llm_enabled: false
+config :daemon, classifier_llm_enabled: false
+config :daemon, compactor_llm_enabled: false
 ```
 
 This means:
@@ -114,11 +114,11 @@ mock provider using `Application.put_env/3` inside the test:
 ```elixir
 setup do
   # Override provider to return a fixed response
-  Application.put_env(:optimal_system_agent, :test_llm_response, %{
+  Application.put_env(:daemon, :test_llm_response, %{
     content: "Mocked response",
     tool_calls: []
   })
-  on_exit(fn -> Application.delete_env(:optimal_system_agent, :test_llm_response) end)
+  on_exit(fn -> Application.delete_env(:daemon, :test_llm_response) end)
   :ok
 end
 ```
@@ -137,22 +137,22 @@ MyModule.process(message, provider: MockProvider)
 Call `execute/1` directly without going through the hook pipeline or agent loop:
 
 ```elixir
-defmodule OptimalSystemAgent.Tools.FileReadTest do
+defmodule Daemon.Tools.FileReadTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Tools.Builtins.FileRead
+  alias Daemon.Tools.Builtins.FileRead
 
   describe "execute/1" do
     test "reads an existing file" do
       # Write a temp file
       path = System.tmp_dir!() <> "/osa_test_#{:rand.uniform(9999)}.txt"
-      File.write!(path, "hello from OSA")
+      File.write!(path, "hello from Daemon")
       on_exit(fn -> File.rm(path) end)
 
       result = FileRead.execute(%{"path" => path})
 
       assert {:ok, content} = result
-      assert content =~ "hello from OSA"
+      assert content =~ "hello from Daemon"
     end
 
     test "returns error for nonexistent file" do
@@ -171,10 +171,10 @@ Start the GenServer under a test-specific name to avoid conflicts with the
 running application:
 
 ```elixir
-defmodule OptimalSystemAgent.Agent.HooksTest do
+defmodule Daemon.Agent.HooksTest do
   use ExUnit.Case, async: false   # async: false — uses named GenServer
 
-  alias OptimalSystemAgent.Agent.Hooks
+  alias Daemon.Agent.Hooks
 
   setup do
     # Start a fresh Hooks GenServer for this test
@@ -207,7 +207,7 @@ test environment via `elixirc_paths(:test)` in `mix.exs`.
 
 ```elixir
 # test/support/factories.ex
-defmodule OptimalSystemAgent.Test.Factories do
+defmodule Daemon.Test.Factories do
   def session_id, do: "test:#{:rand.uniform(999_999)}"
 
   def user_message(content \\ "Hello") do
@@ -223,7 +223,7 @@ end
 Use in tests:
 
 ```elixir
-import OptimalSystemAgent.Test.Factories
+import Daemon.Test.Factories
 
 session_id = session_id()
 msg = user_message("Deploy the staging environment")
@@ -238,10 +238,10 @@ msg = user_message("Deploy the staging environment")
 mix test
 
 # A single file
-mix test test/optimal_system_agent/channels/noise_filter_test.exs
+mix test test/daemon/channels/noise_filter_test.exs
 
 # A specific test by line number
-mix test test/optimal_system_agent/channels/noise_filter_test.exs:15
+mix test test/daemon/channels/noise_filter_test.exs:15
 
 # With verbose output
 mix test --trace
@@ -261,7 +261,7 @@ mix test --cover
 ```
 
 Coverage is reported per file. Target: 80% statement coverage for all public
-modules in `lib/optimal_system_agent/`.
+modules in `lib/daemon/`.
 
 ---
 

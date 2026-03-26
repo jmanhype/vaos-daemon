@@ -15,13 +15,13 @@ Before investigating a specific provider, check the overall provider state:
 
 ```elixir
 # In IEx — check which providers have configured keys:
-Enum.each(OptimalSystemAgent.Providers.Registry.list_providers(), fn provider ->
-  configured = OptimalSystemAgent.Providers.Registry.provider_configured?(provider)
+Enum.each(Daemon.Providers.Registry.list_providers(), fn provider ->
+  configured = Daemon.Providers.Registry.provider_configured?(provider)
   IO.puts("#{provider}: #{if configured, do: "configured", else: "NOT CONFIGURED"}")
 end)
 
 # Test a provider directly with a minimal message:
-OptimalSystemAgent.Providers.Registry.chat(
+Daemon.Providers.Registry.chat(
   [%{role: "user", content: "Say 'ok'"}],
   provider: :groq,
   max_tokens: 5
@@ -52,18 +52,18 @@ ollama serve                   # foreground mode
 
 ```elixir
 # From IEx:
-OptimalSystemAgent.Providers.Registry.provider_configured?(:ollama)
+Daemon.Providers.Registry.provider_configured?(:ollama)
 # => false means the TCP probe to :11434 failed
 
 # Check the configured URL:
-Application.get_env(:optimal_system_agent, :ollama_url)
+Application.get_env(:daemon, :ollama_url)
 # => "http://localhost:11434" (default)
 ```
 
 **Fixes:**
 1. Start Ollama: `ollama serve`
 2. If Ollama runs on a non-default port: `export OLLAMA_URL=http://localhost:11435`
-3. If OSA started before Ollama: restart OSA so the boot-time probe succeeds.
+3. If Daemon started before Ollama: restart Daemon so the boot-time probe succeeds.
 
 ### Ollama Model Not Found
 
@@ -78,19 +78,19 @@ ollama pull llama3.2:latest
 ollama pull qwen2.5:14b
 ```
 
-OSA auto-selects the best available model at boot. Check which model it selected:
+Daemon auto-selects the best available model at boot. Check which model it selected:
 
 ```elixir
-Application.get_env(:optimal_system_agent, :ollama_model)
+Application.get_env(:daemon, :ollama_model)
 # => "llama3.2:latest"
 ```
 
 Override the auto-detected model:
 
 ```bash
-export OSA_OLLAMA_MODEL=qwen2.5:14b
+export DAEMON_OLLAMA_MODEL=qwen2.5:14b
 # or
-export OSA_DEFAULT_MODEL=qwen2.5:14b
+export DAEMON_DEFAULT_MODEL=qwen2.5:14b
 ```
 
 ### Ollama Not Using Tools (Bug 4 — Partial Fix)
@@ -106,7 +106,7 @@ The minimum model size for tool use is 7GB on disk (~14B parameters).
 
 ```elixir
 # Check if your model will receive tools:
-model = Application.get_env(:optimal_system_agent, :ollama_model)
+model = Application.get_env(:daemon, :ollama_model)
 prefixes = ~w(qwen3 qwen2.5 llama3.3 llama3.2 llama3.1 llama3 gemma3 glm mixtral
               mistral deepseek command-r kimi minimax)
 Enum.any?(prefixes, &String.starts_with?(model, &1))
@@ -121,15 +121,15 @@ ollama pull llama3.2:latest # smaller, but marked capable
 
 ### Ollama Context Window
 
-OSA caches Ollama model context sizes in the `:osa_context_cache` ETS table to avoid
+Daemon caches Ollama model context sizes in the `:daemon_context_cache` ETS table to avoid
 repeated API calls. If the cache returns a wrong value:
 
 ```elixir
 # Clear the cache for a specific model:
-:ets.delete(:osa_context_cache, "my_model:latest")
+:ets.delete(:daemon_context_cache, "my_model:latest")
 
 # Inspect the cache:
-:ets.tab2list(:osa_context_cache)
+:ets.tab2list(:daemon_context_cache)
 ```
 
 ---
@@ -144,7 +144,7 @@ export ANTHROPIC_API_KEY=sk-ant-api03-...
 
 ```elixir
 # Verify in IEx:
-Application.get_env(:optimal_system_agent, :anthropic_api_key)
+Application.get_env(:daemon, :anthropic_api_key)
 # => "sk-ant-api03-..." (should not be nil)
 ```
 
@@ -152,11 +152,11 @@ Application.get_env(:optimal_system_agent, :anthropic_api_key)
 - `"HTTP 401: invalid x-api-key"` — Key is wrong or not set.
 - `"HTTP 403: permission_error"` — Key does not have access to the requested model.
 - `"HTTP 400: max_tokens: Field required"` — Anthropic requires `max_tokens` to be set
-  explicitly. OSA should set this by default; check that `opts` include `:max_tokens`.
+  explicitly. Daemon should set this by default; check that `opts` include `:max_tokens`.
 
 ### Rate Limiting (HTTP 429)
 
-Anthropic returns `Retry-After` in 429 responses. OSA handles this automatically with
+Anthropic returns `Retry-After` in 429 responses. Daemon handles this automatically with
 up to 3 retries using the `with_retry/1` wrapper in `Providers.Registry`:
 
 ```
@@ -166,7 +166,7 @@ up to 3 retries using the `with_retry/1` wrapper in `Providers.Registry`:
 If rate limiting is persistent, switch to the fallback chain:
 
 ```elixir
-config :optimal_system_agent, :fallback_chain, [:anthropic, :openai, :groq]
+config :daemon, :fallback_chain, [:anthropic, :openai, :groq]
 ```
 
 ### Model Not Found
@@ -200,10 +200,10 @@ export OPENAI_API_KEY=sk-proj-...
 
 ### Reasoning Models (o3, o4-mini)
 
-OpenAI's o-series models require special handling. OSA detects them via `reasoning_model?/1`
+OpenAI's o-series models require special handling. Daemon detects them via `reasoning_model?/1`
 and sets `reasoning_effort: "medium"` automatically. These models:
 - Do not support `temperature` (ignored).
-- Have longer response times (OSA sets `receive_timeout: 300_000` for them).
+- Have longer response times (Daemon sets `receive_timeout: 300_000` for them).
 - Do not support streaming in the same way.
 
 ```bash
@@ -235,7 +235,7 @@ Groq has aggressive rate limits on free tiers (6,000 tokens per minute). The fal
 chain handles this, but configure cloud budget accordingly:
 
 ```elixir
-config :optimal_system_agent, :fallback_chain, [:groq, :deepseek, :ollama]
+config :daemon, :fallback_chain, [:groq, :deepseek, :ollama]
 ```
 
 ---
@@ -247,7 +247,7 @@ export DEEPSEEK_API_KEY=sk-...
 ```
 
 DeepSeek uses `deepseek-chat` (standard) and `deepseek-reasoner` (chain-of-thought).
-The reasoner model returns `reasoning_content` in deltas — OSA captures this as
+The reasoner model returns `reasoning_content` in deltas — Daemon captures this as
 `:thinking_delta` in the streaming callback.
 
 ---
@@ -278,7 +278,7 @@ wire format.
 export OPENROUTER_API_KEY=sk-or-...
 ```
 
-OpenRouter requires `HTTP-Referer` and `X-Title` headers, which OSA includes via
+OpenRouter requires `HTTP-Referer` and `X-Title` headers, which Daemon includes via
 `extra_headers` in the `@provider_configs` map.
 
 Common model strings for OpenRouter:
@@ -313,7 +313,7 @@ All Chinese providers are OpenAI-compatible. Set the corresponding environment v
 
 ## Diagnosing Provider Health
 
-OSA uses `MiosaLLM.HealthChecker` as a circuit breaker. When a provider fails repeatedly,
+Daemon uses `MiosaLLM.HealthChecker` as a circuit breaker. When a provider fails repeatedly,
 the circuit opens and it is skipped in the fallback chain.
 
 ```elixir

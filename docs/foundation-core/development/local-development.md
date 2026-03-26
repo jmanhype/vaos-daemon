@@ -1,6 +1,6 @@
 # Local Development
 
-Audience: developers setting up OSA for active development on a local machine.
+Audience: developers setting up Daemon for active development on a local machine.
 
 ---
 
@@ -8,7 +8,7 @@ Audience: developers setting up OSA for active development on a local machine.
 
 ```sh
 git clone https://github.com/Miosa-osa/OSA.git
-cd OSA
+cd Daemon
 mix setup
 ```
 
@@ -17,7 +17,7 @@ cloning and again after pulling changes that add new dependencies or migrations.
 
 ---
 
-## Running OSA
+## Running Daemon
 
 ### CLI mode (primary development interface)
 
@@ -46,7 +46,7 @@ available, and you can call functions, inspect state, and recompile on the fly.
 ### HTTP API mode (headless)
 
 ```sh
-bin/osa serve
+bin/daemon serve
 ```
 
 Starts the application without the CLI interface. Useful when developing
@@ -56,10 +56,10 @@ against the HTTP API or SSE event stream.
 
 ## Dev Mode
 
-OSA supports a development mode that changes defaults for local work:
+Daemon supports a development mode that changes defaults for local work:
 
 ```sh
-bin/osa --dev
+bin/daemon --dev
 ```
 
 In dev mode:
@@ -70,7 +70,7 @@ In dev mode:
 Set the dev port manually:
 
 ```sh
-OSA_HTTP_PORT=19001 bin/osa
+DAEMON_HTTP_PORT=19001 bin/osa
 ```
 
 ---
@@ -92,13 +92,13 @@ continue; the new module code is loaded and used on the next call.
 For a single module:
 
 ```elixir
-:code.purge(OptimalSystemAgent.Agent.Hooks)
-r(OptimalSystemAgent.Agent.Hooks)   # IEx helper
+:code.purge(Daemon.Agent.Hooks)
+r(Daemon.Agent.Hooks)   # IEx helper
 ```
 
 ### Soul and skill files
 
-Reload `~/.osa/` files (soul, skills, commands) without restarting:
+Reload `~/.daemon/` files (soul, skills, commands) without restarting:
 
 ```
 /reload
@@ -107,9 +107,9 @@ Reload `~/.osa/` files (soul, skills, commands) without restarting:
 Or from IEx:
 
 ```elixir
-OptimalSystemAgent.Soul.load()
-OptimalSystemAgent.PromptLoader.load()
-OptimalSystemAgent.Tools.Registry.reload_skills()
+Daemon.Soul.load()
+Daemon.PromptLoader.load()
+Daemon.Tools.Registry.reload_skills()
 ```
 
 ---
@@ -117,7 +117,7 @@ OptimalSystemAgent.Tools.Registry.reload_skills()
 ## Desktop App (Tauri)
 
 The desktop app is a Tauri application with a Svelte frontend.
-It connects to the OSA HTTP API on port 8089.
+It connects to the Daemon HTTP API on port 8089.
 
 ### Prerequisites
 
@@ -137,7 +137,7 @@ This starts:
 - Vite dev server for the Svelte frontend (with HMR)
 - The Tauri application shell pointing to the Vite server
 
-The desktop app expects OSA to be running separately (`bin/osa`).
+The desktop app expects Daemon to be running separately (`bin/osa`).
 It does not start the Elixir backend itself.
 
 ### Frontend hot reload
@@ -159,7 +159,7 @@ The compiled binary is placed in `desktop/src-tauri/target/release/`.
 
 ## Database
 
-OSA uses SQLite for the local agent store (`osa.db` by default).
+Daemon uses SQLite for the local agent store (`osa.db` by default).
 
 ```sh
 # Reset the database (drops and recreates)
@@ -180,7 +180,7 @@ variable or defaults to the project root.
 
 ### Platform PostgreSQL (optional)
 
-If `DATABASE_URL` is set, OSA starts a second Ecto repo (`Platform.Repo`)
+If `DATABASE_URL` is set, Daemon starts a second Ecto repo (`Platform.Repo`)
 backed by PostgreSQL. This enables multi-tenant features.
 
 ```sh
@@ -197,10 +197,10 @@ For local development, create a `.env` file in the project root:
 ```sh
 # .env (not committed to source control)
 ANTHROPIC_API_KEY=sk-ant-...
-OSA_DEFAULT_PROVIDER=anthropic
-OSA_MODEL=claude-haiku-4-5
-OSA_HTTP_PORT=8089
-OSA_DAILY_BUDGET_USD=10.0
+DAEMON_DEFAULT_PROVIDER=anthropic
+DAEMON_MODEL=claude-haiku-4-5
+DAEMON_HTTP_PORT=8089
+DAEMON_DAILY_BUDGET_USD=10.0
 ```
 
 The `.env` file is loaded at startup by `config/runtime.exs`. It is listed in
@@ -227,16 +227,16 @@ The `.env` file is loaded at startup by `config/runtime.exs`. It is listed in
 
 ### Add a new tool
 
-1. Create `lib/optimal_system_agent/tools/builtins/my_tool.ex`
-2. Implement `OptimalSystemAgent.Tools.Behaviour`
+1. Create `lib/daemon/tools/builtins/my_tool.ex`
+2. Implement `Daemon.Tools.Behaviour`
 3. Register in `Supervisors.Infrastructure` init or call `Tools.Registry.register/1`
-4. Write tests in `test/optimal_system_agent/tools/my_tool_test.exs`
+4. Write tests in `test/daemon/tools/my_tool_test.exs`
 5. Run `mix test` to verify
 
 ### Add a new channel adapter
 
-1. Create `lib/optimal_system_agent/channels/my_channel.ex`
-2. Implement `OptimalSystemAgent.Channels.Behaviour`
+1. Create `lib/daemon/channels/my_channel.ex`
+2. Implement `Daemon.Channels.Behaviour`
 3. Add to `Channels.Starter` or call `DynamicSupervisor.start_child/2`
 4. Add config key and env var to `config/runtime.exs`
 
@@ -244,7 +244,7 @@ The `.env` file is loaded at startup by `config/runtime.exs`. It is listed in
 
 1. Add env var read to `config/runtime.exs`
 2. Add compile-time default to `config/config.exs`
-3. Read with `Application.get_env(:optimal_system_agent, :my_key, default)`
+3. Read with `Application.get_env(:daemon, :my_key, default)`
 
 ---
 

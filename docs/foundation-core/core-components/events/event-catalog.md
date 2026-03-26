@@ -2,11 +2,11 @@
 
 ## Audience
 
-Engineers subscribing to OSA events, debugging agent behavior, or adding new event emissions.
+Engineers subscribing to Daemon events, debugging agent behavior, or adding new event emissions.
 
 ## Overview
 
-All events are emitted via `OptimalSystemAgent.Events.Bus.emit/3` and carry the CloudEvents v1.0.2 envelope. This catalog describes the `data` field (payload) for each event type. All events also carry `id`, `type`, `source`, `time`, `session_id`, `correlation_id`, `parent_id`, and Signal Theory fields where relevant.
+All events are emitted via `Daemon.Events.Bus.emit/3` and carry the CloudEvents v1.0.2 envelope. This catalog describes the `data` field (payload) for each event type. All events also carry `id`, `type`, `source`, `time`, `session_id`, `correlation_id`, `parent_id`, and Signal Theory fields where relevant.
 
 The event type atom is available as `payload.type` when received by handlers.
 
@@ -186,7 +186,7 @@ Emitted on non-fatal channel errors (e.g. message send failure).
 
 ## :ask_user_question
 
-Emitted when the agent blocks waiting for user input via the `ask_user_question` tool. The HTTP endpoint `GET /sessions/:id/pending_questions` reads from `:osa_pending_questions` ETS which is also populated at this point.
+Emitted when the agent blocks waiting for user input via the `ask_user_question` tool. The HTTP endpoint `GET /sessions/:id/pending_questions` reads from `:daemon_pending_questions` ETS which is also populated at this point.
 
 ```elixir
 %{

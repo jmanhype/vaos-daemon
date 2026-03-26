@@ -1,42 +1,42 @@
 # Backup and Recovery
 
-Audience: operators responsible for protecting OSA data and recovering from failures.
+Audience: operators responsible for protecting Daemon data and recovering from failures.
 
 ## What Needs Backing Up
 
 | Data | Location | Criticality | Notes |
 |------|----------|-------------|-------|
-| SQLite database | `~/.osa/osa.db` | High | Messages, budget ledger, task queue, treasury |
-| Environment / API keys | `~/.osa/.env` | High | Provider keys, secrets, config overrides |
-| Vault memory | `~/.osa/data/` | Medium | Structured memory markdown files, fact store |
-| Sessions | `~/.osa/sessions/` | Medium | JSONL conversation files |
-| Skills | `~/.osa/skills/` | Medium | User-defined SKILL.md files |
-| MCP config | `~/.osa/mcp.json` | Medium | MCP server definitions |
-| Bootstrap identity | `~/.osa/IDENTITY.md`, `~/.osa/SOUL.md`, `~/.osa/USER.md` | Low-medium | Agent personality and user profile |
-| Metrics snapshot | `~/.osa/metrics.json` | Low | Written every 5 minutes; ephemeral |
+| SQLite database | `~/.daemon/osa.db` | High | Messages, budget ledger, task queue, treasury |
+| Environment / API keys | `~/.daemon/.env` | High | Provider keys, secrets, config overrides |
+| Vault memory | `~/.daemon/data/` | Medium | Structured memory markdown files, fact store |
+| Sessions | `~/.daemon/sessions/` | Medium | JSONL conversation files |
+| Skills | `~/.daemon/skills/` | Medium | User-defined SKILL.md files |
+| MCP config | `~/.daemon/mcp.json` | Medium | MCP server definitions |
+| Bootstrap identity | `~/.daemon/IDENTITY.md`, `~/.daemon/SOUL.md`, `~/.daemon/USER.md` | Low-medium | Agent personality and user profile |
+| Metrics snapshot | `~/.daemon/metrics.json` | Low | Written every 5 minutes; ephemeral |
 
 ## SQLite Database Backup
 
-The database at `~/.osa/osa.db` uses WAL (Write-Ahead Log) journal mode (`journal_mode: :wal` in `config.exs`). WAL mode allows consistent online backups without shutting down OSA.
+The database at `~/.daemon/osa.db` uses WAL (Write-Ahead Log) journal mode (`journal_mode: :wal` in `config.exs`). WAL mode allows consistent online backups without shutting down Daemon.
 
 ### Online backup with the SQLite CLI
 
 ```bash
-sqlite3 ~/.osa/osa.db ".backup /tmp/osa-backup-$(date +%Y%m%d-%H%M%S).db"
+sqlite3 ~/.daemon/osa.db ".backup /tmp/osa-backup-$(date +%Y%m%d-%H%M%S).db"
 ```
 
-The `.backup` command uses SQLite's online backup API and is safe to run while OSA is active. The resulting file is a complete, self-contained copy of the database.
+The `.backup` command uses SQLite's online backup API and is safe to run while Daemon is active. The resulting file is a complete, self-contained copy of the database.
 
 ### Copy-based backup (WAL-safe)
 
-Because OSA uses WAL mode, copying all three files together produces a consistent backup:
+Because Daemon uses WAL mode, copying all three files together produces a consistent backup:
 
 ```bash
 BACKUP_DIR="/backup/osa/$(date +%Y%m%d)"
 mkdir -p "$BACKUP_DIR"
-cp ~/.osa/osa.db "$BACKUP_DIR/"
-cp ~/.osa/osa.db-wal "$BACKUP_DIR/" 2>/dev/null || true
-cp ~/.osa/osa.db-shm "$BACKUP_DIR/" 2>/dev/null || true
+cp ~/.daemon/osa.db "$BACKUP_DIR/"
+cp ~/.daemon/osa.db-wal "$BACKUP_DIR/" 2>/dev/null || true
+cp ~/.daemon/osa.db-shm "$BACKUP_DIR/" 2>/dev/null || true
 ```
 
 Copying only `osa.db` without the WAL file risks restoring to a state behind the latest checkpoint. Always copy all three files.
@@ -44,20 +44,20 @@ Copying only `osa.db` without the WAL file risks restoring to a state behind the
 ### Automated daily backup (cron)
 
 ```cron
-0 3 * * * sqlite3 ~/.osa/osa.db ".backup /backup/osa/osa-$(date +\%Y\%m\%d).db" && find /backup/osa -name "osa-*.db" -mtime +30 -delete
+0 3 * * * sqlite3 ~/.daemon/osa.db ".backup /backup/osa/osa-$(date +\%Y\%m\%d).db" && find /backup/osa -name "osa-*.db" -mtime +30 -delete
 ```
 
 This runs at 03:00, creates a dated backup, and prunes backups older than 30 days.
 
 ## Full Data Directory Backup
 
-Back up the entire `~/.osa/` directory to capture all user data:
+Back up the entire `~/.daemon/` directory to capture all user data:
 
 ```bash
 tar -czf "osa-full-$(date +%Y%m%d-%H%M%S).tar.gz" \
-  --exclude="~/.osa/osa.db-wal" \
-  --exclude="~/.osa/osa.db-shm" \
-  ~/.osa/
+  --exclude="~/.daemon/osa.db-wal" \
+  --exclude="~/.daemon/osa.db-shm" \
+  ~/.daemon/
 ```
 
 Exclude the WAL and SHM files from tar archives — they are incomplete WAL segments and should not be restored independently.
@@ -67,9 +67,9 @@ For the SQLite database specifically, take a `.backup` dump separately (see abov
 ```bash
 BACKUP_NAME="osa-full-$(date +%Y%m%d-%H%M%S)"
 TMPDIR=$(mktemp -d)
-sqlite3 ~/.osa/osa.db ".backup ${TMPDIR}/osa.db"
-cp -r ~/.osa/data ~/.osa/sessions ~/.osa/skills ~/.osa/.env \
-  ~/.osa/mcp.json ~/.osa/IDENTITY.md ~/.osa/SOUL.md ~/.osa/USER.md \
+sqlite3 ~/.daemon/osa.db ".backup ${TMPDIR}/osa.db"
+cp -r ~/.daemon/data ~/.daemon/sessions ~/.daemon/skills ~/.daemon/.env \
+  ~/.daemon/mcp.json ~/.daemon/IDENTITY.md ~/.daemon/SOUL.md ~/.daemon/USER.md \
   "$TMPDIR/" 2>/dev/null || true
 tar -czf "${BACKUP_NAME}.tar.gz" -C "$TMPDIR" .
 rm -rf "$TMPDIR"
@@ -77,72 +77,72 @@ rm -rf "$TMPDIR"
 
 ## Vault Memory Export
 
-The Vault subsystem stores structured memory as markdown files under `~/.osa/data/`. Categories include `fact`, `learning`, `project`, and `episodic`.
+The Vault subsystem stores structured memory as markdown files under `~/.daemon/data/`. Categories include `fact`, `learning`, `project`, and `episodic`.
 
 To export vault contents:
 
 ```bash
 # All vault files
-tar -czf "osa-vault-$(date +%Y%m%d).tar.gz" ~/.osa/data/
+tar -czf "osa-vault-$(date +%Y%m%d).tar.gz" ~/.daemon/data/
 ```
 
 To inspect vault contents without archiving:
 
 ```bash
-find ~/.osa/data -name "*.md" | sort
-wc -l ~/.osa/data/**/*.md
+find ~/.daemon/data -name "*.md" | sort
+wc -l ~/.daemon/data/**/*.md
 ```
 
 There is no dedicated vault export command in the CLI. The files are plain markdown and can be read, searched, and transferred directly.
 
 ## Session Export
 
-Sessions are stored as JSONL files in `~/.osa/sessions/`. Each file is one conversation, one JSON object per line:
+Sessions are stored as JSONL files in `~/.daemon/sessions/`. Each file is one conversation, one JSON object per line:
 
 ```bash
-ls -lh ~/.osa/sessions/
+ls -lh ~/.daemon/sessions/
 # session-abc123.jsonl  session-def456.jsonl ...
 
 # Count messages across all sessions
-wc -l ~/.osa/sessions/*.jsonl
+wc -l ~/.daemon/sessions/*.jsonl
 ```
 
 To export all sessions:
 
 ```bash
-tar -czf "osa-sessions-$(date +%Y%m%d).tar.gz" ~/.osa/sessions/
+tar -czf "osa-sessions-$(date +%Y%m%d).tar.gz" ~/.daemon/sessions/
 ```
 
 ## Recovery Procedures
 
 ### Restore SQLite from backup
 
-Stop OSA before restoring to prevent write conflicts:
+Stop Daemon before restoring to prevent write conflicts:
 
 ```bash
 # Stop the service (systemd example)
-sudo systemctl stop osagent
+sudo systemctl stop daemon
 
 # Restore from a .backup file
-cp /backup/osa/osa-20260301.db ~/.osa/osa.db
+cp /backup/osa/osa-20260301.db ~/.daemon/osa.db
 
 # Remove stale WAL files
-rm -f ~/.osa/osa.db-wal ~/.osa/osa.db-shm
+rm -f ~/.daemon/osa.db-wal ~/.daemon/osa.db-shm
 
 # Verify integrity
-sqlite3 ~/.osa/osa.db "PRAGMA integrity_check;"
+sqlite3 ~/.daemon/osa.db "PRAGMA integrity_check;"
 # Expected: ok
 
 # Start the service
-sudo systemctl start osagent
+sudo systemctl start daemon
 ```
 
 ### Restore from a full archive
 
 ```bash
-sudo systemctl stop osagent
-tar -xzf osa-full-20260301.tar.gz -C ~/.osa/
-sudo systemctl start osagent
+sudo systemctl stop daemon
+tar -xzf osa-full-20260301.tar.gz -C ~/.daemon/
+sudo systemctl start daemon
 ```
 
 ### Database corruption recovery
@@ -151,11 +151,11 @@ If `PRAGMA integrity_check` returns errors:
 
 ```bash
 # Attempt repair via dump and restore
-sqlite3 ~/.osa/osa.db ".dump" | sqlite3 ~/.osa/osa-repaired.db
-sqlite3 ~/.osa/osa-repaired.db "PRAGMA integrity_check;"
+sqlite3 ~/.daemon/osa.db ".dump" | sqlite3 ~/.daemon/osa-repaired.db
+sqlite3 ~/.daemon/osa-repaired.db "PRAGMA integrity_check;"
 # If ok:
-mv ~/.osa/osa.db ~/.osa/osa.db.corrupt
-mv ~/.osa/osa-repaired.db ~/.osa/osa.db
+mv ~/.daemon/osa.db ~/.daemon/osa.db.corrupt
+mv ~/.daemon/osa-repaired.db ~/.daemon/osa.db
 ```
 
 If dump fails, restore from the most recent backup.
@@ -169,7 +169,7 @@ After restoring a database from a much older backup, run migrations to bring the
 mix ecto.migrate
 
 # From release
-./bin/osagent_release eval "Ecto.Migrator.run(OptimalSystemAgent.Store.Repo, :up)"
+./bin/daemon_release eval "Ecto.Migrator.run(Daemon.Store.Repo, :up)"
 ```
 
 ### Recover from lost `.env`
@@ -177,15 +177,15 @@ mix ecto.migrate
 If the `.env` file is lost, re-export your API keys:
 
 ```bash
-cat > ~/.osa/.env <<EOF
+cat > ~/.daemon/.env <<EOF
 ANTHROPIC_API_KEY=sk-ant-...
-OSA_DEFAULT_PROVIDER=anthropic
-OSA_SHARED_SECRET=$(openssl rand -hex 32)
-OSA_REQUIRE_AUTH=true
+DAEMON_DEFAULT_PROVIDER=anthropic
+DAEMON_SHARED_SECRET=$(openssl rand -hex 32)
+DAEMON_REQUIRE_AUTH=true
 EOF
 ```
 
-Then restart OSA.
+Then restart Daemon.
 
 ## Docker Volume Backup
 

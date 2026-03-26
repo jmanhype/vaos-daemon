@@ -1,6 +1,6 @@
 # Application Lifecycle
 
-This document describes the startup and shutdown sequence for the OSA OTP application.
+This document describes the startup and shutdown sequence for the Daemon OTP application.
 
 ---
 
@@ -8,26 +8,26 @@ This document describes the startup and shutdown sequence for the OSA OTP applic
 
 ### Phase 0 — Pre-supervisor initialization
 
-`OptimalSystemAgent.Application.start/2` runs before any supervisor is started. This phase
+`Daemon.Application.start/2` runs before any supervisor is started. This phase
 establishes all ETS tables that must exist before any child process attempts to use them.
 
 **ETS tables created:**
 
 | Table | Type | Purpose |
 |---|---|---|
-| `:osa_cancel_flags` | `set, public` | Per-session loop cancel flags. `Agent.Loop.cancel/1` and the run loop read/write concurrently. |
-| `:osa_files_read` | `set, public` | Per-session file read tracking. The `read_before_write` hook checks this before file edits. |
-| `:osa_survey_answers` | `set, public` | Survey answers from the HTTP endpoint. `Agent.Loop.ask_user_question/4` polls this. |
-| `:osa_context_cache` | `set, public` | Ollama model context window size cache. Avoids repeated `/api/show` HTTP calls. |
-| `:osa_survey_responses` | `bag, public` | Survey/waitlist responses when Platform DB is disabled. |
-| `:osa_session_provider_overrides` | `set, public` | Per-session provider/model hot-swap overrides. |
-| `:osa_pending_questions` | `set, public` | Tracks pending `ask_user` questions for `GET /sessions/:id/pending_questions`. |
+| `:daemon_cancel_flags` | `set, public` | Per-session loop cancel flags. `Agent.Loop.cancel/1` and the run loop read/write concurrently. |
+| `:daemon_files_read` | `set, public` | Per-session file read tracking. The `read_before_write` hook checks this before file edits. |
+| `:daemon_survey_answers` | `set, public` | Survey answers from the HTTP endpoint. `Agent.Loop.ask_user_question/4` polls this. |
+| `:daemon_context_cache` | `set, public` | Ollama model context window size cache. Avoids repeated `/api/show` HTTP calls. |
+| `:daemon_survey_responses` | `bag, public` | Survey/waitlist responses when Platform DB is disabled. |
+| `:daemon_session_provider_overrides` | `set, public` | Per-session provider/model hot-swap overrides. |
+| `:daemon_pending_questions` | `set, public` | Tracks pending `ask_user` questions for `GET /sessions/:id/pending_questions`. |
 
 **Soul and prompt loading:**
 
 ```elixir
-OptimalSystemAgent.Soul.load()
-OptimalSystemAgent.PromptLoader.load()
+Daemon.Soul.load()
+Daemon.PromptLoader.load()
 ```
 
 `Soul.load/0` reads `SYSTEM.md` (and any configured personality overlays), interpolates
@@ -42,7 +42,7 @@ supervisor tree starts so no agent can begin a session before its identity is in
 ### Phase 1 — Platform.Repo (conditional)
 
 ```
-[OptimalSystemAgent.Platform.Repo]   # only if platform_enabled == true
+[Daemon.Platform.Repo]   # only if platform_enabled == true
 ```
 
 When `DATABASE_URL` is set and `platform_enabled` is configured, the Ecto PostgreSQL repository
@@ -57,7 +57,7 @@ entirely.
 ### Phase 2 — TaskSupervisor
 
 ```
-{Task.Supervisor, name: OptimalSystemAgent.TaskSupervisor}
+{Task.Supervisor, name: Daemon.TaskSupervisor}
 ```
 
 A general-purpose `Task.Supervisor` for fire-and-forget async work: HTTP message dispatch,
@@ -69,7 +69,7 @@ background learning writes, and webhook delivery. This is separate from `Events.
 ### Phase 3 — Infrastructure Subsystem
 
 ```
-OptimalSystemAgent.Supervisors.Infrastructure   # rest_for_one
+Daemon.Supervisors.Infrastructure   # rest_for_one
 ```
 
 Children start in strict order (see [component-model.md](./component-model.md) for details):
@@ -77,18 +77,18 @@ Children start in strict order (see [component-model.md](./component-model.md) f
 1. **SessionRegistry** — process registry for agent sessions
 2. **Events.TaskSupervisor** — task pool for event handler dispatch (max 100 children)
 3. **Phoenix.PubSub** — in-process pub/sub backbone
-4. **Events.Bus** — compiles `:osa_event_router` goldrush module, creates `:osa_event_handlers` ETS
-5. **Events.DLQ** — creates `:osa_dlq` ETS table, schedules retry tick
+4. **Events.Bus** — compiles `:daemon_event_router` goldrush module, creates `:daemon_event_handlers` ETS
+5. **Events.DLQ** — creates `:daemon_dlq` ETS table, schedules retry tick
 6. **Bridge.PubSub** — bridges Bus → PubSub topics
 7. **Store.Repo** — Ecto SQLite3 repository (runs Ecto migrations if needed)
 8. **EventStream** — SSE circular buffer for Command Center
 9. **Telemetry.Metrics** — subscribes to `system_event` on Events.Bus
 10. **MiosaLLM.HealthChecker** — initializes provider circuit breakers
-11. **MiosaProviders.Registry** — compiles `:osa_provider_router`, registers configured providers
-12. **Tools.Registry** — loads 40 built-in tools, scans `priv/skills/` and `~/.osa/skills/`, compiles `:osa_tool_dispatcher`, stores in `:persistent_term`
+11. **MiosaProviders.Registry** — compiles `:daemon_provider_router`, registers configured providers
+12. **Tools.Registry** — loads 40 built-in tools, scans `priv/skills/` and `~/.daemon/skills/`, compiles `:daemon_tool_dispatcher`, stores in `:persistent_term`
 13. **Tools.Cache** — creates tool result cache ETS
 14. **Machines** — discovers OS templates from config
-15. **Commands** — loads built-in slash commands and user commands from `~/.osa/commands/`
+15. **Commands** — loads built-in slash commands and user commands from `~/.daemon/commands/`
 16. **OS.Registry** — initializes OS template connection tracking
 17. **MCP.Registry** — process registry for MCP server name lookup
 18. **MCP.Supervisor** — DynamicSupervisor for per-server MCP GenServers (no children yet)
@@ -98,7 +98,7 @@ Children start in strict order (see [component-model.md](./component-model.md) f
 ### Phase 4 — Sessions Subsystem
 
 ```
-OptimalSystemAgent.Supervisors.Sessions   # one_for_one
+Daemon.Supervisors.Sessions   # one_for_one
 ```
 
 1. **Channels.Supervisor** — DynamicSupervisor for channel adapters (no adapters started yet)
@@ -110,7 +110,7 @@ OptimalSystemAgent.Supervisors.Sessions   # one_for_one
 ### Phase 5 — AgentServices Subsystem
 
 ```
-OptimalSystemAgent.Supervisors.AgentServices   # one_for_one
+Daemon.Supervisors.AgentServices   # one_for_one
 ```
 
 All 15 agent service GenServers start in order:
@@ -121,7 +121,7 @@ All 15 agent service GenServers start in order:
 4. `MiosaBudget.Budget` — loads historical spend from SQLite, initializes counters
 5. `Agent.Orchestrator` — initializes orchestration state
 6. `Agent.Progress` — creates progress tracking state
-7. `Agent.Hooks` — creates `:osa_hooks` and `:osa_hooks_metrics` ETS tables, registers 10 built-in hooks
+7. `Agent.Hooks` — creates `:daemon_hooks` and `:daemon_hooks_metrics` ETS tables, registers 10 built-in hooks
 8. `Agent.Learning` — loads accumulated patterns and solutions from storage
 9. `MiosaKnowledge.Store` — starts Mnesia (production) or ETS (test) knowledge backend
 10. `Agent.Memory.KnowledgeBridge` — subscribes to memory write events
@@ -137,17 +137,17 @@ All 15 agent service GenServers start in order:
 ### Phase 6 — Extensions Subsystem
 
 ```
-OptimalSystemAgent.Supervisors.Extensions   # one_for_one
+Daemon.Supervisors.Extensions   # one_for_one
 ```
 
 Conditional children start based on environment configuration:
 
-1. **[Treasury]** — if `OSA_TREASURY_ENABLED=true`
+1. **[Treasury]** — if `DAEMON_TREASURY_ENABLED=true`
 2. **Intelligence.Supervisor** — always (children start dormant)
 3. **Orchestrator.Mailbox** — always (ETS table creation)
 4. **Orchestrator.SwarmMode** — always
 5. **SwarmMode.AgentPool** — always (DynamicSupervisor, max 50)
-6. **[Fleet.Supervisor]** — if `OSA_FLEET_ENABLED=true`
+6. **[Fleet.Supervisor]** — if `DAEMON_FLEET_ENABLED=true`
 7. **Sidecar.Manager** — always (creates circuit breaker ETS)
 8. **[Go.Tokenizer]** — if `go_tokenizer_enabled` in app config
 9. **[Python.Supervisor]** — if `python_sidecar_enabled`
@@ -164,7 +164,7 @@ Conditional children start based on environment configuration:
 ### Phase 7 — Deferred Channel Startup
 
 ```
-OptimalSystemAgent.Channels.Starter   # GenServer
+Daemon.Channels.Starter   # GenServer
 ```
 
 `Channels.Starter` starts immediately as a GenServer but does its real work in `handle_continue`.
@@ -180,11 +180,11 @@ that lack required configuration (no API token, no webhook URL) skip silently an
 ### Phase 8 — HTTP Server
 
 ```
-{Bandit, plug: OptimalSystemAgent.Channels.HTTP, port: 8089}
+{Bandit, plug: Daemon.Channels.HTTP, port: 8089}
 ```
 
 Bandit (the HTTP server) starts last. By the time it accepts its first request, the entire agent
-stack is initialized and ready. The port defaults to 8089, configurable via `OSA_HTTP_PORT`.
+stack is initialized and ready. The port defaults to 8089, configurable via `DAEMON_HTTP_PORT`.
 
 `Channels.HTTP` is a Plug router that handles:
 - `POST /sessions` — create a new agent session
@@ -206,7 +206,7 @@ caller:
 
 ```elixir
 MiosaProviders.Ollama.auto_detect_model()
-OptimalSystemAgent.Agent.Tier.detect_ollama_tiers()
+Daemon.Agent.Tier.detect_ollama_tiers()
 ```
 
 This detects the best available Ollama model and assigns tier mappings (which Ollama model
@@ -217,13 +217,13 @@ shows the correct model rather than a stale fallback.
 
 ```elixir
 Task.start(fn ->
-  OptimalSystemAgent.MCP.Client.start_servers()
-  OptimalSystemAgent.MCP.Client.list_tools()
-  OptimalSystemAgent.Tools.Registry.register_mcp_tools()
+  Daemon.MCP.Client.start_servers()
+  Daemon.MCP.Client.list_tools()
+  Daemon.Tools.Registry.register_mcp_tools()
 end)
 ```
 
-MCP servers defined in `~/.osa/mcp.json` are started asynchronously. `start_servers/0` spawns
+MCP servers defined in `~/.daemon/mcp.json` are started asynchronously. `start_servers/0` spawns
 one `MCP.Server` GenServer per entry under `MCP.Supervisor`. `list_tools/0` blocks until each
 server completes its JSON-RPC `initialize` handshake. `register_mcp_tools/0` writes discovered
 tools into `:persistent_term` (the same store used by `Tools.Registry.list_tools_direct/0`).
@@ -268,10 +268,10 @@ sequenceDiagram
 
 ## Shutdown Sequence
 
-OSA uses standard OTP graceful shutdown. When the application receives a shutdown signal (SIGTERM,
+Daemon uses standard OTP graceful shutdown. When the application receives a shutdown signal (SIGTERM,
 `Application.stop/1`, or VM halt):
 
-1. `OptimalSystemAgent.Supervisor` calls `Supervisor.stop/3` on itself.
+1. `Daemon.Supervisor` calls `Supervisor.stop/3` on itself.
 2. Children are terminated in reverse start order (Bandit → Channels.Starter → Extensions →
    AgentServices → Sessions → Infrastructure → TaskSupervisor → Platform.Repo).
 3. Each GenServer receives `terminate/2` with reason `:shutdown`. In-flight LLM calls are

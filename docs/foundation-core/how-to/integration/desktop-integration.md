@@ -1,6 +1,6 @@
 # Desktop App Integration
 
-How the Tauri desktop app connects to the OSA backend. Covers SSE streaming, the sidecar
+How the Tauri desktop app connects to the Daemon backend. Covers SSE streaming, the sidecar
 process model, port configuration, and the lifecycle of the connection.
 
 ## Audience
@@ -13,7 +13,7 @@ and the Elixir backend.
 ## Architecture Overview
 
 The desktop app is a Tauri v2 application with a SvelteKit frontend. It communicates with
-the OSA backend exclusively via HTTP and SSE (Server-Sent Events). There is no shared
+the Daemon backend exclusively via HTTP and SSE (Server-Sent Events). There is no shared
 memory or direct process communication between Tauri and the Elixir VM.
 
 ```
@@ -23,7 +23,7 @@ Tauri App (Rust + SvelteKit)
     | GET /api/v1/stream/:session_id  (SSE)
     |
     v
-OSA Backend (Elixir/OTP, port 9089)
+Daemon Backend (Elixir/OTP, port 9089)
     |
     +-- Agent.Loop (per session)
     +-- Tools.Registry
@@ -58,10 +58,10 @@ pub const BACKEND_PORT: u16 = 9089;
 pub const HEALTH_URL: &str = "http://127.0.0.1:9089/health";
 ```
 
-To run OSA on the desktop port during development:
+To run Daemon on the desktop port during development:
 
 ```bash
-OSA_HTTP_PORT=9089 iex -S mix
+DAEMON_HTTP_PORT=9089 iex -S mix
 ```
 
 ---
@@ -177,7 +177,7 @@ get "/api/v1/stream/:session_id" do
     |> put_resp_header("connection", "keep-alive")
     |> send_chunked(200)
 
-  OptimalSystemAgent.EventStream.subscribe(session_id, conn)
+  Daemon.EventStream.subscribe(session_id, conn)
 end
 ```
 
@@ -210,7 +210,7 @@ To develop the desktop app while running the backend manually:
 
 ```bash
 # Terminal 1 — Start the backend on the desktop port:
-OSA_HTTP_PORT=9089 iex -S mix
+DAEMON_HTTP_PORT=9089 iex -S mix
 
 # Terminal 2 — Start the Tauri dev server:
 cd desktop

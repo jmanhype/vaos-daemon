@@ -2,7 +2,7 @@
 
 > **Severity:** CRITICAL (Partial Fix)
 > **Status:** Fixed — v0.2.6 (partial; full fix tracked as BUG-004)
-> **Component:** `lib/optimal_system_agent/providers/ollama.ex`
+> **Component:** `lib/daemon/providers/ollama.ex`
 > **Reported:** 2026-03-14
 > **Fixed:** 2026-03-14
 
@@ -20,7 +20,7 @@ auto-pulled by the Ollama installer).
 ## Symptom
 
 Users who installed Ollama and pulled only `llama3.2:latest` (the default model
-recommended in the Ollama quickstart) found that OSA would chat but never
+recommended in the Ollama quickstart) found that Daemon would chat but never
 execute any tools. The model was in the auto-detect pool
 (`auto_detect_model/0`) but excluded from tool calling.
 

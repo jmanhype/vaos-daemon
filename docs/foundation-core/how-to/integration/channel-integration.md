@@ -6,7 +6,7 @@ verification.
 
 ## Audience
 
-Operators deploying OSA to a messaging platform.
+Operators deploying Daemon to a messaging platform.
 
 ---
 
@@ -38,10 +38,10 @@ The CLI channel is always available — no configuration required.
 
 ```bash
 # Start the interactive REPL:
-mix osa.chat
+mix daemon.chat
 
 # With a specific provider:
-OSA_DEFAULT_PROVIDER=anthropic mix osa.chat
+DAEMON_DEFAULT_PROVIDER=anthropic mix daemon.chat
 ```
 
 The CLI supports:
@@ -57,10 +57,10 @@ The CLI session ID format is `"cli_"` followed by 16 random hex characters.
 
 ## HTTP Channel
 
-The HTTP API is always available on port 8089 (configurable via `OSA_HTTP_PORT`).
+The HTTP API is always available on port 8089 (configurable via `DAEMON_HTTP_PORT`).
 
 ```bash
-# Start OSA:
+# Start Daemon:
 mix run --no-halt
 
 # Or in Docker:
@@ -94,14 +94,14 @@ curl -X POST http://localhost:8089/api/v1/orchestrate \
 **Change port:**
 
 ```bash
-export OSA_HTTP_PORT=9090
+export DAEMON_HTTP_PORT=9090
 ```
 
 ---
 
 ## Telegram
 
-Telegram operates in webhook mode. Telegram POSTs updates to OSA.
+Telegram operates in webhook mode. Telegram POSTs updates to Daemon.
 
 ### Bot Setup
 
@@ -117,11 +117,11 @@ export TELEGRAM_BOT_TOKEN=123456:ABCdefGHI...
 
 ### Webhook Registration
 
-After OSA is running and publicly accessible via HTTPS, register the webhook:
+After Daemon is running and publicly accessible via HTTPS, register the webhook:
 
 ```elixir
 # In IEx:
-OptimalSystemAgent.Channels.Telegram.set_webhook("https://your-domain.com")
+Daemon.Channels.Telegram.set_webhook("https://your-domain.com")
 ```
 
 Or via curl:
@@ -135,11 +135,11 @@ curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
 
 ```elixir
 # Check adapter status:
-OptimalSystemAgent.Channels.Telegram.connected?()
+Daemon.Channels.Telegram.connected?()
 # => true
 
 # Check bot info:
-OptimalSystemAgent.Channels.Telegram.get_me()
+Daemon.Channels.Telegram.get_me()
 ```
 
 ### Features
@@ -165,7 +165,7 @@ Then register the webhook with the ngrok URL.
 ## Discord
 
 Discord operates in interactions (webhook) mode. Discord POSTs signed interaction
-payloads to OSA.
+payloads to Daemon.
 
 ### Bot Setup
 
@@ -195,13 +195,13 @@ Set the Interactions Endpoint URL in your Discord application settings:
 https://your-domain.com/api/v1/channels/discord/webhook
 ```
 
-Discord sends a verification challenge when you first set this URL. OSA responds
+Discord sends a verification challenge when you first set this URL. Daemon responds
 automatically.
 
 ### Verification
 
 ```elixir
-OptimalSystemAgent.Channels.Discord.connected?()
+Daemon.Channels.Discord.connected?()
 ```
 
 **Outbound message format:** Discord uses `Authorization: Bot {token}` headers. Outbound
@@ -215,7 +215,7 @@ calls target `https://discord.com/api/v10/channels/{channel_id}/messages`.
 
 ## Slack
 
-Slack uses the Events API. Slack POSTs events to OSA after HMAC-SHA256 signature
+Slack uses the Events API. Slack POSTs events to Daemon after HMAC-SHA256 signature
 verification.
 
 ### App Setup
@@ -241,12 +241,12 @@ Under **Event Subscriptions**, enable events and set the request URL:
 https://your-domain.com/api/v1/channels/slack/events
 ```
 
-Slack sends a URL verification challenge. OSA responds to `url_verification` events
+Slack sends a URL verification challenge. Daemon responds to `url_verification` events
 automatically. Subscribe to the `message.im` bot event to receive direct messages.
 
 ### Signature Verification
 
-OSA verifies Slack's HMAC-SHA256 signatures using the signing secret. Requests older
+Daemon verifies Slack's HMAC-SHA256 signatures using the signing secret. Requests older
 than 5 minutes (`@signature_max_age 300`) are rejected.
 
 ### Session ID Format
@@ -335,9 +335,9 @@ Signal integration requires `signal-cli` running as a daemon on the same host.
 ```elixir
 # List all adapter modules:
 [
-  OptimalSystemAgent.Channels.Telegram,
-  OptimalSystemAgent.Channels.Discord,
-  OptimalSystemAgent.Channels.Slack,
+  Daemon.Channels.Telegram,
+  Daemon.Channels.Discord,
+  Daemon.Channels.Slack,
 ]
 |> Enum.map(fn mod ->
   {mod.channel_name(), mod.connected?()}
@@ -345,5 +345,5 @@ end)
 # => [{:telegram, true}, {:discord, false}, {:slack, true}]
 
 # Check if the CLI channel is active:
-Process.whereis(OptimalSystemAgent.Channels.CLI) != nil
+Process.whereis(Daemon.Channels.CLI) != nil
 ```

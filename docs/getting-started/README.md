@@ -1,6 +1,6 @@
 # Getting Started
 
-> Install, configure, and start using OSA
+> Install, configure, and start using Daemon
 
 ## Guides
 
@@ -16,12 +16,12 @@ cd optimal-system-agent
 mix deps.get && mix compile
 
 # Configure (at minimum, one provider key)
-echo 'ANTHROPIC_API_KEY=sk-ant-...' >> ~/.osa/.env
+echo 'ANTHROPIC_API_KEY=sk-ant-...' >> ~/.daemon/.env
 
 # Run
 mix run --no-halt
 # or
-./osagent
+./daemon
 ```
 
 ## Prerequisites

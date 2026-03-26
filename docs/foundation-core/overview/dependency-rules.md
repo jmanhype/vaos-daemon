@@ -12,7 +12,7 @@ runtime initialization failures.
 
 ## Layer Model
 
-OSA has four layers. Dependencies flow strictly downward. No layer may depend on
+Daemon has four layers. Dependencies flow strictly downward. No layer may depend on
 a layer above it.
 
 ```
@@ -20,7 +20,7 @@ a layer above it.
 │  Layer 4: Extensions                                                │
 │  Sandbox, Fleet, Sidecars, AMQP, Wallet, Updater                   │
 │  Depends on: Agent Layer, Infrastructure Layer                      │
-│  Has NO dependents within OSA                                       │
+│  Has NO dependents within Daemon                                       │
 └────────────────────────────────┬────────────────────────────────────┘
                                  │ depends on
 ┌────────────────────────────────▼────────────────────────────────────┐
@@ -44,7 +44,7 @@ a layer above it.
 │  SessionRegistry, Events.Bus, Events.DLQ, PubSub, Bridge.PubSub,  │
 │  Store.Repo, Telemetry, HealthChecker, Providers.Registry,         │
 │  Tools.Registry, Machines, Commands, OS.Registry, MCP.Supervisor   │
-│  Depends on: NOTHING within OSA                                     │
+│  Depends on: NOTHING within Daemon                                     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -80,7 +80,7 @@ of its children, not by convenience.
 ### Top-Level Supervisor — `rest_for_one`
 
 ```elixir
-# OptimalSystemAgent.Supervisor
+# Daemon.Supervisor
 Supervisor.init(children, strategy: :rest_for_one)
 ```
 
@@ -93,7 +93,7 @@ Extensions cannot run in a healthy state, so they are all restarted together.
 ### Infrastructure Supervisor — `rest_for_one`
 
 ```elixir
-# OptimalSystemAgent.Supervisors.Infrastructure
+# Daemon.Supervisors.Infrastructure
 Supervisor.init(children, strategy: :rest_for_one)
 ```
 
@@ -120,7 +120,7 @@ state. `rest_for_one` enforces this.
 ### Sessions Supervisor — `one_for_one`
 
 ```elixir
-# OptimalSystemAgent.Supervisors.Sessions
+# Daemon.Supervisors.Sessions
 Supervisor.init(children, strategy: :one_for_one)
 ```
 
@@ -131,7 +131,7 @@ in-flight continue normally while the crashed adapter restarts.
 ### AgentServices Supervisor — `one_for_one`
 
 ```elixir
-# OptimalSystemAgent.Supervisors.AgentServices
+# Daemon.Supervisors.AgentServices
 Supervisor.init(children, strategy: :one_for_one)
 ```
 
@@ -142,7 +142,7 @@ chain.
 ### Extensions Supervisor — `one_for_one`
 
 ```elixir
-# OptimalSystemAgent.Supervisors.Extensions
+# Daemon.Supervisors.Extensions
 Supervisor.init(children, strategy: :one_for_one)
 ```
 
@@ -169,9 +169,9 @@ Rule:    ONLY used for high-frequency dispatch paths. Do not use goldrush
 
 ```
 Role:    HTTP client for all outbound LLM provider API calls and webhook delivery
-Used in: All provider adapters in lib/optimal_system_agent/providers/ and
+Used in: All provider adapters in lib/daemon/providers/ and
          lib/miosa/providers/
-Rule:    Not used for inter-process communication within OSA. Do not use
+Rule:    Not used for inter-process communication within Daemon. Do not use
          req to call localhost:8089 from within the Elixir process — use
          direct GenServer calls instead.
 ```
@@ -180,7 +180,7 @@ Rule:    Not used for inter-process communication within OSA. Do not use
 
 ```
 Role:    HTTP server for the REST API (port 8089) and webhook reception
-Used in: OptimalSystemAgent.Channels.HTTP and associated router/plugs
+Used in: Daemon.Channels.HTTP and associated router/plugs
 Rule:    Not used as an application web framework. No Phoenix, no LiveView,
          no Ecto changesets in HTTP request handlers — raw Plug only.
 ```
@@ -189,7 +189,7 @@ Rule:    Not used as an application web framework. No Phoenix, no LiveView,
 
 ```
 Role:    Durable local storage for conversations, memory, telemetry
-Used in: OptimalSystemAgent.Store.Repo and associated schema modules
+Used in: Daemon.Store.Repo and associated schema modules
 Rule:    SQLite is for persistence, not for in-process coordination. Hot
          state (active sessions, hook registrations, signal cache) lives
          in ETS, not SQLite.
@@ -199,7 +199,7 @@ Rule:    SQLite is for persistence, not for in-process coordination. Hot
 
 ```
 Role:    Multi-tenant platform storage (conditional — prod + platform mode only)
-Used in: OptimalSystemAgent.Platform modules (Platform.Repo)
+Used in: Daemon.Platform modules (Platform.Repo)
 Rule:    Only imported/used in platform/ namespace modules. Agent layer and
          Infrastructure layer modules must not reference Platform.Repo.
 ```
@@ -231,7 +231,7 @@ Rule:    Use Jason.decode!/1 only when the input is guaranteed valid
 ```
 Role:    YAML parsing for skill definitions (SKILL.md frontmatter) and config
 Used in: Skills loading system, configuration parsers
-Rule:    YAML is read-only at runtime. OSA does not write YAML. Do not use
+Rule:    YAML is read-only at runtime. Daemon does not write YAML. Do not use
          yaml_elixir for serialization.
 ```
 
@@ -248,7 +248,7 @@ Rule:    Always validate tool call arguments against the tool's schema before
 
 ```
 Role:    Event-driven instrumentation
-Used in: OptimalSystemAgent.Telemetry.Metrics, hook telemetry entries
+Used in: Daemon.Telemetry.Metrics, hook telemetry entries
 Rule:    Telemetry events are fire-and-forget. Never block on telemetry.
          Never make routing decisions based on telemetry data — it is
          observability output, not control input.
@@ -262,22 +262,22 @@ Module namespace placement encodes layer membership:
 
 | Namespace | Layer |
 |---|---|
-| `OptimalSystemAgent.Events.*` | Infrastructure |
-| `OptimalSystemAgent.Store.*` | Infrastructure |
-| `OptimalSystemAgent.Telemetry.*` | Infrastructure |
+| `Daemon.Events.*` | Infrastructure |
+| `Daemon.Store.*` | Infrastructure |
+| `Daemon.Telemetry.*` | Infrastructure |
 | `MiosaProviders.*` | Infrastructure |
 | `MiosaLLM.*` | Infrastructure |
-| `OptimalSystemAgent.Tools.*` | Infrastructure |
-| `OptimalSystemAgent.Agent.*` | Agent Layer |
-| `OptimalSystemAgent.Vault.*` | Agent Layer |
+| `Daemon.Tools.*` | Infrastructure |
+| `Daemon.Agent.*` | Agent Layer |
+| `Daemon.Vault.*` | Agent Layer |
 | `MiosaBudget.*` | Agent Layer |
 | `MiosaKnowledge.*` | Agent Layer |
-| `OptimalSystemAgent.Channels.*` | Channels |
-| `OptimalSystemAgent.Swarm.*` | Channels (orchestration output) |
-| `OptimalSystemAgent.Sandbox.*` | Extensions |
-| `OptimalSystemAgent.Fleet.*` | Extensions |
-| `OptimalSystemAgent.Sidecar.*` | Extensions |
-| `OptimalSystemAgent.Platform.*` | Cross-cutting (platform mode only) |
+| `Daemon.Channels.*` | Channels |
+| `Daemon.Swarm.*` | Channels (orchestration output) |
+| `Daemon.Sandbox.*` | Extensions |
+| `Daemon.Fleet.*` | Extensions |
+| `Daemon.Sidecar.*` | Extensions |
+| `Daemon.Platform.*` | Cross-cutting (platform mode only) |
 
 **Enforcement:** There is no compile-time dependency checker today (tracked in
 the ADRs as future work). Enforcement is currently by code review. When adding a

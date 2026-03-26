@@ -1,6 +1,6 @@
 # Maintainers
 
-OSA is developed by **Roberto H. Luna** and the **MIOSA team** under the
+Daemon is developed by **Roberto H. Luna** and the **MIOSA team** under the
 [miosa-osa](https://github.com/Miosa-osa) GitHub organization.
 
 ---
@@ -9,8 +9,8 @@ OSA is developed by **Roberto H. Luna** and the **MIOSA team** under the
 
 **Roberto H. Luna** ([@robertohluna](https://github.com/robertohluna))
 
-Roberto is the original author of OSA and the author of Signal Theory (Luna, 2026),
-the theoretical framework underlying OSA's message classification system. He holds
+Roberto is the original author of Daemon and the author of Signal Theory (Luna, 2026),
+the theoretical framework underlying Daemon's message classification system. He holds
 final decision authority on:
 
 - Architecture — supervision tree structure, event routing, provider abstraction
@@ -59,8 +59,8 @@ responsible disclosure process.
 
 ## How to Reach the Team
 
-**For bug reports**: Open a GitHub Issue with the `bug` label. Include the OSA
-version (`mix run -e "OptimalSystemAgent.CLI.version()"`), the operating system,
+**For bug reports**: Open a GitHub Issue with the `bug` label. Include the Daemon
+version (`mix run -e "Daemon.CLI.version()"`), the operating system,
 and steps to reproduce.
 
 **For feature requests**: Open a GitHub Issue with the `enhancement` label.
@@ -74,7 +74,7 @@ with the relevant area (e.g., `signal-theory`, `providers`, `supervision`).
 proposals should include a draft ADR in the format described in
 `docs/foundation-core/governance/architectural-decisions/adr-template.md`.
 
-**For urgent production issues**: There is no on-call support. OSA is open-source
+**For urgent production issues**: There is no on-call support. Daemon is open-source
 software provided under the Apache 2.0 license with no warranty. For production
 deployments requiring support, contact the MIOSA team via GitHub Discussions.
 
@@ -82,7 +82,7 @@ deployments requiring support, contact the MIOSA team via GitHub Discussions.
 
 ## Decision-Making Process
 
-OSA does not operate under a formal governance structure (foundation, TSC, steering
+Daemon does not operate under a formal governance structure (foundation, TSC, steering
 committee). Decisions are made by the MIOSA team with community input.
 
 For routine changes (bug fixes, new providers, new skills): PR review by one MIOSA
@@ -99,7 +99,7 @@ begins. The ADR is posted as a GitHub Discussion for community feedback before a
 
 ## License
 
-OSA is licensed under the **Apache License 2.0**. By contributing to the project,
+Daemon is licensed under the **Apache License 2.0**. By contributing to the project,
 contributors agree that their contributions will be licensed under the same terms.
 
 Copyright 2024-2026 Roberto H. Luna / MIOSA

@@ -34,7 +34,7 @@ Get a key at [platform.deepseek.com](https://platform.deepseek.com).
 ## Configuration
 
 ```elixir
-config :optimal_system_agent, :deepseek,
+config :daemon, :deepseek,
   api_key: System.get_env("DEEPSEEK_API_KEY"),
   model: "deepseek-chat",
   url: "https://api.deepseek.com/v1"

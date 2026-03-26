@@ -1,6 +1,6 @@
 # Architecture Principles
 
-**Audience:** Engineers contributing to or extending OSA, operators deploying it.
+**Audience:** Engineers contributing to or extending Daemon, operators deploying it.
 These principles explain *why* the system is built the way it is — the reasoning
 behind decisions that might otherwise look arbitrary.
 
@@ -8,7 +8,7 @@ behind decisions that might otherwise look arbitrary.
 
 ## 1. OTP Fault Tolerance — Let It Crash
 
-The single most important design principle in OSA is inherited from Erlang/OTP:
+The single most important design principle in Daemon is inherited from Erlang/OTP:
 **do not write defensive code to prevent crashes; write supervision hierarchies
 to recover from them automatically.**
 
@@ -22,10 +22,10 @@ Instead: if a GenServer crashes, its supervisor restarts it. If the crash repeat
 beyond the restart intensity limit, it propagates up the tree. Each supervision
 level is responsible for a meaningful scope of the system.
 
-The practical consequence is that OSA uses a four-level supervision tree:
+The practical consequence is that Daemon uses a four-level supervision tree:
 
 ```
-OptimalSystemAgent.Supervisor     (rest_for_one)
+Daemon.Supervisor     (rest_for_one)
 ├── Supervisors.Infrastructure    (rest_for_one)  — foundational layer
 ├── Supervisors.Sessions          (one_for_one)   — user-facing sessions
 ├── Supervisors.AgentServices     (one_for_one)   — intelligence services
@@ -50,15 +50,15 @@ bytecode modules at startup.
 
 ```erlang
 %% At startup, glc:compile/2 produces a real BEAM module:
-%% :osa_event_router — compiled from the union of all registered predicates.
+%% :daemon_event_router — compiled from the union of all registered predicates.
 %% At runtime:
-glc:handle(:osa_event_router, Event)
+glc:handle(:daemon_event_router, Event)
 %% This is a function call into a compiled module — no hash lookups,
 %% no ETS reads, no pattern dispatch. Pure BEAM instruction execution.
 ```
 
-The tool dispatcher (`:osa_tool_dispatcher`) and provider router
-(`:osa_provider_router`) use the same mechanism. Tool calls and provider
+The tool dispatcher (`:daemon_tool_dispatcher`) and provider router
+(`:daemon_provider_router`) use the same mechanism. Tool calls and provider
 selections are compiled routing decisions, not runtime lookups.
 
 **Rule:** High-frequency paths (event dispatch, tool calls, provider routing)
@@ -68,15 +68,15 @@ must use compiled goldrush modules, not dynamic dispatch over ETS or maps.
 
 ## 3. ETS for Reads, GenServer for Writes
 
-OSA uses ETS (Erlang Term Storage) as a shared in-memory data layer for all
+Daemon uses ETS (Erlang Term Storage) as a shared in-memory data layer for all
 state that is read frequently and written infrequently:
 
 | ETS Table | Contents | Access Pattern |
 |---|---|---|
-| `:osa_hooks` | Registered hook entries | Many readers, rare writes |
-| `:osa_hooks_metrics` | Atomic execution counters | Many concurrent writers |
-| `:osa_signal_cache` | Classification results (10-min TTL) | Many readers, rare writes |
-| `:osa_tool_cache` | Tool schema cache | Many readers, rare writes |
+| `:daemon_hooks` | Registered hook entries | Many readers, rare writes |
+| `:daemon_hooks_metrics` | Atomic execution counters | Many concurrent writers |
+| `:daemon_signal_cache` | Classification results (10-min TTL) | Many readers, rare writes |
+| `:daemon_tool_cache` | Tool schema cache | Many readers, rare writes |
 
 The corresponding GenServer owns each ETS table and is the sole writer:
 
@@ -88,7 +88,7 @@ end
 
 # Execution reads from ETS in the caller's process (no GenServer bottleneck)
 def run_hooks(event, payload) do
-  :ets.lookup(:osa_hooks, event)
+  :ets.lookup(:daemon_hooks, event)
   |> Enum.sort_by(& &1.priority)
   |> Enum.reduce_while({:ok, payload}, &execute_hook/2)
 end
@@ -152,7 +152,7 @@ Budget guard    — spend_guard (priority 8) blocks tool calls when the session
                   token budget is exhausted
 Sandbox         — code execution runs in Docker (read-only root, CAP_DROP ALL),
                   Wasm (fuel limits), or Sprites.dev (Firecracker microVMs)
-Shell policy    — allowlist/blocklist enforcement in OptimalSystemAgent.Security
+Shell policy    — allowlist/blocklist enforcement in Daemon.Security
                   independent of the hook pipeline
 ```
 
@@ -220,7 +220,7 @@ surfaces recent context before older context at the same relevance score.
 
 **Rule:** Time is information. Relevance degrades. Systems that treat a fact from
 two years ago as equally relevant as a fact from this morning are discarding
-temporal information. OSA does not.
+temporal information. Daemon does not.
 
 ---
 
@@ -252,12 +252,12 @@ generated but not validated is not a complete orchestration result.
 ## 9. Proactive, Not Reactive by Default
 
 The `ProactiveMode` GenServer and the `Intelligence.Supervisor` (with its five
-communication modules) treat OSA as an actor, not just a responder. The scheduler
+communication modules) treat Daemon as an actor, not just a responder. The scheduler
 fires cron-style triggers that cause the agent to take autonomous actions — not
 because a user asked, but because the system detected a condition that warrants
 action.
 
-This is architecturally significant: OSA is designed as a *viable system* (see
+This is architecturally significant: Daemon is designed as a *viable system* (see
 [Purpose](purpose.md)) with System 4 (intelligence) and System 5 (policy)
 functions. It monitors its environment and acts. This is not an add-on feature —
 it is a design goal that shapes how the supervision tree is structured and why the
@@ -270,7 +270,7 @@ scheduler, heartbeat, and intelligence modules are always started, not opt-in.
 
 ## Next
 
-- [System Boundaries](system-boundaries.md) — The concrete scope of what OSA
+- [System Boundaries](system-boundaries.md) — The concrete scope of what Daemon
   owns versus what it delegates
 - [Dependency Rules](dependency-rules.md) — How layers are allowed to depend
   on each other

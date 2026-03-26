@@ -1,6 +1,6 @@
 # Frontend-Backend Communication
 
-All data communication between the SvelteKit frontend and the OSA backend goes over HTTP and Server-Sent Events to `http://127.0.0.1:9089`. There is no Tauri IPC for data — IPC is used only for system-level operations (health check, restart, hardware detection, terminal launch).
+All data communication between the SvelteKit frontend and the Daemon backend goes over HTTP and Server-Sent Events to `http://127.0.0.1:9089`. There is no Tauri IPC for data — IPC is used only for system-level operations (health check, restart, hardware detection, terminal launch).
 
 ## HTTP Client (`src/lib/api/client.ts`)
 

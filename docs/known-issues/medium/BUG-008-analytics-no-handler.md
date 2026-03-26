@@ -2,7 +2,7 @@
 
 > **Severity:** MEDIUM
 > **Status:** Open
-> **Component:** `lib/optimal_system_agent/commands.ex`, `lib/optimal_system_agent/commands/system.ex`
+> **Component:** `lib/daemon/commands.ex`, `lib/daemon/commands/system.ex`
 > **Reported:** 2026-03-14
 
 ---
@@ -34,9 +34,9 @@ The `builtin_commands/0` list at line 362 registers:
 {"analytics", "Usage analytics and metrics", &System.cmd_analytics/2},
 ```
 
-The `System` commands module (`lib/optimal_system_agent/commands/system.ex`)
+The `System` commands module (`lib/daemon/commands/system.ex`)
 defines `cmd_analytics/2` but the implementation body calls
-`OptimalSystemAgent.Telemetry.Metrics` functions that are not yet wired to
+`Daemon.Telemetry.Metrics` functions that are not yet wired to
 return formatted session or cost data. The `Metrics` GenServer exists and tracks
 data, but no formatting function is exported that `cmd_analytics` can call.
 
@@ -50,7 +50,7 @@ data, but no formatting function is exported that `cmd_analytics` can call.
 ## Suggested Fix
 
 Wire `cmd_analytics/2` to query and format data from
-`OptimalSystemAgent.Telemetry.Metrics`:
+`Daemon.Telemetry.Metrics`:
 
 ```elixir
 def cmd_analytics(_arg, session_id) do
@@ -67,7 +67,7 @@ end
 ```
 
 If `Metrics.summary/1` does not exist, add it to
-`lib/optimal_system_agent/telemetry/metrics.ex`.
+`lib/daemon/telemetry/metrics.ex`.
 
 ## Workaround
 

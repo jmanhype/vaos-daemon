@@ -2,7 +2,7 @@
 
 ## Overview
 
-OSA's resilience model is built entirely on OTP supervision trees. Every
+Daemon's resilience model is built entirely on OTP supervision trees. Every
 process that can fail is supervised. Restart policies are chosen based on the
 dependency relationships between processes, not by convention. The result is a
 system that recovers from individual component failures automatically, without
@@ -17,7 +17,7 @@ supervisors. The root uses `:rest_for_one`; each subsystem uses the strategy
 appropriate to its child relationships.
 
 ```
-OptimalSystemAgent.Supervisor  [rest_for_one]
+Daemon.Supervisor  [rest_for_one]
 ├── Platform.Repo              (opt-in: DATABASE_URL)
 ├── Task.Supervisor            (fire-and-forget async work)
 ├── Supervisors.Infrastructure [rest_for_one]
@@ -129,7 +129,7 @@ complete isolation between extension children.
 
 ## DynamicSupervisor: Session Management
 
-Agent sessions are managed by `OptimalSystemAgent.SessionSupervisor`, a
+Agent sessions are managed by `Daemon.SessionSupervisor`, a
 `DynamicSupervisor` with strategy `:one_for_one`.
 
 Key properties:
@@ -165,8 +165,8 @@ Event routing and tool dispatch use goldrush, which compiles event predicates
 to native BEAM bytecode modules at startup via `glc:compile/2`. Two compiled
 modules are central to resilience:
 
-- `:osa_event_router` — routes typed events to registered handlers
-- `:osa_tool_dispatcher` — dispatches tool calls to registered tool modules
+- `:daemon_event_router` — routes typed events to registered handlers
+- `:daemon_tool_dispatcher` — dispatches tool calls to registered tool modules
 
 Because goldrush compiles dispatch to bytecode, individual handler crashes do
 not affect the compiled router module itself. If a handler function raises, the

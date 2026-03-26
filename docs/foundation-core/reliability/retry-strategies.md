@@ -2,7 +2,7 @@
 
 ## Overview
 
-OSA applies different retry strategies to different failure domains. The
+Daemon applies different retry strategies to different failure domains. The
 strategies are chosen based on whether the failure is transient (network
 hiccup, rate limit) or structural (wrong API key, provider outage), and
 whether the caller can tolerate latency for a retry or needs a fast failure.
@@ -144,7 +144,7 @@ After 5 failed reconnection attempts, the client surfaces an error to the user
 and stops retrying automatically. The user can manually trigger reconnection via
 the channel UI.
 
-The server-side SSE stream in `OptimalSystemAgent.EventStream` is stateless
+The server-side SSE stream in `Daemon.EventStream` is stateless
 per connection. Reconnecting clients receive the current agent state via the
 initial SSE `data:` payload — they do not need to replay missed events.
 
@@ -154,7 +154,7 @@ initial SSE `data:` payload — they do not need to replay missed events.
 
 ### Mechanism
 
-Tool errors are not retried by OSA's infrastructure. Instead, errors are
+Tool errors are not retried by Daemon's infrastructure. Instead, errors are
 returned to the LLM as tool result messages. The LLM is then responsible for
 deciding how to proceed: retry with corrected parameters, use a different tool,
 or ask the user for clarification.

@@ -2,7 +2,7 @@
 
 > **Severity:** CRITICAL
 > **Status:** Open
-> **Component:** `lib/optimal_system_agent/tools/registry.ex`, `lib/optimal_system_agent/agent/loop.ex`
+> **Component:** `lib/daemon/tools/registry.ex`, `lib/daemon/agent/loop.ex`
 > **Reported:** 2026-03-14
 
 ---

@@ -1,7 +1,7 @@
 # Deprecation Process
 
 This document describes how features, configuration keys, API endpoints, and
-behaviours are deprecated and removed in OSA.
+behaviours are deprecated and removed in Daemon.
 
 ---
 
@@ -29,8 +29,8 @@ Announced → Deprecated (1+ releases) → Removed
 Configuration key renames and removed options log at startup via `Logger.warning`:
 
 ```elixir
-# Example: renaming OSA_PROVIDER to OSA_DEFAULT_PROVIDER
-if Application.get_env(:optimal_system_agent, :provider) do
+# Example: renaming DAEMON_PROVIDER to DAEMON_DEFAULT_PROVIDER
+if Application.get_env(:daemon, :provider) do
   Logger.warning(
     "[DEPRECATED] The :provider config key is deprecated. " <>
     "Use :default_provider instead. Support will be removed in a future release."
@@ -61,9 +61,9 @@ notice when the function is called from other modules at compile time.
 When an entire module is deprecated:
 
 ```elixir
-defmodule OptimalSystemAgent.OldModule do
+defmodule Daemon.OldModule do
   @moduledoc """
-  DEPRECATED: Use `OptimalSystemAgent.NewModule` instead.
+  DEPRECATED: Use `Daemon.NewModule` instead.
   This module will be removed in a future release.
   """
   ...
@@ -98,8 +98,8 @@ When a configuration key is renamed, the old key is read and mapped to the new k
 for at least one MINOR release with a startup warning. Example:
 
 ```
-Old: OSA_PROVIDER=anthropic
-New: OSA_DEFAULT_PROVIDER=anthropic
+Old: DAEMON_PROVIDER=anthropic
+New: DAEMON_DEFAULT_PROVIDER=anthropic
 Transition: Both read, old key mapped to new, startup warning logged.
 ```
 

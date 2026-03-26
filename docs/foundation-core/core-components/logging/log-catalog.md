@@ -2,7 +2,7 @@
 
 ## Audience
 
-Operators monitoring OSA in production who need to know what specific log messages mean and what action to take.
+Operators monitoring Daemon in production who need to know what specific log messages mean and what action to take.
 
 ## How to Use This Catalog
 
@@ -15,7 +15,7 @@ Grep for the bracketed prefix or key phrase. Messages use the format:
 
 ## Startup and Initialization
 
-### `Event bus started — :osa_event_router compiled`
+### `Event bus started — :daemon_event_router compiled`
 **Level:** info
 **Source:** `Events.Bus`
 **Meaning:** goldrush routing module compiled successfully. Normal startup.
@@ -42,10 +42,10 @@ Grep for the bracketed prefix or key phrase. Messages use the format:
 ### `[Extensions] Treasury enabled — starting MiosaBudget.Treasury`
 **Level:** info
 **Source:** `Supervisors.Extensions`
-**Meaning:** `OSA_TREASURY_ENABLED=true` was set; Treasury GenServer is starting.
+**Meaning:** `DAEMON_TREASURY_ENABLED=true` was set; Treasury GenServer is starting.
 **Action:** None.
 
-### `Failed to compile :osa_event_router: ...`
+### `Failed to compile :daemon_event_router: ...`
 **Level:** warning
 **Source:** `Events.Bus`
 **Meaning:** goldrush compilation failed. Events will not be routed.
@@ -59,7 +59,7 @@ Grep for the bracketed prefix or key phrase. Messages use the format:
 **Level:** warning
 **Source:** `Providers.Registry`
 **Meaning:** Provider returned HTTP 429. Automatic retry in progress.
-**Action:** None. If this appears frequently, consider adding `OSA_FALLBACK_CHAIN` or raising budget limits on the provider.
+**Action:** None. If this appears frequently, consider adding `DAEMON_FALLBACK_CHAIN` or raising budget limits on the provider.
 
 ### `Provider :anthropic failed: timeout. Trying fallback chain: [:openai, :ollama]`
 **Level:** warning
@@ -71,7 +71,7 @@ Grep for the bracketed prefix or key phrase. Messages use the format:
 **Level:** error
 **Source:** `Providers.Registry`
 **Meaning:** Provider failed and no fallback is available. The agent call will fail.
-**Action:** Configure a fallback provider via `OSA_FALLBACK_CHAIN`, or investigate why the primary provider is unreachable.
+**Action:** Configure a fallback provider via `DAEMON_FALLBACK_CHAIN`, or investigate why the primary provider is unreachable.
 
 ### `[HealthChecker] anthropic: circuit OPENED after 3 consecutive failures (last reason: timeout)`
 **Level:** warning
@@ -191,7 +191,7 @@ Grep for the bracketed prefix or key phrase. Messages use the format:
 
 ## Telemetry
 
-### `[Telemetry.Metrics] Started — flushing to ~/.osa/metrics.json every 5m`
+### `[Telemetry.Metrics] Started — flushing to ~/.daemon/metrics.json every 5m`
 **Level:** info
 **Source:** `Telemetry.Metrics`
 **Meaning:** Metrics GenServer started. Metrics will be written to disk every 5 minutes.
@@ -201,4 +201,4 @@ Grep for the bracketed prefix or key phrase. Messages use the format:
 **Level:** warning
 **Source:** `Telemetry.Metrics`
 **Meaning:** Disk write for metrics.json failed.
-**Action:** Check disk space and permissions on `~/.osa/`. This does not affect agent operation.
+**Action:** Check disk space and permissions on `~/.daemon/`. This does not affect agent operation.

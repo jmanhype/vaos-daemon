@@ -35,7 +35,7 @@ Any model on Replicate's platform. Common choices:
 ## Configuration
 
 ```elixir
-config :optimal_system_agent, :replicate,
+config :daemon, :replicate,
   api_key: System.get_env("REPLICATE_API_KEY"),
   model: "meta/llama-3.3-70b-instruct"
 ```

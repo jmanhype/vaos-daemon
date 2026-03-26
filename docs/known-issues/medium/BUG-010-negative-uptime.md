@@ -2,7 +2,7 @@
 
 > **Severity:** MEDIUM
 > **Status:** Open
-> **Component:** `lib/optimal_system_agent/channels/http.ex`
+> **Component:** `lib/daemon/channels/http.ex`
 > **Reported:** 2026-03-14
 
 ---
@@ -36,7 +36,7 @@ wall-clock time.
 
 ```elixir
 uptime = System.system_time(:second) -
-  Application.get_env(:optimal_system_agent, :start_time,
+  Application.get_env(:daemon, :start_time,
     System.system_time(:second))
 ```
 
@@ -65,14 +65,14 @@ Record boot time using monotonic time in `application.ex`:
 
 ```elixir
 # In Application.start/2:
-Application.put_env(:optimal_system_agent, :boot_monotonic,
+Application.put_env(:daemon, :boot_monotonic,
   System.monotonic_time(:second))
 ```
 
 In `http.ex` compute uptime from monotonic origin:
 
 ```elixir
-boot = Application.get_env(:optimal_system_agent, :boot_monotonic,
+boot = Application.get_env(:daemon, :boot_monotonic,
          System.monotonic_time(:second))
 uptime = System.monotonic_time(:second) - boot
 ```
@@ -84,6 +84,6 @@ making it safe for elapsed-time calculations.
 
 Set `:start_time` explicitly in `application.ex`:
 ```elixir
-Application.put_env(:optimal_system_agent, :start_time, System.system_time(:second))
+Application.put_env(:daemon, :start_time, System.system_time(:second))
 ```
 This eliminates the negative value but retains the NTP-susceptibility issue.

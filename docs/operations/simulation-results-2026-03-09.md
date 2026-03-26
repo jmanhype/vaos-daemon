@@ -2,14 +2,14 @@
 
 ## Overview
 
-End-to-end live simulation testing of the OSA agent framework covering:
+End-to-end live simulation testing of the Daemon agent framework covering:
 - Multi-turn conversation memory (6-turn progressive build)
 - Multi-agent swarm orchestration (all 4 patterns)
 - Edge case handling and error recovery
 - LLM connection reliability
 
 Model: `kimi-k2.5:cloud` via Ollama
-Server: `mix osa.serve` on port 5050
+Server: `mix daemon.serve` on port 5050
 
 ---
 

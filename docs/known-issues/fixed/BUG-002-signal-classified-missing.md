@@ -2,7 +2,7 @@
 
 > **Severity:** HIGH
 > **Status:** Fixed — v0.2.5
-> **Component:** `lib/optimal_system_agent/bridge/pubsub.ex`, `lib/optimal_system_agent/signal/classifier.ex`
+> **Component:** `lib/daemon/bridge/pubsub.ex`, `lib/daemon/signal/classifier.ex`
 > **Reported:** 2026-03-14
 > **Fixed:** 2026-03-14
 

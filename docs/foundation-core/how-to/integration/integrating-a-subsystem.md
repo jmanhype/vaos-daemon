@@ -1,19 +1,19 @@
 # Integrating a Subsystem
 
-Audience: developers connecting an external system, a new OSA subsystem, or a
-third-party library into the OSA runtime.
+Audience: developers connecting an external system, a new Daemon subsystem, or a
+third-party library into the Daemon runtime.
 
 ---
 
 ## Integrating with Events.Bus
 
 The event bus is the primary integration point for observing or reacting to
-what happens inside OSA. Every significant action emits an event.
+what happens inside Daemon. Every significant action emits an event.
 
 ### Subscribe to events
 
 ```elixir
-alias OptimalSystemAgent.Events.Bus
+alias Daemon.Events.Bus
 
 Bus.subscribe(:tool_call, fn event ->
   IO.inspect(event.payload, label: "tool_call")
@@ -21,7 +21,7 @@ end)
 ```
 
 `subscribe/2` takes an event type atom and a handler function. The handler
-receives a full `%OptimalSystemAgent.Events.Event{}` struct with:
+receives a full `%Daemon.Events.Event{}` struct with:
 
 - `id` — UUID
 - `type` — the event type atom
@@ -66,12 +66,12 @@ Agent.Memory provides conversation-level persistence backed by SQLite. Use it
 to store and retrieve messages within a session.
 
 ```elixir
-alias OptimalSystemAgent.Agent.Memory
+alias Daemon.Agent.Memory
 
 # Append a message to a session's conversation
 Memory.append(session_id, %{
   role: "user",
-  content: "Hello, OSA!"
+  content: "Hello, Daemon!"
 })
 
 # Load full session message history
@@ -80,7 +80,7 @@ messages = Memory.load_session(session_id)
 # Recall relevant context for a given message (semantic + keyword search)
 context = Memory.recall_relevant("deployment pipeline", max_tokens: 2000)
 
-# Save a durable memory (persisted to ~/.osa/memory/)
+# Save a durable memory (persisted to ~/.daemon/memory/)
 Memory.remember("The user prefers Python over JavaScript", "preference")
 
 # Search saved memories
@@ -99,7 +99,7 @@ The Vault is the structured long-term memory system. Unlike `Agent.Memory`
 provides semantically-aware injection.
 
 ```elixir
-alias OptimalSystemAgent.Vault
+alias Daemon.Vault
 
 # Store a memory with automatic fact extraction
 {:ok, path} = Vault.remember(
@@ -134,7 +134,7 @@ Categories (second argument to `remember/3`):
 Register your own tools and call existing tools programmatically.
 
 ```elixir
-alias OptimalSystemAgent.Tools.Registry, as: Tools
+alias Daemon.Tools.Registry, as: Tools
 
 # Register a tool module
 Tools.register(MyApp.Tools.WeatherTool)
@@ -156,11 +156,11 @@ budget guards) run correctly.
 
 For fan-out to multiple subscribers (e.g., feeding a WebSocket or SSE
 endpoint), use `Phoenix.PubSub` directly on the named PubSub instance
-`OptimalSystemAgent.PubSub`.
+`Daemon.PubSub`.
 
 ```elixir
 # Subscribe your process to a topic
-Phoenix.PubSub.subscribe(OptimalSystemAgent.PubSub, "session:#{session_id}")
+Phoenix.PubSub.subscribe(Daemon.PubSub, "session:#{session_id}")
 
 # Receive messages in handle_info
 def handle_info({:event, %{type: :agent_response} = event}, state) do
@@ -170,13 +170,13 @@ end
 
 # Broadcast to all subscribers (from another process)
 Phoenix.PubSub.broadcast(
-  OptimalSystemAgent.PubSub,
+  Daemon.PubSub,
   "session:#{session_id}",
   {:event, event}
 )
 ```
 
-Topics used by OSA:
+Topics used by Daemon:
 
 | Topic | Content |
 |-------|---------|
@@ -191,10 +191,10 @@ Read application config at runtime:
 
 ```elixir
 # Read a config value with a default
-Application.get_env(:optimal_system_agent, :my_setting, :default_value)
+Application.get_env(:daemon, :my_setting, :default_value)
 
 # Check a feature flag
-if Application.get_env(:optimal_system_agent, :feature_enabled, false) do
+if Application.get_env(:daemon, :feature_enabled, false) do
   # feature code
 end
 ```
@@ -202,7 +202,7 @@ end
 Write config at runtime (for testing or hot configuration):
 
 ```elixir
-Application.put_env(:optimal_system_agent, :my_setting, new_value)
+Application.put_env(:daemon, :my_setting, new_value)
 ```
 
 For persistent configuration, use environment variables loaded by

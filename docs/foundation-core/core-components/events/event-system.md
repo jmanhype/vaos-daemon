@@ -2,7 +2,7 @@
 
 ## Overview
 
-The OSA event system is built on `goldrush`, a library that compiles
+The Daemon event system is built on `goldrush`, a library that compiles
 event-matching predicates into real Erlang bytecode modules (`.beam` files) at
 runtime. This gives routing performance at BEAM instruction speed — no hash
 lookups, no dynamic pattern matching on the hot path.
@@ -12,9 +12,9 @@ The system has three layers:
 ```
 Events.Bus          — public API: emit/3, register_handler/2, unregister_handler/2
     ↓
-:osa_event_router   — goldrush-compiled BEAM module (type filtering only)
+:daemon_event_router   — goldrush-compiled BEAM module (type filtering only)
     ↓
-dispatch_event/1    — reads handlers from ETS :osa_event_handlers, dispatches via Task
+dispatch_event/1    — reads handlers from ETS :daemon_event_handlers, dispatches via Task
     ↓
 Events.DLQ          — failed handlers → exponential backoff retry
 ```
@@ -135,8 +135,8 @@ All dispatch is fire-and-forget via `Events.TaskSupervisor`:
 
 ```elixir
 Task.Supervisor.start_child(
-  OptimalSystemAgent.Events.TaskSupervisor,
-  fn -> :glc.handle(:osa_event_router, gre_event) end,
+  Daemon.Events.TaskSupervisor,
+  fn -> :glc.handle(:daemon_event_router, gre_event) end,
   max_children: 1000
 )
 ```

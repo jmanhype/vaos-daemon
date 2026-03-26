@@ -1,6 +1,6 @@
 # Integration Tests
 
-Audience: developers writing tests that exercise multiple OSA components
+Audience: developers writing tests that exercise multiple Daemon components
 together, including the supervision tree, channels, and the agent loop.
 
 ---
@@ -44,7 +44,7 @@ Integration tests must use `async: false`. They share the running application's
 singleton processes (Events.Bus, Tools.Registry, Agent.Memory, etc.).
 
 ```elixir
-defmodule OptimalSystemAgent.Integration.AgentLoopTest do
+defmodule Daemon.Integration.AgentLoopTest do
   use ExUnit.Case, async: false
 
   @moduletag :integration
@@ -63,7 +63,7 @@ context). Verify it is running:
 setup do
   # Ensure the application is started
   assert Application.started_applications()
-         |> Enum.any?(fn {app, _, _} -> app == :optimal_system_agent end)
+         |> Enum.any?(fn {app, _, _} -> app == :daemon end)
 
   :ok
 end
@@ -74,28 +74,28 @@ end
 ## Testing Agent Session Lifecycle
 
 ```elixir
-defmodule OptimalSystemAgent.Integration.SessionTest do
+defmodule Daemon.Integration.SessionTest do
   use ExUnit.Case, async: false
 
   @moduletag :integration
 
-  alias OptimalSystemAgent.Agent.Loop
-  alias OptimalSystemAgent.Agent.Memory
-  alias OptimalSystemAgent.Events.Bus
+  alias Daemon.Agent.Loop
+  alias Daemon.Agent.Memory
+  alias Daemon.Events.Bus
 
   setup do
     session_id = "test:#{:rand.uniform(999_999)}"
 
     # Start an agent loop for this session
     {:ok, _pid} = DynamicSupervisor.start_child(
-      OptimalSystemAgent.SessionSupervisor,
+      Daemon.SessionSupervisor,
       {Loop, session_id: session_id, channel: :test}
     )
 
     on_exit(fn ->
       # Stop the loop after the test
-      case Registry.lookup(OptimalSystemAgent.SessionRegistry, session_id) do
-        [{pid, _}] -> DynamicSupervisor.terminate_child(OptimalSystemAgent.SessionSupervisor, pid)
+      case Registry.lookup(Daemon.SessionRegistry, session_id) do
+        [{pid, _}] -> DynamicSupervisor.terminate_child(Daemon.SessionSupervisor, pid)
         [] -> :ok
       end
     end)
@@ -104,7 +104,7 @@ defmodule OptimalSystemAgent.Integration.SessionTest do
   end
 
   test "session registers in SessionRegistry", %{session_id: session_id} do
-    assert [{_pid, _}] = Registry.lookup(OptimalSystemAgent.SessionRegistry, session_id)
+    assert [{_pid, _}] = Registry.lookup(Daemon.SessionRegistry, session_id)
   end
 
   test "message is persisted to memory", %{session_id: session_id} do
@@ -133,12 +133,12 @@ verifying the response is dispatched back through the expected path.
 For the CLI channel:
 
 ```elixir
-defmodule OptimalSystemAgent.Integration.CLIChannelTest do
+defmodule Daemon.Integration.CLIChannelTest do
   use ExUnit.Case, async: false
 
   @moduletag :integration
 
-  alias OptimalSystemAgent.Channels.CLI
+  alias Daemon.Channels.CLI
 
   test "CLI channel processes a message and returns a response" do
     # The CLI channel routes through the agent loop.
@@ -156,13 +156,13 @@ end
 For HTTP channel endpoints, use `Plug.Test`:
 
 ```elixir
-defmodule OptimalSystemAgent.Integration.HTTPChannelTest do
+defmodule Daemon.Integration.HTTPChannelTest do
   use ExUnit.Case, async: false
   use Plug.Test
 
   @moduletag :integration
 
-  alias OptimalSystemAgent.Channels.HTTP
+  alias Daemon.Channels.HTTP
 
   @opts HTTP.init([])
 
@@ -199,13 +199,13 @@ Verify that a tool call goes through the full hook pipeline and executes
 correctly:
 
 ```elixir
-defmodule OptimalSystemAgent.Integration.ToolPipelineTest do
+defmodule Daemon.Integration.ToolPipelineTest do
   use ExUnit.Case, async: false
 
   @moduletag :integration
 
-  alias OptimalSystemAgent.Agent.Hooks
-  alias OptimalSystemAgent.Tools.Registry, as: Tools
+  alias Daemon.Agent.Hooks
+  alias Daemon.Tools.Registry, as: Tools
 
   test "pre_tool_use hook runs before tool execution" do
     results = Agent.get({:test_results, __MODULE__}, fn s -> s end) || []
@@ -227,8 +227,8 @@ defmodule OptimalSystemAgent.Integration.ToolPipelineTest do
 
   test "spend_guard blocks tool calls when budget is exceeded" do
     # Artificially exceed the budget
-    Application.put_env(:optimal_system_agent, :daily_budget_usd, 0.0)
-    on_exit(fn -> Application.put_env(:optimal_system_agent, :daily_budget_usd, 50.0) end)
+    Application.put_env(:daemon, :daily_budget_usd, 0.0)
+    on_exit(fn -> Application.put_env(:daemon, :daily_budget_usd, 50.0) end)
 
     # Run the hook pipeline directly
     result = Hooks.run(:pre_tool_use, %{tool: "file_write", session_id: "test"})
@@ -242,12 +242,12 @@ end
 ## Testing Event Subscriptions
 
 ```elixir
-defmodule OptimalSystemAgent.Integration.EventBusTest do
+defmodule Daemon.Integration.EventBusTest do
   use ExUnit.Case, async: false
 
   @moduletag :integration
 
-  alias OptimalSystemAgent.Events.Bus
+  alias Daemon.Events.Bus
 
   test "emitting an event triggers subscribed handler" do
     test_pid = self()

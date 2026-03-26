@@ -6,7 +6,7 @@ All events share a common envelope defined by the `Event` struct (CloudEvents
 v1.0.2 compliant):
 
 ```elixir
-%OptimalSystemAgent.Events.Event{
+%Daemon.Events.Event{
   # CloudEvents v1.0.2 required fields
   id:              "550e8400-e29b-41d4-a716-446655440000",  # UUID v4
   type:            :tool_call,                               # atom

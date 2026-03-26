@@ -34,7 +34,7 @@ Get a key at [fireworks.ai](https://fireworks.ai).
 ## Configuration
 
 ```elixir
-config :optimal_system_agent, :fireworks,
+config :daemon, :fireworks,
   api_key: System.get_env("FIREWORKS_API_KEY"),
   model: "accounts/fireworks/models/llama-v3p3-70b-instruct",
   url: "https://api.fireworks.ai/inference/v1"

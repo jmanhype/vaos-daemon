@@ -1,6 +1,6 @@
 # Feature Flags
 
-All opt-in features in OSA are disabled by default. Each flag activates a
+All opt-in features in Daemon are disabled by default. Each flag activates a
 distinct subsystem that is conditionally included in the supervision tree at
 boot by `Supervisors.Extensions`.
 
@@ -8,19 +8,19 @@ boot by `Supervisors.Extensions`.
 
 | Feature | Env Var | Config Key | Default |
 |---------|---------|------------|---------|
-| Sandbox | `OSA_SANDBOX_ENABLED=true` | `sandbox_enabled` | `false` |
-| Treasury | `OSA_TREASURY_ENABLED=true` | `treasury_enabled` | `false` |
-| Fleet | `OSA_FLEET_ENABLED=true` | `fleet_enabled` | `false` |
-| Wallet | `OSA_WALLET_ENABLED=true` | `wallet_enabled` | `false` |
-| OTA Updater | `OSA_UPDATE_ENABLED=true` | `update_enabled` | `false` |
+| Sandbox | `DAEMON_SANDBOX_ENABLED=true` | `sandbox_enabled` | `false` |
+| Treasury | `DAEMON_TREASURY_ENABLED=true` | `treasury_enabled` | `false` |
+| Fleet | `DAEMON_FLEET_ENABLED=true` | `fleet_enabled` | `false` |
+| Wallet | `DAEMON_WALLET_ENABLED=true` | `wallet_enabled` | `false` |
+| OTA Updater | `DAEMON_UPDATE_ENABLED=true` | `update_enabled` | `false` |
 | AMQP | `AMQP_URL=<url>` | `amqp_url` | `nil` |
-| Python Sidecar | `OSA_PYTHON_SIDECAR=true` | `python_sidecar_enabled` | `false` |
-| Go Tokenizer | `OSA_GO_TOKENIZER=true` | `go_tokenizer_enabled` | `false` |
+| Python Sidecar | `DAEMON_PYTHON_SIDECAR=true` | `python_sidecar_enabled` | `false` |
+| Go Tokenizer | `DAEMON_GO_TOKENIZER=true` | `go_tokenizer_enabled` | `false` |
 | Go Git | config only | `go_git_enabled` | `false` |
 | Go Sysmon | config only | `go_sysmon_enabled` | `false` |
 | WhatsApp Web | config only | `whatsapp_web_enabled` | `false` |
-| Plan Mode | `OSA_PLAN_MODE=true` | `plan_mode_enabled` | `false` |
-| Extended Thinking | `OSA_THINKING_ENABLED=true` | `thinking_enabled` | `false` |
+| Plan Mode | `DAEMON_PLAN_MODE=true` | `plan_mode_enabled` | `false` |
+| Extended Thinking | `DAEMON_THINKING_ENABLED=true` | `thinking_enabled` | `false` |
 
 Always-on extensions (started unconditionally, dormant until wired):
 
@@ -35,7 +35,7 @@ Isolates tool execution in a Docker container (or BEAM process). Prevents agent
 code execution from affecting the host filesystem or network beyond controlled
 mounts.
 
-**Enable:** `OSA_SANDBOX_ENABLED=true`
+**Enable:** `DAEMON_SANDBOX_ENABLED=true`
 
 **Modes:**
 - `:docker` (default) — OS-level isolation via Docker
@@ -45,12 +45,12 @@ mounts.
 **Key settings:**
 
 ```elixir
-sandbox_image: "osa-sandbox:latest"   # build with: mix osa.sandbox.setup
+sandbox_image: "osa-sandbox:latest"   # build with: mix daemon.sandbox.setup
 sandbox_network: false                 # --network none (no outbound network)
 sandbox_max_memory: "256m"
 sandbox_max_cpu: "0.5"
 sandbox_timeout: 30_000                # ms per command
-sandbox_workspace_mount: true          # mount ~/.osa/workspace at /workspace
+sandbox_workspace_mount: true          # mount ~/.daemon/workspace at /workspace
 sandbox_read_only_root: true
 sandbox_no_new_privileges: true
 sandbox_capabilities_drop: ["ALL"]
@@ -72,15 +72,15 @@ Financial governance layer with a transaction ledger. Wraps all LLM API spend
 in a double-entry accounting system with approval workflows for large
 transactions.
 
-**Enable:** `OSA_TREASURY_ENABLED=true`
+**Enable:** `DAEMON_TREASURY_ENABLED=true`
 
 **Settings:**
 
 | Env Var | Default | Description |
 |---------|---------|-------------|
-| `OSA_TREASURY_DAILY_LIMIT` | `250.0` | Daily spend cap (USD) |
-| `OSA_TREASURY_MAX_SINGLE` | `50.0` | Max single transaction (USD) |
-| `OSA_TREASURY_AUTO_DEBIT` | `true` | Auto-debit approved amounts |
+| `DAEMON_TREASURY_DAILY_LIMIT` | `250.0` | Daily spend cap (USD) |
+| `DAEMON_TREASURY_MAX_SINGLE` | `50.0` | Max single transaction (USD) |
+| `DAEMON_TREASURY_AUTO_DEBIT` | `true` | Auto-debit approved amounts |
 
 Treasury runs as `MiosaBudget.Treasury` under `Supervisors.Extensions`. When
 enabled, all LLM calls route spend through the Treasury ledger rather than the
@@ -88,12 +88,12 @@ basic budget counter.
 
 ## Fleet
 
-Remote agent fleet registry with sentinel monitoring. Allows OSA to coordinate
+Remote agent fleet registry with sentinel monitoring. Allows Daemon to coordinate
 work across multiple agent instances on different hosts.
 
-**Enable:** `OSA_FLEET_ENABLED=true`
+**Enable:** `DAEMON_FLEET_ENABLED=true`
 
-Starts `OptimalSystemAgent.Fleet.Supervisor`, which manages:
+Starts `Daemon.Fleet.Supervisor`, which manages:
 - Fleet registry (tracks agent instances, their capabilities, and health)
 - Sentinel monitors (detect unreachable agents and reroute work)
 
@@ -101,15 +101,15 @@ Starts `OptimalSystemAgent.Fleet.Supervisor`, which manages:
 
 Crypto wallet connectivity for on-chain payments and token management.
 
-**Enable:** `OSA_WALLET_ENABLED=true`
+**Enable:** `DAEMON_WALLET_ENABLED=true`
 
 **Settings:**
 
 | Env Var | Default | Description |
 |---------|---------|-------------|
-| `OSA_WALLET_PROVIDER` | `mock` | Wallet backend identifier |
-| `OSA_WALLET_ADDRESS` | — | Wallet public address |
-| `OSA_WALLET_RPC_URL` | — | Blockchain RPC endpoint |
+| `DAEMON_WALLET_PROVIDER` | `mock` | Wallet backend identifier |
+| `DAEMON_WALLET_ADDRESS` | — | Wallet public address |
+| `DAEMON_WALLET_RPC_URL` | — | Blockchain RPC endpoint |
 
 When enabled, starts `Integrations.Wallet` and `Integrations.Wallet.Mock`
 (development mock) under `Supervisors.Extensions`.
@@ -119,20 +119,20 @@ When enabled, starts `Integrations.Wallet` and `Integrations.Wallet.Mock`
 Secure over-the-air updates using TUF (The Update Framework) for cryptographic
 verification of update packages.
 
-**Enable:** `OSA_UPDATE_ENABLED=true`
+**Enable:** `DAEMON_UPDATE_ENABLED=true`
 
 **Settings:**
 
 | Env Var | Default | Description |
 |---------|---------|-------------|
-| `OSA_UPDATE_URL` | — | TUF update server URL (required) |
-| `OSA_UPDATE_INTERVAL` | `86400000` | Check interval in ms (24 hours) |
+| `DAEMON_UPDATE_URL` | — | TUF update server URL (required) |
+| `DAEMON_UPDATE_INTERVAL` | `86400000` | Check interval in ms (24 hours) |
 
-Starts `OptimalSystemAgent.System.Updater` under `Supervisors.Extensions`.
+Starts `Daemon.System.Updater` under `Supervisors.Extensions`.
 
 ## AMQP (RabbitMQ)
 
-Publishes OSA events to a RabbitMQ exchange for Go worker consumption in
+Publishes Daemon events to a RabbitMQ exchange for Go worker consumption in
 platform deployments.
 
 **Enable:** Set `AMQP_URL` to a valid AMQP connection URL.
@@ -141,7 +141,7 @@ platform deployments.
 AMQP_URL=amqp://user:password@rabbitmq:5672/vhost
 ```
 
-Starts `OptimalSystemAgent.Platform.AMQP` under `Supervisors.Extensions`.
+Starts `Daemon.Platform.AMQP` under `Supervisors.Extensions`.
 The AMQP publisher subscribes to `Events.Bus` and forwards selected event
 types to the configured exchange.
 
@@ -150,7 +150,7 @@ types to the configured exchange.
 Runs a Python subprocess for semantic memory search using local sentence
 embeddings. When disabled, memory search falls back to keyword-based retrieval.
 
-**Enable:** `OSA_PYTHON_SIDECAR=true`
+**Enable:** `DAEMON_PYTHON_SIDECAR=true`
 
 **Requirements:** Python 3 with `sentence-transformers` installed.
 
@@ -159,17 +159,17 @@ embeddings. When disabled, memory search falls back to keyword-based retrieval.
 ```elixir
 python_sidecar_model: "all-MiniLM-L6-v2"  # embedding model
 python_sidecar_timeout: 30_000              # ms per embedding request
-python_path: "python3"                      # override with OSA_PYTHON_PATH
+python_path: "python3"                      # override with DAEMON_PYTHON_PATH
 ```
 
-Starts `OptimalSystemAgent.Python.Supervisor` under `Supervisors.Extensions`.
+Starts `Daemon.Python.Supervisor` under `Supervisors.Extensions`.
 
 ## Go Tokenizer
 
 Replaces the word-count heuristic for token estimation with accurate BPE token
 counting via a pre-built Go binary.
 
-**Enable:** `OSA_GO_TOKENIZER=true`
+**Enable:** `DAEMON_GO_TOKENIZER=true`
 
 **Requirements:** Pre-built Go binary at `priv/go/tokenizer/osa-tokenizer`.
 Build before `mix release` (CI handles this in a prior step).
@@ -180,7 +180,7 @@ Build before `mix release` (CI handles this in a prior step).
 go_tokenizer_encoding: "cl100k_base"  # tiktoken encoding
 ```
 
-Starts `OptimalSystemAgent.Go.Tokenizer` under `Supervisors.Extensions`. When
+Starts `Daemon.Go.Tokenizer` under `Supervisors.Extensions`. When
 the binary is missing, falls back to the word-count heuristic without error.
 
 ## Go Git
@@ -191,7 +191,7 @@ operations) beyond what the Elixir git tools support.
 **Enable:** Set `go_git_enabled: true` in `config/config.exs` or via runtime
 config injection.
 
-Starts `OptimalSystemAgent.Go.Git` under `Supervisors.Extensions`.
+Starts `Daemon.Go.Git` under `Supervisors.Extensions`.
 
 ## Go Sysmon
 
@@ -200,7 +200,7 @@ low overhead. Used by the `system_info` tool to provide accurate host metrics.
 
 **Enable:** Set `go_sysmon_enabled: true` in config.
 
-Starts `OptimalSystemAgent.Go.Sysmon` under `Supervisors.Extensions`.
+Starts `Daemon.Go.Sysmon` under `Supervisors.Extensions`.
 
 ## WhatsApp Web
 
@@ -209,7 +209,7 @@ the Baileys protocol implementation via a Node.js sidecar.
 
 **Enable:** Set `whatsapp_web_enabled: true` in config.
 
-Starts `OptimalSystemAgent.WhatsAppWeb` under `Supervisors.Extensions`.
+Starts `Daemon.WhatsAppWeb` under `Supervisors.Extensions`.
 
 ## Plan Mode
 
@@ -217,7 +217,7 @@ When active, the agent makes a single LLM call with no tool iterations. The LLM
 produces a structured plan as its sole output. Useful for high-level task
 decomposition before execution.
 
-**Enable:** `OSA_PLAN_MODE=true` (sets `plan_mode_enabled: true`; individual
+**Enable:** `DAEMON_PLAN_MODE=true` (sets `plan_mode_enabled: true`; individual
 sessions can toggle via `/plan` command)
 
 ## Extended Thinking
@@ -226,17 +226,17 @@ Enables extended thinking budget for LLM providers that support it (Anthropic
 Claude). The model receives additional tokens to reason internally before
 producing a response.
 
-**Enable:** `OSA_THINKING_ENABLED=true`
+**Enable:** `DAEMON_THINKING_ENABLED=true`
 
 **Settings:**
 
 | Env Var | Default | Description |
 |---------|---------|-------------|
-| `OSA_THINKING_BUDGET` | `5000` | Token budget for thinking phase |
+| `DAEMON_THINKING_BUDGET` | `5000` | Token budget for thinking phase |
 
 ## Sidecar Manager
 
-`OptimalSystemAgent.Sidecar.Manager` starts unconditionally and manages all Go
+`Daemon.Sidecar.Manager` starts unconditionally and manages all Go
 and Python sidecars. It creates the sidecar registry and circuit breaker ETS
 tables. Individual sidecars are only started when their feature flag is active.
 

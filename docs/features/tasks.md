@@ -1,6 +1,6 @@
 # Task System
 
-The Task system gives OSA structured, persistent task tracking across three integrated subsystems: a live per-session Tracker, an LLM-decomposed Workflow engine, and a durable distributed Queue. All three are unified under a single GenServer (`Agent.Tasks`) and a single public API.
+The Task system gives Daemon structured, persistent task tracking across three integrated subsystems: a live per-session Tracker, an LLM-decomposed Workflow engine, and a durable distributed Queue. All three are unified under a single GenServer (`Agent.Tasks`) and a single public API.
 
 ---
 
@@ -48,7 +48,7 @@ The Tracker maintains a per-session checklist. Tasks transition through states:
 
 Every transition emits an event on `Events.Bus` so the CLI and HTTP channels can display live progress.
 
-**Persistence:** `~/.osa/sessions/{session_id}/tasks.json` — atomic `.tmp` → rename writes.
+**Persistence:** `~/.daemon/sessions/{session_id}/tasks.json` — atomic `.tmp` → rename writes.
 
 ### API
 
@@ -98,7 +98,7 @@ When the Hooks system fires `post_response`, the Tasks GenServer inspects the ag
 
 Workflows handle long-horizon tasks by decomposing a natural-language description into sequential steps via an LLM call. Each step has a status, tools list, acceptance criteria, and result.
 
-**Persistence:** `~/.osa/workflows/{workflow_id}.json` — survives restarts.
+**Persistence:** `~/.daemon/workflows/{workflow_id}.json` — survives restarts.
 
 ### Lifecycle
 
@@ -226,7 +226,7 @@ The task system emits these events on `Events.Bus` (`:system_event` topic):
 
 | Table | Type | Purpose |
 |-------|------|---------|
-| `:osa_files_read` | Public set | Tracks files read per session (used by read-before-write hook) |
+| `:daemon_files_read` | Public set | Tracks files read per session (used by read-before-write hook) |
 
 The Tasks GenServer itself holds session and workflow state in process memory. Queue state lives in ETS-backed in-memory maps plus the SQLite DB.
 

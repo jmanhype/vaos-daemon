@@ -1,11 +1,11 @@
 # Testing Strategy
 
-How to test OSA effectively. Covers Mix test setup, test helpers, mocking LLM responses,
+How to test Daemon effectively. Covers Mix test setup, test helpers, mocking LLM responses,
 testing tools, and testing the event system.
 
 ## Audience
 
-Developers writing tests for OSA modules or contributions.
+Developers writing tests for Daemon modules or contributions.
 
 ---
 
@@ -52,7 +52,7 @@ This means knowledge store tests are fast and in-memory, requiring no database s
 
 ## Test Modes: Unit vs Integration
 
-OSA tests fall into two categories:
+Daemon tests fall into two categories:
 
 **Unit tests** (`async: true`): Test pure logic without starting the supervision tree.
 Most module-level tests use this mode. They can run in parallel and are fast.
@@ -64,11 +64,11 @@ running. They must run synchronously because shared GenServer state is not test-
 The hooks tests demonstrate this pattern:
 
 ```elixir
-defmodule OptimalSystemAgent.Agent.HooksTest do
+defmodule Daemon.Agent.HooksTest do
   use ExUnit.Case, async: false
 
   setup do
-    case Process.whereis(OptimalSystemAgent.Agent.Hooks) do
+    case Process.whereis(Daemon.Agent.Hooks) do
       nil -> {:ok, %{available: false}}
       _pid -> {:ok, %{available: true}}
     end
@@ -85,8 +85,8 @@ end
 
 ## Mocking LLM Responses
 
-OSA ships with a `MockProvider` in `test/support/` (or registered as
-`OptimalSystemAgent.Test.MockProvider` in `Providers.Registry` when `Mix.env() == :test`).
+Daemon ships with a `MockProvider` in `test/support/` (or registered as
+`Daemon.Test.MockProvider` in `Providers.Registry` when `Mix.env() == :test`).
 
 ### Using the Mock Provider
 
@@ -96,7 +96,7 @@ defmodule MyModuleTest do
 
   test "agent loop uses the response content" do
     # The mock provider is registered as :mock in test env
-    result = OptimalSystemAgent.Providers.Registry.chat(
+    result = Daemon.Providers.Registry.chat(
       [%{role: "user", content: "hello"}],
       provider: :mock
     )
@@ -113,7 +113,7 @@ For fine-grained control over responses, implement the provider behaviour inline
 
 ```elixir
 defmodule MyTest.FakeProvider do
-  @behaviour OptimalSystemAgent.Providers.Behaviour
+  @behaviour Daemon.Providers.Behaviour
 
   def name, do: :fake
   def default_model, do: "fake-model"
@@ -132,7 +132,7 @@ defmodule MyTest.FakeProvider do
 end
 
 # Register it at test runtime:
-OptimalSystemAgent.Providers.Registry.register_provider(:fake, MyTest.FakeProvider)
+Daemon.Providers.Registry.register_provider(:fake, MyTest.FakeProvider)
 ```
 
 ### Simulating Tool Calls
@@ -141,7 +141,7 @@ To test how the agent handles a tool call response:
 
 ```elixir
 defmodule ToolCallFakeProvider do
-  @behaviour OptimalSystemAgent.Providers.Behaviour
+  @behaviour Daemon.Providers.Behaviour
 
   def name, do: :tool_call_fake
   def default_model, do: "fake-model"
@@ -170,10 +170,10 @@ Tool modules are stateless functions — test them directly without starting the
 tree.
 
 ```elixir
-defmodule OptimalSystemAgent.Tools.Builtins.FileReadTest do
+defmodule Daemon.Tools.Builtins.FileReadTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Tools.Builtins.FileRead
+  alias Daemon.Tools.Builtins.FileRead
 
   setup do
     # Create a temp file for testing
@@ -204,7 +204,7 @@ JSON Schema. Test schemas against known-good and known-bad inputs:
 defmodule MyToolSchemaTest do
   use ExUnit.Case, async: true
 
-  alias OptimalSystemAgent.Tools.Registry
+  alias Daemon.Tools.Registry
 
   defmodule MyTool do
     @behaviour MiosaTools.Behaviour
@@ -247,16 +247,16 @@ defmodule EventTest do
   test "emitting a system_event calls registered handlers" do
     test_pid = self()
 
-    ref = OptimalSystemAgent.Events.Bus.register_handler(:system_event, fn event ->
+    ref = Daemon.Events.Bus.register_handler(:system_event, fn event ->
       send(test_pid, {:received, event})
     end)
 
-    OptimalSystemAgent.Events.Bus.emit(:system_event, %{event: :test}, source: "test")
+    Daemon.Events.Bus.emit(:system_event, %{event: :test}, source: "test")
 
     assert_receive {:received, event}, 1000
     assert event[:type] == :system_event
 
-    OptimalSystemAgent.Events.Bus.unregister_handler(:system_event, ref)
+    Daemon.Events.Bus.unregister_handler(:system_event, ref)
   end
 end
 ```
@@ -268,15 +268,15 @@ end
 The standard approach for GenServer tests follows `loop_test.exs`:
 
 ```elixir
-defmodule OptimalSystemAgent.Agent.LoopTest do
+defmodule Daemon.Agent.LoopTest do
   use ExUnit.Case, async: false
 
   setup do
     # Ensure the Registry is running (start it if not already):
-    case Process.whereis(OptimalSystemAgent.SessionRegistry) do
+    case Process.whereis(Daemon.SessionRegistry) do
       nil ->
         start_supervised!(
-          {Registry, keys: :unique, name: OptimalSystemAgent.SessionRegistry}
+          {Registry, keys: :unique, name: Daemon.SessionRegistry}
         )
       _pid -> :ok
     end
@@ -287,7 +287,7 @@ defmodule OptimalSystemAgent.Agent.LoopTest do
     session_id = "smoke-loop-#{:erlang.unique_integer([:positive])}"
 
     pid = start_supervised!(
-      {OptimalSystemAgent.Agent.Loop, [session_id: session_id, channel: :cli]},
+      {Daemon.Agent.Loop, [session_id: session_id, channel: :cli]},
       id: String.to_atom(session_id)
     )
 
@@ -313,13 +313,13 @@ mix test --cover
 ```
 
 Coverage is reported by `mix test --cover`. The project targets 80%+ statement coverage.
-Files in `lib/optimal_system_agent/` are included; generated files and `priv/` are not.
+Files in `lib/daemon/` are included; generated files and `priv/` are not.
 
 ---
 
 ## Common Pitfalls
 
-**Async tests sharing ETS tables:** OSA's ETS tables (`:osa_hooks`, `:osa_event_handlers`,
+**Async tests sharing ETS tables:** Daemon's ETS tables (`:daemon_hooks`, `:daemon_event_handlers`,
 etc.) are global. Tests that mutate these tables must use `async: false`. Tests that only
 read can use `async: true`.
 

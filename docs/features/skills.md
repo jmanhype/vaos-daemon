@@ -1,12 +1,12 @@
 # Skills Guide
 
-Skills are the actions your OSA agent can perform. This guide covers everything about writing, registering, and managing skills.
+Skills are the actions your Daemon agent can perform. This guide covers everything about writing, registering, and managing skills.
 
 ---
 
 ## Two Types of Skills
 
-OSA supports two skill formats:
+Daemon supports two skill formats:
 
 | Format | Best For | Requires Code | Hot Reload |
 |--------|----------|---------------|------------|
@@ -17,12 +17,12 @@ Both types are hot-reloaded — no restart needed when you add or modify skills.
 
 ## SKILL.md Format Reference
 
-Drop a `SKILL.md` file into `~/.osa/skills/<skill-name>/` and it is available immediately.
+Drop a `SKILL.md` file into `~/.daemon/skills/<skill-name>/` and it is available immediately.
 
 ### Directory Structure
 
 ```
-~/.osa/skills/
+~/.daemon/skills/
   email-assistant/
     SKILL.md
   sales-pipeline/
@@ -119,11 +119,11 @@ For programmatic tools that need to execute code, make API calls, or process dat
 
 ### The Behaviour
 
-Implement `OptimalSystemAgent.Skills.Behaviour` with four callbacks:
+Implement `Daemon.Skills.Behaviour` with four callbacks:
 
 ```elixir
 defmodule MyApp.Skills.StockPrice do
-  @behaviour OptimalSystemAgent.Skills.Behaviour
+  @behaviour Daemon.Skills.Behaviour
 
   @impl true
   def name, do: "stock_price"
@@ -203,10 +203,10 @@ end
 Register at runtime — the skill is available immediately with no restart:
 
 ```elixir
-OptimalSystemAgent.Skills.Registry.register(MyApp.Skills.StockPrice)
+Daemon.Skills.Registry.register(MyApp.Skills.StockPrice)
 ```
 
-Under the hood, this recompiles the goldrush tool dispatcher module (`:osa_tool_dispatcher`) with the new skill. The compiled Erlang bytecode module is replaced in the running VM.
+Under the hood, this recompiles the goldrush tool dispatcher module (`:daemon_tool_dispatcher`) with the new skill. The compiled Erlang bytecode module is replaced in the running VM.
 
 ### Error Handling
 
@@ -227,11 +227,11 @@ For unexpected crashes, OTP supervision handles recovery. The skill process cras
 
 ## Hot Reload
 
-Both skill types support hot reload — changes take effect without restarting OSA.
+Both skill types support hot reload — changes take effect without restarting Daemon.
 
 ### SKILL.md Hot Reload
 
-OSA watches `~/.osa/skills/` using `file_system` (fsnotify). When you:
+Daemon watches `~/.daemon/skills/` using `file_system` (fsnotify). When you:
 
 - **Add** a new SKILL.md file: The skill is parsed and registered automatically
 - **Modify** an existing SKILL.md: The skill definition is updated in the registry
@@ -245,14 +245,14 @@ When you call `Skills.Registry.register/1`, the goldrush tool dispatcher is reco
 
 1. New skill module is loaded into the BEAM
 2. Registry state is updated with the new skill
-3. goldrush recompiles `:osa_tool_dispatcher` with the updated tool list
+3. goldrush recompiles `:daemon_tool_dispatcher` with the updated tool list
 4. The next agent loop iteration sees the new tool
 
 This is the same mechanism that powers Erlang's hot code upgrades in telecom systems.
 
 ## Machine Assignment
 
-Skills can be grouped into machines. Machines are toggled in `~/.osa/config.json`:
+Skills can be grouped into machines. Machines are toggled in `~/.daemon/config.json`:
 
 ```json
 {
@@ -346,4 +346,4 @@ See `examples/skills/` for complete, production-ready example skills:
 - `content-writer/` — Content drafting assistant
 - `meeting-prep/` — Meeting preparation
 
-Copy any of these to `~/.osa/skills/` and they work immediately.
+Copy any of these to `~/.daemon/skills/` and they work immediately.

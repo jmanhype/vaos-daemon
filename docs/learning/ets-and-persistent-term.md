@@ -1,10 +1,10 @@
 # Understanding ETS and persistent_term
 
-OSA stores several categories of data in memory structures that are built into
+Daemon stores several categories of data in memory structures that are built into
 the BEAM runtime itself: ETS tables and `persistent_term`. Neither requires a
 database, a network call, or serialization. Reads happen in microseconds.
 
-This guide explains what these structures are, why OSA uses them, and exactly
+This guide explains what these structures are, why Daemon uses them, and exactly
 which data lives in each one.
 
 ---
@@ -18,7 +18,7 @@ multiple processes can read and write simultaneously.
 Key properties:
 
 - **In-process storage**: Data lives in the VM's memory, not a database.
-- **Named tables**: You reference a table by an atom name, like `:osa_cancel_flags`.
+- **Named tables**: You reference a table by an atom name, like `:daemon_cancel_flags`.
 - **Concurrent reads**: Multiple processes can read the same table simultaneously
   with no locking required (for `read_concurrency: true` tables).
 - **Configurable write semantics**: `:set` (one value per key), `:bag` (multiple
@@ -32,7 +32,7 @@ explicitly deleted. They do not survive a node restart.
 
 ## Why Not Just Use a Database?
 
-A natural question: OSA has SQLite (`Store.Repo`) for persistent storage. Why
+A natural question: Daemon has SQLite (`Store.Repo`) for persistent storage. Why
 not use that for everything?
 
 The answer is latency. A SQLite query, even on a local file, involves:
@@ -63,7 +63,7 @@ becomes a bottleneck.
 ETS solves this with concurrent reads. With `read_concurrency: true`, any number
 of processes can read the same ETS table simultaneously, with no queuing.
 
-The pattern OSA uses throughout:
+The pattern Daemon uses throughout:
 
 - **Reads**: go directly to ETS (concurrent, microsecond latency)
 - **Writes**: go through a GenServer (serialized, ensures consistency)
@@ -73,15 +73,15 @@ directly.
 
 ---
 
-## ETS Tables in OSA
+## ETS Tables in Daemon
 
-OSA creates all its ETS tables during application startup, before the supervision
+Daemon creates all its ETS tables during application startup, before the supervision
 tree begins, to guarantee they exist before any process needs them.
 
-### `:osa_cancel_flags`
+### `:daemon_cancel_flags`
 
 ```elixir
-:ets.new(:osa_cancel_flags, [:named_table, :public, :set])
+:ets.new(:daemon_cancel_flags, [:named_table, :public, :set])
 ```
 
 Tracks which agent sessions have been cancelled. When a user sends a cancellation
@@ -93,10 +93,10 @@ This must be a public ETS table (not a GenServer) because the loop and the HTTP
 handler run in different processes. It must be read on every iteration, so
 microsecond latency matters.
 
-### `:osa_files_read`
+### `:daemon_files_read`
 
 ```elixir
-:ets.new(:osa_files_read, [:named_table, :public, :set])
+:ets.new(:daemon_files_read, [:named_table, :public, :set])
 ```
 
 Tracks which files have been read by which session. The pre-tool-use hook checks
@@ -104,42 +104,42 @@ this before allowing a file write: if a session tries to write a file it has
 not read first, the hook nudges the agent to read before writing. This prevents
 blind overwrites.
 
-### `:osa_survey_answers`
+### `:daemon_survey_answers`
 
 ```elixir
-:ets.new(:osa_survey_answers, [:set, :public, :named_table])
+:ets.new(:daemon_survey_answers, [:set, :public, :named_table])
 ```
 
 When the agent's `ask_user_question` tool sends a question to the user, the
 agent loop polls this table waiting for an answer. The HTTP endpoint writes the
 answer here when the user responds. The loop reads it and continues.
 
-### `:osa_context_cache`
+### `:daemon_context_cache`
 
 ```elixir
-:ets.new(:osa_context_cache, [:set, :public, :named_table])
+:ets.new(:daemon_context_cache, [:set, :public, :named_table])
 ```
 
 Caches the context window size for each Ollama model. Every time a new session
-starts with Ollama, OSA would normally call Ollama's `/api/show` endpoint to ask
+starts with Ollama, Daemon would normally call Ollama's `/api/show` endpoint to ask
 "how many tokens can this model handle?" That is a network round-trip. Since the
-context size never changes without re-pulling the model, OSA caches the result
+context size never changes without re-pulling the model, Daemon caches the result
 here and skips the network call on subsequent sessions.
 
-### `:osa_survey_responses`
+### `:daemon_survey_responses`
 
 ```elixir
-:ets.new(:osa_survey_responses, [:bag, :public, :named_table])
+:ets.new(:daemon_survey_responses, [:bag, :public, :named_table])
 ```
 
 Stores survey and waitlist form responses when the platform database is not
 enabled. Uses `:bag` (multiple values per key) because multiple responses can
 exist. Rows are `{unique_integer, body_map, datetime}`.
 
-### `:osa_session_provider_overrides`
+### `:daemon_session_provider_overrides`
 
 ```elixir
-:ets.new(:osa_session_provider_overrides, [:named_table, :public, :set])
+:ets.new(:daemon_session_provider_overrides, [:named_table, :public, :set])
 ```
 
 Stores per-session provider and model overrides set via the hot-swap API. When
@@ -147,17 +147,17 @@ an operator calls `PUT /sessions/:id/provider` to switch a running session from
 Anthropic to Groq mid-conversation, the new provider is stored here. The agent
 loop reads this table to resolve which provider to use for each LLM call.
 
-### `:osa_pending_questions`
+### `:daemon_pending_questions`
 
 ```elixir
-:ets.new(:osa_pending_questions, [:named_table, :public, :set])
+:ets.new(:daemon_pending_questions, [:named_table, :public, :set])
 ```
 
 Tracks questions where the agent is currently blocked waiting for a human answer.
 The `GET /sessions/:id/pending_questions` endpoint reads this table to show the
 frontend which questions are outstanding.
 
-### `:osa_event_handlers` (created by Events.Bus)
+### `:daemon_event_handlers` (created by Events.Bus)
 
 Created by the event bus during its `init`. Stores registered event handlers as
 `{event_type, ref, handler_fn}` tuples. When an event fires, goldrush calls
@@ -186,17 +186,17 @@ constantly thereafter.
 
 ---
 
-## `persistent_term` in OSA
+## `persistent_term` in Daemon
 
 ### System prompts and prompt templates
 
 ```elixir
 # From PromptLoader.load/0 — called at application startup
-:persistent_term.put({OptimalSystemAgent.PromptLoader, :SYSTEM}, content)
-:persistent_term.put({OptimalSystemAgent.PromptLoader, :SOUL}, content)
+:persistent_term.put({Daemon.PromptLoader, :SYSTEM}, content)
+:persistent_term.put({Daemon.PromptLoader, :SOUL}, content)
 ```
 
-OSA loads prompt templates from `~/.osa/prompts/` and `priv/prompts/` at boot
+Daemon loads prompt templates from `~/.daemon/prompts/` and `priv/prompts/` at boot
 and stores them in `persistent_term`. Every agent session reads the system prompt
 for every LLM call. With thousands of calls per day, avoiding even a microsecond
 of copying adds up. Prompts are immutable at runtime (they can be reloaded with
@@ -206,8 +206,8 @@ of copying adds up. Prompts are immutable at runtime (they can be reloaded with
 
 ```elixir
 # From Tools.Registry — stores built-in tool list without the GenServer lock
-:persistent_term.put({OptimalSystemAgent.Tools.Registry, :builtin_tools}, tools_map)
-:persistent_term.put({OptimalSystemAgent.Tools.Registry, :mcp_tools}, mcp_map)
+:persistent_term.put({Daemon.Tools.Registry, :builtin_tools}, tools_map)
+:persistent_term.put({Daemon.Tools.Registry, :mcp_tools}, mcp_map)
 ```
 
 The tool registry has a `list_tools_direct/0` function that reads from
@@ -221,7 +221,7 @@ involved.
 
 ```elixir
 # From Signal.Classifier
-:persistent_term.get({OptimalSystemAgent.PromptLoader, :classifier}, @fallback)
+:persistent_term.get({Daemon.PromptLoader, :classifier}, @fallback)
 ```
 
 The signal classifier prompt is read for every incoming message to classify it.
@@ -231,7 +231,7 @@ Storing it in `persistent_term` means zero allocation on this hot path.
 
 ## The Pattern: ETS for Hot Reads, GenServer for Writes
 
-To summarize how OSA uses these three storage options together:
+To summarize how Daemon uses these three storage options together:
 
 | Data type | Storage | Why |
 |---|---|---|
@@ -246,13 +246,13 @@ To summarize how OSA uses these three storage options together:
 
 The guiding principle: the closer data is to the execution hot path, the faster
 the storage needs to be. ETS and `persistent_term` exist at one extreme. A
-PostgreSQL database exists at the other. OSA puts each piece of data in the right
+PostgreSQL database exists at the other. Daemon puts each piece of data in the right
 place.
 
 ---
 
 ## Next Steps
 
-Read [goldrush-events.md](./goldrush-events.md) to see how OSA routes events,
+Read [goldrush-events.md](./goldrush-events.md) to see how Daemon routes events,
 tool calls, and provider requests through compiled BEAM bytecode modules — a
 technique that takes speed even further than ETS lookups.

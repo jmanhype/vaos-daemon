@@ -19,7 +19,7 @@ Delegation is lightweight sub-agent spawning without full orchestration overhead
 
 ## The `delegate` Tool
 
-`OptimalSystemAgent.Tools.Builtins.Delegate` is a registered builtin tool callable by any agent. It spawns a focused sub-agent that autonomously chains tool calls.
+`Daemon.Tools.Builtins.Delegate` is a registered builtin tool callable by any agent. It spawns a focused sub-agent that autonomously chains tool calls.
 
 ### Parameters
 
@@ -125,7 +125,7 @@ Tool results are truncated at 10KB per call to prevent context window overflow f
 
 ## Orchestrate Tool
 
-`OptimalSystemAgent.Tools.Builtins.Orchestrate` is the higher-level sibling to `delegate`. It invokes the full Orchestrator with complexity analysis and multi-agent decomposition. It is blocked for sub-agents to prevent infinite recursion.
+`Daemon.Tools.Builtins.Orchestrate` is the higher-level sibling to `delegate`. It invokes the full Orchestrator with complexity analysis and multi-agent decomposition. It is blocked for sub-agents to prevent infinite recursion.
 
 The `orchestrate` tool is only callable from user-facing contexts (the main agent loop or explicit API calls), not from within orchestrated sub-agents.
 

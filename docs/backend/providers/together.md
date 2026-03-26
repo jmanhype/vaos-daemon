@@ -36,7 +36,7 @@ Get a key at [together.ai](https://together.ai).
 ## Configuration
 
 ```elixir
-config :optimal_system_agent, :together,
+config :daemon, :together,
   api_key: System.get_env("TOGETHER_API_KEY"),
   model: "meta-llama/Llama-3.3-70B-Instruct-Turbo",
   url: "https://api.together.xyz/v1"

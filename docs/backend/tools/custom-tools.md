@@ -1,15 +1,15 @@
 # Custom Tools
 
-OSA supports defining custom tools at runtime via the SDK. Custom tools integrate into the same registry as builtins, appear in every agent's tool list, and execute with the same middleware pipeline.
+Daemon supports defining custom tools at runtime via the SDK. Custom tools integrate into the same registry as builtins, appear in every agent's tool list, and execute with the same middleware pipeline.
 
 ---
 
 ## SDK Tool Definition
 
-`OptimalSystemAgent.SDK.Tool.define/4` creates a tool from a closure and registers it immediately.
+`Daemon.SDK.Tool.define/4` creates a tool from a closure and registers it immediately.
 
 ```elixir
-OptimalSystemAgent.SDK.Tool.define(
+Daemon.SDK.Tool.define(
   "weather",                    # tool name (must be unique)
   "Get current weather for a city",  # description shown to LLM
   %{                            # JSON Schema for parameters
@@ -39,7 +39,7 @@ Returns `:ok` on success or `{:error, reason}` on failure.
 2. **Module creation** — `Module.create/3` compiles a new BEAM module at runtime implementing `MiosaTools.Behaviour`:
    ```elixir
    # Generated module (pseudocode)
-   defmodule OptimalSystemAgent.SDK.Tools.Weather do
+   defmodule Daemon.SDK.Tools.Weather do
      @behaviour MiosaTools.Behaviour
      def name, do: "weather"
      def description, do: "Get current weather for a city"
@@ -59,7 +59,7 @@ After registration, the tool is immediately available to all agents — no resta
 
 ## Tool Schema
 
-The `parameters` map must be a valid JSON Schema object. OSA uses this schema for:
+The `parameters` map must be a valid JSON Schema object. Daemon uses this schema for:
 - Input validation before calling `execute/1`
 - Generating the `parameters` field in LLM tool definitions
 - Documentation and introspection
@@ -146,7 +146,7 @@ The `args` map keys are always strings (not atoms), matching the JSON Schema pro
 ## Removing a Tool
 
 ```elixir
-OptimalSystemAgent.SDK.Tool.undefine("weather")
+Daemon.SDK.Tool.undefine("weather")
 ```
 
 Removes the handler from `:persistent_term`. The module remains compiled but calls to `execute/1` will raise a missing key error. To fully remove the tool from the registry, restart the Tools.Registry process or call `Tools.Registry.deregister/1` if available.
@@ -158,7 +158,7 @@ Removes the handler from `:persistent_term`. The module remains compiled but cal
 For one-off tools passed to specific agent calls via `:extra_tools`:
 
 ```elixir
-tool_def = OptimalSystemAgent.SDK.Tool.build_tool_def(
+tool_def = Daemon.SDK.Tool.build_tool_def(
   "summarize",
   "Summarize a block of text",
   %{
@@ -171,7 +171,7 @@ tool_def = OptimalSystemAgent.SDK.Tool.build_tool_def(
 )
 
 # Pass to Loop
-OptimalSystemAgent.Agent.Loop.run(message, session_id, extra_tools: [tool_def])
+Daemon.Agent.Loop.run(message, session_id, extra_tools: [tool_def])
 ```
 
 `build_tool_def/3` returns a plain map — no registration, no module creation. The tool appears in the LLM's tool list for that run only.
@@ -233,7 +233,7 @@ defmodule MyApp.Tools.DatabaseQuery do
 end
 
 # Register on application start
-OptimalSystemAgent.Tools.Registry.register(MyApp.Tools.DatabaseQuery)
+Daemon.Tools.Registry.register(MyApp.Tools.DatabaseQuery)
 ```
 
 ---
@@ -264,4 +264,4 @@ end
 - [Tools Overview](./overview.md)
 - [File Tools](./file-tools.md)
 - [Integration Tools](./integration-tools.md)
-- [SDK Supervisor](../../lib/optimal_system_agent/sdk/supervisor.ex)
+- [SDK Supervisor](../../lib/daemon/sdk/supervisor.ex)

@@ -1,6 +1,6 @@
 # HTTP API Reference
 
-OSA exposes a REST API on port 8089 (configurable) for SDK clients, integrations, and external applications.
+Daemon exposes a REST API on port 8089 (configurable) for SDK clients, integrations, and external applications.
 
 Base URL: `http://localhost:8089`
 
@@ -17,8 +17,8 @@ By default, authentication is disabled. All requests are allowed with an "anonym
 Enable authentication by setting:
 
 ```bash
-export OSA_SHARED_SECRET="your-secret-key-min-32-characters"
-export OSA_REQUIRE_AUTH=true
+export DAEMON_SHARED_SECRET="your-secret-key-min-32-characters"
+export DAEMON_REQUIRE_AUTH=true
 ```
 
 All API requests under `/api/v1/` must include a valid JWT token:
@@ -29,7 +29,7 @@ Authorization: Bearer <token>
 
 ### Token Format
 
-OSA uses JWT HS256 (HMAC-SHA256) signed with the shared secret.
+Daemon uses JWT HS256 (HMAC-SHA256) signed with the shared secret.
 
 **Required claims:**
 
@@ -50,7 +50,7 @@ OSA uses JWT HS256 (HMAC-SHA256) signed with the shared secret.
 From an IEx session:
 
 ```elixir
-token = OptimalSystemAgent.Channels.HTTP.Auth.generate_token(%{
+token = Daemon.Channels.HTTP.Auth.generate_token(%{
   "user_id" => "user_123",
   "workspace_id" => "ws_abc"
 })
@@ -62,7 +62,7 @@ From the command line:
 
 ```bash
 # Generate a token using the mix task (if available)
-mix osa.token --user-id user_123
+mix daemon.token --user-id user_123
 ```
 
 ### Authentication Errors
@@ -105,7 +105,7 @@ curl http://localhost:8089/health
 ```
 
 The `model` field resolves from:
-1. `OSA_MODEL` env var (explicit override)
+1. `DAEMON_MODEL` env var (explicit override)
 2. Provider-specific env var (`GROQ_MODEL`, `ANTHROPIC_MODEL`, `OPENAI_MODEL`, etc.)
 3. Provider's built-in default (e.g., Groq → `llama-3.3-70b-versatile`)
 
@@ -581,7 +581,7 @@ All error responses follow this format:
 
 ## Rate Limiting
 
-OSA does not currently enforce rate limiting at the HTTP layer. If you need rate limiting for production deployments, add it at the reverse proxy level (Nginx, Caddy, Cloudflare):
+Daemon does not currently enforce rate limiting at the HTTP layer. If you need rate limiting for production deployments, add it at the reverse proxy level (Nginx, Caddy, Cloudflare):
 
 ```nginx
 # Nginx example
@@ -626,7 +626,7 @@ A complete SDK integration workflow:
 
 ```bash
 # 1. Generate a session token (if auth enabled)
-TOKEN=$(mix osa.token --user-id sdk-client-1 2>/dev/null)
+TOKEN=$(mix daemon.token --user-id sdk-client-1 2>/dev/null)
 
 # 2. Start listening for events (background)
 curl -N -H "Authorization: Bearer $TOKEN" \

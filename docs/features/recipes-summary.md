@@ -8,7 +8,7 @@
 
 ## Overview
 
-The Recipe system (`lib/optimal_system_agent/recipes/recipe.ex`, ~380 lines) provides structured multi-step workflows for complex tasks like code reviews, debugging, and app scaffolding.
+The Recipe system (`lib/daemon/recipes/recipe.ex`, ~380 lines) provides structured multi-step workflows for complex tasks like code reviews, debugging, and app scaffolding.
 
 ## Test Results
 
@@ -19,7 +19,7 @@ The Recipe system (`lib/optimal_system_agent/recipes/recipe.ex`, ~380 lines) pro
 | `Recipe.run()` | ✅ Pass | Works via TUI `/recipe` command — fresh session, 0% context |
 | `/recipe` (TUI) | ✅ Pass | Lists all recipes, triggers `new_session_prompt` flow |
 | `/recipe code-review` (TUI) | ✅ Pass | Creates fresh session → SSE reconnect → auto-submits prompt |
-| `/recipe-create` (TUI) | ✅ Pass | Scaffolds new recipe JSON at `.osa/recipes/` |
+| `/recipe-create` (TUI) | ✅ Pass | Scaffolds new recipe JSON at `.daemon/recipes/` |
 
 ## Available Recipes (12)
 
@@ -78,8 +78,8 @@ At load time, recipe JSON is validated for:
 
 Recipes are resolved in this order:
 
-1. `~/.osa/recipes/` — User custom recipes
-2. `.osa/recipes/` — Project-local recipes  
+1. `~/.daemon/recipes/` — User custom recipes
+2. `.daemon/recipes/` — Project-local recipes  
 3. `priv/recipes/` — Built-in recipes (12 canonical recipes)
 4. `examples/workflows/` — Fallback (5 original recipes)
 
@@ -128,11 +128,11 @@ When a user runs `/recipe <slug>`, the system:
 
 ## Files
 
-- **Module:** `lib/optimal_system_agent/recipes/recipe.ex`
+- **Module:** `lib/daemon/recipes/recipe.ex`
 - **Recipes:** `priv/recipes/*.json` (12 files)
 - **Fallback:** `examples/workflows/*.json` (5 files)
-- **Commands:** `lib/optimal_system_agent/commands/dev.ex`
-- **HTTP mapping:** `lib/optimal_system_agent/channels/http/api/tool_routes.ex`
+- **Commands:** `lib/daemon/commands/dev.ex`
+- **HTTP mapping:** `lib/daemon/channels/http/api/tool_routes.ex`
 - **TUI handlers:** `priv/rust/tui/src/app/handle_actions.rs`, `handle_backend.rs`, `mod.rs`
 
 ## Dependencies

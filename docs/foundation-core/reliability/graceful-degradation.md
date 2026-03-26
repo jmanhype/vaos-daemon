@@ -1,6 +1,6 @@
 # Graceful Degradation
 
-OSA is designed to remain useful when components fail. This document describes the
+Daemon is designed to remain useful when components fail. This document describes the
 fallback behaviors at each layer: provider selection, local provider availability,
 and total provider failure.
 
@@ -13,7 +13,7 @@ and total provider failure.
 A fallback chain is set in `config/runtime.exs`:
 
 ```elixir
-config :optimal_system_agent, :fallback_chain, [:anthropic, :openai, :groq, :ollama]
+config :daemon, :fallback_chain, [:anthropic, :openai, :groq, :ollama]
 ```
 
 The chain is ordered by preference. The registry tries each provider in sequence,
@@ -63,7 +63,7 @@ Ollama has special handling because it is the default provider and runs locally.
 
 During `Providers.Registry.init/1`, `Providers.Ollama.reachable?/0` is called. If
 Ollama is unreachable (connection refused, timeout), it is excluded from the fallback
-chain via `Process.put(:osa_ollama_excluded, true)`. No `:econnrefused` log flood
+chain via `Process.put(:daemon_ollama_excluded, true)`. No `:econnrefused` log flood
 occurs on subsequent LLM calls.
 
 The boot exclusion is stored in the Registry process dictionary. It applies for the

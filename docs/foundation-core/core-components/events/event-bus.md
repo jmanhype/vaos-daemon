@@ -2,15 +2,15 @@
 
 ## Architecture
 
-`OptimalSystemAgent.Events.Bus` is a GenServer that owns the goldrush router
+`Daemon.Events.Bus` is a GenServer that owns the goldrush router
 compilation and handler registration. At runtime, routing and dispatch happen in
 caller processes (not the GenServer), giving near-zero overhead for the hot path.
 
 ```
 Events.Bus (GenServer)
-├── init/1            → compiles :osa_event_router once
+├── init/1            → compiles :daemon_event_router once
 ├── handle_call       → serializes handler registration/unregistration
-└── :osa_event_handlers (ETS :bag, public) → read by dispatch_event/1
+└── :daemon_event_handlers (ETS :bag, public) → read by dispatch_event/1
 ```
 
 ## goldrush Router Compilation
@@ -28,12 +28,12 @@ defp compile_router do
       dispatch_event(event)
     end)
 
-  :glc.compile(:osa_event_router, query)
+  :glc.compile(:daemon_event_router, query)
 end
 ```
 
-`glc:compile/2` generates a real `.beam` module named `:osa_event_router` and
-loads it into the running VM. Subsequently, `glc:handle(:osa_event_router, event)`
+`glc:compile/2` generates a real `.beam` module named `:daemon_event_router` and
+loads it into the running VM. Subsequently, `glc:handle(:daemon_event_router, event)`
 routes events at BEAM instruction speed with no runtime pattern matching.
 
 ### Why Never Recompile
@@ -85,9 +85,9 @@ gre:make(fields, [:list])                 # converts to goldrush event record
     │
     ▼
 Task.Supervisor.start_child(...)          # fire-and-forget task
-    │   └── glc:handle(:osa_event_router, gre_event)
+    │   └── glc:handle(:daemon_event_router, gre_event)
     │           └── dispatch_event(event)
-    │                   └── read :osa_event_handlers ETS
+    │                   └── read :daemon_event_handlers ETS
     │                           └── dispatch_with_dlq/3 per handler
     │
     ▼
@@ -130,7 +130,7 @@ def unregister_handler(event_type, ref)
 
 Registration goes through `GenServer.call/3` to serialize writes. The returned
 reference is used for later unregistration. Handler data is stored in ETS
-`:osa_event_handlers` (`:bag`, `:public`):
+`:daemon_event_handlers` (`:bag`, `:public`):
 
 ```
 {event_type, ref, handler_fn}
@@ -146,7 +146,7 @@ and routes failures to the DLQ:
 
 ```elixir
 defp dispatch_with_dlq(type, payload, handler) do
-  Task.Supervisor.start_child(OptimalSystemAgent.Events.TaskSupervisor, fn ->
+  Task.Supervisor.start_child(Daemon.Events.TaskSupervisor, fn ->
     try do
       handler.(payload)
     rescue
@@ -219,7 +219,7 @@ as-is on a best-effort basis.
 
 | Table | Type | Options | Purpose |
 |-------|------|---------|---------|
-| `:osa_event_handlers` | `:bag` | `:public` | Handler registrations by event type |
+| `:daemon_event_handlers` | `:bag` | `:public` | Handler registrations by event type |
 
 The Bus itself does not own the goldrush internal tables — those are managed by
 `gr_param` (a goldrush GenServer started automatically when goldrush is loaded).

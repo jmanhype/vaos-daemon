@@ -1,8 +1,8 @@
 # Service Contracts
 
-Audience: developers integrating with OSA or extending it with custom adapters.
+Audience: developers integrating with Daemon or extending it with custom adapters.
 
-This document defines the four primary behaviour contracts OSA uses internally.
+This document defines the four primary behaviour contracts Daemon uses internally.
 Every channel adapter, skill, tool, and LLM provider must satisfy one of these
 contracts. The BEAM enforces each `@callback` at compile time when `@behaviour`
 is declared.
@@ -11,11 +11,11 @@ is declared.
 
 ## Channels.Behaviour
 
-**Module:** `OptimalSystemAgent.Channels.Behaviour`
-**File:** `lib/optimal_system_agent/channels/behaviour.ex`
+**Module:** `Daemon.Channels.Behaviour`
+**File:** `lib/daemon/channels/behaviour.ex`
 
 A channel adapter bridges an external messaging platform (Telegram, Slack,
-Discord, CLI, HTTP, etc.) to the OSA agent loop. Every adapter is a GenServer
+Discord, CLI, HTTP, etc.) to the Daemon agent loop. Every adapter is a GenServer
 that registers under its channel atom and routes inbound messages through
 `Agent.Loop.process_message/2`.
 
@@ -33,17 +33,17 @@ that registers under its channel atom and routes inbound messages through
 ```elixir
 defmodule MyApp.Channels.WebhookChannel do
   use GenServer
-  @behaviour OptimalSystemAgent.Channels.Behaviour
+  @behaviour Daemon.Channels.Behaviour
 
-  @impl OptimalSystemAgent.Channels.Behaviour
+  @impl Daemon.Channels.Behaviour
   def channel_name, do: :webhook
 
-  @impl OptimalSystemAgent.Channels.Behaviour
+  @impl Daemon.Channels.Behaviour
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  @impl OptimalSystemAgent.Channels.Behaviour
+  @impl Daemon.Channels.Behaviour
   def send_message(chat_id, message, _opts) do
     case HTTPClient.post("https://hooks.example.com/#{chat_id}", %{text: message}) do
       {:ok, %{status: 200}} -> :ok
@@ -51,7 +51,7 @@ defmodule MyApp.Channels.WebhookChannel do
     end
   end
 
-  @impl OptimalSystemAgent.Channels.Behaviour
+  @impl Daemon.Channels.Behaviour
   def connected? do
     case Process.whereis(__MODULE__) do
       nil -> false
@@ -77,16 +77,16 @@ end
 
 ## Skills.Behaviour
 
-Skills are SKILL.md markdown files loaded from `~/.osa/skills/` or `priv/skills/`.
+Skills are SKILL.md markdown files loaded from `~/.daemon/skills/` or `priv/skills/`.
 The registry parses YAML frontmatter and injects the skill's instructions into
 the system prompt when trigger keywords match an incoming message.
 
 ### SKILL.md File Format
 
-A skill is a directory under `~/.osa/skills/<name>/` containing a `SKILL.md` file.
+A skill is a directory under `~/.daemon/skills/<name>/` containing a `SKILL.md` file.
 
 ```
-~/.osa/skills/
+~/.daemon/skills/
 └── code-review/
     └── SKILL.md
 ```
@@ -243,7 +243,7 @@ end
 
 ```elixir
 # At application start or after boot:
-OptimalSystemAgent.Tools.Registry.register(MyApp.Tools.SlackPost)
+Daemon.Tools.Registry.register(MyApp.Tools.SlackPost)
 ```
 
 The registry recompiles the goldrush dispatcher automatically — the new tool
@@ -253,11 +253,11 @@ is available to the LLM within the same BEAM session without a restart.
 
 ## Providers.Behaviour
 
-**Module:** `OptimalSystemAgent.Providers.Behaviour`
-**File:** `lib/optimal_system_agent/providers/behaviour.ex`
+**Module:** `Daemon.Providers.Behaviour`
+**File:** `lib/daemon/providers/behaviour.ex`
 
 Every LLM provider implements this contract. The provider is responsible for
-translating OSA's canonical message format into provider-specific API calls and
+translating Daemon's canonical message format into provider-specific API calls and
 parsing responses back into the canonical shape.
 
 ### Canonical Types
@@ -301,7 +301,7 @@ The `callback` function passed to `chat_stream/3` receives one of four tuples:
 
 ```elixir
 defmodule MyApp.Providers.Bedrock do
-  @behaviour OptimalSystemAgent.Providers.Behaviour
+  @behaviour Daemon.Providers.Behaviour
 
   @impl true
   def name, do: :bedrock
@@ -344,7 +344,7 @@ end
 ### Registering a Custom Provider
 
 ```elixir
-OptimalSystemAgent.Providers.Registry.register_provider(:bedrock, MyApp.Providers.Bedrock)
+Daemon.Providers.Registry.register_provider(:bedrock, MyApp.Providers.Bedrock)
 ```
 
 ---
@@ -353,7 +353,7 @@ OptimalSystemAgent.Providers.Registry.register_provider(:bedrock, MyApp.Provider
 
 | Contract | Module | Extension Point |
 |---|---|---|
-| `Channels.Behaviour` | `OptimalSystemAgent.Channels.Behaviour` | Messaging platform adapters |
+| `Channels.Behaviour` | `Daemon.Channels.Behaviour` | Messaging platform adapters |
 | Skills (SKILL.md) | `Tools.Registry` parser | Custom workflows via markdown |
 | `MiosaTools.Behaviour` | `MiosaTools.Behaviour` | Custom callable tools |
-| `Providers.Behaviour` | `OptimalSystemAgent.Providers.Behaviour` | LLM provider integrations |
+| `Providers.Behaviour` | `Daemon.Providers.Behaviour` | LLM provider integrations |

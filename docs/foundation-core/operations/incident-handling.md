@@ -1,6 +1,6 @@
 # Incident Handling
 
-Audience: operators responding to production incidents in OSA deployments.
+Audience: operators responding to production incidents in Daemon deployments.
 
 ---
 
@@ -9,7 +9,7 @@ Audience: operators responding to production incidents in OSA deployments.
 ### What happens automatically
 
 When the active provider returns an error (HTTP 5xx, timeout, connection
-refused), OSA attempts the fallback chain in order:
+refused), Daemon attempts the fallback chain in order:
 
 1. `MiosaLLM.HealthChecker` records the failure.
 2. After 3 consecutive failures, the circuit breaker opens for 30 seconds.
@@ -28,10 +28,10 @@ immediately, change the default provider at runtime:
 
 ```elixir
 # In IEx (takes effect for new sessions immediately)
-Application.put_env(:optimal_system_agent, :default_provider, :groq)
+Application.put_env(:daemon, :default_provider, :groq)
 ```
 
-For a permanent change, set `OSA_DEFAULT_PROVIDER` and restart.
+For a permanent change, set `DAEMON_DEFAULT_PROVIDER` and restart.
 
 To force a provider's circuit breaker to reset (e.g., after confirming the
 provider is back):
@@ -47,7 +47,7 @@ seconds (or the `Retry-After` duration if provided). During this window,
 the provider is skipped by the fallback logic.
 
 If the rate limit persists, check your API key's quota and consider upgrading
-the plan or distributing load across multiple keys via `OSA_FALLBACK_CHAIN`.
+the plan or distributing load across multiple keys via `DAEMON_FALLBACK_CHAIN`.
 
 ---
 
@@ -70,7 +70,7 @@ is dropped.
 Inspect the DLQ:
 
 ```elixir
-OptimalSystemAgent.Events.DLQ.list()
+Daemon.Events.DLQ.list()
 # Each entry shows: event_type, payload, handler MFA, error, retry count
 ```
 
@@ -81,17 +81,17 @@ Fix the handler code, then flush the DLQ:
 
 ```elixir
 # Drop all pending entries (fixes symptom; does not replay events)
-OptimalSystemAgent.Events.DLQ.flush()
+Daemon.Events.DLQ.flush()
 
 # Force immediate retry of all entries (if handler is now fixed)
-OptimalSystemAgent.Events.DLQ.retry_all()
+Daemon.Events.DLQ.retry_all()
 ```
 
 If the same event type keeps failing, consider deregistering the handler
 until the fix is deployed:
 
 ```elixir
-OptimalSystemAgent.Events.Bus.unsubscribe(:tool_call, handler_ref)
+Daemon.Events.Bus.unsubscribe(:tool_call, handler_ref)
 ```
 
 ---
@@ -121,18 +121,18 @@ To diagnose:
 
 ```elixir
 # Check if the session still exists in the registry
-Registry.lookup(OptimalSystemAgent.SessionRegistry, session_id)
+Registry.lookup(Daemon.SessionRegistry, session_id)
 # => []  means the session was removed after too many crashes
 
 # Check the supervisor's restart intensity settings
-Supervisor.count_children(OptimalSystemAgent.SessionSupervisor)
+Supervisor.count_children(Daemon.SessionSupervisor)
 ```
 
 To recover the user's conversation:
 
 ```elixir
 # From IEx, load the persisted message history
-OptimalSystemAgent.Agent.Memory.load_session(session_id)
+Daemon.Agent.Memory.load_session(session_id)
 ```
 
 Ask the user to start a new session and use `/resume SESSION_ID` to reload
@@ -152,7 +152,7 @@ reached:
 3. The LLM can still respond with text (no tool calls), but complex multi-step
    tasks will fail.
 4. An `:algedonic_alert` event is emitted with `reason: :budget_exceeded`.
-5. A `[:optimal_system_agent, :budget, :exceeded]` telemetry event fires.
+5. A `[:daemon, :budget, :exceeded]` telemetry event fires.
 
 ### Manual intervention
 
@@ -167,7 +167,7 @@ If the limit was hit legitimately (user workload), you have two options:
 **Option A: Raise the limit temporarily**
 
 ```elixir
-Application.put_env(:optimal_system_agent, :daily_budget_usd, 100.0)
+Application.put_env(:daemon, :daily_budget_usd, 100.0)
 # Restart the budget GenServer to pick up the new limit
 GenServer.stop(MiosaBudget.Budget)
 # The supervisor will restart it with the new limit
@@ -192,7 +192,7 @@ Bug 17 is a known issue: weak LLMs (particularly small local models) sometimes
 echo the system prompt in their response, despite the input-side guardrail
 blocking prompt extraction attempts.
 
-OSA includes an output-side guardrail in `Agent.Loop.Guardrails` that
+Daemon includes an output-side guardrail in `Agent.Loop.Guardrails` that
 detects and replaces prompt-leaking responses before they are returned to the
 user. The guardrail is logged at warning level:
 
@@ -204,7 +204,7 @@ user. The guardrail is logged at warning level:
 
 Until Bug 17 is fixed:
 
-1. Do not use OSA with highly sensitive system prompt content in production.
+1. Do not use Daemon with highly sensitive system prompt content in production.
 2. Monitor for `Output guardrail` log lines.
 3. If the leak rate is high with your model, switch to a stronger model that
    does not leak.
@@ -265,12 +265,12 @@ When an incident cannot be resolved with the above steps:
 3. Capture provider health: `MiosaLLM.HealthChecker.status()`.
 4. Restart the application as a last resort:
    ```sh
-   bin/osa stop
-   bin/osa start
+   bin/daemon stop
+   bin/daemon start
    ```
 5. If the issue is data corruption in SQLite:
    ```sh
-   sqlite3 ~/.osa/osa.db "PRAGMA integrity_check;"
+   sqlite3 ~/.daemon/osa.db "PRAGMA integrity_check;"
    ```
 
 ---

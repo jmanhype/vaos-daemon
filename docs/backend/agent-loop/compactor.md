@@ -2,7 +2,7 @@
 
 Intelligent sliding-window context compaction with importance-weighted retention. Runs as a GenServer that records metrics; the actual compaction logic is pure functions safe to call from any process.
 
-**Module:** `OptimalSystemAgent.Agent.Compactor`
+**Module:** `Daemon.Agent.Compactor`
 
 ---
 
@@ -91,7 +91,7 @@ The warm-zone step sorts messages by importance ascending before grouping, so th
 
 ## Token Estimation
 
-Uses the Go tokenizer (`OptimalSystemAgent.Go.Tokenizer.count_tokens/1`) for accurate BPE counts when available. Falls back to:
+Uses the Go tokenizer (`Daemon.Go.Tokenizer.count_tokens/1`) for accurate BPE counts when available. Falls back to:
 
 ```
 words * 1.3 + punctuation_chars * 0.5

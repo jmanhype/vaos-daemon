@@ -1,6 +1,6 @@
 # Project Structure
 
-Audience: developers who are new to the OSA codebase and need a map before
+Audience: developers who are new to the Daemon codebase and need a map before
 diving into the source.
 
 ---
@@ -8,7 +8,7 @@ diving into the source.
 ## Root Layout
 
 ```
-OSA/
+Daemon/
 ├── mix.exs                 Application definition, deps, aliases, releases
 ├── mix.lock                Locked dependency versions
 ├── VERSION                 Current version string (read by mix.exs)
@@ -17,7 +17,7 @@ OSA/
 ├── test/                   ExUnit tests
 ├── priv/                   Non-Elixir assets bundled with releases
 ├── desktop/                Tauri desktop application (Svelte + Rust)
-├── bin/                    Shell scripts for running and managing OSA
+├── bin/                    Shell scripts for running and managing Daemon
 ├── docs/                   Project documentation
 ├── rel/                    Release templates
 ├── native/                 Rustler NIF stubs (currently unused)
@@ -50,18 +50,18 @@ environment variables.
 
 ```
 lib/
-├── optimal_system_agent/   Main application namespace
-├── miosa/                  Compatibility shims (Miosa.* → OptimalSystemAgent.*)
+├── daemon/   Main application namespace
+├── miosa/                  Compatibility shims (Miosa.* → Daemon.*)
 ├── mix/                    Custom Mix tasks
 └── osa_sdk.ex              Public SDK entry point
 ```
 
-### lib/optimal_system_agent/
+### lib/daemon/
 
-This is the primary namespace. Every module is `OptimalSystemAgent.*`.
+This is the primary namespace. Every module is `Daemon.*`.
 
 ```
-optimal_system_agent/
+daemon/
 ├── application.ex          OTP Application — supervision tree root
 ├── cli.ex                  CLI entry point (subcommands: chat, setup, serve, doctor)
 ├── commands.ex             Slash command registry (built-in + custom)
@@ -156,7 +156,7 @@ optimal_system_agent/
 │   └── supervisor.ex       Vault subsystem supervisor
 │
 ├── signal/                 Signal Theory subsystem
-│   └── classifier.ex       OSA-wired classifier (delegates to MiosaSignal)
+│   └── classifier.ex       Daemon-wired classifier (delegates to MiosaSignal)
 │
 ├── supervisors/            Subsystem supervisors
 │   ├── infrastructure.ex   Core layer (bus, storage, tools, MCP)
@@ -185,7 +185,7 @@ optimal_system_agent/
 ### lib/miosa/
 
 Thin shims that satisfy call sites expecting the `Miosa.*` or `MiosaX.*`
-namespace. The actual implementations live in `lib/optimal_system_agent/` —
+namespace. The actual implementations live in `lib/daemon/` —
 these modules just delegate:
 
 ```
@@ -231,7 +231,7 @@ priv/
 ```
 test/
 ├── test_helper.exs             ExUnit setup (excludes :integration by default)
-├── optimal_system_agent/       Unit tests (mirrors lib/ structure)
+├── daemon/       Unit tests (mirrors lib/ structure)
 ├── integration/                Integration tests (tagged @moduletag :integration)
 ├── e2e/                        End-to-end tests
 └── support/                    Shared test utilities and factories
@@ -268,6 +268,6 @@ bin/
 
 ## Related
 
-- [Local Development](./local-development.md) — run and develop OSA locally
+- [Local Development](./local-development.md) — run and develop Daemon locally
 - [Coding Standards](./coding-standards.md) — naming and style conventions
 - [Understanding the Core](../how-to/understanding-the-core.md) — mental model of the runtime

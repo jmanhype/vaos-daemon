@@ -1,6 +1,6 @@
-# Foundation Core — OSA Documentation
+# Foundation Core — Daemon Documentation
 
-> **OSA v0.2.6** — Optimal System Agent
+> **Daemon v0.2.6** — Optimal System Agent
 > Elixir/OTP + Rust TUI + Tauri/SvelteKit. Signal Theory-based AI agent orchestration.
 > 154,000 lines. 18 LLM providers. 12 chat channels. Runs locally. Apache 2.0.
 
@@ -8,16 +8,16 @@
 
 ## What You Are Looking At
 
-OSA is a production AI agent system built on Elixir/OTP. It is the intelligence
+Daemon is a production AI agent system built on Elixir/OTP. It is the intelligence
 layer of the [MIOSA](https://miosa.ai) platform and is also fully usable as a
 standalone local agent.
 
 The architecture solves a real problem: every existing agent framework processes
-every message through the same pipeline regardless of complexity. OSA classifies
+every message through the same pipeline regardless of complexity. Daemon classifies
 each input into a 5-tuple signal before routing — matching compute to complexity
 automatically, at sub-millisecond speed, before the LLM is ever invoked.
 
-This section documents the **foundation**: why OSA exists, the principles that
+This section documents the **foundation**: why Daemon exists, the principles that
 govern its design, where its boundaries lie, the dependency rules its modules
 obey, and the vocabulary used throughout all other documentation.
 
@@ -27,11 +27,11 @@ obey, and the vocabulary used throughout all other documentation.
 
 | Document | What It Covers |
 |---|---|
-| [Purpose](overview/purpose.md) | The problem OSA solves, Signal Theory foundations, theoretical grounding |
+| [Purpose](overview/purpose.md) | The problem Daemon solves, Signal Theory foundations, theoretical grounding |
 | [Architecture Principles](overview/architecture-principles.md) | OTP design philosophy, event routing, storage patterns, context assembly |
-| [System Boundaries](overview/system-boundaries.md) | What OSA is, what it is not, external dependencies, integration points |
+| [System Boundaries](overview/system-boundaries.md) | What Daemon is, what it is not, external dependencies, integration points |
 | [Dependency Rules](overview/dependency-rules.md) | Layer ordering, supervision strategy, external package roles |
-| [Glossary](overview/glossary.md) | Canonical definitions for all OSA-specific terms |
+| [Glossary](overview/glossary.md) | Canonical definitions for all Daemon-specific terms |
 
 ---
 
@@ -85,7 +85,7 @@ Weight drives tier selection:
 ### OTP Supervision Tree (top-level)
 
 ```
-OptimalSystemAgent.Supervisor  (rest_for_one)
+Daemon.Supervisor  (rest_for_one)
 ├── Platform.Repo              PostgreSQL — multi-tenant (conditional)
 ├── Supervisors.Infrastructure  (rest_for_one) — core registries, event bus, storage
 ├── Supervisors.Sessions        (one_for_one)  — channel adapters, agent loop processes
@@ -124,14 +124,14 @@ OptimalSystemAgent.Supervisor  (rest_for_one)
 
 ## Quick Navigation
 
-**New to OSA?** Start with [Purpose](overview/purpose.md) then
+**New to Daemon?** Start with [Purpose](overview/purpose.md) then
 [System Boundaries](overview/system-boundaries.md).
 
-**Building on OSA?** Read [Dependency Rules](overview/dependency-rules.md) and
+**Building on Daemon?** Read [Dependency Rules](overview/dependency-rules.md) and
 the [Glossary](overview/glossary.md), then move to the
 [backend docs](../backend/).
 
-**Deploying OSA?** See [operations docs](../operations/).
+**Deploying Daemon?** See [operations docs](../operations/).
 
 **Contributing?** The [architecture docs](../architecture/) cover the
 full supervision tree, data flow, Signal Theory spec, and ADRs.

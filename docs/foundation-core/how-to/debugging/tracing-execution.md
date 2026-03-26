@@ -1,7 +1,7 @@
 # Tracing Execution
 
 Audience: developers who need to follow a single user message through the
-entire OSA pipeline to understand where it was processed, modified, or stalled.
+entire Daemon pipeline to understand where it was processed, modified, or stalled.
 
 ---
 
@@ -31,7 +31,7 @@ stream for a session to see every significant action, in order.
 
 ```elixir
 # Retrieve recent events for a session
-alias OptimalSystemAgent.Events.Stream
+alias Daemon.Events.Stream
 
 events = Stream.events("cli:my_session_id", limit: 50)
 
@@ -51,7 +51,7 @@ If the session ID is unknown, list all active sessions:
 
 ```elixir
 Registry.select(
-  OptimalSystemAgent.SessionRegistry,
+  Daemon.SessionRegistry,
   [{{:"$1", :"$2", :"$3"}, [], [:"$1"]}]
 )
 ```
@@ -65,7 +65,7 @@ messages accumulated so far, current provider and model, and iteration count.
 
 ```elixir
 # Find the loop PID for a session
-[{pid, _}] = Registry.lookup(OptimalSystemAgent.SessionRegistry, "cli:my_session_id")
+[{pid, _}] = Registry.lookup(Daemon.SessionRegistry, "cli:my_session_id")
 
 # Inspect the state
 :sys.get_state(pid)
@@ -95,7 +95,7 @@ filter and guardrail checks. If a message is missing from memory, it was
 blocked at the filter stage.
 
 ```elixir
-alias OptimalSystemAgent.Agent.Memory
+alias Daemon.Agent.Memory
 
 # Load the full session history
 messages = Memory.load_session("cli:my_session_id")
@@ -121,7 +121,7 @@ The `:pre_tool_use` hook chain can block tool calls. Check whether a hook is
 firing and blocking:
 
 ```elixir
-alias OptimalSystemAgent.Agent.Hooks
+alias Daemon.Agent.Hooks
 
 # Per-hook metrics: call count, block count, avg latency
 Hooks.metrics()
@@ -148,7 +148,7 @@ MiosaBudget.Budget.status()
 If an event handler crashed during dispatch, the event lands in the DLQ.
 
 ```elixir
-alias OptimalSystemAgent.Events.DLQ
+alias Daemon.Events.DLQ
 
 # List all entries
 DLQ.list()
@@ -174,11 +174,11 @@ function call and return value in the traced modules.
 
 # Trace all calls to Agent.Loop
 :dbg.p(:all, :c)
-:dbg.tpl(OptimalSystemAgent.Agent.Loop, :process_message, :x)
-:dbg.tpl(OptimalSystemAgent.Agent.Loop, :run_loop, :x)
+:dbg.tpl(Daemon.Agent.Loop, :process_message, :x)
+:dbg.tpl(Daemon.Agent.Loop, :run_loop, :x)
 
 # Trace tool execution
-:dbg.tpl(OptimalSystemAgent.Agent.Loop.ToolExecutor, :execute_tool_call, :x)
+:dbg.tpl(Daemon.Agent.Loop.ToolExecutor, :execute_tool_call, :x)
 
 # Send a message to the session — watch the trace output
 

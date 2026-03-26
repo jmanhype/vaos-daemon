@@ -3,7 +3,7 @@
 Complete sequence from user input arriving at a channel to the agent response
 returned to the channel. This covers the full path through `Agent.Loop`.
 
-Source: `lib/optimal_system_agent/agent/loop.ex` and supporting modules.
+Source: `lib/daemon/agent/loop.ex` and supporting modules.
 
 ---
 

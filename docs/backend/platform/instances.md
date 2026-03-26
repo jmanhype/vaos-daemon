@@ -1,6 +1,6 @@
 # Platform: OS Instances
 
-An OS instance is a sandboxed, tenant-scoped deployment of OSA. Each instance belongs to a tenant and an owner. Multiple users can be members of an instance with role-based access. Instances are managed via `Platform.OsInstances` and the `OsInstance` Ecto schema.
+An OS instance is a sandboxed, tenant-scoped deployment of Daemon. Each instance belongs to a tenant and an owner. Multiple users can be members of an instance with role-based access. Instances are managed via `Platform.OsInstances` and the `OsInstance` Ecto schema.
 
 ---
 

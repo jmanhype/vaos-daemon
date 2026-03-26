@@ -20,7 +20,7 @@ The XML parser in `OpenAICompat` handles `<function>` and `<function_call>` form
 certain model outputs use non-standard variants.
 
 **Workaround:**
-1. Switch to a tool-capable model. OSA only sends tools to models matching
+1. Switch to a tool-capable model. Daemon only sends tools to models matching
    `@tool_capable_prefixes` in `Providers.Ollama`. Supported prefixes include:
    `qwen3`, `qwen2.5`, `llama3.3`, `llama3.2`, `llama3.1`, `gemma3`, `mixtral`,
    `deepseek`, `command-r`, `kimi`.
@@ -30,7 +30,7 @@ certain model outputs use non-standard variants.
 
 **Check current model:**
 ```elixir
-Application.get_env(:optimal_system_agent, :ollama_model)
+Application.get_env(:daemon, :ollama_model)
 ```
 
 ---
@@ -46,8 +46,8 @@ prompt content before delivery to the channel.
 **Workaround:** Add a `post_response` hook that scans outbound messages:
 
 ```elixir
-OptimalSystemAgent.Agent.Hooks.register(:post_response, "system_prompt_guard", fn payload ->
-  system_keywords = ["You are OSA", "Soul:", "## Identity"]
+Daemon.Agent.Hooks.register(:post_response, "system_prompt_guard", fn payload ->
+  system_keywords = ["You are Daemon", "Soul:", "## Identity"]
   content = Map.get(payload, :content, "")
 
   if Enum.any?(system_keywords, &String.contains?(content, &1)) do
@@ -74,7 +74,7 @@ the model picks arbitrarily.
 1. Make tool descriptions more distinct. The description is the only signal the LLM uses.
 2. Reduce the tool list. Use `Tools.Registry.filter_applicable_tools/1` with context:
    ```elixir
-   OptimalSystemAgent.Tools.Registry.filter_applicable_tools(%{
+   Daemon.Tools.Registry.filter_applicable_tools(%{
      language: "python",
      history: ["file_read", "file_grep"]
    })
@@ -113,7 +113,7 @@ channels. The CLI channel calls it, but some configurations bypass it.
 **Workaround:** Call the filter explicitly before routing to the loop:
 
 ```elixir
-alias OptimalSystemAgent.Channels.NoiseFilter
+alias Daemon.Channels.NoiseFilter
 case NoiseFilter.classify(user_message) do
   :noise -> send_quick_ack(channel, session_id)
   :signal -> Loop.process_message(session_id, user_message)
@@ -158,13 +158,13 @@ A boot-time probe was added to `Providers.Registry.init/1` to detect this, but t
 detection can fail if Ollama is installed but not started.
 
 **Current behavior:** The boot-time probe runs `GET /api/version` on `http://localhost:11434`.
-If it fails, `:osa_ollama_excluded` is set in the process dictionary and Ollama is skipped.
+If it fails, `:daemon_ollama_excluded` is set in the process dictionary and Ollama is skipped.
 
 **Workaround:** Explicitly configure the fallback chain without Ollama:
 
 ```elixir
 # In config/runtime.exs:
-config :optimal_system_agent, :fallback_chain, [:anthropic, :openai, :groq]
+config :daemon, :fallback_chain, [:anthropic, :openai, :groq]
 ```
 
 ---
@@ -189,7 +189,7 @@ number shortly after startup.
 table is populated, the subtraction produces a negative result.
 
 **Workaround:** The value corrects itself within a second of startup. If you see it
-persistently negative, check that `Application.put_env(:optimal_system_agent, :start_time, ...)`
+persistently negative, check that `Application.put_env(:daemon, :start_time, ...)`
 runs successfully at boot.
 
 ---
@@ -228,8 +228,8 @@ functions are not implemented.
 
 **Workaround:**
 - `/budget` — call `MiosaBudget.Budget.summary/0` directly in IEx.
-- `/machines` — call `OptimalSystemAgent.Machines.list/0` directly.
-- `/providers` — call `OptimalSystemAgent.Providers.Registry.list_providers/0` directly.
+- `/machines` — call `Daemon.Machines.list/0` directly.
+- `/providers` — call `Daemon.Providers.Registry.list_providers/0` directly.
 
 ---
 
@@ -242,7 +242,7 @@ error. The user does not know which key is needed.
 
 **Workaround:** Check provider configuration status explicitly:
 ```elixir
-OptimalSystemAgent.Providers.Registry.provider_configured?(:anthropic)
+Daemon.Providers.Registry.provider_configured?(:anthropic)
 # => false means the key is missing
 ```
 Set the key: `export ANTHROPIC_API_KEY=sk-ant-...`
@@ -251,7 +251,7 @@ Set the key: `export ANTHROPIC_API_KEY=sk-ant-...`
 
 **Symptom:** The retry and star action buttons in the Command Center do not trigger any action.
 
-**Workaround:** Use the CLI (`mix osa.chat`) or the HTTP API directly until the desktop
+**Workaround:** Use the CLI (`mix daemon.chat`) or the HTTP API directly until the desktop
 app action handlers are repaired.
 
 ### Ollama Not Showing as Selectable Option
@@ -262,7 +262,7 @@ is running.
 **Root cause:** The boot-time probe in `Providers.Registry` excluded Ollama because the
 probe ran before the Ollama service was ready.
 
-**Workaround:** Restart OSA after Ollama is fully started, or force-configure Ollama:
+**Workaround:** Restart Daemon after Ollama is fully started, or force-configure Ollama:
 ```
-OSA_DEFAULT_PROVIDER=ollama mix osa.chat
+DAEMON_DEFAULT_PROVIDER=ollama mix daemon.chat
 ```

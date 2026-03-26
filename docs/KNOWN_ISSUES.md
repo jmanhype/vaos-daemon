@@ -1,4 +1,4 @@
-# OSA Known Issues
+# Daemon Known Issues
 
 > Last updated: 2026-03-14
 > Version: 0.2.6
@@ -24,7 +24,7 @@ identified through codebase analysis and user testing.
 ### BUG-004: Tools Never Execute — Raw XML Returned Instead
 
 **Status:** Partially fixed (llama3.2 added to `@tool_capable_prefixes`)
-**Component:** `OSA.AgentLoop`, LLM response parsing
+**Component:** `Daemon.AgentLoop`, LLM response parsing
 **Symptom:** When the LLM returns tool calls, they appear as raw XML/JSON in the
 chat output instead of being executed. The agent loop does not recognize the
 response as containing tool invocations.
@@ -64,7 +64,7 @@ model's tool-use capability is insufficient for the provider being used.
 ### BUG-005: Tool Name Mismatch on Iteration 2+
 
 **Status:** Open
-**Component:** `OSA.AgentLoop` tool call formatting
+**Component:** `Daemon.AgentLoop` tool call formatting
 **Symptom:** On the second iteration of the agent loop, tool parameters get
 appended to the tool name (e.g., `file_read{"path": "..."}` instead of
 `file_read` with params). This causes tool dispatch to fail.
@@ -74,7 +74,7 @@ back into the conversation for the next LLM turn.
 ### BUG-006: Noise Filter Not Working
 
 **Status:** Open
-**Component:** `OSA.NLU.NoiseFilter`
+**Component:** `Daemon.NLU.NoiseFilter`
 **Symptom:** Trivial messages like "ok", "thanks", "hi" trigger full LLM calls
 instead of being handled locally. The noise filter is either not in the
 request path or its classification is not being checked.
@@ -162,7 +162,7 @@ but have no handler implementation:
 
 **Status:** Open
 **Component:** Provider initialization, onboarding UX
-**Symptom:** When no API key is configured for any provider, OSA does not
+**Symptom:** When no API key is configured for any provider, Daemon does not
 clearly inform the user. It either fails silently or shows a generic error.
 **Expected:** Clear message on startup: "No API keys detected. Set ANTHROPIC_API_KEY,
 OPENAI_API_KEY, or install Ollama to get started."

@@ -1,6 +1,6 @@
 # Platform: Auth
 
-OSA has two distinct authentication layers. The channel-level layer (`Channels.HTTP.Auth`) handles session tokens for the HTTP API. The platform-level layer (`Platform.Auth`) handles user accounts, registration, and multi-tenant identity for the MIOSA platform.
+Daemon has two distinct authentication layers. The channel-level layer (`Channels.HTTP.Auth`) handles session tokens for the HTTP API. The platform-level layer (`Platform.Auth`) handles user accounts, registration, and multi-tenant identity for the MIOSA platform.
 
 ---
 

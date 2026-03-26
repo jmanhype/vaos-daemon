@@ -1,15 +1,15 @@
 # Internal Module APIs
 
 This document describes the public function signatures and GenServer interfaces
-that modules within OSA call on each other. These are internal contracts — not
+that modules within Daemon call on each other. These are internal contracts — not
 exposed over HTTP.
 
 ---
 
-## Agent Loop (`OptimalSystemAgent.Agent.Loop`)
+## Agent Loop (`Daemon.Agent.Loop`)
 
 The core ReAct reasoning engine. Each live session has one Loop GenServer,
-registered in `OptimalSystemAgent.SessionRegistry` under the `session_id` key.
+registered in `Daemon.SessionRegistry` under the `session_id` key.
 
 **GenServer interface:**
 
@@ -47,7 +47,7 @@ GenServer.call(pid, {:swap_provider, provider :: String.t(), model :: String.t()
 
 ---
 
-## Orchestrator (`OptimalSystemAgent.Agent.Orchestrator`)
+## Orchestrator (`Daemon.Agent.Orchestrator`)
 
 Single named GenServer managing all multi-agent tasks.
 
@@ -99,7 +99,7 @@ Orchestrator.suggest_or_create_skill(name, description, instructions, tools)
 
 ---
 
-## SwarmMode (`OptimalSystemAgent.Agent.Orchestrator.SwarmMode`)
+## SwarmMode (`Daemon.Agent.Orchestrator.SwarmMode`)
 
 Manages swarm lifecycles. Max 10 concurrent swarms.
 
@@ -121,7 +121,7 @@ SwarmMode.list_swarms()
 
 ---
 
-## Memory (`OptimalSystemAgent.Agent.Memory`)
+## Memory (`Daemon.Agent.Memory`)
 
 Thin delegate to `MiosaMemory.Store`. All functions are synchronous.
 
@@ -150,7 +150,7 @@ Memory.archive(max_age_days :: integer()) :: {:ok, integer()}
 
 ---
 
-## Tools Registry (`OptimalSystemAgent.Tools.Registry`)
+## Tools Registry (`Daemon.Tools.Registry`)
 
 Manages builtin tools, SKILL.md files, and MCP tools.
 
@@ -183,7 +183,7 @@ Tool modules implement `MiosaTools.Behaviour`:
 
 ---
 
-## Session Management (`OptimalSystemAgent.Channels.Session`)
+## Session Management (`Daemon.Channels.Session`)
 
 ```elixir
 # Ensure a Loop GenServer exists for a session; creates one if not present
@@ -194,11 +194,11 @@ Session.ensure_loop(
 ) :: :ok | {:error, term()}
 ```
 
-Sessions are registered in `OptimalSystemAgent.SessionRegistry` (a `Registry` with `:unique` keys). Registry value is the `user_id` (owner).
+Sessions are registered in `Daemon.SessionRegistry` (a `Registry` with `:unique` keys). Registry value is the `user_id` (owner).
 
 ---
 
-## Events Bus (`OptimalSystemAgent.Events.Bus`)
+## Events Bus (`Daemon.Events.Bus`)
 
 goldrush-backed in-process event bus. All events are fan-out to the Bridge.PubSub bridge.
 
@@ -235,7 +235,7 @@ Bus.register_handler(event_type :: atom(), handler :: (map() -> any())) :: :ok
 
 ---
 
-## PubSub Bridge (`OptimalSystemAgent.Bridge.PubSub`)
+## PubSub Bridge (`Daemon.Bridge.PubSub`)
 
 Bridges goldrush events to `Phoenix.PubSub`. Subscription functions:
 
@@ -246,7 +246,7 @@ Bridge.PubSub.subscribe_type(event_type)        # topic: "osa:type:{atom}"
 Bridge.PubSub.subscribe_tui_output()            # topic: "osa:tui:output"
 ```
 
-All subscribers receive `{:osa_event, event_map}` messages.
+All subscribers receive `{:daemon_event, event_map}` messages.
 
 **TUI-visible topic** (`osa:tui:output`) receives a filtered subset:
 `llm_chunk`, `llm_response`, `agent_response`, `tool_result`, `tool_error`,
@@ -256,7 +256,7 @@ All subscribers receive `{:osa_event, event_map}` messages.
 
 ---
 
-## Provider Registry (`OptimalSystemAgent.Providers.Registry`)
+## Provider Registry (`Daemon.Providers.Registry`)
 
 Routes LLM calls across 18 providers with automatic fallback.
 
@@ -277,7 +277,7 @@ Providers.Registry.provider_info(provider :: atom()) :: {:ok, map()} | {:error, 
 
 **`chat/2` options:** `:provider` (atom), `:model` (string), `:temperature`, `:max_tokens`, `:tools` (function schema list), `:stream` (boolean), `:thinking` (boolean)
 
-Provider modules implement `OptimalSystemAgent.Providers.Behaviour`:
+Provider modules implement `Daemon.Providers.Behaviour`:
 ```elixir
 @callback name() :: atom()
 @callback default_model() :: String.t()
@@ -288,7 +288,7 @@ Provider modules implement `OptimalSystemAgent.Providers.Behaviour`:
 
 ---
 
-## Vault (`OptimalSystemAgent.Vault`)
+## Vault (`Daemon.Vault`)
 
 Facade over the filesystem-backed structured memory system.
 
@@ -308,4 +308,4 @@ Vault.checkpoint(session_id :: String.t()) :: :ok
 
 Categories: `:fact`, `:decision`, `:lesson`, `:preference`, `:commitment`, `:relationship`, `:project`, `:observation`
 
-Storage path: `~/.osa/vault/{category}/{slug}.md` (markdown with YAML frontmatter)
+Storage path: `~/.daemon/vault/{category}/{slug}.md` (markdown with YAML frontmatter)

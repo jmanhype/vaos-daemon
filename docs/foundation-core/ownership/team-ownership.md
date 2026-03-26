@@ -2,7 +2,7 @@
 
 ## Project Authors
 
-OSA (Optimal System Agent) is built by **Roberto H. Luna** and the **MIOSA team**.
+Daemon (Optimal System Agent) is built by **Roberto H. Luna** and the **MIOSA team**.
 
 The project is open-source and welcomes community contributions. The MIOSA team
 maintains final review authority over architectural decisions, public API
@@ -12,7 +12,7 @@ changes, and the supervision tree structure.
 
 ## License
 
-OSA is licensed under the **Apache License 2.0**.
+Daemon is licensed under the **Apache License 2.0**.
 
 ```
 Copyright 2024 Roberto H. Luna / MIOSA
@@ -30,11 +30,11 @@ The full license text is in `/LICENSE`.
 
 ## Contribution Model
 
-OSA prioritizes **skill contributions over code contributions**.
+Daemon prioritizes **skill contributions over code contributions**.
 
 ### SKILL.md as the Preferred Contribution Path
 
-OSA agents learn from experience files. The most impactful way to contribute
+Daemon agents learn from experience files. The most impactful way to contribute
 to the project's intelligence is by editing `SKILL.md` — a structured YAML
 file that describes task patterns, tools, and resolution strategies. Skill
 contributions:
@@ -65,18 +65,18 @@ Pull requests must:
 ### Review Authority
 
 The MIOSA team holds review authority over:
-- Changes to `lib/optimal_system_agent/supervisors/`
-- Changes to `lib/optimal_system_agent/application.ex`
+- Changes to `lib/daemon/supervisors/`
+- Changes to `lib/daemon/application.ex`
 - Changes to `lib/miosa/shims.ex`
 - New ADRs and changes to existing ADRs
-- Changes to the HTTP API surface (`lib/optimal_system_agent/channels/http/`)
-- Changes to public hook signatures (`lib/optimal_system_agent/agent/hooks.ex`)
+- Changes to the HTTP API surface (`lib/daemon/channels/http/`)
+- Changes to public hook signatures (`lib/daemon/agent/hooks.ex`)
 
 ---
 
 ## Governance
 
-OSA does not currently operate under a formal governance structure (foundation,
+Daemon does not currently operate under a formal governance structure (foundation,
 TSC, steering committee). Decisions are made by the MIOSA team with community
 input via GitHub Discussions.
 

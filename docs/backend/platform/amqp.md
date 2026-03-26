@@ -1,26 +1,26 @@
 # Platform: AMQP
 
-`Platform.AMQP` provides RabbitMQ integration for cross-instance event propagation. It enables multiple OSA instances to coordinate via a shared message broker.
+`Platform.AMQP` provides RabbitMQ integration for cross-instance event propagation. It enables multiple Daemon instances to coordinate via a shared message broker.
 
 ---
 
 ## Architecture
 
 ```
-OSA Instance A                RabbitMQ
+Daemon Instance A                RabbitMQ
   Platform.AMQP
     publish_event/2  ------->  miosa.events (fanout)  -----> All subscribers
     publish_task/2   ------->  miosa.tasks (topic)    -----> Routed subscribers
 ```
 
-The AMQP module is a GenServer that maintains a single connection and channel. On disconnect, it automatically reconnects with a 1-second delay. During downtime, outbound messages are buffered in an ETS ordered set (`:osa_amqp_buffer`) and flushed on reconnection.
+The AMQP module is a GenServer that maintains a single connection and channel. On disconnect, it automatically reconnects with a 1-second delay. During downtime, outbound messages are buffered in an ETS ordered set (`:daemon_amqp_buffer`) and flushed on reconnection.
 
 ---
 
 ## Configuration
 
 ```elixir
-config :optimal_system_agent,
+config :daemon,
   amqp_url: System.get_env("AMQP_URL")
   # e.g. "amqp://user:password@rabbitmq-host:5672/vhost"
 ```
@@ -82,7 +82,7 @@ Publishes to the `miosa.tasks` topic exchange with the given `routing_key`. Cons
 
 ## Offline Buffer
 
-When the AMQP connection is down, messages are stored in `:osa_amqp_buffer` (`:ordered_set` ETS):
+When the AMQP connection is down, messages are stored in `:daemon_amqp_buffer` (`:ordered_set` ETS):
 
 - Keyed by `System.monotonic_time()` for FIFO ordering.
 - Maximum buffer size: 1 000 messages.

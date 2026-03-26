@@ -1,6 +1,6 @@
 # Custom Middleware and Hooks
 
-OSA has two complementary middleware systems. The `Agent.Hooks` system intercepts tool
+Daemon has two complementary middleware systems. The `Agent.Hooks` system intercepts tool
 execution at the agent level. The `MiosaTools.Middleware` system intercepts tool execution
 at the SDK level. This guide covers both.
 
@@ -61,7 +61,7 @@ audit_hook = fn payload ->
   {:ok, payload}
 end
 
-OptimalSystemAgent.Agent.Hooks.register(
+Daemon.Agent.Hooks.register(
   :pre_tool_use,
   "audit_writes",
   audit_hook,
@@ -85,7 +85,7 @@ restriction_hook = fn payload ->
   end
 end
 
-OptimalSystemAgent.Agent.Hooks.register(
+Daemon.Agent.Hooks.register(
   :pre_tool_use,
   "network_restriction",
   restriction_hook,
@@ -124,7 +124,7 @@ end
 
 ```elixir
 # List all registered hooks and their priorities:
-OptimalSystemAgent.Agent.Hooks.list_hooks()
+Daemon.Agent.Hooks.list_hooks()
 # => %{
 #   pre_tool_use: [
 #     %{name: "spend_guard", priority: 8},
@@ -135,7 +135,7 @@ OptimalSystemAgent.Agent.Hooks.list_hooks()
 # }
 
 # Get execution metrics:
-OptimalSystemAgent.Agent.Hooks.metrics()
+Daemon.Agent.Hooks.metrics()
 # => %{
 #   pre_tool_use: %{calls: 42, total_us: 12000, avg_us: 285},
 #   post_tool_use: %{...}
@@ -234,7 +234,7 @@ stack = [
 ]
 
 executor = fn inst ->
-  OptimalSystemAgent.Tools.Registry.execute(inst.tool, inst.params)
+  Daemon.Tools.Registry.execute(inst.tool, inst.params)
 end
 
 case Middleware.execute(instruction, stack, executor) do
@@ -295,9 +295,9 @@ Use **`Agent.Hooks`** when:
 - You need to intercept tool calls in the live agent loop.
 - You want to block execution (pre_tool_use) or observe results (post_tool_use).
 - You need to react to session lifecycle events.
-- You are extending a running OSA instance without modifying core code.
+- You are extending a running Daemon instance without modifying core code.
 
 Use **`MiosaTools.Middleware`** when:
-- You are building an SDK application on top of OSA.
+- You are building an SDK application on top of Daemon.
 - You need a composable, ordered pipeline for a specific set of tool calls.
 - You want to unit-test the pipeline in isolation without a running agent.

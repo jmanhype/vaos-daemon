@@ -60,7 +60,7 @@ The `available?/0` callback allows tools to declare themselves unavailable at ru
 
 ## Tool Registry
 
-`OptimalSystemAgent.Tools.Registry` maintains the live tool map. It uses Goldrush-compiled dispatch for fast tool lookup and execution.
+`Daemon.Tools.Registry` maintains the live tool map. It uses Goldrush-compiled dispatch for fast tool lookup and execution.
 
 ### Registration
 
@@ -142,7 +142,7 @@ Skills are `.md` files in `~/.claude/skills/` and `priv/skills/`. Each skill has
 
 ## Tool Discovery
 
-Tools are discovered at compile time from the `OptimalSystemAgent.Tools.Builtins.*` namespace and at runtime via `Tools.Registry.register/1` for SDK-defined tools.
+Tools are discovered at compile time from the `Daemon.Tools.Builtins.*` namespace and at runtime via `Tools.Registry.register/1` for SDK-defined tools.
 
 ### Builtin tool list
 

@@ -2,11 +2,11 @@
 
 ## Audience
 
-Operators running OSA in production and engineers adding log output to new modules.
+Operators running Daemon in production and engineers adding log output to new modules.
 
 ## Overview
 
-OSA uses the standard Elixir `Logger` with no external logging dependencies. Log level is controlled by environment. Structured metadata is passed as keyword lists. No log aggregation pipeline is built in — operators are expected to collect stdout/stderr via their infrastructure (systemd, Docker, Kubernetes log drivers, etc.).
+Daemon uses the standard Elixir `Logger` with no external logging dependencies. Log level is controlled by environment. Structured metadata is passed as keyword lists. No log aggregation pipeline is built in — operators are expected to collect stdout/stderr via their infrastructure (systemd, Docker, Kubernetes log drivers, etc.).
 
 ## Logger Configuration
 
@@ -39,7 +39,7 @@ Metadata keys are arbitrary atoms. They appear in the log output if the formatte
 
 ## Log Prefix Convention
 
-OSA modules use bracketed prefixes in the message string for easy grepping. This is a convention, not enforced by the framework:
+Daemon modules use bracketed prefixes in the message string for easy grepping. This is a convention, not enforced by the framework:
 
 | Prefix | Module |
 |--------|--------|
@@ -62,13 +62,13 @@ OSA modules use bracketed prefixes in the message string for easy grepping. This
 - Session strategy switches
 - Signal weight gate decisions: `signal_weight=0.12 < 0.20 — skipping tools`
 - HealthChecker availability checks: `anthropic: circuit open, skipping (14s left)`
-- Telemetry flush: `Metrics written to ~/.osa/metrics.json`
+- Telemetry flush: `Metrics written to ~/.daemon/metrics.json`
 - Rate limiter stale entry cleanup
 
 ### `:info`
 
 - Application lifecycle: agent boot, MCP tool registration
-- Event bus startup: `Event bus started — :osa_event_router compiled`
+- Event bus startup: `Event bus started — :daemon_event_router compiled`
 - Session lifecycle: checkpoint restore, strategy initialization
 - Provider registration: `Registered custom provider: my_provider -> MyModule`
 - Providers initialization: `Providers: anthropic, openai, ollama`
@@ -89,7 +89,7 @@ OSA modules use bracketed prefixes in the message string for easy grepping. This
 - Signal failure modes: `[Bus] Signal failure mode :noise on tool_result: high noise`
 - Output guardrail: `[loop] Output guardrail: LLM response contained system prompt content`
 - HTTP 429 rate limit: `[RateLimiter] 429 for 1.2.3.4 on /api/v1/sessions`
-- goldrush compile failure: `Failed to compile :osa_event_router: ...`
+- goldrush compile failure: `Failed to compile :daemon_event_router: ...`
 
 ### `:error`
 
@@ -102,7 +102,7 @@ OSA modules use bracketed prefixes in the message string for easy grepping. This
 
 ## What Is Not Logged
 
-By design, OSA never logs:
+By design, Daemon never logs:
 
 - API keys or bearer tokens
 - JWT contents or signing secrets
@@ -121,7 +121,7 @@ Default Elixir Logger format:
 — iteration=5, messages=12
 ```
 
-For production deployments, configure JSON log format using a formatter library (e.g. `logger_json`) and add it to `config/prod.exs`. OSA does not ship a JSON formatter but is compatible with any standard Logger backend.
+For production deployments, configure JSON log format using a formatter library (e.g. `logger_json`) and add it to `config/prod.exs`. Daemon does not ship a JSON formatter but is compatible with any standard Logger backend.
 
 ## Enabling Debug Logs at Runtime
 
@@ -135,10 +135,10 @@ To target a specific module only (Elixir Logger does not support per-module leve
 
 ## Log Rotation
 
-OSA writes to stdout/stderr. Log rotation is the responsibility of the host process manager:
+Daemon writes to stdout/stderr. Log rotation is the responsibility of the host process manager:
 
 - **systemd**: `StandardOutput=journal` with journald rotation
 - **Docker**: configure the `json-file` log driver with `max-size` and `max-file`
 - **Kubernetes**: kubelet captures stdout; use a sidecar log aggregator
 
-One file OSA does write to disk: `~/.osa/metrics.json` (flushed every 5 minutes by `Telemetry.Metrics`). This is not a log file and does not rotate — it is overwritten on each flush.
+One file Daemon does write to disk: `~/.daemon/metrics.json` (flushed every 5 minutes by `Telemetry.Metrics`). This is not a log file and does not rotate — it is overwritten on each flush.

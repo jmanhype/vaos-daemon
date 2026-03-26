@@ -121,7 +121,7 @@ Token is generated with `32 random bytes |> Base.url_encode64`. Unique constrain
 
 ## Per-Tenant Configuration
 
-The `settings` map is the primary mechanism for per-tenant customization. There is no fixed schema — OSA reads settings at runtime where needed. Typical keys:
+The `settings` map is the primary mechanism for per-tenant customization. There is no fixed schema — Daemon reads settings at runtime where needed. Typical keys:
 
 | Key | Description |
 |-----|-------------|

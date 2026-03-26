@@ -1,6 +1,6 @@
 # Migration Strategy
 
-OSA uses Ecto migrations for both SQLite (core agent database) and PostgreSQL
+Daemon uses Ecto migrations for both SQLite (core agent database) and PostgreSQL
 (platform multi-tenant database). This document covers naming conventions, how to
 create and run migrations, rollback procedures, and the rules for safe schema changes.
 
@@ -10,8 +10,8 @@ create and run migrations, rollback procedures, and the rules for safe schema ch
 
 | Repo | Adapter | Migration directory | When run |
 |---|---|---|---|
-| `OptimalSystemAgent.Store.Repo` | ecto_sqlite3 | `priv/repo/migrations/` | Always (local-first) |
-| `OptimalSystemAgent.Platform.Repo` | postgrex | `priv/platform_repo/migrations/` | Only when `DATABASE_URL` is set |
+| `Daemon.Store.Repo` | ecto_sqlite3 | `priv/repo/migrations/` | Always (local-first) |
+| `Daemon.Platform.Repo` | postgrex | `priv/platform_repo/migrations/` | Only when `DATABASE_URL` is set |
 
 The `mix ecto.migrate` alias runs migrations for all configured repos.
 
@@ -51,7 +51,7 @@ created on the same day, increment the time portion (e.g. `000000`, `010000`, `0
 mix ecto.gen.migration create_scheduler_jobs
 
 # Platform (PostgreSQL)
-mix ecto.gen.migration create_scheduler_jobs --repo OptimalSystemAgent.Platform.Repo
+mix ecto.gen.migration create_scheduler_jobs --repo Daemon.Platform.Repo
 ```
 
 Ecto generates the file at the correct path with the current timestamp:
@@ -62,7 +62,7 @@ priv/repo/migrations/20260314120000_create_scheduler_jobs.exs
 Open the file and fill in the `change/0` callback (or `up/0` + `down/0` for irreversible operations):
 
 ```elixir
-defmodule OptimalSystemAgent.Store.Repo.Migrations.CreateSchedulerJobs do
+defmodule Daemon.Store.Repo.Migrations.CreateSchedulerJobs do
   use Ecto.Migration
 
   def change do
@@ -91,10 +91,10 @@ end
 mix ecto.migrate
 
 # Run only for the SQLite repo
-mix ecto.migrate --repo OptimalSystemAgent.Store.Repo
+mix ecto.migrate --repo Daemon.Store.Repo
 
 # Run only for the Platform repo
-mix ecto.migrate --repo OptimalSystemAgent.Platform.Repo
+mix ecto.migrate --repo Daemon.Platform.Repo
 
 # Run a specific number of migrations
 mix ecto.migrate --step 1
@@ -105,7 +105,7 @@ mix ecto.migrations
 
 In production (OTP release), migrations run via the release eval:
 ```bash
-./bin/osagent eval "OptimalSystemAgent.Release.migrate()"
+./bin/daemon eval "Daemon.Release.migrate()"
 ```
 
 ---
@@ -115,7 +115,7 @@ In production (OTP release), migrations run via the release eval:
 ### Rolling Back the Last Migration
 
 ```bash
-mix ecto.rollback --repo OptimalSystemAgent.Store.Repo
+mix ecto.rollback --repo Daemon.Store.Repo
 ```
 
 This calls the `down/0` callback (or reverses `change/0` if the migration is reversible).
@@ -214,7 +214,7 @@ end
 
 ## Migration Conventions in This Codebase
 
-**Module naming:** `OptimalSystemAgent.Store.Repo.Migrations.<CamelCase>` for SQLite; `OptimalSystemAgent.PlatformRepo.Migrations.<CamelCase>` for PostgreSQL.
+**Module naming:** `Daemon.Store.Repo.Migrations.<CamelCase>` for SQLite; `Daemon.PlatformRepo.Migrations.<CamelCase>` for PostgreSQL.
 
 **Timestamps:** All tables use `timestamps()` (adds `inserted_at`, `updated_at`). Financial and audit tables use `utc_datetime_usec` precision: `timestamps(type: :utc_datetime_usec)`.
 
@@ -251,7 +251,7 @@ Platform migrations follow the same conventions but with additional consideratio
 - **Transactions:** Ecto wraps each migration in a transaction by default. For index creation with `CONCURRENTLY`, add `@disable_ddl_transaction true` at the module level.
 
 ```elixir
-defmodule OptimalSystemAgent.PlatformRepo.Migrations.AddIndexConcurrently do
+defmodule Daemon.PlatformRepo.Migrations.AddIndexConcurrently do
   use Ecto.Migration
   @disable_ddl_transaction true
 
@@ -267,10 +267,10 @@ end
 
 ```bash
 # Which migrations have run?
-mix ecto.migrations --repo OptimalSystemAgent.Store.Repo
+mix ecto.migrations --repo Daemon.Store.Repo
 
 # Pending migrations only
-mix ecto.migrations --repo OptimalSystemAgent.Store.Repo | grep "down"
+mix ecto.migrations --repo Daemon.Store.Repo | grep "down"
 ```
 
 The `schema_migrations` table tracks which timestamps have been applied. Do not modify this table manually.

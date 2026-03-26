@@ -1,16 +1,16 @@
 # Infrastructure: MCP (Model Context Protocol)
 
-OSA integrates with external MCP servers — tools, data sources, and services exposed over stdio JSON-RPC — through a two-module client stack: `MCP.Client` (orchestrator) and `MCP.Server` (per-process GenServer).
+Daemon integrates with external MCP servers — tools, data sources, and services exposed over stdio JSON-RPC — through a two-module client stack: `MCP.Client` (orchestrator) and `MCP.Server` (per-process GenServer).
 
 ---
 
 ## Architecture
 
 ```
-~/.osa/mcp.json
+~/.daemon/mcp.json
     |
 MCP.Client.start_servers/0
-    |-> DynamicSupervisor (OptimalSystemAgent.MCP.Supervisor)
+    |-> DynamicSupervisor (Daemon.MCP.Supervisor)
           |-> MCP.Server "filesystem"   -- Port (npx stdio)
           |-> MCP.Server "github"       -- Port (npx stdio)
           |-> MCP.Server "custom-tool"  -- Port (any executable)
@@ -26,7 +26,7 @@ Each MCP server process manages one external subprocess via an Erlang `Port`. Al
 
 ## Configuration
 
-Configuration lives at `~/.osa/mcp.json` (path configurable via `:mcp_config_path` app env):
+Configuration lives at `~/.daemon/mcp.json` (path configurable via `:mcp_config_path` app env):
 
 ```json
 {
@@ -88,7 +88,7 @@ MCP.Client.stop_servers()
 
 `call_tool/2` searches running servers for a tool matching `tool_name`, then delegates to `MCP.Server.call_tool/3`. Returns `{:error, "No MCP server found for tool: ..."}` when no server owns the tool.
 
-Servers are registered via `OptimalSystemAgent.MCP.Registry` (a standard `Registry`). `start_servers/0` skips servers that fail to start — one broken config does not prevent the others from loading.
+Servers are registered via `Daemon.MCP.Registry` (a standard `Registry`). `start_servers/0` skips servers that fail to start — one broken config does not prevent the others from loading.
 
 ---
 
@@ -198,15 +198,15 @@ Tool names and reason strings passed to the audit log are sanitized: control cha
 ## Supervision
 
 ```
-OptimalSystemAgent.MCP.Supervisor  (DynamicSupervisor)
+Daemon.MCP.Supervisor  (DynamicSupervisor)
   |-> MCP.Server "filesystem"
   |-> MCP.Server "github"
   ...
 
-OptimalSystemAgent.MCP.Registry  (Registry, keys: :unique)
+Daemon.MCP.Registry  (Registry, keys: :unique)
 ```
 
-Servers register under `{:via, Registry, {OptimalSystemAgent.MCP.Registry, name}}`.
+Servers register under `{:via, Registry, {Daemon.MCP.Registry, name}}`.
 
 ---
 

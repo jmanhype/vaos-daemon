@@ -2,7 +2,7 @@
 
 > **Severity:** MEDIUM
 > **Status:** Open
-> **Component:** `lib/optimal_system_agent/store/repo.ex`, `lib/optimal_system_agent/store/message.ex`
+> **Component:** `lib/daemon/store/repo.ex`, `lib/daemon/store/message.ex`
 > **Reported:** 2026-03-14
 
 ---
@@ -34,7 +34,7 @@ pragmas =
 The SQLite `PRAGMA encoding` must be set _before the first write_ to a new
 database. After any data has been written, the pragma has no effect — SQLite
 ignores it silently. If the database file was created without the pragma (e.g.
-by a previous version of OSA or by `mix ecto.migrate` before `repo.ex` was
+by a previous version of Daemon or by `mix ecto.migrate` before `repo.ex` was
 updated), the database remains in the default `UTF-8` mode that SQLite claims
 to support, but the `ecto_sqlite3` adapter version being used may not set the
 connection-level encoding correctly, causing the driver to substitute `?` for
@@ -66,7 +66,7 @@ error reported.
 2. Pass `:journal_mode` and `:encoding` in `config.exs` as connection options
    rather than `custom_pragmas`, which some adapter versions handle differently:
    ```elixir
-   config :optimal_system_agent, OptimalSystemAgent.Store.Repo,
+   config :daemon, Daemon.Store.Repo,
      database: "priv/osa.db",
      journal_mode: :wal,
      encoding: "UTF-8"

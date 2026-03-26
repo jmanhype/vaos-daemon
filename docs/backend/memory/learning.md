@@ -13,10 +13,10 @@ The learning engine records patterns, solutions, and error corrections from agen
 
 ## API
 
-The OSA alias `OptimalSystemAgent.Agent.Learning` delegates to `MiosaMemory.Learning`:
+The Daemon alias `Daemon.Agent.Learning` delegates to `MiosaMemory.Learning`:
 
 ```elixir
-alias OptimalSystemAgent.Agent.Learning
+alias Daemon.Agent.Learning
 
 # Record an interaction for pattern extraction
 Learning.observe(%{
@@ -85,7 +85,7 @@ A solution maps an error type to a proven resolution. `error/3` extracts the err
 
 1. Prunes pattern entries with frequency below a minimum threshold (prevents noise accumulation)
 2. Deduplicates solutions with identical error types (keeps most recent)
-3. Persists the cleaned state to `~/.osa/learning/` (patterns.json, solutions.json)
+3. Persists the cleaned state to `~/.daemon/learning/` (patterns.json, solutions.json)
 
 Consolidation is triggered:
 - Explicitly by calling `Learning.consolidate/0`
@@ -94,7 +94,7 @@ Consolidation is triggered:
 
 ## Knowledge Graph Sync (KnowledgeBridge)
 
-`OptimalSystemAgent.Agent.Memory.KnowledgeBridge` runs as a GenServer that wakes every 60 seconds and publishes the current patterns and solutions as RDF triples into the `"osa_default"` knowledge store:
+`Daemon.Agent.Memory.KnowledgeBridge` runs as a GenServer that wakes every 60 seconds and publishes the current patterns and solutions as RDF triples into the `"osa_default"` knowledge store:
 
 ```
 Pattern triples:
@@ -111,12 +111,12 @@ The sync is best-effort. If the knowledge store is not yet running (e.g., during
 To trigger an immediate sync outside the schedule:
 
 ```elixir
-OptimalSystemAgent.Agent.Memory.KnowledgeBridge.sync_now()
+Daemon.Agent.Memory.KnowledgeBridge.sync_now()
 ```
 
 ## Taxonomy and Injector Integration
 
-The learning engine writes entries through `MiosaMemory.Taxonomy` (classification) and relies on `MiosaMemory.Injector` to filter and format them for prompt injection. These modules are planned additions to the `miosa_memory` package; the OSA alias modules (`Agent.Memory.Taxonomy`, `Agent.Memory.Injector`) are forward declarations for that interface.
+The learning engine writes entries through `MiosaMemory.Taxonomy` (classification) and relies on `MiosaMemory.Injector` to filter and format them for prompt injection. These modules are planned additions to the `miosa_memory` package; the Daemon alias modules (`Agent.Memory.Taxonomy`, `Agent.Memory.Injector`) are forward declarations for that interface.
 
 When implemented, the flow is:
 
@@ -135,7 +135,7 @@ See [taxonomy.md](./taxonomy.md) for category and scope definitions.
 
 ## Swarm Intelligence Extension
 
-`OptimalSystemAgent.Agent.Learning.Intelligence` provides a multi-agent swarm mode built on top of the learning infrastructure. It is separate from the core learning engine and intended for complex exploratory tasks, not routine learning.
+`Daemon.Agent.Learning.Intelligence` provides a multi-agent swarm mode built on top of the learning infrastructure. It is separate from the core learning engine and intended for complex exploratory tasks, not routine learning.
 
 Two swarm types:
 

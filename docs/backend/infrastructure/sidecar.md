@@ -1,6 +1,6 @@
 # Infrastructure: Sidecar
 
-The sidecar subsystem integrates external language processes (Go, Python, Rust) with OSA through a capability-based dispatch layer. It provides lifecycle management, health monitoring, circuit breaking, telemetry, and a shared JSON-RPC wire protocol.
+The sidecar subsystem integrates external language processes (Go, Python, Rust) with Daemon through a capability-based dispatch layer. It provides lifecycle management, health monitoring, circuit breaking, telemetry, and a shared JSON-RPC wire protocol.
 
 ---
 
@@ -10,10 +10,10 @@ The sidecar subsystem integrates external language processes (Go, Python, Rust) 
 Sidecar.Manager (GenServer)
   |-- health poll every 30s
   |
-  +-> Sidecar.Registry (ETS: :osa_sidecar_registry)
+  +-> Sidecar.Registry (ETS: :daemon_sidecar_registry)
   |     {module, pid, health, capabilities, updated_at}
   |
-  +-> Sidecar.CircuitBreaker (ETS: :osa_circuit_breakers)
+  +-> Sidecar.CircuitBreaker (ETS: :daemon_circuit_breakers)
   |     {module, state, failure_count, timestamp}
   |
   +-> Sidecar.Telemetry
@@ -100,7 +100,7 @@ Health failures are isolated per sidecar; one unavailable sidecar does not affec
 
 ## Sidecar.Registry
 
-ETS-backed registry (table `:osa_sidecar_registry`). Rows: `{name, pid, health, capabilities, updated_at}`.
+ETS-backed registry (table `:daemon_sidecar_registry`). Rows: `{name, pid, health, capabilities, updated_at}`.
 
 ```elixir
 # Register a sidecar with its capability list
@@ -125,7 +125,7 @@ The registry is `:public` with `read_concurrency: true` for lock-free reads from
 
 ## Sidecar.CircuitBreaker
 
-Per-sidecar circuit breaker for fault isolation. State stored in ETS (`:osa_circuit_breakers`), keyed by module atom.
+Per-sidecar circuit breaker for fault isolation. State stored in ETS (`:daemon_circuit_breakers`), keyed by module atom.
 
 ### State machine
 
@@ -222,7 +222,7 @@ Attach handlers via `:telemetry.attach/4`:
 
 ```elixir
 defmodule MyApp.Sidecars.Tokenizer do
-  @behaviour OptimalSystemAgent.Sidecar.Behaviour
+  @behaviour Daemon.Sidecar.Behaviour
 
   use GenServer
 
@@ -244,7 +244,7 @@ defmodule MyApp.Sidecars.Tokenizer do
 
   def init(:ok) do
     # Register with the sidecar registry
-    OptimalSystemAgent.Sidecar.Registry.register(__MODULE__, capabilities())
+    Daemon.Sidecar.Registry.register(__MODULE__, capabilities())
     # ... start subprocess, open Port, etc.
     {:ok, %{}}
   end
@@ -257,4 +257,4 @@ end
 
 - [mcp.md](mcp.md) — MCP protocol for stdio JSON-RPC tool servers
 - [sandbox.md](sandbox.md) — Isolated code execution environments
-- [../events/telemetry.md](../events/telemetry.md) — OSA-wide telemetry catalog
+- [../events/telemetry.md](../events/telemetry.md) — Daemon-wide telemetry catalog

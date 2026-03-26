@@ -2,7 +2,7 @@
 
 > **Severity:** CRITICAL
 > **Status:** Fixed — v0.2.5
-> **Component:** `lib/optimal_system_agent/onboarding.ex`
+> **Component:** `lib/daemon/onboarding.ex`
 > **Reported:** 2026-03-14
 > **Fixed:** 2026-03-14
 
@@ -10,9 +10,9 @@
 
 ## Summary
 
-On first run, when no `~/.osa/config.json` existed and no provider was
+On first run, when no `~/.daemon/config.json` existed and no provider was
 configured, the onboarding module attempted a pattern match on `nil` — the
-result of `Application.get_env(:optimal_system_agent, :default_provider)` before
+result of `Application.get_env(:daemon, :default_provider)` before
 any provider had been set. The VM raised `FunctionClauseError` and the
 application crashed before the onboarding wizard could be displayed.
 
@@ -20,10 +20,10 @@ application crashed before the onboarding wizard could be displayed.
 
 ```
 ** (FunctionClauseError) no function clause matching in
-   OptimalSystemAgent.Onboarding.auto_configure/0
+   Daemon.Onboarding.auto_configure/0
 ```
 
-Application exits immediately on `mix osa.chat` for new installs.
+Application exits immediately on `mix daemon.chat` for new installs.
 
 ## Root Cause
 
@@ -33,7 +33,7 @@ Application exits immediately on `mix osa.chat` for new installs.
 ```elixir
 # Before fix:
 def auto_configure do
-  case Application.get_env(:optimal_system_agent, :default_provider) do
+  case Application.get_env(:daemon, :default_provider) do
     :ollama -> configure_ollama()
     provider -> configure_cloud(provider)
     # nil was not matched — FunctionClauseError
@@ -50,7 +50,7 @@ when no provider is configured, and a default `_` catch-all for unknown atoms:
 
 ```elixir
 def auto_configure do
-  case Application.get_env(:optimal_system_agent, :default_provider) do
+  case Application.get_env(:daemon, :default_provider) do
     :ollama -> configure_ollama()
     nil -> run_first_run_wizard()
     provider when is_atom(provider) -> configure_cloud(provider)
@@ -61,7 +61,7 @@ end
 
 ## Verification
 
-Fresh install with no `.env` file: `mix osa.chat` now presents the provider
+Fresh install with no `.env` file: `mix daemon.chat` now presents the provider
 selection wizard instead of crashing.
 
 ## Version

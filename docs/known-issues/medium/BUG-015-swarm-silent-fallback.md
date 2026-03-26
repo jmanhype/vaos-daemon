@@ -2,7 +2,7 @@
 
 > **Severity:** MEDIUM
 > **Status:** Open
-> **Component:** `lib/optimal_system_agent/channels/http/api/orchestration_routes.ex`, `lib/optimal_system_agent/swarm/patterns.ex`
+> **Component:** `lib/daemon/channels/http/api/orchestration_routes.ex`, `lib/daemon/swarm/patterns.ex`
 > **Reported:** 2026-03-14
 
 ---

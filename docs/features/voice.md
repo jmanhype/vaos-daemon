@@ -1,6 +1,6 @@
 # Voice Input System
 
-Voice input for the OSA TUI — press F2 to toggle recording. The transcript appears in the input box for review before sending.
+Voice input for the Daemon TUI — press F2 to toggle recording. The transcript appears in the input box for review before sending.
 
 ---
 
@@ -24,7 +24,7 @@ TUI (Rust)
 ### Local Mode (Default)
 
 - Uses `whisper-rs` — Rust bindings to whisper.cpp
-- Model auto-downloads to `~/.osa/models/ggml-base.bin` (~140 MB) on first run
+- Model auto-downloads to `~/.daemon/models/ggml-base.bin` (~140 MB) on first run
 - No API keys required
 - Requires `cargo build --features local-voice` (needs LLVM/libclang for bindgen)
 
@@ -99,7 +99,7 @@ Modified files: `Cargo.toml`, `src/app/state.rs`, `src/event/mod.rs`, `src/app/m
 | `VOICE_PROVIDER` | `local` | `local` or `cloud` |
 | `OPENAI_API_KEY` | — | Required for cloud mode |
 | `WHISPER_MODEL` | `base` | Model size: `tiny`, `base`, `small`, `medium` |
-| `WHISPER_MODEL_DIR` | `~/.osa/models` | Model download directory |
+| `WHISPER_MODEL_DIR` | `~/.daemon/models` | Model download directory |
 
 ---
 

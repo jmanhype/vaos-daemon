@@ -1,12 +1,12 @@
 # Troubleshooting Common Issues
 
-Audience: developers and operators resolving runtime problems in OSA.
+Audience: developers and operators resolving runtime problems in Daemon.
 
 ---
 
 ## "Provider not configured"
 
-**Symptom:** OSA starts but immediately shows an error like
+**Symptom:** Daemon starts but immediately shows an error like
 `Provider not configured` or `No LLM provider available`.
 
 **Cause:** No API key is set for any provider, and Ollama is not reachable on
@@ -17,7 +17,7 @@ Audience: developers and operators resolving runtime problems in OSA.
 1. Check what provider was auto-detected:
 
    ```elixir
-   Application.get_env(:optimal_system_agent, :default_provider)
+   Application.get_env(:daemon, :default_provider)
    ```
 
 2. Check that the API key for that provider is set:
@@ -41,7 +41,7 @@ Audience: developers and operators resolving runtime problems in OSA.
    bin/osa
    ```
 
-5. Alternatively, run `bin/osa setup` to configure interactively.
+5. Alternatively, run `bin/daemon setup` to configure interactively.
 
 ---
 
@@ -57,17 +57,17 @@ The session's `permission_tier` may be `:read_only`, which blocks write tools.
 
 ```elixir
 # Check the tier
-[{pid, _}] = Registry.lookup(OptimalSystemAgent.SessionRegistry, session_id)
+[{pid, _}] = Registry.lookup(Daemon.SessionRegistry, session_id)
 :sys.get_state(pid) |> Map.get(:permission_tier)
 ```
 
-Adjust the tier by setting `OSA_PERMISSION_TIER=full` or sending a
+Adjust the tier by setting `DAEMON_PERMISSION_TIER=full` or sending a
 `/permissions` command.
 
 **B. A hook is blocking the tool call.**
 
 ```elixir
-OptimalSystemAgent.Agent.Hooks.metrics()
+Daemon.Agent.Hooks.metrics()
 # Look for high block_count on :pre_tool_use
 ```
 
@@ -81,7 +81,7 @@ Not all providers expose the `tool_capable_prefixes` required for function
 calling. Check whether the active model supports tools:
 
 ```elixir
-Application.get_env(:optimal_system_agent, :default_provider)
+Application.get_env(:daemon, :default_provider)
 ```
 
 Providers with full tool support: Anthropic, OpenAI, Groq, Google, Mistral.
@@ -108,7 +108,7 @@ message.
    MiosaLLM.HealthChecker.status()
    ```
 
-   If a provider is in `:open` or `:rate_limited` state, OSA is using the
+   If a provider is in `:open` or `:rate_limited` state, Daemon is using the
    fallback chain. The fallback chain may include slower providers.
 
 2. Check whether tool execution is the bottleneck. Look at the EventStream for
@@ -139,7 +139,7 @@ in-memory; they do not survive application restarts.
 1. Check whether the session still exists:
 
    ```elixir
-   Registry.lookup(OptimalSystemAgent.SessionRegistry, session_id)
+   Registry.lookup(Daemon.SessionRegistry, session_id)
    # [] means the session is gone
    ```
 
@@ -157,7 +157,7 @@ in-memory; they do not survive application restarts.
 
 ## "Port already in use"
 
-**Symptom:** OSA fails to start with `{:error, :eaddrinuse}` or
+**Symptom:** Daemon fails to start with `{:error, :eaddrinuse}` or
 `Address already in use` on port 8089.
 
 **Resolution:**
@@ -178,10 +178,10 @@ in-memory; they do not survive application restarts.
    kill -9 <PID>
    ```
 
-3. Or start OSA on a different port:
+3. Or start Daemon on a different port:
 
    ```sh
-   OSA_HTTP_PORT=9000 bin/osa
+   DAEMON_HTTP_PORT=9000 bin/osa
    ```
 
 ---
@@ -204,7 +204,7 @@ per-call budget has been reached.
 2. Increase the limit temporarily:
 
    ```sh
-   OSA_DAILY_BUDGET_USD=100.0 bin/osa
+   DAEMON_DAILY_BUDGET_USD=100.0 bin/osa
    ```
 
 3. Or reset the budget counter in IEx (development only):
@@ -217,7 +217,7 @@ per-call budget has been reached.
 
 ## "DLQ is growing"
 
-**Symptom:** `OptimalSystemAgent.Events.DLQ.size()` keeps increasing. An
+**Symptom:** `Daemon.Events.DLQ.size()` keeps increasing. An
 `:algedonic_alert` event is emitted.
 
 **Cause:** An event handler is repeatedly crashing. After 3 retries the event
@@ -228,7 +228,7 @@ is dropped and an alert is fired.
 1. Inspect the DLQ entries to find the failing handler and error:
 
    ```elixir
-   OptimalSystemAgent.Events.DLQ.list()
+   Daemon.Events.DLQ.list()
    ```
 
 2. Fix the handler (the module referenced in the entry's `:handler` field).
@@ -236,7 +236,7 @@ is dropped and an alert is fired.
 3. Flush the DLQ after fixing:
 
    ```elixir
-   OptimalSystemAgent.Events.DLQ.flush()
+   Daemon.Events.DLQ.flush()
    ```
 
 ---
@@ -280,20 +280,20 @@ context is genuinely large.
 1. Check compaction is enabled:
 
    ```elixir
-   Application.get_env(:optimal_system_agent, :compactor_llm_enabled, true)
+   Application.get_env(:daemon, :compactor_llm_enabled, true)
    ```
 
 2. Check compaction stats:
 
    ```elixir
-   OptimalSystemAgent.Agent.Compactor.stats()
+   Daemon.Agent.Compactor.stats()
    ```
 
 3. Force compaction on a session:
 
    ```elixir
    # From within IEx with the loop PID
-   OptimalSystemAgent.Agent.Compactor.compact_now(session_id)
+   Daemon.Agent.Compactor.compact_now(session_id)
    ```
 
 ---

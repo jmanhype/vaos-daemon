@@ -2,18 +2,18 @@
 
 ## Audience
 
-Operators deploying OSA and developers adding new configuration knobs.
+Operators deploying Daemon and developers adding new configuration knobs.
 
 ## Overview
 
-OSA configuration flows through four sources in precedence order (highest first):
+Daemon configuration flows through four sources in precedence order (highest first):
 
 1. Environment variables (set in the shell or `.env` files)
 2. `config/runtime.exs` — runtime resolution of env vars into application config
 3. `config/<env>.exs` — compile-time environment overrides (`dev.exs`, `test.exs`, `prod.exs`)
 4. `config/config.exs` — base defaults, imported first
 
-The final value for any key is determined by the last `config :optimal_system_agent, key: value` call that ran, which means runtime.exs always wins over the compile-time files.
+The final value for any key is determined by the last `config :daemon, key: value` call that ran, which means runtime.exs always wins over the compile-time files.
 
 ## Config File Roles
 
@@ -22,7 +22,7 @@ The final value for any key is determined by the last `config :optimal_system_ag
 Base defaults for all environments. Contains every config key with a safe fallback value. Notable settings:
 
 ```elixir
-config :optimal_system_agent,
+config :daemon,
   default_provider: :ollama,
   ollama_url: "http://localhost:11434",
   ollama_model: "qwen2.5:7b",
@@ -43,7 +43,7 @@ Ends with `import_config "#{config_env()}.exs"` which overlays the environment-s
 
 ### `config/dev.exs`
 
-Sets `Logger` level to `:debug`. No other changes — OSA's defaults are already development-friendly.
+Sets `Logger` level to `:debug`. No other changes — Daemon's defaults are already development-friendly.
 
 ### `config/prod.exs`
 
@@ -54,11 +54,11 @@ Sets `Logger` level to `:info`. No other changes — all production tuning goes 
 Reduces pool size, disables LLM calls in the classifier and compactor, uses port 0 (OS-assigned), and generates a random shared secret per test run:
 
 ```elixir
-config :optimal_system_agent, OptimalSystemAgent.Store.Repo, pool_size: 2
-config :optimal_system_agent, classifier_llm_enabled: false
-config :optimal_system_agent, compactor_llm_enabled: false
-config :optimal_system_agent, http_port: 0
-config :optimal_system_agent,
+config :daemon, Daemon.Store.Repo, pool_size: 2
+config :daemon, classifier_llm_enabled: false
+config :daemon, compactor_llm_enabled: false
+config :daemon, http_port: 0
+config :daemon,
   shared_secret: "osa-test-#{:crypto.strong_rand_bytes(16) |> Base.url_encode64(padding: false)}"
 ```
 
@@ -66,7 +66,7 @@ config :optimal_system_agent,
 
 Runs at application start, after compilation. Responsible for:
 
-1. Loading `.env` files from the project root or `~/.osa/.env`
+1. Loading `.env` files from the project root or `~/.daemon/.env`
 2. Auto-detecting the default provider from available API keys
 3. Building the fallback chain (TCP-probing Ollama before including it)
 4. Resolving all env var overrides into application config
@@ -76,8 +76,8 @@ Runs at application start, after compilation. Responsible for:
 `runtime.exs` loads `.env` files in this order, with environment variables already in the shell taking priority:
 
 ```
-~/.osa/.env   (user global)
-.env          (project root, takes priority over ~/.osa/.env)
+~/.daemon/.env   (user global)
+.env          (project root, takes priority over ~/.daemon/.env)
 ```
 
 Only variables not already set in the environment are written. Lines starting with `#` and empty lines are skipped. Values are stripped of surrounding single or double quotes.
@@ -89,7 +89,7 @@ This loading is skipped entirely in test environment to prevent `.env` variables
 `runtime.exs` selects `default_provider` using this precedence:
 
 ```
-OSA_DEFAULT_PROVIDER env var
+DAEMON_DEFAULT_PROVIDER env var
 → ANTHROPIC_API_KEY present  → :anthropic
 → OPENAI_API_KEY present     → :openai
 → GROQ_API_KEY present       → :groq
@@ -107,15 +107,15 @@ ollama_reachable =
   end
 ```
 
-Override the chain manually with `OSA_FALLBACK_CHAIN=anthropic,openai,ollama`.
+Override the chain manually with `DAEMON_FALLBACK_CHAIN=anthropic,openai,ollama`.
 
 ## Reading Config at Runtime
 
 Standard pattern using `Application.get_env/3`:
 
 ```elixir
-max_iter = Application.get_env(:optimal_system_agent, :max_iterations, 30)
-provider  = Application.get_env(:optimal_system_agent, :default_provider, :ollama)
+max_iter = Application.get_env(:daemon, :max_iterations, 30)
+provider  = Application.get_env(:daemon, :default_provider, :ollama)
 ```
 
 The third argument is the default if the key is absent from the application environment.
@@ -123,8 +123,8 @@ The third argument is the default if the key is absent from the application envi
 For hot-reload scenarios, `Application.put_env/3` updates the running process without restart. The onboarding flow uses this to apply a provider switch immediately:
 
 ```elixir
-Application.put_env(:optimal_system_agent, :ollama_url, url)
-Application.put_env(:optimal_system_agent, :ollama_api_key, api_key)
+Application.put_env(:daemon, :ollama_url, url)
+Application.put_env(:daemon, :ollama_api_key, api_key)
 ```
 
 ## persistent_term for Boot-Time Config
@@ -140,8 +140,8 @@ Writing to `:persistent_term` triggers a global GC pass across all processes. On
 ## SQLite Database Config
 
 ```elixir
-config :optimal_system_agent, OptimalSystemAgent.Store.Repo,
-  database: Path.expand("~/.osa/osa.db"),
+config :daemon, Daemon.Store.Repo,
+  database: Path.expand("~/.daemon/osa.db"),
   pool_size: 5,
   journal_mode: :wal,
   custom_pragmas: [encoding: "'UTF-8'", busy_timeout: 5000]
@@ -151,14 +151,14 @@ WAL journal mode allows concurrent reads. `busy_timeout: 5000` prevents writer s
 
 ## Platform PostgreSQL (Optional)
 
-Activated by setting `DATABASE_URL`. When present, `runtime.exs` configures `OptimalSystemAgent.Platform.Repo` and adds it to `ecto_repos`:
+Activated by setting `DATABASE_URL`. When present, `runtime.exs` configures `Daemon.Platform.Repo` and adds it to `ecto_repos`:
 
 ```elixir
 if database_url do
-  config :optimal_system_agent, OptimalSystemAgent.Platform.Repo,
+  config :daemon, Daemon.Platform.Repo,
     url: database_url,
     pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10")
 end
 ```
 
-`platform_enabled: true` is set automatically when `DATABASE_URL` is present. Application code checks `Application.get_env(:optimal_system_agent, :platform_enabled, false)` before using platform features.
+`platform_enabled: true` is set automatically when `DATABASE_URL` is present. Application code checks `Application.get_env(:daemon, :platform_enabled, false)` before using platform features.

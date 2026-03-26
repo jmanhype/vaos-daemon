@@ -1,8 +1,8 @@
 # Creating a Service
 
-Audience: developers adding a new GenServer to the OSA supervision tree.
+Audience: developers adding a new GenServer to the Daemon supervision tree.
 
-A "service" in OSA terms is a supervised GenServer that runs for the lifetime
+A "service" in Daemon terms is a supervised GenServer that runs for the lifetime
 of the application (or a session). This guide covers how to choose the right
 supervisor, implement the GenServer, and wire it into the tree.
 
@@ -10,7 +10,7 @@ supervisor, implement the GenServer, and wire it into the tree.
 
 ## Choose the Right Supervisor
 
-OSA has four subsystem supervisors. Pick the one whose lifecycle and failure
+Daemon has four subsystem supervisors. Pick the one whose lifecycle and failure
 semantics match your service.
 
 | Supervisor | Strategy | Use when |
@@ -31,12 +31,12 @@ list.
 
 ## Define the Module
 
-Create the file in the appropriate subdirectory of `lib/optimal_system_agent/`.
+Create the file in the appropriate subdirectory of `lib/daemon/`.
 Follow the naming convention: `snake_case.ex` for the file,
-`OptimalSystemAgent.YourModule` for the module.
+`Daemon.YourModule` for the module.
 
 ```elixir
-defmodule OptimalSystemAgent.MyService do
+defmodule Daemon.MyService do
   @moduledoc """
   One-sentence summary of what this service does.
 
@@ -134,14 +134,14 @@ Open the supervisor file for the subsystem you chose. Add your module to the
 Example: adding to `AgentServices`:
 
 ```elixir
-# lib/optimal_system_agent/supervisors/agent_services.ex
+# lib/daemon/supervisors/agent_services.ex
 
 children = [
-  OptimalSystemAgent.Agent.Memory,
-  OptimalSystemAgent.Agent.HeartbeatState,
+  Daemon.Agent.Memory,
+  Daemon.Agent.HeartbeatState,
   # ...existing children...
-  OptimalSystemAgent.MyService,   # <-- add here
-  OptimalSystemAgent.Agent.Scheduler,
+  Daemon.MyService,   # <-- add here
+  Daemon.Agent.Scheduler,
   # ...
 ]
 ```
@@ -177,10 +177,10 @@ iex -S mix
 
 ```elixir
 # In IEx
-Process.whereis(OptimalSystemAgent.MyService)
+Process.whereis(Daemon.MyService)
 # => #PID<0.xxx.0>
 
-:sys.get_state(OptimalSystemAgent.MyService)
+:sys.get_state(Daemon.MyService)
 # => %{option: :default}
 ```
 

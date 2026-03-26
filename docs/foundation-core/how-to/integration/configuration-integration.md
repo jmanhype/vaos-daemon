@@ -1,18 +1,18 @@
 # Configuration Integration
 
-Audience: developers who need to read, write, or extend OSA's runtime
+Audience: developers who need to read, write, or extend Daemon's runtime
 configuration from their own code.
 
 ---
 
 ## How Configuration is Loaded
 
-OSA uses standard Elixir/Mix configuration with a layered precedence:
+Daemon uses standard Elixir/Mix configuration with a layered precedence:
 
 ```
 Shell environment variables         (highest priority)
   └── .env in project root
-        └── ~/.osa/.env
+        └── ~/.daemon/.env
               └── config/runtime.exs  (evaluates the above)
                     └── config/config.exs  (compile-time defaults)
                           └── config/dev.exs | prod.exs | test.exs
@@ -20,7 +20,7 @@ Shell environment variables         (highest priority)
 
 `config/runtime.exs` is evaluated at application startup, after the OTP
 release is assembled. It reads environment variables and writes the resolved
-values into the application environment under the `:optimal_system_agent` key.
+values into the application environment under the `:daemon` key.
 
 `.env` files are loaded by `runtime.exs` before provider detection runs. Only
 keys that are not already in the shell environment are written — an explicit
@@ -34,10 +34,10 @@ shell export always wins.
 
 ```elixir
 # Read a value (with default)
-Application.get_env(:optimal_system_agent, :default_provider, :ollama)
+Application.get_env(:daemon, :default_provider, :ollama)
 
 # Read a nested value
-Application.get_env(:optimal_system_agent, :noise_filter_thresholds, %{})
+Application.get_env(:daemon, :noise_filter_thresholds, %{})
 |> Map.get(:definitely_noise, 0.15)
 ```
 
@@ -66,16 +66,16 @@ Application.get_env(:optimal_system_agent, :noise_filter_thresholds, %{})
 ## Environment Variables
 
 All user-facing configuration is driven by environment variables. Setting a
-variable and restarting OSA is the standard way to change configuration.
+variable and restarting Daemon is the standard way to change configuration.
 
 ### Provider and model
 
 ```sh
 # Override provider
-OSA_DEFAULT_PROVIDER=anthropic
+DAEMON_DEFAULT_PROVIDER=anthropic
 
 # Override model (applies to the active provider)
-OSA_MODEL=claude-opus-4-5
+DAEMON_MODEL=claude-opus-4-5
 
 # Provider-specific model overrides
 ANTHROPIC_MODEL=claude-opus-4-5
@@ -86,34 +86,34 @@ GOOGLE_MODEL=gemini-2.0-flash
 ### Budget
 
 ```sh
-OSA_DAILY_BUDGET_USD=25.0
-OSA_MONTHLY_BUDGET_USD=250.0
-OSA_PER_CALL_LIMIT_USD=2.0
+DAEMON_DAILY_BUDGET_USD=25.0
+DAEMON_MONTHLY_BUDGET_USD=250.0
+DAEMON_PER_CALL_LIMIT_USD=2.0
 ```
 
 ### HTTP and auth
 
 ```sh
-OSA_HTTP_PORT=8089
-OSA_REQUIRE_AUTH=true
-OSA_SHARED_SECRET=a-very-long-random-secret
+DAEMON_HTTP_PORT=8089
+DAEMON_REQUIRE_AUTH=true
+DAEMON_SHARED_SECRET=a-very-long-random-secret
 ```
 
 ### Behaviour flags
 
 ```sh
-OSA_PLAN_MODE=true           # Single LLM call per message — no tool loop
-OSA_THINKING_ENABLED=true    # Extended reasoning (Anthropic only)
-OSA_THINKING_BUDGET=10000    # Max tokens for extended reasoning
-OSA_WORKING_DIR=~/projects/myapp  # Default working directory
-OSA_QUIET_HOURS=22-08        # Suppress heartbeat during these hours
+DAEMON_PLAN_MODE=true           # Single LLM call per message — no tool loop
+DAEMON_THINKING_ENABLED=true    # Extended reasoning (Anthropic only)
+DAEMON_THINKING_BUDGET=10000    # Max tokens for extended reasoning
+DAEMON_WORKING_DIR=~/projects/myapp  # Default working directory
+DAEMON_QUIET_HOURS=22-08        # Suppress heartbeat during these hours
 ```
 
 ### Fallback chain
 
 ```sh
 # Override auto-detected fallback order
-OSA_FALLBACK_CHAIN=anthropic,openai,ollama
+DAEMON_FALLBACK_CHAIN=anthropic,openai,ollama
 ```
 
 ### Channel tokens
@@ -140,10 +140,10 @@ JWT_SECRET=shared-secret-with-go-backend
 
 ```elixir
 # Change a value at runtime (takes effect immediately for new reads)
-Application.put_env(:optimal_system_agent, :plan_mode_enabled, true)
+Application.put_env(:daemon, :plan_mode_enabled, true)
 
 # Verify
-Application.get_env(:optimal_system_agent, :plan_mode_enabled)
+Application.get_env(:daemon, :plan_mode_enabled)
 # => true
 ```
 
@@ -155,7 +155,7 @@ the `.env` file and restart.
 ```elixir
 defmodule MyModule do
   defp feature_enabled? do
-    Application.get_env(:optimal_system_agent, :my_feature_enabled, false)
+    Application.get_env(:daemon, :my_feature_enabled, false)
   end
 
   def do_something do
@@ -173,13 +173,13 @@ Enable the feature without a code change:
 ```sh
 # In .env or shell
 MY_FEATURE_ENABLED=true  # read in runtime.exs as:
-# Application.put_env(:optimal_system_agent, :my_feature_enabled, true)
+# Application.put_env(:daemon, :my_feature_enabled, true)
 ```
 
 Or toggle at runtime in IEx:
 
 ```elixir
-Application.put_env(:optimal_system_agent, :my_feature_enabled, true)
+Application.put_env(:daemon, :my_feature_enabled, true)
 ```
 
 ---
@@ -189,14 +189,14 @@ Application.put_env(:optimal_system_agent, :my_feature_enabled, true)
 1. Add the env var read to `config/runtime.exs`:
 
 ```elixir
-config :optimal_system_agent,
+config :daemon,
   my_new_setting: System.get_env("MY_NEW_SETTING") || "default"
 ```
 
 2. Add a compile-time default to `config/config.exs` if needed:
 
 ```elixir
-config :optimal_system_agent,
+config :daemon,
   my_new_setting: "default"
 ```
 
@@ -204,7 +204,7 @@ config :optimal_system_agent,
 
 ```elixir
 defp my_new_setting do
-  Application.get_env(:optimal_system_agent, :my_new_setting, "default")
+  Application.get_env(:daemon, :my_new_setting, "default")
 end
 ```
 

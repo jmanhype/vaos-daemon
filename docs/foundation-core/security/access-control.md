@@ -2,7 +2,7 @@
 
 ## Current State
 
-OSA does not implement role-based access control (RBAC) in its local-first mode. Access control is binary: either all API endpoints are open (dev mode) or all require a valid JWT (enforced mode). There is no per-endpoint or per-resource permission model beyond session ownership.
+Daemon does not implement role-based access control (RBAC) in its local-first mode. Access control is binary: either all API endpoints are open (dev mode) or all require a valid JWT (enforced mode). There is no per-endpoint or per-resource permission model beyond session ownership.
 
 ---
 
@@ -11,7 +11,7 @@ OSA does not implement role-based access control (RBAC) in its local-first mode.
 ### Dev Mode (default)
 
 ```
-OSA_REQUIRE_AUTH=false   # default when env var is absent
+DAEMON_REQUIRE_AUTH=false   # default when env var is absent
 ```
 
 All API endpoints accept requests without credentials. The `authenticate` plug assigns `user_id: "anonymous"` and `workspace_id: nil`. No authorization checks are performed beyond session ownership on SSE streams (and even that check is bypassed for `"anonymous"` users).
@@ -21,12 +21,12 @@ This mode is appropriate for single-user local operation where the HTTP port (de
 ### Enforced Mode
 
 ```
-OSA_REQUIRE_AUTH=true
-OSA_SHARED_SECRET=<secret>
+DAEMON_REQUIRE_AUTH=true
+DAEMON_SHARED_SECRET=<secret>
 ```
 
 Every request (except the bypassed routes below) must carry a valid `Authorization: Bearer <jwt>` header. The JWT must be:
-- Signed with HS256 using the configured `OSA_SHARED_SECRET`
+- Signed with HS256 using the configured `DAEMON_SHARED_SECRET`
 - Not expired (`exp` claim in the future)
 - Contain a `user_id` claim
 
@@ -66,7 +66,7 @@ Sessions created implicitly by `POST /api/v1/orchestrate` (via `Session.ensure_l
 
 ## Platform Multi-Tenant Access Control
 
-When `DATABASE_URL` is configured and `platform_enabled: true`, OSA activates a multi-tenant layer with its own access control:
+When `DATABASE_URL` is configured and `platform_enabled: true`, Daemon activates a multi-tenant layer with its own access control:
 
 **Roles (in `platform_users.role`):**
 - `"user"` — default
@@ -101,7 +101,7 @@ When `require_auth: true`, the Integrity plug enforces HMAC-SHA256 body signing:
 
 This is optional even in enforced mode; it requires clients to implement signing. The Rust TUI does implement signing. External API clients would need to as well.
 
-Fleet endpoints (`/api/v1/fleet/*`) can independently require integrity checks via `OSA_REQUIRE_FLEET_INTEGRITY=true`.
+Fleet endpoints (`/api/v1/fleet/*`) can independently require integrity checks via `DAEMON_REQUIRE_FLEET_INTEGRITY=true`.
 
 ---
 
@@ -123,7 +123,7 @@ Orchestrator sub-agents inherit the tier from the state machine phase. The `Stat
 
 ## Future RBAC Considerations
 
-The current binary auth model is intentional for local-first use. As OSA moves toward hosted multi-tenant deployment, the following RBAC dimensions would need to be added:
+The current binary auth model is intentional for local-first use. As Daemon moves toward hosted multi-tenant deployment, the following RBAC dimensions would need to be added:
 
 1. **Per-endpoint permission scopes** — grant clients the ability to call only `GET /sessions` without being able to `POST /orchestrate/complex`
 2. **Tool allowlist per user** — restrict which tools a given JWT can invoke

@@ -16,11 +16,11 @@ OLLAMA_URL="http://localhost:11434"    # Default
 OLLAMA_MODEL="llama3.2:latest"        # Default
 ```
 
-OSA falls back to Ollama when no cloud API keys are configured.
+Daemon falls back to Ollama when no cloud API keys are configured.
 
 ## Tool Gating
 
-OSA only sends tool definitions to Ollama models that meet BOTH criteria:
+Daemon only sends tool definitions to Ollama models that meet BOTH criteria:
 1. Model size >= 7GB
 2. Model matches known tool-capable prefix (llama3, qwen2, mistral, etc.)
 
@@ -28,7 +28,7 @@ Small models get NO tools — this prevents hallucinated tool calls.
 
 ## Auto-Detection
 
-At boot, OSA queries `ollama list` and selects the **largest tool-capable model** automatically.
+At boot, Daemon queries `ollama list` and selects the **largest tool-capable model** automatically.
 
 ## Recommended Models
 

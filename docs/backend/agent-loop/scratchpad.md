@@ -2,7 +2,7 @@
 
 Provider-agnostic thinking support. Gives non-Anthropic LLMs a private reasoning space equivalent to Anthropic's native extended thinking.
 
-**Module:** `OptimalSystemAgent.Agent.Scratchpad`
+**Module:** `Daemon.Agent.Scratchpad`
 
 ---
 
@@ -17,7 +17,7 @@ The gate is `Scratchpad.inject?/1`:
 
 ```elixir
 def inject?(provider) do
-  enabled = Application.get_env(:optimal_system_agent, :scratchpad_enabled, true)
+  enabled = Application.get_env(:daemon, :scratchpad_enabled, true)
   enabled and provider != :anthropic
 end
 ```

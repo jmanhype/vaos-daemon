@@ -1,6 +1,6 @@
 # Real-Time Events: SSE and WebSocket (Planned)
 
-OSA uses Server-Sent Events (SSE) for streaming agent responses today. This document describes the planned extension of that event stream to cover knowledge graph changes, agent activity, and system-level signals — enabling live-updating frontends without polling.
+Daemon uses Server-Sent Events (SSE) for streaming agent responses today. This document describes the planned extension of that event stream to cover knowledge graph changes, agent activity, and system-level signals — enabling live-updating frontends without polling.
 
 This is a design document. The full event taxonomy described here is planned, not fully implemented as of March 2026.
 

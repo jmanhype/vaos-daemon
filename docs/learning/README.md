@@ -1,11 +1,11 @@
-# New to OSA's Tech Stack? Start Here.
+# New to Daemon's Tech Stack? Start Here.
 
-OSA is built on a stack of technologies that are powerful but unfamiliar to most
+Daemon is built on a stack of technologies that are powerful but unfamiliar to most
 developers coming from Python, JavaScript, or other mainstream ecosystems. This
 section exists to change that.
 
-You do not need to be an Elixir expert to use OSA. But understanding the
-fundamentals of how OSA works will help you configure it correctly, debug it
+You do not need to be an Elixir expert to use Daemon. But understanding the
+fundamentals of how Daemon works will help you configure it correctly, debug it
 when something goes wrong, and extend it when you need to.
 
 These guides are written for people who have never used Elixir, OTP, or the BEAM
@@ -29,47 +29,47 @@ the previous one.
 
 - **[supervision-trees.md](./supervision-trees.md)** — Understanding Supervision Trees
 
-  How OSA organizes its processes into a hierarchy that self-heals. Covers
-  restart strategies and walks through OSA's actual four-subsystem tree.
+  How Daemon organizes its processes into a hierarchy that self-heals. Covers
+  restart strategies and walks through Daemon's actual four-subsystem tree.
 
 ### 2. Storage and Speed
 
 - **[ets-and-persistent-term.md](./ets-and-persistent-term.md)** — Understanding ETS and persistent_term
 
-  How OSA stores and retrieves data at microsecond speed without a database.
-  Explains ETS tables, persistent_term, and when OSA uses each.
+  How Daemon stores and retrieves data at microsecond speed without a database.
+  Explains ETS tables, persistent_term, and when Daemon uses each.
 
 ### 3. Event Routing
 
-- **[goldrush-events.md](./goldrush-events.md)** — What is goldrush and Why OSA Uses It
+- **[goldrush-events.md](./goldrush-events.md)** — What is goldrush and Why Daemon Uses It
 
-  How OSA routes events, tool calls, and provider requests at BEAM instruction
+  How Daemon routes events, tool calls, and provider requests at BEAM instruction
   speed using a compiled event dispatch library.
 
 ### 4. Intelligence Layer
 
 - **[signal-theory-explained.md](./signal-theory-explained.md)** — Understanding Signal Theory
 
-  OSA classifies every incoming message into a 5-tuple before deciding how to
+  Daemon classifies every incoming message into a 5-tuple before deciding how to
   handle it. This guide explains why, and what each dimension means.
 
 - **[react-pattern.md](./react-pattern.md)** — The ReAct Pattern: How AI Agents Reason
 
-  The core loop that drives OSA's intelligence: Observe, Think, Act, repeat.
+  The core loop that drives Daemon's intelligence: Observe, Think, Act, repeat.
   Explains how the agent decides what to do and when to stop.
 
 ### 5. Providers and Models
 
-- **[llm-providers.md](./llm-providers.md)** — How OSA Talks to AI Models
+- **[llm-providers.md](./llm-providers.md)** — How Daemon Talks to AI Models
 
-  The 18 LLM providers OSA supports, how provider abstraction works, fallback
+  The 18 LLM providers Daemon supports, how provider abstraction works, fallback
   chains, local models with Ollama, and how tool calling and streaming work.
 
 ### 6. The Desktop App
 
 - **[tauri-sveltekit.md](./tauri-sveltekit.md)** — Understanding the Desktop App Stack
 
-  How OSA's desktop application works: Tauri (Rust shell), SvelteKit (web UI),
+  How Daemon's desktop application works: Tauri (Rust shell), SvelteKit (web UI),
   and the Elixir backend running as a sidecar process.
 
 ---

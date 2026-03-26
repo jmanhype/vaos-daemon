@@ -1,6 +1,6 @@
 # Taxonomy and Injector
 
-The taxonomy system classifies memory entries into categories and scopes, enabling the injector to filter and rank entries precisely for each LLM prompt context. Both modules are planned additions to `miosa_memory`; OSA's alias modules (`Agent.Memory.Taxonomy`, `Agent.Memory.Injector`) define the stable interface.
+The taxonomy system classifies memory entries into categories and scopes, enabling the injector to filter and rank entries precisely for each LLM prompt context. Both modules are planned additions to `miosa_memory`; Daemon's alias modules (`Agent.Memory.Taxonomy`, `Agent.Memory.Injector`) define the stable interface.
 
 ## Taxonomy Entry
 
@@ -47,7 +47,7 @@ Scope is resolved at write time by `Taxonomy.new/2` using cues from the entry co
 ## Taxonomy API
 
 ```elixir
-alias OptimalSystemAgent.Agent.Memory.Taxonomy
+alias Daemon.Agent.Memory.Taxonomy
 
 # Create a new classified entry
 entry = Taxonomy.new("Always use parameterized queries",
@@ -79,7 +79,7 @@ updated = Taxonomy.touch(entry)
 
 ## Injector
 
-`MiosaMemory.Injector` (aliased as `OptimalSystemAgent.Agent.Memory.Injector`) takes a filtered set of taxonomy entries and formats them for insertion into an LLM prompt.
+`MiosaMemory.Injector` (aliased as `Daemon.Agent.Memory.Injector`) takes a filtered set of taxonomy entries and formats them for insertion into an LLM prompt.
 
 ### Injection Context
 
@@ -89,7 +89,7 @@ The `injection_context` struct carries the current session state used to filter 
 # MiosaMemory.Injector.injection_context()
 %{
   session_id:   "sess-abc123",
-  working_dir:  "/Users/rhl/projects/OptimalSystemAgent",
+  working_dir:  "/Users/rhl/projects/Daemon",
   current_query: "How do I configure the connection pool?",
   token_budget: 2000
 }
@@ -98,7 +98,7 @@ The `injection_context` struct carries the current session state used to filter 
 ### Injection API
 
 ```elixir
-alias OptimalSystemAgent.Agent.Memory.Injector
+alias Daemon.Agent.Memory.Injector
 
 # Filter entries relevant to the current context, respecting scope and budget
 filtered = Injector.inject_relevant(entries, injection_context)

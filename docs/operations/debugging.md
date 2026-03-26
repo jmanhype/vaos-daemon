@@ -1,6 +1,6 @@
 # Debugging Journal
 
-Post-mortems for every significant bug fixed in OSA. Each entry documents the symptom, root cause chain, fix, and the lesson so we never debug the same thing twice.
+Post-mortems for every significant bug fixed in Daemon. Each entry documents the symptom, root cause chain, fix, and the lesson so we never debug the same thing twice.
 
 ---
 
@@ -22,7 +22,7 @@ Post-mortems for every significant bug fixed in OSA. Each entry documents the sy
 
 ### Symptom
 
-Every line typed in `mix osa.chat` appeared **twice**. Pressing Enter on an empty line produced duplicate `❯` prompts. Output like "goodbye" also doubled.
+Every line typed in `mix daemon.chat` appeared **twice**. Pressing Enter on an empty line produced duplicate `❯` prompts. Output like "goodbye" also doubled.
 
 ```
 ❯ Hello
@@ -128,7 +128,7 @@ end
 `skip_compilation?` in `nif.ex` defaulted to `false`:
 
 ```elixir
-skip_compilation?: System.get_env("OSA_SKIP_NIF", "false") == "true"
+skip_compilation?: System.get_env("DAEMON_SKIP_NIF", "false") == "true"
 ```
 
 This forced Rust NIF compilation even though every NIF function has a pure-Elixir fallback (`safe_count_tokens/1`, `safe_calculate_weight/1`, `safe_word_count/1`).
@@ -138,7 +138,7 @@ This forced Rust NIF compilation even though every NIF function has a pure-Elixi
 Inverted the default — NIF compilation is now opt-in:
 
 ```elixir
-skip_compilation?: System.get_env("OSA_SKIP_NIF", "true") != "false"
+skip_compilation?: System.get_env("DAEMON_SKIP_NIF", "true") != "false"
 ```
 
 ### Lesson

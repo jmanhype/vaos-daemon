@@ -1,7 +1,7 @@
 # Module Structure
 
-OSA contains 853 Elixir source files totaling approximately 82K lines of Elixir code across
-`lib/`. The main application logic lives under `lib/optimal_system_agent/`. Supporting libraries
+Daemon contains 853 Elixir source files totaling approximately 82K lines of Elixir code across
+`lib/`. The main application logic lives under `lib/daemon/`. Supporting libraries
 live under `lib/miosa/` (memory shims) and `lib/osa_sdk.ex` (public SDK entry point).
 
 ---
@@ -10,7 +10,7 @@ live under `lib/miosa/` (memory shims) and `lib/osa_sdk.ex` (public SDK entry po
 
 ```
 lib/
-├── optimal_system_agent/        # Main application (853 .ex files, ~82K lines)
+├── daemon/        # Main application (853 .ex files, ~82K lines)
 │   ├── agent/                   # Core reasoning loop (73 files, ~22K lines)
 │   ├── channels/                # I/O adapters (51 files, ~12K lines)
 │   ├── tools/                   # Built-in tool modules (56 files, ~13K lines)
@@ -52,7 +52,7 @@ lib/
 
 ## agent/ — Core Reasoning Loop (73 files, ~22K lines)
 
-The heart of OSA. Every agent session runs as an `Agent.Loop` GenServer. The loop coordinates
+The heart of Daemon. Every agent session runs as an `Agent.Loop` GenServer. The loop coordinates
 context building, LLM calls, tool execution, and memory persistence.
 
 ### Top-level agent modules
@@ -189,7 +189,7 @@ The HTTP channel is the primary API surface for the SDK and Command Center. It i
 - REST endpoints for session creation, message submission, and status queries
 - SSE endpoints for streaming agent responses
 - WebSocket support for real-time bidirectional communication
-- The `ask_user_question` survey endpoint (writes to `:osa_survey_answers` ETS)
+- The `ask_user_question` survey endpoint (writes to `:daemon_survey_answers` ETS)
 
 ---
 
@@ -317,7 +317,7 @@ contract. `MiosaProviders.Registry` routes calls to the active provider.
 ## commands/ — Slash Commands (12 files, ~3K lines)
 
 Each command module handles a specific slash command. The `Commands` GenServer discovers and
-registers these at boot, alongside user-defined markdown commands from `~/.osa/commands/`.
+registers these at boot, alongside user-defined markdown commands from `~/.daemon/commands/`.
 
 | File | Command | Purpose |
 |---|---|---|
@@ -411,7 +411,7 @@ registers these at boot, alongside user-defined markdown commands from `~/.osa/c
 
 ## Naming Conventions
 
-- Module names use the `OptimalSystemAgent.*` namespace for all application code.
+- Module names use the `Daemon.*` namespace for all application code.
 - External library modules use their own namespace (`MiosaLLM`, `MiosaProviders`, `MiosaBudget`,
   `MiosaKnowledge`, `MiosaSignal`).
 - All GenServer modules follow the pattern: `use GenServer`, named `__MODULE__` in `start_link/1`.

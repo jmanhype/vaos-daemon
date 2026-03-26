@@ -12,7 +12,7 @@
 TELEGRAM_BOT_TOKEN="123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
 ```
 
-4. Restart OSA — Telegram auto-connects
+4. Restart Daemon — Telegram auto-connects
 
 ## How It Works
 

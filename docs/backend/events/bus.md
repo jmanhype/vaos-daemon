@@ -1,6 +1,6 @@
 # Events: Bus
 
-The event bus is the central nervous system of OSA. It routes typed events between the agent loop, tools, channels, orchestration, memory, and external integrations using Goldrush-compiled BEAM bytecode for zero-overhead dispatch.
+The event bus is the central nervous system of Daemon. It routes typed events between the agent loop, tools, channels, orchestration, memory, and external integrations using Goldrush-compiled BEAM bytecode for zero-overhead dispatch.
 
 ---
 
@@ -11,7 +11,7 @@ Bus.emit(:event_type, payload)
   -> Event.new/4          builds typed Event struct (UUID, timestamp, Signal Theory dims)
   -> Classifier.auto_classify   fills signal_mode/genre/type if not explicit
   -> :gre.make/2          wraps as goldrush event proplist
-  -> TaskSupervisor child  dispatches to :osa_event_router (never blocks caller)
+  -> TaskSupervisor child  dispatches to :daemon_event_router (never blocks caller)
      -> :glc.handle/2     compiled filter matches by type
         -> dispatch_event/1   ETS lookup -> handler calls
            -> TaskSupervisor child per handler  (isolated: crash = DLQ)
@@ -24,7 +24,7 @@ The caller of `Bus.emit/3` is never blocked. Dispatch runs in a supervised Task.
 
 ## Goldrush Compilation
 
-The router module `:osa_event_router` is compiled once at `Bus.init/1` using `glc:compile/2`. This compiles event type predicates into real BEAM bytecode — routing at BEAM instruction speed with no hash lookups or runtime pattern matching.
+The router module `:daemon_event_router` is compiled once at `Bus.init/1` using `glc:compile/2`. This compiles event type predicates into real BEAM bytecode — routing at BEAM instruction speed with no hash lookups or runtime pattern matching.
 
 The compiled module handles type-filtering only. Handler dispatch remains dynamic via ETS lookup in `dispatch_event/1`. The router is **never recompiled after init** to prevent a TOCTOU race with `gr_param`'s ETS table while in-flight tasks hold references to old bytecode.
 
@@ -90,7 +90,7 @@ Emits an `:algedonic_alert` event — an urgent bypass signal in Beer's VSM mode
 Bus.register_handler(event_type, handler_fn) :: reference()
 ```
 
-Registers a `(payload -> any())` handler for `event_type`. Returns a `ref` for later unregistration. Handlers are stored in ETS table `:osa_event_handlers` as `{event_type, ref, fn}`.
+Registers a `(payload -> any())` handler for `event_type`. Returns a `ref` for later unregistration. Handlers are stored in ETS table `:daemon_event_handlers` as `{event_type, ref, fn}`.
 
 ### `Bus.unregister_handler/2`
 
@@ -142,7 +142,7 @@ Failure modes correspond to the 11 failure types in Signal Theory (routing failu
 
 Per-session circular buffer with pub/sub for live subscribers.
 
-Each session gets its own `Stream` GenServer registered in `OptimalSystemAgent.EventStreamRegistry`. The Bus calls `Stream.append/2` automatically for any event that has a `session_id`.
+Each session gets its own `Stream` GenServer registered in `Daemon.EventStreamRegistry`. The Bus calls `Stream.append/2` automatically for any event that has a `session_id`.
 
 **Buffer:** Fixed capacity of 1 000 events (FIFO drop of oldest on overflow).
 
@@ -162,7 +162,7 @@ Each session gets its own `Stream` GenServer registered in `OptimalSystemAgent.E
 
 ## Event Struct
 
-`OptimalSystemAgent.Events.Event` is a backward-compatibility shim over `MiosaSignal.Event`. The struct fields are:
+`Daemon.Events.Event` is a backward-compatibility shim over `MiosaSignal.Event`. The struct fields are:
 
 | Field | CloudEvents | Description |
 |-------|-------------|-------------|

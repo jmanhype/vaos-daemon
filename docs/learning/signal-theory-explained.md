@@ -1,7 +1,7 @@
 # Understanding Signal Theory
 
-Signal Theory is OSA's approach to classifying messages before deciding how to
-handle them. It is one of the ideas that makes OSA different from a simple
+Signal Theory is Daemon's approach to classifying messages before deciding how to
+handle them. It is one of the ideas that makes Daemon different from a simple
 LLM wrapper.
 
 ---
@@ -29,14 +29,14 @@ Signal Theory says: **classify the message first, then route it**.
 
 ## The 5-Tuple: S = (Mode, Genre, Type, Weight, Format)
 
-Every incoming message in OSA is classified into five dimensions. Together they
+Every incoming message in Daemon is classified into five dimensions. Together they
 form a signal:
 
 ```
 S = (Mode, Genre, Type, Weight, Format)
 ```
 
-Think of this as a diagnostic label that tells OSA what to do with a message
+Think of this as a diagnostic label that tells Daemon what to do with a message
 before any LLM reasoning begins.
 
 ---
@@ -98,7 +98,7 @@ Type is a more specific classification within genre and mode:
 | `report` | Providing status or results |
 | `general` | None of the above |
 
-Type helps OSA select the right response style and tools. An `issue` type message
+Type helps Daemon select the right response style and tools. An `issue` type message
 might trigger the debugging reasoning strategy. A `scheduling` type message routes
 to the scheduler subsystem.
 
@@ -117,7 +117,7 @@ urgency of the message.
 | 0.7–0.9 | High | Complex tasks, multi-part requests, technical content |
 | 0.9–1.0 | Critical | Urgent issues, emergencies, production problems |
 
-Weight is the most operationally significant dimension. OSA uses it to:
+Weight is the most operationally significant dimension. Daemon uses it to:
 
 - **Skip tool loading** for low-weight messages (weight < 0.3 means the message
   is probably noise; loading all available tools for a greeting wastes tokens).
@@ -140,7 +140,7 @@ it arrived from:
 | `notification` | Webhook — programmatic triggers |
 | `document` | Filesystem — file-based input |
 
-Format helps OSA adapt its response style to the communication medium. A CLI
+Format helps Daemon adapt its response style to the communication medium. A CLI
 command gets a precise, structured response. A chat message gets a conversational
 reply. A document gets a document back.
 
@@ -148,7 +148,7 @@ reply. A document gets a document back.
 
 ## How Classification Works
 
-OSA classifies messages using two approaches in sequence:
+Daemon classifies messages using two approaches in sequence:
 
 **1. Fast deterministic classification** (always runs, < 1ms, `confidence: :low`)
 
@@ -173,7 +173,7 @@ the signal when it arrives and is emitted as a `signal_classified` event.
 
 ## Real Examples with Weight Scores
 
-These are examples of how OSA classifies actual messages:
+These are examples of how Daemon classifies actual messages:
 
 ```
 "ok"
@@ -216,7 +216,7 @@ Token savings come from two places:
    from the context saves hundreds of tokens per message.
 
 2. **Genre routing can skip the LLM entirely**: An `EXPRESS` genre message with
-   weight < 0.2 is noise. OSA can respond with a canned acknowledgment without
+   weight < 0.2 is noise. Daemon can respond with a canned acknowledgment without
    an LLM call at all.
 
 Accuracy improves because the reasoning strategy matches the message type. A
@@ -234,13 +234,13 @@ Signal Theory is formally defined in:
 > Luna, R. (2026). *Signal Theory: The Architecture of Optimal Intent Encoding
 > in Communication Systems*. Zenodo. https://zenodo.org/records/18774174
 
-OSA's implementation lives in `MiosaSignal` (the canonical library) and
-`OptimalSystemAgent.Signal.Classifier` (the OSA-wired wrapper that injects the
+Daemon's implementation lives in `MiosaSignal` (the canonical library) and
+`Daemon.Signal.Classifier` (the Daemon-wired wrapper that injects the
 event bus and LLM provider into the classification pipeline).
 
 ---
 
 ## Next Steps
 
-Read [react-pattern.md](./react-pattern.md) to see how OSA uses the signal
+Read [react-pattern.md](./react-pattern.md) to see how Daemon uses the signal
 classification to select a reasoning strategy and drive the agent loop.

@@ -2,7 +2,7 @@
 
 ## Overview
 
-This diagram shows the dependency relationships between OSA's major module
+This diagram shows the dependency relationships between Daemon's major module
 groups. Arrows represent "depends on" (calls into). Infrastructure components
 sit at the bottom; extension leaf nodes sit at the top.
 
@@ -28,7 +28,7 @@ graph TD
     end
 
     subgraph Providers["Providers"]
-        ProvidersReg["Providers.Registry\n(goldrush :osa_provider_router)"]
+        ProvidersReg["Providers.Registry\n(goldrush :daemon_provider_router)"]
         HealthChecker["Providers.HealthChecker\n(MiosaLLM.HealthChecker)"]
         Anthropic["Providers.Anthropic"]
         OpenAICompat["Providers.OpenAICompat"]
@@ -36,7 +36,7 @@ graph TD
     end
 
     subgraph ToolsGroup["Tools"]
-        ToolsReg["Tools.Registry\n(goldrush :osa_tool_dispatcher)"]
+        ToolsReg["Tools.Registry\n(goldrush :daemon_tool_dispatcher)"]
         ToolsCache["Tools.Cache"]
         MCPClient["MCP.Client"]
     end
@@ -55,7 +55,7 @@ graph TD
     end
 
     subgraph Infrastructure["Infrastructure"]
-        EventsBus["Events.Bus\n(goldrush :osa_event_router)"]
+        EventsBus["Events.Bus\n(goldrush :daemon_event_router)"]
         DLQ["Events.DLQ"]
         StoreRepo["Store.Repo\n(SQLite WAL)"]
         PubSub["Phoenix.PubSub"]
@@ -174,8 +174,8 @@ these rules are architectural defects and require an ADR to justify.
 
 The `Miosa*` namespace modules in `lib/miosa/shims.ex` are transparent
 forwarding aliases. They do not appear as separate nodes in the dependency
-graph because they add no logic — they delegate to `OptimalSystemAgent.*`
+graph because they add no logic — they delegate to `Daemon.*`
 implementations directly.
 
 For the purposes of dependency analysis, `MiosaLLM.HealthChecker` and
-`OptimalSystemAgent.Providers.HealthChecker` are the same module.
+`Daemon.Providers.HealthChecker` are the same module.
