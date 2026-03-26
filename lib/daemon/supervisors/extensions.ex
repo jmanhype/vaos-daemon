@@ -31,7 +31,8 @@ defmodule Daemon.Supervisors.Extensions do
       wallet_children() ++
       updater_children() ++
       amqp_children() ++
-      production_children()
+      production_children() ++
+      receipt_children()
 
     Supervisor.init(children, strategy: :one_for_one)
   end
@@ -171,6 +172,16 @@ defmodule Daemon.Supervisors.Extensions do
     if Application.get_env(:daemon, :amqp_url) do
       Logger.info("[Extensions] AMQP enabled — starting Platform.AMQP publisher")
       [Daemon.Platform.AMQP]
+    else
+      []
+    end
+  end
+
+  # Receipt emission — opt-in via VAS_SWARM_ENABLED=true
+  defp receipt_children do
+    if Application.get_env(:daemon, :vas_swarm_enabled, false) do
+      Logger.info("[Extensions] Receipt Emitter enabled — starting Daemon.Receipt.Emitter")
+      [Daemon.Receipt.Emitter]
     else
       []
     end

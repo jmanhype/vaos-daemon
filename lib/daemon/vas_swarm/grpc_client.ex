@@ -341,7 +341,30 @@ defmodule Daemon.VasSwarm.GrpcClient do
   end
 
   def handle_call({:confirm_audit, audit}, _from, %{connected: false} = state) do
-    {:reply, {:error, :not_connected}, state}
+    # HTTP fallback — mirrors request_token HTTP fallback pattern
+    kernel_http = System.get_env("VAOS_KERNEL_HTTP_URL") || "http://localhost:8080"
+    Logger.debug("[GrpcClient] gRPC not connected, using HTTP fallback for audit confirmation")
+
+    body = Jason.encode!(build_audit_confirmation(audit))
+
+    case Req.post("#{kernel_http}/api/audit",
+           body: body,
+           headers: [{"content-type", "application/json"}],
+           receive_timeout: 5_000
+         ) do
+      {:ok, %{status: 200, body: %{"confirmed" => true} = resp}} ->
+        Logger.info("[GrpcClient] Audit confirmed via HTTP (audit_id: #{resp["audit_id"]})")
+        {:reply, {:ok, %{audit_id: resp["audit_id"], confirmed: true}}, state}
+
+      {:ok, %{status: status, body: resp_body}} ->
+        error_msg = if is_map(resp_body), do: resp_body["error"] || "unknown", else: "status #{status}"
+        Logger.warning("[GrpcClient] Kernel HTTP audit confirmation failed: #{error_msg}")
+        {:reply, {:error, {:kernel_error, error_msg}}, state}
+
+      {:error, reason} ->
+        Logger.warning("[GrpcClient] Kernel HTTP unreachable for audit: #{inspect(reason)}")
+        {:reply, {:error, :not_connected}, state}
+    end
   end
 
   def handle_call({:confirm_audit, audit}, _from, %{stub: stub} = state) do

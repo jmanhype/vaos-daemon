@@ -117,6 +117,14 @@ defmodule Daemon.Agent.Loop.ToolExecutor do
 
     run_hooks_async(:post_tool_use, post_payload)
 
+    # Emit audit receipt to kernel (fire-and-forget, never crashes tool execution)
+    try do
+      bundle = Daemon.Receipt.Bundle.from_tool_call(tool_call, post_payload)
+      Daemon.Receipt.Emitter.emit_async(bundle)
+    catch
+      _, _ -> :ok
+    end
+
     Bus.emit(:tool_call, %{
       name: tool_call.name,
       phase: :end,

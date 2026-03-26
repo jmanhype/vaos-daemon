@@ -500,7 +500,7 @@ Known failure patterns to avoid:
     topic_id = "investigate:" <> short_hash(topic)
     claim_id = claim.id
 
-    json_result = Jason.encode!(%{
+    json_metadata = %{
       topic: topic,
       claim_id: claim_id,
       direction: direction,
@@ -557,7 +557,16 @@ Known failure patterns to avoid:
       rescue
         _ -> []
       end
-    })
+    }
+    json_result = Jason.encode!(json_metadata)
+
+    # Emit audit receipt to kernel (fire-and-forget, never crashes investigation)
+    try do
+      bundle = Daemon.Receipt.Bundle.from_investigation(json_metadata)
+      Daemon.Receipt.Emitter.emit_async(bundle)
+    catch
+      _, _ -> :ok
+    end
 
     triples = [
       {topic_id, "rdf:type", "vaos:Investigation"},
