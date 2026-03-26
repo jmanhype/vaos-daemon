@@ -85,6 +85,22 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
       assert DecisionLedger.derive_context("web_search", "elixir genserver") == "web"
     end
 
+    test "dedicated git tool → git" do
+      assert DecisionLedger.derive_context("git", "operation, path") == "git"
+    end
+
+    test "file_read + absolute lib/ path → lib/" do
+      assert DecisionLedger.derive_context("file_read", "/Users/speed/Projects/vaos-daemon/lib/daemon/agent.ex") == "lib/"
+    end
+
+    test "file_edit + absolute test/ path → test/" do
+      assert DecisionLedger.derive_context("file_edit", "/home/user/project/test/some_test.exs") == "test/"
+    end
+
+    test "file_read + config/ path → config/" do
+      assert DecisionLedger.derive_context("file_read", "config/runtime.exs") == "config/"
+    end
+
     test "unknown tool → general" do
       assert DecisionLedger.derive_context("custom_tool", "some args") == "general"
     end

@@ -36,6 +36,9 @@ defmodule Daemon.Intelligence.DecisionLedger do
   # Tools that read/write knowledge or memory — excluded to prevent feedback loops
   @meta_tools ~w(knowledge memory_recall memory_save knowledge_query knowledge_assert)
 
+  # File-oriented tools for context derivation
+  @file_tools ~w(file_read file_edit file_write file_glob file_grep dir_list)
+
   # ── Public API (all read from ETS — no GenServer bottleneck) ───────────────
 
   @doc "List patterns with at least `min_observations` total observations, sorted by count desc."
@@ -183,16 +186,25 @@ defmodule Daemon.Intelligence.DecisionLedger do
     args = args_hint || ""
 
     cond do
+      # Dedicated git tool (arg hint is key names like "operation, path")
+      tool_name == "git" -> "git"
       tool_name == "shell_execute" and String.starts_with?(args, "git ") -> "git"
       tool_name == "shell_execute" and String.starts_with?(args, "mix ") -> "mix"
       tool_name == "shell_execute" and String.starts_with?(args, "npm ") -> "npm"
       tool_name == "shell_execute" and String.starts_with?(args, "docker ") -> "docker"
-      tool_name in ~w(file_read file_edit file_write file_glob file_grep dir_list) and String.starts_with?(args, "lib/") -> "lib/"
-      tool_name in ~w(file_read file_edit file_write file_glob file_grep dir_list) and String.starts_with?(args, "test/") -> "test/"
+      # File tools: match both relative (lib/foo.ex) and absolute (/home/.../lib/foo.ex) paths
+      tool_name in @file_tools and path_contains?(args, "/lib/") -> "lib/"
+      tool_name in @file_tools and path_contains?(args, "/test/") -> "test/"
+      tool_name in @file_tools and path_contains?(args, "/config/") -> "config/"
       tool_name == "investigate" -> "research"
       tool_name in ~w(web_fetch web_search) -> "web"
       true -> "general"
     end
+  end
+
+  # Match both "lib/foo.ex" (relative prefix) and "/Users/.../lib/foo.ex" (absolute contains)
+  defp path_contains?(path, segment) do
+    String.starts_with?(path, String.trim_leading(segment, "/")) or String.contains?(path, segment)
   end
 
   # ── GenServer lifecycle ────────────────────────────────────────────────────
