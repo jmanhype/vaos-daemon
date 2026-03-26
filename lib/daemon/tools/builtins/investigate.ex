@@ -41,6 +41,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
   alias Vaos.Ledger.Epistemic.Policy
   alias Vaos.Ledger.Research.Pipeline
   alias Vaos.Ledger.ML.CrashLearner
+  alias Daemon.Investigation.{Strategy, Optimizer, Receipt}
 
   @ledger_path Path.join(System.user_home!(), ".openclaw/investigate_ledger.json")
   @ledger_name :investigate_ledger
@@ -55,7 +56,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
   # AEC Two-Store Architecture (arxiv.org/abs/2602.03974)
   # Grounded store: high-quality sources that can determine the verdict
   # Belief store: low-quality sources for context only (cannot flip direction)
-  @grounded_threshold 0.4
+  # Threshold is now configurable via Strategy.grounded_threshold (default: 0.4)
 
   # Word-boundary patterns to avoid false positives on common words like "cell", "nature", "science"
   @high_quality_pattern_sources [
@@ -397,10 +398,33 @@ Known failure patterns to avoid:
     verified_supporting = verify_citations(supporting_raw, paper_map)
     verified_opposing = verify_citations(opposing_raw, paper_map)
 
+    # 9.5 Build probe context for MCTS optimization
+    probe_ctx = %{
+      papers: all_papers,
+      paper_map: paper_map,
+      verified_supporting: verified_supporting,
+      verified_opposing: verified_opposing,
+      topic: topic
+    }
+
+    # 9.6 MCTS optimization — searches over scoring params using EIG as reward
+    # Feature-flagged: off by default for safe rollout
+    {strategy, optimization_receipt} =
+      if Application.get_env(:daemon, :investigate_optimizer_enabled, false) do
+        Optimizer.optimize(probe_ctx)
+      else
+        {Strategy.default(), nil}
+      end
+
+    # 9.7 Re-score evidence with winning strategy's hierarchy weights
+    verified_supporting = rescore_evidence(verified_supporting, strategy)
+    verified_opposing = rescore_evidence(verified_opposing, strategy)
+
     # 9a. AEC TWO-STORE CLASSIFICATION (arxiv.org/abs/2602.03974)
     # Split into grounded (high-quality, determines verdict) and belief (context only)
-    classified_supporting = classify_evidence_store(verified_supporting, paper_map)
-    classified_opposing = classify_evidence_store(verified_opposing, paper_map)
+    # Uses strategy's grounded_threshold and citation/publisher weights
+    classified_supporting = classify_evidence_store(verified_supporting, paper_map, strategy)
+    classified_opposing = classify_evidence_store(verified_opposing, paper_map, strategy)
 
     grounded_for = Enum.filter(classified_supporting, & &1.evidence_store == :grounded)
     grounded_against = Enum.filter(classified_opposing, & &1.evidence_store == :grounded)
@@ -411,6 +435,7 @@ Known failure patterns to avoid:
     belief_against_count = length(classified_opposing) - grounded_against_count
 
     # 10. Compute direction from GROUNDED evidence only (AEC commitment gating)
+    # Uses strategy's direction_ratio and belief_fallback_ratio
     verified_for = Enum.count(classified_supporting, & &1.verified)
     verified_against = Enum.count(classified_opposing, & &1.verified)
 
@@ -429,8 +454,8 @@ Known failure patterns to avoid:
       # Both stores have grounded evidence — use grounded scores
       grounded_for_score > 0 and grounded_against_score > 0 ->
         cond do
-          grounded_for_score > grounded_against_score * 1.3 -> "supporting"
-          grounded_against_score > grounded_for_score * 1.3 -> "opposing"
+          grounded_for_score > grounded_against_score * strategy.direction_ratio -> "supporting"
+          grounded_against_score > grounded_for_score * strategy.direction_ratio -> "opposing"
           true -> "genuinely_contested"
         end
 
@@ -445,9 +470,9 @@ Known failure patterns to avoid:
       # when source quality thresholds filter out all papers
       for_total == 0 and against_total == 0 ->
         "insufficient_evidence"
-      against_total > for_total * 1.5 ->
+      against_total > for_total * strategy.belief_fallback_ratio ->
         "belief_consensus_against"
-      for_total > against_total * 1.5 ->
+      for_total > against_total * strategy.belief_fallback_ratio ->
         "belief_consensus_for"
       true ->
         "belief_contested"
@@ -547,6 +572,7 @@ Known failure patterns to avoid:
           source: p["source"] || "unknown"}
       end),
       investigation_id: topic_id,
+      optimization: if(optimization_receipt, do: Receipt.to_map(optimization_receipt), else: nil),
       suggested_next: try do
         Policy.rank_actions(@ledger_name, limit: 3)
         |> Enum.map(fn a ->
@@ -681,6 +707,7 @@ Known failure patterns to avoid:
       (if prior_evidence != [], do: "\n### Prior Evidence (related topics)\n" <> Enum.join(prior_evidence, "\n") <> "\n", else: "") <>
       deep_note <>
       iteration_note <>
+      format_optimization_note(optimization_receipt) <>
       "\n### Keywords\n  " <> Enum.join(keywords, ", ") <> "\n\n" <>
       "*Claim ID: #{claim_id} -- stored in knowledge graph as #{topic_id}*" <>
       "\n\n<!-- VAOS_JSON:#{json_result} -->"
@@ -824,6 +851,10 @@ Known failure patterns to avoid:
   # -- Evidence hierarchy scoring -----------------------------------------
 
   defp compute_evidence_score(verification, paper_type, citation_count) do
+    compute_evidence_score(verification, paper_type, citation_count, Strategy.default())
+  end
+
+  defp compute_evidence_score(verification, paper_type, citation_count, %Strategy{} = strategy) do
     # Base score from verification
     base = case verification do
       :verified -> 1.0
@@ -831,16 +862,16 @@ Known failure patterns to avoid:
       :unverified -> 0.0
     end
 
-    # Evidence hierarchy weight
+    # Evidence hierarchy weight (from strategy)
     type_weight = case paper_type do
-      :review -> 3.0    # Systematic review / meta-analysis
-      :trial -> 2.0     # RCT / experiment
-      :study -> 1.5     # Observational / single study
-      :other -> 1.0     # Unclassified
+      :review -> strategy.review_weight
+      :trial -> strategy.trial_weight
+      :study -> strategy.study_weight
+      :other -> 1.0
     end
 
-    # Citation count bonus (log scale)
-    citation_bonus = :math.log10(max(citation_count, 2))
+    # Citation count bonus (log scale, base from strategy)
+    citation_bonus = :math.log10(max(citation_count, strategy.citation_bonus_base))
 
     # Final score
     base * type_weight * citation_bonus
@@ -859,7 +890,7 @@ Known failure patterns to avoid:
     Enum.map(@low_quality_journal_sources, fn {src, opts} -> Regex.compile!(src, opts) end)
   end
 
-  defp score_source_quality(paper) do
+  defp score_source_quality(paper, %Strategy{} = strategy) do
     title = (paper["title"] || "") |> String.downcase()
     source = (paper["source"] || "") |> String.downcase()
     abstract = (paper["abstract"] || "") |> String.downcase()
@@ -890,8 +921,8 @@ Known failure patterns to avoid:
       true -> 0.3
     end
 
-    # 4. Combined (citation weight + publisher weight)
-    Float.round(citation_score * 0.5 + publisher_score * 0.5, 3)
+    # 4. Combined (using strategy's citation/publisher weights)
+    Float.round(citation_score * strategy.citation_weight + publisher_score * strategy.publisher_weight, 3)
   end
 
   # Detect systematic reviews and meta-analyses from publicationTypes field or title keywords
@@ -909,23 +940,41 @@ Known failure patterns to avoid:
     type_match or title_match
   end
 
-  defp classify_evidence_store(verified_evidence, paper_map) do
+  defp classify_evidence_store(verified_evidence, paper_map, %Strategy{} = strategy) do
     Enum.map(verified_evidence, fn ev ->
       source_quality = case ev.paper_ref do
         nil -> 0.15
         n ->
           case Map.get(paper_map, n) do
             nil -> 0.1
-            paper -> score_source_quality(paper)
+            paper -> score_source_quality(paper, strategy)
           end
       end
 
-      store = if source_quality >= @grounded_threshold, do: :grounded, else: :belief
+      store = if source_quality >= strategy.grounded_threshold, do: :grounded, else: :belief
       Map.merge(ev, %{source_quality: source_quality, evidence_store: store})
     end)
   end
 
   # -- Format papers for LLM context -----------------------------------
+
+  # -- Re-score evidence with optimized strategy params ------------------
+
+  defp rescore_evidence(evidence, %Strategy{} = strategy) do
+    Enum.map(evidence, fn ev ->
+      verification_atom =
+        case ev.verification do
+          "verified" -> :verified
+          "partial" -> :partial
+          _ -> :unverified
+        end
+
+      new_score =
+        compute_evidence_score(verification_atom, ev.paper_type, ev.citation_count, strategy)
+
+      %{ev | score: new_score}
+    end)
+  end
 
   defp format_papers([]), do: "No relevant papers found. Base your arguments on your training knowledge, but mark everything as [REASONING]."
   defp format_papers(papers) do
@@ -1644,6 +1693,23 @@ Known failure patterns to avoid:
           Logger.warning("[investigate] HTTP request failed for #{url}: #{inspect(reason)}")
           {:error, reason}
       end
+    end
+  end
+
+  defp format_optimization_note(nil), do: ""
+  defp format_optimization_note(%Receipt{} = receipt) do
+    if receipt.improvement_pct > 0 do
+      diff_lines = Enum.map(receipt.strategy_diff, fn d ->
+        "  - #{d.param}: #{d.old} -> #{d.new} (delta: #{d.delta})"
+      end)
+
+      "\n### MCTS Optimization\n" <>
+        "EIG improved #{receipt.improvement_pct}% " <>
+        "(#{receipt.baseline_eig} -> #{receipt.winning_eig}) " <>
+        "in #{receipt.iterations_run} iterations (#{receipt.elapsed_ms}ms)\n" <>
+        "Strategy changes:\n" <> Enum.join(diff_lines, "\n") <> "\n"
+    else
+      ""
     end
   end
 
