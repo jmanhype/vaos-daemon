@@ -101,7 +101,7 @@ defmodule Daemon.Channels.NoiseFilterTest do
     end
 
     test "weight in likely_noise range filters" do
-      assert {:filtered, _ack} = NoiseFilter.check("alright that sounds good to me", 0.25)
+      assert {:filtered, _ack} = NoiseFilter.check("alright that sounds good to me", 0.15)
     end
 
     test "weight in uncertain range returns :clarify" do
@@ -155,12 +155,12 @@ defmodule Daemon.Channels.NoiseFilterTest do
     end
 
     test "defaults match documented values" do
-      # Documented defaults: 0.15, 0.35, 0.65
+      # Documented defaults: 0.10, 0.20, 0.60
       t = NoiseFilter.weight_thresholds()
 
-      assert_in_delta t.definitely_noise, 0.15, 0.10
-      assert_in_delta t.likely_noise, 0.35, 0.10
-      assert_in_delta t.uncertain, 0.65, 0.10
+      assert_in_delta t.definitely_noise, 0.10, 0.05
+      assert_in_delta t.likely_noise, 0.20, 0.05
+      assert_in_delta t.uncertain, 0.60, 0.05
     end
   end
 

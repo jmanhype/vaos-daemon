@@ -1,7 +1,7 @@
 defmodule Daemon.Agent.TreasuryTest do
   use ExUnit.Case, async: true
 
-  alias MiosaBudget.Treasury
+  alias Daemon.Agent.Treasury
 
   # Start a fresh Treasury per test to avoid shared state
   setup do
