@@ -1604,7 +1604,11 @@ Known failure patterns to avoid:
       "citation_count" => paper[:citation_count] || 0,
       "citationCount" => paper[:citation_count] || 0,
       "source" => to_string(src),
-      "authors" => Enum.join(paper[:authors] || [], ", "),
+      "authors" => (case paper[:authors] do
+        list when is_list(list) -> Enum.join(list, ", ")
+        str when is_binary(str) -> str
+        _ -> ""
+      end),
       "paper_id" => to_string(paper[:paper_id] || ""),
       "url" => to_string(paper[:url] || ""),
       "doi" => to_string(paper[:doi] || ""),
