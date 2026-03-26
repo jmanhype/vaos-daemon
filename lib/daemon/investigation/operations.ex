@@ -18,7 +18,8 @@ defmodule Daemon.Investigation.Operations do
     :narrow_search,
     :adjust_direction_sensitivity,
     :rebalance_source_quality,
-    :perturb_temperature
+    :perturb_temperature,
+    :adjust_citation_bonus
   ]
 
   @doc "List of all available mutation operations."
@@ -79,6 +80,11 @@ defmodule Daemon.Investigation.Operations do
   def apply_op(%Strategy{} = s, :perturb_temperature) do
     delta = if :rand.uniform() > 0.5, do: 0.05, else: -0.05
     %{s | adversarial_temperature: clamp(s.adversarial_temperature + delta, 0.0, 0.5)}
+  end
+
+  def apply_op(%Strategy{} = s, :adjust_citation_bonus) do
+    delta = if :rand.uniform() > 0.5, do: 0.5, else: -0.5
+    %{s | citation_bonus_base: clamp(s.citation_bonus_base + delta, 1.5, 10.0)}
   end
 
   @doc "Clamp a value between min and max bounds."

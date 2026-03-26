@@ -149,13 +149,21 @@ defmodule Daemon.Tools.Builtins.AlphaXivClient do
     ""
   end
 
+  defp clean_arxiv_id(id) when is_binary(id) do
+    case Regex.run(~r/^(\d{4}\.\d{4,5})(v\d+)?/, id) do
+      [match | _] -> match
+      _ -> id
+    end
+  end
+  defp clean_arxiv_id(id), do: id
+
   defp normalize_paper(paper) when is_map(paper) do
     %{
       "title" => Map.get(paper, "title", "Unknown"),
       "abstract" => (Map.get(paper, "abstract", "") || "") |> to_string() |> String.slice(0, 200),
       "year" => (Map.get(paper, "publicationDate", Map.get(paper, "year", "unknown")) || "unknown") |> to_string() |> String.slice(0, 4),
       "citationCount" => Map.get(paper, "likes", Map.get(paper, "citationCount", 0)) || 0,
-      "arxivId" => Map.get(paper, "arxivId", Map.get(paper, "id", "")) || ""
+      "arxivId" => clean_arxiv_id(Map.get(paper, "arxivId", Map.get(paper, "id", "")) || "")
     }
   end
   defp normalize_paper(_), do: %{"title" => "Unknown", "abstract" => "", "year" => "unknown", "citationCount" => 0, "arxivId" => ""}
@@ -170,7 +178,7 @@ defmodule Daemon.Tools.Builtins.AlphaXivClient do
         "abstract" => String.trim(abstract) |> String.slice(0, 200),
         "year" => year,
         "citationCount" => 0,
-        "arxivId" => String.trim(id)
+        "arxivId" => String.trim(id) |> clean_arxiv_id()
       }
     end)
   end

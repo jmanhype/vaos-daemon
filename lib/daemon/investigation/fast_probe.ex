@@ -5,8 +5,9 @@ defmodule Daemon.Investigation.FastProbe do
   Takes a strategy + pre-fetched investigation data and computes EIG in ~1-5ms.
   No LLM calls, no API calls — pure map/filter/reduce on evidence items.
 
-  EIG = 0.35 * discriminability + 0.25 * grounding_coverage +
-        0.20 * direction_confidence + 0.20 * uncertainty_reduction
+  EIG = 0.25 * discriminability + 0.20 * grounding_coverage +
+        0.15 * direction_confidence + 0.15 * uncertainty_reduction +
+        0.25 * grounding_proximity
   """
 
   alias Daemon.Investigation.Strategy
@@ -52,13 +53,15 @@ defmodule Daemon.Investigation.FastProbe do
       grounding_coverage = compute_grounding_coverage(grounded, all_evidence)
       direction_confidence = compute_direction_confidence(for_score, against_score, strategy)
       uncertainty_reduction = compute_uncertainty_reduction(grounded_scores)
+      grounding_proximity = compute_grounding_proximity(all_evidence, paper_map, strategy)
 
       # 5. Weighted EIG
       eig =
-        0.35 * discriminability +
-          0.25 * grounding_coverage +
-          0.20 * direction_confidence +
-          0.20 * uncertainty_reduction
+        0.25 * discriminability +
+          0.20 * grounding_coverage +
+          0.15 * direction_confidence +
+          0.15 * uncertainty_reduction +
+          0.25 * grounding_proximity
 
       clamp(eig, 0.0, 1.0)
     end
@@ -148,6 +151,28 @@ defmodule Daemon.Investigation.FastProbe do
       ratio = bigger / smaller
       # Higher confidence when ratio clearly exceeds direction_ratio
       clamp((ratio - 1.0) / (strategy.direction_ratio - 1.0 + 0.001), 0.0, 1.0)
+    end
+  end
+
+  # How close is belief-store evidence to becoming grounded?
+  # Gives MCTS a gradient signal BEFORE anything crosses the grounded_threshold.
+  defp compute_grounding_proximity(all_evidence, paper_map, strategy) do
+    source_qualities =
+      Enum.map(all_evidence, fn ev ->
+        source_quality(ev, paper_map, strategy)
+      end)
+
+    if source_qualities == [] do
+      0.0
+    else
+      best_sq = Enum.max(source_qualities)
+      threshold = strategy.grounded_threshold
+
+      if best_sq >= threshold do
+        1.0
+      else
+        clamp(best_sq / max(threshold, 0.001), 0.0, 1.0)
+      end
     end
   end
 

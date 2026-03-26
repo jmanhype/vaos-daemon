@@ -4,9 +4,9 @@ defmodule Daemon.Investigation.OperationsTest do
   alias Daemon.Investigation.{Operations, Strategy}
 
   describe "operations/0" do
-    test "returns 8 operations" do
+    test "returns 9 operations" do
       ops = Operations.operations()
-      assert length(ops) == 8
+      assert length(ops) == 9
       assert :tighten_grounding in ops
       assert :loosen_grounding in ops
       assert :shift_hierarchy in ops
@@ -15,6 +15,7 @@ defmodule Daemon.Investigation.OperationsTest do
       assert :adjust_direction_sensitivity in ops
       assert :rebalance_source_quality in ops
       assert :perturb_temperature in ops
+      assert :adjust_citation_bonus in ops
     end
   end
 
@@ -116,6 +117,29 @@ defmodule Daemon.Investigation.OperationsTest do
         assert result.direction_ratio >= 1.1 and result.direction_ratio <= 2.0
         assert result.belief_fallback_ratio >= 1.2 and result.belief_fallback_ratio <= 2.5
       end
+    end
+  end
+
+  describe "adjust_citation_bonus" do
+    test "citation_bonus_base stays within bounds" do
+      s = Strategy.default()
+      for _ <- 1..20 do
+        result = Operations.apply_op(s, :adjust_citation_bonus)
+        assert result.citation_bonus_base >= 1.5
+        assert result.citation_bonus_base <= 10.0
+      end
+    end
+
+    test "cannot go below lower bound" do
+      s = %{Strategy.default() | citation_bonus_base: 1.5}
+      result = Operations.apply_op(s, :adjust_citation_bonus)
+      assert result.citation_bonus_base >= 1.5
+    end
+
+    test "cannot exceed upper bound" do
+      s = %{Strategy.default() | citation_bonus_base: 10.0}
+      result = Operations.apply_op(s, :adjust_citation_bonus)
+      assert result.citation_bonus_base <= 10.0
     end
   end
 

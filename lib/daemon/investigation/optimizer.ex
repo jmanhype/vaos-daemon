@@ -11,7 +11,7 @@ defmodule Daemon.Investigation.Optimizer do
 
   require Logger
 
-  alias Daemon.Investigation.{Strategy, Operations, FastProbe, StrategyStore, Receipt}
+  alias Daemon.Investigation.{Strategy, Operations, FastProbe, StrategyStore, Receipt, SourceScoring}
   alias Daemon.Agent.Strategies.MCTS.{Tree, Node}
 
   @default_iterations 200
@@ -298,8 +298,8 @@ defmodule Daemon.Investigation.Optimizer do
     cond do
       # No evidence to evaluate — strategy is fine
       total == 0 -> true
-      # Everything filtered out — threshold too high
-      length(grounded) == 0 -> false
+      # Allow 0 grounded — proximity signal guides MCTS toward threshold
+      length(grounded) == 0 -> true
       # Everything grounded (threshold too low) — only flag if >2 items
       length(grounded) == total and total > 2 -> false
       # Degenerate direction sensitivity
@@ -339,7 +339,7 @@ defmodule Daemon.Investigation.Optimizer do
         if Map.has_key?(paper, :_publisher_score) do
           {k, paper}
         else
-          ps = compute_publisher_score(paper)
+          ps = SourceScoring.publisher_score(paper)
           {k, Map.put(paper, :_publisher_score, ps)}
         end
       end)
@@ -347,38 +347,6 @@ defmodule Daemon.Investigation.Optimizer do
     Map.put(probe_ctx, :paper_map, enriched)
   end
 
-  # Quick publisher score — computed once and cached in paper_map.
-  # Mirrors the logic in investigate.ex but simplified for fast evaluation.
-  defp compute_publisher_score(paper) do
-    title = (paper["title"] || "") |> String.downcase()
-    source = (paper["source"] || "") |> String.downcase()
-    abstract = (paper["abstract"] || "") |> String.downcase()
-    all_text = "#{title} #{source} #{abstract}"
-
-    cond do
-      Regex.match?(
-        ~r/journal.of.alternative|complementary.*medicine|integrative.*medicine/i,
-        source
-      ) ->
-        0.05
-
-      Regex.match?(~r/systematic\s+review|meta[\-\s]?analysis|cochrane/i, title) ->
-        0.8
-
-      Regex.match?(
-        ~r/\bnature\b|\blancet\b|\bbmj\b|\bnejm\b|\bcochrane\b|\bjama\b|\bplos\b|\bpnas\b/i,
-        all_text
-      ) ->
-        0.8
-
-      Regex.match?(
-        ~r/\bwiley\b|\bspringer\b|\belsevier\b|\boxford\b|\bcambridge\b|\bieee\b|\bacm\b/i,
-        all_text
-      ) ->
-        0.8
-
-      true ->
-        0.3
-    end
-  end
+  # Publisher scoring delegated to Daemon.Investigation.SourceScoring
+  # (shared with investigate.ex — eliminates scoring divergence)
 end

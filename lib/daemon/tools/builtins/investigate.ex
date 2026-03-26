@@ -41,7 +41,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
   alias Vaos.Ledger.Epistemic.Policy
   alias Vaos.Ledger.Research.Pipeline
   alias Vaos.Ledger.ML.CrashLearner
-  alias Daemon.Investigation.{Strategy, StrategyStore, Optimizer, Receipt}
+  alias Daemon.Investigation.{Strategy, StrategyStore, Optimizer, Receipt, SourceScoring}
 
   @ledger_path Path.join(System.user_home!(), ".openclaw/investigate_ledger.json")
   @ledger_name :investigate_ledger
@@ -57,51 +57,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
   # Grounded store: high-quality sources that can determine the verdict
   # Belief store: low-quality sources for context only (cannot flip direction)
   # Threshold is now configurable via Strategy.grounded_threshold (default: 0.4)
-
-  # Word-boundary patterns to avoid false positives on common words like "cell", "nature", "science"
-  @high_quality_pattern_sources [
-    {~S"\bnature\b(?!\s+of\b)", "i"},
-    {~S"(?<!\bcomputer\s)(?<!\bdata\s)\bscience\b(?!\s+of\b|\s+fiction\b)", "i"},
-    {~S"\blancet\b", "i"},
-    {~S"\bbmj\b", "i"},
-    {~S"\bnejm\b", "i"},
-    {~S"\bcochrane\b", "i"},
-    {~S"\bjama\b", "i"},
-    {~S"\bplos\b", "i"},
-    {~S"\bcell\s+(press|reports|research|biology|metabolism|host|systems|stem|chemical)\b", "i"},
-    {~S"\bannual\s+review", "i"},
-    {~S"\bpnas\b", "i"},
-    {~S"\bwiley\b", "i"},
-    {~S"\bspringer\b", "i"},
-    {~S"\belsevier\b", "i"},
-    {~S"\boxford\s+(university|academic|press)", "i"},
-    {~S"\bcambridge\s+(university|press)", "i"},
-    {~S"\bieee\b", "i"},
-    {~S"\bacm\b", "i"},
-    {~S"\bamerican\s+medical", "i"},
-    {~S"\bamerican\s+psychological", "i"},
-    {~S"\bbritish\s+medical", "i"},
-    {~S"\bworld\s+health", "i"}
-  ]
-
-  # Low-quality JOURNAL/SOURCE patterns — matched ONLY against source/journal field.
-  # Do NOT add topic terms here (e.g. "homeopath") — they'll match every paper's
-  # title/abstract when investigating that topic, nuking all source quality scores.
-  @low_quality_journal_sources [
-    {~S"journal.of.alternative", "i"},
-    {~S"complementary.*medicine", "i"},
-    {~S"integrative.*medicine", "i"},
-    {~S"traditional.*medicine", "i"},
-    {~S"holistic.*medicine", "i"},
-    {~S"journal.*healing", "i"},
-    {~S"explore.*journal", "i"},
-    {~S"frontier.*alternative", "i"},
-    {~S"evidence.based.complementary", "i"},
-    {~S"homeopath.*journal", "i"},
-    {~S"journal.*homeopath", "i"},
-    {~S"journal.*naturopath", "i"},
-    {~S"journal.*ayurved", "i"}
-  ]
+  # Scoring patterns extracted to Daemon.Investigation.SourceScoring
 
   @impl true
   def available?, do: true
@@ -890,64 +846,7 @@ Known failure patterns to avoid:
   # Per arxiv.org/abs/2602.03974 — Active Epistemic Control
   # Only grounded (high-quality) evidence can determine the verdict.
   # Belief (low-quality) evidence provides context but cannot flip direction.
-
-  defp compiled_high_quality_patterns do
-    Enum.map(@high_quality_pattern_sources, fn {src, opts} -> Regex.compile!(src, opts) end)
-  end
-
-  defp compiled_low_quality_journal_patterns do
-    Enum.map(@low_quality_journal_sources, fn {src, opts} -> Regex.compile!(src, opts) end)
-  end
-
-  defp score_source_quality(paper, %Strategy{} = strategy) do
-    title = (paper["title"] || "") |> String.downcase()
-    source = (paper["source"] || "") |> String.downcase()
-    abstract = (paper["abstract"] || "") |> String.downcase()
-    citations = paper["citation_count"] || paper["citationCount"] || 0
-    pub_types = paper["publicationTypes"] || []
-
-    # 1. Citation count score (log scale, normalized to 0-1)
-    citation_score = if citations > 0, do: :math.log10(citations) / 5.0, else: 0.0
-    citation_score = min(citation_score, 1.0)
-
-    # 2. Publisher/journal quality — low-quality check MUST come first
-    # to prevent review-type boost from laundering garbage journals.
-    # Only match journal patterns against SOURCE field — matching against title/abstract
-    # would nuke every paper when investigating topics like "homeopathy".
-    journal_text = "#{source}"
-    is_low_quality = Enum.any?(compiled_low_quality_journal_patterns(), &Regex.match?(&1, journal_text))
-
-    # 3. Publication type boost — only if NOT from a low-quality source
-    # A "systematic review" in a CAM journal is not the same as one in Cochrane
-    is_review_type = not is_low_quality and is_review_or_meta_analysis?(title, pub_types)
-
-    # High-quality patterns match against full text (title + source + abstract)
-    all_text = "#{title} #{source} #{abstract}"
-    publisher_score = cond do
-      is_low_quality -> 0.05  # Low-quality journals always score low, review or not
-      is_review_type -> 0.8   # Reviews from non-garbage sources get grounded
-      Enum.any?(compiled_high_quality_patterns(), &Regex.match?(&1, all_text)) -> 0.8
-      true -> 0.3
-    end
-
-    # 4. Combined (using strategy's citation/publisher weights)
-    Float.round(citation_score * strategy.citation_weight + publisher_score * strategy.publisher_weight, 3)
-  end
-
-  # Detect systematic reviews and meta-analyses from publicationTypes field or title keywords
-  defp is_review_or_meta_analysis?(title, pub_types) do
-    type_match = Enum.any?(List.wrap(pub_types), fn t ->
-      t_lower = String.downcase(to_string(t))
-      t_lower in ["review", "meta-analysis", "metaanalysis", "systematic review"]
-    end)
-
-    title_match = Regex.match?(
-      ~r/\b(systematic\s+review|meta[\-\s]?analysis|cochrane|umbrella\s+review)\b/i,
-      title
-    )
-
-    type_match or title_match
-  end
+  # Scoring logic in Daemon.Investigation.SourceScoring (shared with optimizer).
 
   defp classify_evidence_store(verified_evidence, paper_map, %Strategy{} = strategy) do
     Enum.map(verified_evidence, fn ev ->
@@ -956,7 +855,7 @@ Known failure patterns to avoid:
         n ->
           case Map.get(paper_map, n) do
             nil -> 0.1
-            paper -> score_source_quality(paper, strategy)
+            paper -> SourceScoring.score(paper, strategy)
           end
       end
 

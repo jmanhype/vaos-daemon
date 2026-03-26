@@ -134,6 +134,74 @@ defmodule Daemon.Investigation.FastProbeTest do
     end
   end
 
+  describe "grounding proximity" do
+    test "all-belief evidence still produces non-zero score via proximity" do
+      # All evidence below threshold → grounded=[], but proximity provides gradient
+      ctx = %{
+        paper_map: %{
+          1 => %{
+            "title" => "Some paper",
+            "source" => "Unknown Journal",
+            "abstract" => "A study",
+            "citation_count" => 5,
+            _publisher_score: 0.3
+          }
+        },
+        verified_supporting: [
+          %{
+            summary: "Low quality evidence",
+            paper_ref: 1,
+            paper_type: :study,
+            verification: "verified",
+            citation_count: 5
+          }
+        ],
+        verified_opposing: []
+      }
+
+      # Default threshold 0.4 — paper with 5 citations and 0.3 publisher score
+      # won't reach grounded, but proximity should give a gradient
+      score = FastProbe.score(Strategy.default(), ctx)
+      assert score > 0.0
+      # With old weights (no proximity), this would be exactly 0.35 * discriminability
+      # With proximity, it should be different
+      assert is_float(score)
+    end
+
+    test "lowering threshold increases proximity score for all-belief evidence" do
+      ctx = %{
+        paper_map: %{
+          1 => %{
+            "title" => "Paper",
+            "source" => "Regional",
+            "abstract" => "Study",
+            "citation_count" => 5,
+            _publisher_score: 0.3
+          }
+        },
+        verified_supporting: [
+          %{
+            summary: "Evidence",
+            paper_ref: 1,
+            paper_type: :study,
+            verification: "verified",
+            citation_count: 5
+          }
+        ],
+        verified_opposing: []
+      }
+
+      s_high = %{Strategy.default() | grounded_threshold: 0.7}
+      s_low = %{Strategy.default() | grounded_threshold: 0.25}
+
+      score_high = FastProbe.score(s_high, ctx)
+      score_low = FastProbe.score(s_low, ctx)
+
+      # Lower threshold brings evidence closer to grounded → higher proximity → higher EIG
+      assert score_low > score_high
+    end
+  end
+
   describe "EIG component sensitivity" do
     test "very low threshold moves all evidence to grounded" do
       s = %{Strategy.default() | grounded_threshold: 0.01}
