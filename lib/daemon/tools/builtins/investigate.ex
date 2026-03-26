@@ -867,7 +867,7 @@ Known failure patterns to avoid:
       :review -> strategy.review_weight
       :trial -> strategy.trial_weight
       :study -> strategy.study_weight
-      :other -> 1.0
+      _ -> 1.0
     end
 
     # Citation count bonus (log scale, base from strategy)
