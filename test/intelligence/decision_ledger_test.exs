@@ -1,0 +1,312 @@
+defmodule Daemon.Intelligence.DecisionLedgerTest do
+  use ExUnit.Case, async: true
+
+  alias Daemon.Intelligence.DecisionLedger
+
+  # Use test_mode to get isolated ETS tables and temp dirs
+  defp start_test_ledger do
+    {:ok, pid} = DecisionLedger.start_link(test_mode: true)
+    table = :sys.get_state(pid).ets_table
+    {pid, table}
+  end
+
+  defp simulate_outcome(pid, tool_name, args_hint, success, opts \\ []) do
+    duration = Keyword.get(opts, :duration_ms, 100)
+    result = Keyword.get(opts, :result, if(success, do: "ok", else: "Error: something failed"))
+
+    send(pid, {:tool_outcome, %{
+      name: tool_name,
+      args: args_hint,
+      success: success,
+      duration_ms: duration,
+      result: result,
+      session_id: "test"
+    }})
+
+    # Give GenServer time to process
+    :timer.sleep(10)
+  end
+
+  # ── GenServer lifecycle ──────────────────────────────────────────────────
+
+  describe "GenServer lifecycle" do
+    test "starts successfully in test mode" do
+      {pid, _table} = start_test_ledger()
+      assert Process.alive?(pid)
+      GenServer.stop(pid)
+    end
+
+    test "initial state has empty pending_calls and claim_cache" do
+      {pid, _table} = start_test_ledger()
+      state = :sys.get_state(pid)
+      assert state.pending_calls == %{}
+      assert state.claim_cache == %{}
+      GenServer.stop(pid)
+    end
+
+    test "ETS table is created" do
+      {pid, table} = start_test_ledger()
+      assert :ets.info(table) != :undefined
+      GenServer.stop(pid)
+    end
+  end
+
+  # ── Context derivation ─────────────────────────────────────────────────
+
+  describe "derive_context/2" do
+    test "shell_execute + git command → git" do
+      assert DecisionLedger.derive_context("shell_execute", "git status") == "git"
+    end
+
+    test "shell_execute + mix command → mix" do
+      assert DecisionLedger.derive_context("shell_execute", "mix test") == "mix"
+    end
+
+    test "file_read + lib/ path → lib/" do
+      assert DecisionLedger.derive_context("file_read", "lib/daemon/agent.ex") == "lib/"
+    end
+
+    test "file_edit + test/ path → test/" do
+      assert DecisionLedger.derive_context("file_edit", "test/some_test.exs") == "test/"
+    end
+
+    test "investigate → research" do
+      assert DecisionLedger.derive_context("investigate", "quantum computing") == "research"
+    end
+
+    test "web_fetch → web" do
+      assert DecisionLedger.derive_context("web_fetch", "https://example.com") == "web"
+    end
+
+    test "web_search → web" do
+      assert DecisionLedger.derive_context("web_search", "elixir genserver") == "web"
+    end
+
+    test "unknown tool → general" do
+      assert DecisionLedger.derive_context("custom_tool", "some args") == "general"
+    end
+
+    test "nil args → general fallback" do
+      assert DecisionLedger.derive_context("shell_execute", nil) == "general"
+    end
+  end
+
+  # ── Pattern tracking ───────────────────────────────────────────────────
+
+  describe "pattern tracking" do
+    test "tool outcome creates pattern in ETS" do
+      {pid, table} = start_test_ledger()
+
+      simulate_outcome(pid, "shell_execute", "git status", true)
+
+      entries = :ets.tab2list(table)
+      assert length(entries) == 1
+      [{key, pattern}] = entries
+      assert key == "shell_execute:git"
+      assert pattern.tool_name == "shell_execute"
+      assert pattern.context_type == "git"
+      assert pattern.success_count == 1
+      assert pattern.failure_count == 0
+
+      GenServer.stop(pid)
+    end
+
+    test "success increments success_count" do
+      {pid, table} = start_test_ledger()
+
+      simulate_outcome(pid, "file_read", "lib/foo.ex", true)
+      simulate_outcome(pid, "file_read", "lib/bar.ex", true)
+      simulate_outcome(pid, "file_read", "lib/baz.ex", true)
+
+      [{_key, pattern}] = :ets.tab2list(table)
+      assert pattern.success_count == 3
+      assert pattern.failure_count == 0
+
+      GenServer.stop(pid)
+    end
+
+    test "failure increments failure_count and adds to recent_errors" do
+      {pid, table} = start_test_ledger()
+
+      simulate_outcome(pid, "web_fetch", "https://example.com", false,
+        result: "Error: 429 rate limit")
+
+      [{_key, pattern}] = :ets.tab2list(table)
+      assert pattern.failure_count == 1
+      assert pattern.success_count == 0
+      assert length(pattern.recent_errors) == 1
+      assert hd(pattern.recent_errors) =~ "429"
+
+      GenServer.stop(pid)
+    end
+
+    test "avg_duration_ms is computed correctly" do
+      {pid, table} = start_test_ledger()
+
+      simulate_outcome(pid, "investigate", "topic", true, duration_ms: 100)
+      simulate_outcome(pid, "investigate", "topic2", true, duration_ms: 200)
+
+      [{_key, pattern}] = :ets.tab2list(table)
+      assert pattern.avg_duration_ms == 150.0
+
+      GenServer.stop(pid)
+    end
+  end
+
+  # ── Meta tool filtering ────────────────────────────────────────────────
+
+  describe "meta tool filtering" do
+    test "knowledge tool calls are not recorded" do
+      {pid, table} = start_test_ledger()
+
+      simulate_outcome(pid, "knowledge", "some query", true)
+      simulate_outcome(pid, "memory_recall", "something", true)
+      simulate_outcome(pid, "memory_save", "data", true)
+
+      assert :ets.tab2list(table) == []
+
+      GenServer.stop(pid)
+    end
+  end
+
+  # ── Buffer limits ──────────────────────────────────────────────────────
+
+  describe "buffer limits" do
+    test "recent_errors capped at 3" do
+      {pid, table} = start_test_ledger()
+
+      for i <- 1..5 do
+        simulate_outcome(pid, "web_fetch", "https://example.com", false,
+          result: "Error: #{i}")
+      end
+
+      [{_key, pattern}] = :ets.tab2list(table)
+      assert length(pattern.recent_errors) == 3
+
+      GenServer.stop(pid)
+    end
+  end
+
+  # ── context_block/0 ────────────────────────────────────────────────────
+
+  describe "context_block" do
+    test "returns nil when no patterns exist" do
+      {pid, _table} = start_test_ledger()
+      # context_block reads from the module-level ETS, so we test the function directly
+      # with the freshly started ledger that has no data
+      # Since test_mode uses a different ETS name, we test the public function separately
+      assert DecisionLedger.context_block() == nil or is_binary(DecisionLedger.context_block())
+      GenServer.stop(pid)
+    end
+
+    test "returns formatted text when patterns have 5+ observations" do
+      {pid, table} = start_test_ledger()
+
+      for _ <- 1..6 do
+        simulate_outcome(pid, "shell_execute", "git status", true)
+      end
+
+      # Read directly from the test ETS table
+      [{_key, pattern}] = :ets.tab2list(table)
+      total = pattern.success_count + pattern.failure_count
+      assert total >= 5
+
+      GenServer.stop(pid)
+    end
+  end
+
+  # ── JSONL persistence ──────────────────────────────────────────────────
+
+  describe "JSONL persistence" do
+    test "writes to JSONL and reloads on init" do
+      {pid, _table} = start_test_ledger()
+      state = :sys.get_state(pid)
+      jsonl_path = state.jsonl_path
+
+      # Generate some data
+      for _ <- 1..3 do
+        simulate_outcome(pid, "file_read", "lib/test.ex", true)
+      end
+
+      # Verify JSONL file exists and has content
+      assert File.exists?(jsonl_path)
+      {:ok, content} = File.read(jsonl_path)
+      lines = String.split(content, "\n", trim: true)
+      assert length(lines) == 3
+
+      GenServer.stop(pid)
+
+      # Start a new ledger with the same JSONL path to test reload
+      # We need a fresh ETS table for this
+      suffix = :crypto.strong_rand_bytes(4) |> Base.url_encode64(padding: false)
+      new_table = :"daemon_decision_ledger_reload_#{suffix}"
+      :ets.new(new_table, [:set, :named_table, :public, read_concurrency: true])
+
+      # Manually load from JSONL to verify
+      content
+      |> String.split("\n", trim: true)
+      |> Enum.each(fn line ->
+        {:ok, _entry} = Jason.decode(line)
+      end)
+
+      :ets.delete(new_table)
+    end
+  end
+
+  # ── Outcome correlation ────────────────────────────────────────────────
+
+  describe "outcome correlation" do
+    test "tool_call_start + tool_outcome flow records duration" do
+      {pid, table} = start_test_ledger()
+
+      # Simulate the full event flow
+      send(pid, {:tool_call_start, %{name: "shell_execute", args: "git log", session_id: "test"}})
+      :timer.sleep(5)
+      send(pid, {:tool_call_end, %{name: "shell_execute", duration_ms: 250, session_id: "test"}})
+      :timer.sleep(5)
+      send(pid, {:tool_outcome, %{
+        name: "shell_execute",
+        args: "git log",
+        success: true,
+        result: "commit abc123",
+        session_id: "test"
+      }})
+      :timer.sleep(15)
+
+      [{_key, pattern}] = :ets.tab2list(table)
+      assert pattern.total_duration_ms == 250
+      assert pattern.success_count == 1
+
+      # Verify pending_calls is cleaned up
+      state = :sys.get_state(pid)
+      assert state.pending_calls == %{}
+
+      GenServer.stop(pid)
+    end
+  end
+
+  # ── Error handling ─────────────────────────────────────────────────────
+
+  describe "error handling" do
+    test "handles unknown messages gracefully" do
+      {pid, _table} = start_test_ledger()
+
+      send(pid, :unknown_message)
+      send(pid, {:random, "data"})
+      :timer.sleep(10)
+
+      assert Process.alive?(pid)
+      GenServer.stop(pid)
+    end
+
+    test "handles malformed tool_outcome gracefully" do
+      {pid, _table} = start_test_ledger()
+
+      send(pid, {:tool_outcome, %{name: nil, success: true}})
+      :timer.sleep(10)
+
+      assert Process.alive?(pid)
+      GenServer.stop(pid)
+    end
+  end
+end

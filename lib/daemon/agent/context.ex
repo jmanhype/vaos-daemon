@@ -197,7 +197,8 @@ defmodule Daemon.Agent.Context do
       {workflow_block(state), 1, "workflow"},
       {skills_block(state), 2, "skills"},
       {scratchpad_block(state), 1, "scratchpad"},
-      {vault_block(state), 2, "vault"}
+      {vault_block(state), 2, "vault"},
+      {decision_intelligence_block(state), 2, "decision_intelligence"}
     ]
     |> Enum.reject(fn {content, _, _} -> is_nil(content) or content == "" end)
   end
@@ -753,6 +754,16 @@ defmodule Daemon.Agent.Context do
       _ -> ""
     catch
       :exit, _ -> ""
+    end
+  end
+
+  defp decision_intelligence_block(_state) do
+    try do
+      Daemon.Intelligence.DecisionLedger.context_block()
+    rescue
+      _ -> nil
+    catch
+      :exit, _ -> nil
     end
   end
 end
