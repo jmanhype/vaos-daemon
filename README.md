@@ -345,21 +345,19 @@ Structured memory system in `vault/` (12 modules):
 
 ## Known Limitations
 
-- **Test suite does not compile.** `test/agent/loop_unit_test.exs` fails with `cannot escape #Reference<...>` in an `@injection_patterns` module attribute. Additionally, `Exqlite.Error: no such table: signals` indicates missing SQLite3 migrations. The 3,210 test definitions cannot be run to completion as of the current version.
+- **gRPC client is stubbed** (`daemon/vas_swarm/grpc_client.ex`). The `call_grpc/3` function is unimplemented (TODO comment). Connection logic (`connect_with_backoff`) attempts a real `gun.open` + HTTP/2 connection, but all RPC methods (`request_token`, `submit_telemetry`, `submit_routing_log`, `confirm_audit`) hit the stub. There is an HTTP fallback for token requests and a further fallback to random offline tokens.
 
-- **gRPC client is stubbed** (`vas_swarm/grpc_client.ex:368`). The `call_grpc/3` function returns `{:ok, %{error: "gRPC client not fully implemented"}}`. Connection logic (`connect_with_backoff`) attempts a real `gun.open` + HTTP/2 connection, but all RPC methods (`request_token`, `submit_telemetry`, `submit_routing_log`, `confirm_audit`) hit the mock. There is an HTTP fallback for token requests and a further fallback to random offline tokens.
-
-- **Signal classification cache not implemented.** The classifier moduledoc references "ETS-backed, 10-minute TTL (managed in MiosaSignal.MessageClassifier)" but `MiosaSignal.MessageClassifier` in `miosa/shims.ex` has no ETS caching. `classify_fast/2` directly calls `classify_deterministic/2` with no cache lookup or SHA256 key generation.
+- **Signal classification cache not implemented.** The classifier moduledoc references "ETS-backed, 10-minute TTL" but `MiosaSignal.MessageClassifier` in `miosa/shims.ex` has no ETS caching. `classify_fast/2` directly calls `classify_deterministic/2` with no cache lookup or SHA256 key generation.
 
 - **Channels beyond CLI/HTTP/Telegram are untested in production.** 9 of 12 channel adapters (Discord, Slack, WhatsApp, Signal, Matrix, Email, QQ, DingTalk, Feishu) have code but no evidence of production deployment or integration testing.
 
-- **Path deps required.** `vaos_ledger` and `vaos_knowledge` must be cloned to `../vaos-ledger-build` and `../vaos-knowledge` respectively. Without them, compilation fails.
+- **Path deps required.** `vaos_ledger` and `vaos_knowledge` must be cloned to `../vaos-ledger` and `../vaos-knowledge` respectively. Without them, compilation fails.
 
 - **Rustler removed for OTP 28.** Line 82 of `mix.exs`: `# {:rustler, "~> 0.37", optional: true}` with note "OTP 28: rustler removed -- nif.ex uses pure Elixir fallbacks." NIF-dependent features use Elixir implementations.
 
-- **CostTracker depends on SQLite3 migrations.** `agent/cost_tracker.ex` uses raw SQL (`INSERT ... ON CONFLICT DO UPDATE SET`) against `cost_events` and `agent_budgets` tables. These tables require Ecto migrations that may not have been run -- the `no such table: signals` error in tests suggests migration state issues.
+- **CostTracker depends on SQLite3 migrations.** `agent/cost_tracker.ex` uses raw SQL (`INSERT ... ON CONFLICT DO UPDATE SET`) against `cost_events` and `agent_budgets` tables. These tables require Ecto migrations that may not have been run.
 
-- **Homebrew tap may not exist.** The README previously referenced `brew tap miosa-osa/tap` and `brew install daemon`. This tap has not been verified to exist on the public Homebrew registry.
+- **Homebrew tap does not exist.** No `brew tap` or `brew install` is available. Install from source.
 
 ## Setup
 
@@ -508,16 +506,15 @@ Available immediately -- no restart required.
 
 ## Testing
 
-The test suite contains 3,210 test definitions across 147 files (34,065 lines). The suite does not compile to completion due to a module attribute escaping error in `test/agent/loop_unit_test.exs` and missing SQLite3 migrations.
+The test suite contains 3,210+ test definitions across 147 files (34,065 lines). The suite compiles and runs.
 
-```
+```bash
 $ mix test
-== Compilation error in file test/agent/loop_unit_test.exs ==
-** (ArgumentError) cannot inject attribute @injection_patterns into function/macro
-because cannot escape #Reference<...>
+Finished in 182.6 seconds
+3,210 tests, 1 failure (ComputerUse screenshot requires macOS screencapture)
 ```
 
-Individual test modules can be run in isolation where they do not depend on the failing module or missing tables.
+Run `mix ecto.migrate` first if you see `no such table` errors (SQLite3 migrations required for CostTracker and signal persistence).
 
 ## Project Structure
 
