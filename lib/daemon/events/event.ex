@@ -1,13 +1,12 @@
 defmodule Daemon.Events.Event do
   @moduledoc """
-  Backward-compatibility shim for `MiosaSignal.Event`.
+  CloudEvents v1.0.2 event struct for the Daemon event bus.
 
-  The canonical Event implementation lives in the `miosa_signal` package.
-  This module re-exports the struct and delegates all functions so that existing
-  code using `alias Daemon.Events.Event` continues to work.
+  Provides `new/2..4`, `child/3..5`, `to_map/1`, and `to_cloud_event/1`.
+  Previously delegated to `MiosaSignal.Event` which delegated back here
+  (circular delegation — silently crashed every Bus.emit call).
   """
 
-  # Re-export the struct so that %Event{...} pattern matches compile.
   defstruct [
     # CloudEvents v1.0.2 required
     :id, :type, :source, :time,
@@ -23,18 +22,74 @@ defmodule Daemon.Events.Event do
     extensions: %{}
   ]
 
-  @type t :: MiosaSignal.Event.t()
-  @type signal_mode :: MiosaSignal.Event.signal_mode()
-  @type signal_genre :: MiosaSignal.Event.signal_genre()
-  @type signal_type :: MiosaSignal.Event.signal_type()
-  @type signal_format :: MiosaSignal.Event.signal_format()
+  @type t :: %__MODULE__{}
+  @type signal_mode :: :utility | :specialist | :elite | nil
+  @type signal_genre :: atom() | nil
+  @type signal_type :: atom() | nil
+  @type signal_format :: atom() | nil
 
-  defdelegate new(type, source), to: MiosaSignal.Event
-  defdelegate new(type, source, data), to: MiosaSignal.Event
-  defdelegate new(type, source, data, opts), to: MiosaSignal.Event
-  defdelegate child(parent, type, source), to: MiosaSignal.Event
-  defdelegate child(parent, type, source, data), to: MiosaSignal.Event
-  defdelegate child(parent, type, source, data, opts), to: MiosaSignal.Event
-  defdelegate to_map(event), to: MiosaSignal.Event
-  defdelegate to_cloud_event(event), to: MiosaSignal.Event
+  @doc "Create a new event with type and source."
+  def new(type, source), do: new(type, source, nil, [])
+
+  @doc "Create a new event with type, source, and data."
+  def new(type, source, data), do: new(type, source, data, [])
+
+  @doc "Create a new event with type, source, data, and options."
+  def new(type, source, data, opts) when is_list(opts) do
+    %__MODULE__{
+      id: Keyword.get(opts, :id, generate_id()),
+      type: type,
+      source: to_string(source),
+      time: Keyword.get(opts, :time, DateTime.utc_now()),
+      data: data,
+      subject: Keyword.get(opts, :subject),
+      session_id: Keyword.get(opts, :session_id) || extract_session_id(data),
+      parent_id: Keyword.get(opts, :parent_id),
+      correlation_id: Keyword.get(opts, :correlation_id)
+    }
+  end
+
+  @doc "Create a child event derived from a parent."
+  def child(parent, type, source), do: child(parent, type, source, nil, [])
+  def child(parent, type, source, data), do: child(parent, type, source, data, [])
+
+  def child(%__MODULE__{} = parent, type, source, data, opts) do
+    new(type, source, data,
+      Keyword.merge(opts,
+        parent_id: parent.id,
+        session_id: parent.session_id,
+        correlation_id: parent.correlation_id || parent.id
+      )
+    )
+  end
+
+  @doc "Convert an Event struct to a plain map (all fields)."
+  def to_map(%__MODULE__{} = event) do
+    Map.from_struct(event)
+  end
+
+  def to_map(other) when is_map(other), do: other
+
+  @doc "Convert to CloudEvents v1.0.2 format."
+  def to_cloud_event(%__MODULE__{} = event) do
+    %{
+      specversion: event.specversion,
+      type: to_string(event.type),
+      source: event.source,
+      id: event.id,
+      time: if(event.time, do: DateTime.to_iso8601(event.time)),
+      subject: event.subject,
+      datacontenttype: event.datacontenttype,
+      data: event.data
+    }
+    |> Enum.reject(fn {_, v} -> is_nil(v) end)
+    |> Map.new()
+  end
+
+  defp generate_id do
+    :crypto.strong_rand_bytes(12) |> Base.url_encode64(padding: false)
+  end
+
+  defp extract_session_id(%{session_id: sid}) when is_binary(sid), do: sid
+  defp extract_session_id(_), do: nil
 end

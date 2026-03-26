@@ -370,18 +370,32 @@ defmodule Daemon.Intelligence.DecisionLedger do
 
   # ── Event handler callbacks (run in Bus task, dispatch to GenServer) ────────
 
-  defp handle_tool_call_event(%{payload: payload}) when is_map(payload) do
-    case payload[:phase] do
-      :start -> send(__MODULE__, {:tool_call_start, payload})
-      :end -> send(__MODULE__, {:tool_call_end, payload})
+  defp handle_tool_call_event(%{data: data}) when is_map(data) do
+    case data[:phase] do
+      :start -> send(__MODULE__, {:tool_call_start, data})
+      :end -> send(__MODULE__, {:tool_call_end, data})
+      _ -> :ok
+    end
+  end
+
+  # Fallback: some Bus configurations flatten the event map
+  defp handle_tool_call_event(meta) when is_map(meta) do
+    case meta[:phase] do
+      :start -> send(__MODULE__, {:tool_call_start, meta})
+      :end -> send(__MODULE__, {:tool_call_end, meta})
       _ -> :ok
     end
   end
 
   defp handle_tool_call_event(_), do: :ok
 
-  defp handle_tool_result_event(%{payload: payload}) when is_map(payload) do
-    send(__MODULE__, {:tool_outcome, payload})
+  defp handle_tool_result_event(%{data: data}) when is_map(data) do
+    send(__MODULE__, {:tool_outcome, data})
+  end
+
+  # Fallback: handle flattened event maps
+  defp handle_tool_result_event(meta) when is_map(meta) and is_map_key(meta, :name) do
+    send(__MODULE__, {:tool_outcome, meta})
   end
 
   defp handle_tool_result_event(_), do: :ok
