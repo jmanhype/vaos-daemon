@@ -345,8 +345,6 @@ Structured memory system in `vault/` (12 modules):
 
 ## Known Limitations
 
-- **gRPC encoding not implemented; HTTP fallback is live.** `daemon/vas_swarm/grpc_client.ex` connects to vaos-kernel via `gun.open` but `call_grpc/3` cannot encode protobuf (TODO). All 4 RPC methods (`request_token`, `submit_telemetry`, `submit_routing_log`, `confirm_audit`) have working HTTP fallbacks that hit vaos-kernel's REST API at `VAOS_KERNEL_HTTP_URL`. Token requests, telemetry, and routing logs all work over HTTP when gRPC is unavailable.
-
 - **Signal classification cache not implemented.** The classifier moduledoc references "ETS-backed, 10-minute TTL" but `MiosaSignal.MessageClassifier` in `miosa/shims.ex` has no ETS caching. `classify_fast/2` directly calls `classify_deterministic/2` with no cache lookup or SHA256 key generation.
 
 - **Channels beyond CLI/HTTP/Telegram are untested in production.** 9 of 12 channel adapters (Discord, Slack, WhatsApp, Signal, Matrix, Email, QQ, DingTalk, Feishu) have code but no evidence of production deployment or integration testing.
