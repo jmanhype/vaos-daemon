@@ -10,23 +10,25 @@ defmodule Daemon.Tools.Builtins.AlphaXivClient do
   @alphaxiv_mcp_path "/mcp/v1"
   @client_name :alphaxiv_mcp
   @token_path Path.join(System.user_home!(), ".openclaw/alphaxiv_token.txt")
+  @oauth_path Path.join(System.user_home!(), ".openclaw/alphaxiv_oauth.json")
 
   def start_link(_opts \\ []) do
     try do
       case load_auth_headers() do
-        {:expired, exp_date} ->
-          Logger.warning("[alphaxiv] JWT token expired on #{exp_date}. Refresh at: https://alphaxiv.org (login → copy token to #{@token_path})")
-          {:error, :token_expired}
+        {:expired, _exp_date} ->
+          # Try auto-refresh before giving up
+          case refresh_access_token() do
+            {:ok, new_token} ->
+              Logger.info("[alphaxiv] Auto-refreshed expired access token")
+              start_mcp_client(%{"authorization" => "Bearer " <> new_token})
+
+            {:error, reason} ->
+              Logger.warning("[alphaxiv] Token expired and refresh failed: #{inspect(reason)}. Re-auth needed.")
+              {:error, :token_expired}
+          end
 
         headers ->
-          Logger.info("[alphaxiv] Starting MCP client with #{if map_size(headers) > 0, do: "auth token", else: "no auth"}")
-          Anubis.Client.start_link(
-            name: @client_name,
-            transport: {:streamable_http, base_url: @alphaxiv_base_url, mcp_path: @alphaxiv_mcp_path, headers: headers},
-            client_info: %{"name" => "VAOS", "version" => "1.0.0"},
-            capabilities: %{},
-            protocol_version: "2025-06-18"
-          )
+          start_mcp_client(headers)
       end
     rescue
       e ->
@@ -171,6 +173,53 @@ defmodule Daemon.Tools.Builtins.AlphaXivClient do
         "arxivId" => String.trim(id)
       }
     end)
+  end
+
+  defp start_mcp_client(headers) do
+    Logger.info("[alphaxiv] Starting MCP client with #{if map_size(headers) > 0, do: "auth token", else: "no auth"}")
+    Anubis.Client.start_link(
+      name: @client_name,
+      transport: {:streamable_http, base_url: @alphaxiv_base_url, mcp_path: @alphaxiv_mcp_path, headers: headers},
+      client_info: %{"name" => "VAOS", "version" => "1.0.0"},
+      capabilities: %{},
+      protocol_version: "2025-06-18"
+    )
+  end
+
+  defp refresh_access_token do
+    case File.read(@oauth_path) do
+      {:ok, json} ->
+        case Jason.decode(json) do
+          {:ok, %{"refresh_token" => refresh, "client_id" => client_id, "token_endpoint" => endpoint}} ->
+            body = URI.encode_query(%{
+              "grant_type" => "refresh_token",
+              "refresh_token" => refresh,
+              "client_id" => client_id
+            })
+            case Req.post(endpoint, body: body, headers: [{"content-type", "application/x-www-form-urlencoded"}], receive_timeout: 10_000) do
+              {:ok, %{status: 200, body: %{"access_token" => new_token} = resp}} ->
+                # Save new access token
+                File.write!(@token_path, new_token)
+                # Update refresh token if rotated
+                if new_refresh = resp["refresh_token"] do
+                  oauth = Jason.decode!(json) |> Map.put("refresh_token", new_refresh)
+                  if exp = resp["expires_in"] do
+                    oauth = Map.put(oauth, "expires_at", System.os_time(:second) + exp)
+                    File.write!(@oauth_path, Jason.encode!(oauth))
+                  else
+                    File.write!(@oauth_path, Jason.encode!(oauth))
+                  end
+                end
+                {:ok, new_token}
+              {:ok, %{status: status, body: body}} ->
+                {:error, {:refresh_failed, status, body}}
+              {:error, reason} ->
+                {:error, reason}
+            end
+          _ -> {:error, :invalid_oauth_config}
+        end
+      _ -> {:error, :no_oauth_config}
+    end
   end
 
   defp load_auth_headers do
