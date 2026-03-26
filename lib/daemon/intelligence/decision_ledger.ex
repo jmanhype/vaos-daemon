@@ -240,7 +240,7 @@ defmodule Daemon.Intelligence.DecisionLedger do
        event_refs: [],
        pending_calls: %{},
        claim_cache: %{},
-       last_tool: %{},
+       last_iteration: %{},
        jsonl_path: jsonl_path,
        sync_timer: sync_timer,
        ets_table: table_name,
@@ -263,8 +263,15 @@ defmodule Daemon.Intelligence.DecisionLedger do
 
   def handle_info(:sync_to_knowledge, state) do
     sync_to_knowledge(state.ets_table)
+
+    # Prune stale session state to prevent memory leaks.
+    # last_iteration and pending_calls grow per-session — cap at 50 entries,
+    # evicting the oldest by iteration number.
+    last_iteration = prune_session_map(state.last_iteration, 50)
+    pending_calls = prune_session_map(state.pending_calls, 50)
+
     timer = Process.send_after(self(), :sync_to_knowledge, @sync_interval_ms)
-    {:noreply, %{state | sync_timer: timer}}
+    {:noreply, %{state | sync_timer: timer, last_iteration: last_iteration, pending_calls: pending_calls}}
   end
 
   def handle_info({:tool_call_start, payload}, state) do
@@ -313,9 +320,10 @@ defmodule Daemon.Intelligence.DecisionLedger do
       # Update ETS pattern
       upsert_pattern(state.ets_table, pattern_key, tool_name, context_type, success, duration_ms, payload)
 
-      # Update pair tracking (sequence awareness)
+      # Update pair tracking (iteration-aware sequence tracking)
       session_id = payload[:session_id] || "default"
-      state = track_pair(state, session_id, pattern_key, success)
+      iteration = payload[:iteration] || 0
+      state = track_pair(state, session_id, iteration, pattern_key, success)
 
       # Append to JSONL
       append_to_jsonl(state.jsonl_path, %{
@@ -436,18 +444,45 @@ defmodule Daemon.Intelligence.DecisionLedger do
     :ets.insert(table, {pattern_key, pattern})
   end
 
-  # ── Pair (sequence) tracking ─────────────────────────────────────────────
+  # ── Pair (sequence) tracking — iteration-aware ──────────────────────────
+  #
+  # Tools within the same iteration run in parallel (Task.async_stream,
+  # max_concurrency: 10). Their arrival order at the Bus is non-deterministic.
+  # We only create pairs BETWEEN iterations: if iteration N had exactly one
+  # tool (unambiguous predecessor), we pair it with each tool in iteration N+1.
+  # Multi-tool iterations are tracked but don't create pairs as predecessors
+  # — the LLM chose them as a batch, so there's no causal A→B signal.
 
-  defp track_pair(state, session_id, current_pattern_key, success) do
-    case Map.get(state.last_tool, session_id) do
+  defp track_pair(state, session_id, iteration, current_pattern_key, success) do
+    prev = Map.get(state.last_iteration, session_id)
+
+    case prev do
       nil ->
-        %{state | last_tool: Map.put(state.last_tool, session_id, current_pattern_key)}
+        # First tool for this session — start tracking this iteration
+        new_iter = %{iteration: iteration, tools: [current_pattern_key]}
+        %{state | last_iteration: Map.put(state.last_iteration, session_id, new_iter)}
 
-      prev_pattern_key ->
-        pair_key = "#{prev_pattern_key}->#{current_pattern_key}"
-        upsert_pair(state.pairs_table, pair_key, success)
-        enforce_max_pairs(state.pairs_table)
-        %{state | last_tool: Map.put(state.last_tool, session_id, current_pattern_key)}
+      %{iteration: ^iteration, tools: tools} ->
+        # Same iteration — just accumulate (parallel tools arriving)
+        updated = %{prev | tools: [current_pattern_key | tools]}
+        %{state | last_iteration: Map.put(state.last_iteration, session_id, updated)}
+
+      %{iteration: prev_iter, tools: prev_tools} when iteration > prev_iter ->
+        # New iteration — create pairs from previous iteration IF unambiguous
+        if length(prev_tools) == 1 do
+          [prev_key] = prev_tools
+          pair_key = "#{prev_key}->#{current_pattern_key}"
+          upsert_pair(state.pairs_table, pair_key, success)
+          enforce_max_pairs(state.pairs_table)
+        end
+
+        new_iter = %{iteration: iteration, tools: [current_pattern_key]}
+        %{state | last_iteration: Map.put(state.last_iteration, session_id, new_iter)}
+
+      _ ->
+        # Edge case: iteration went backwards (shouldn't happen) — reset
+        new_iter = %{iteration: iteration, tools: [current_pattern_key]}
+        %{state | last_iteration: Map.put(state.last_iteration, session_id, new_iter)}
     end
   end
 
@@ -699,6 +734,20 @@ defmodule Daemon.Intelligence.DecisionLedger do
   end
 
   # ── Helpers ────────────────────────────────────────────────────────────────
+
+  # Prune a session-keyed map to at most `max` entries.
+  # Keeps the most recent entries (by map size — no timestamp needed since
+  # active sessions get re-added on next event).
+  defp prune_session_map(map, max) when map_size(map) <= max, do: map
+
+  defp prune_session_map(map, max) do
+    map
+    |> Enum.to_list()
+    |> Enum.take(-max)
+    |> Map.new()
+  rescue
+    _ -> map
+  end
 
   # Production always uses the module-level constant. Test mode uses isolated
   # tables directly via the GenServer state — tests read ETS by table name,

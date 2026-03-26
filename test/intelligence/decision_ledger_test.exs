@@ -13,6 +13,8 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
   defp simulate_outcome(pid, tool_name, args_hint, success, opts \\ []) do
     duration = Keyword.get(opts, :duration_ms, 100)
     result = Keyword.get(opts, :result, if(success, do: "ok", else: "Error: something failed"))
+    iteration = Keyword.get(opts, :iteration, 0)
+    session_id = Keyword.get(opts, :session_id, "test")
 
     send(pid, {:tool_outcome, %{
       name: tool_name,
@@ -20,7 +22,8 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
       success: success,
       duration_ms: duration,
       result: result,
-      session_id: "test"
+      session_id: session_id,
+      iteration: iteration
     }})
 
     # Give GenServer time to process
@@ -310,16 +313,16 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
     end
   end
 
-  # ── Pair (sequence) tracking ───────────────────────────────────────────
+  # ── Pair (sequence) tracking — iteration-aware ────────────────────────
 
-  describe "pair tracking" do
-    test "records tool pairs across sequential calls" do
+  describe "pair tracking (iteration-aware)" do
+    test "single-tool iterations create pairs across iteration boundaries" do
       {pid, _table, pairs} = start_test_ledger()
 
-      # Call 1: file_read (no pair yet — no previous tool)
-      simulate_outcome(pid, "file_read", "lib/foo.ex", true)
-      # Call 2: file_edit (pair: file_read:lib/ -> file_edit:lib/)
-      simulate_outcome(pid, "file_edit", "lib/foo.ex", true)
+      # Iteration 1: file_read (single tool — will be unambiguous predecessor)
+      simulate_outcome(pid, "file_read", "lib/foo.ex", true, iteration: 1)
+      # Iteration 2: file_edit (should pair with iteration 1's single tool)
+      simulate_outcome(pid, "file_edit", "lib/foo.ex", true, iteration: 2)
 
       pair_entries = :ets.tab2list(pairs)
       assert length(pair_entries) == 1
@@ -331,11 +334,41 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
       GenServer.stop(pid)
     end
 
+    test "parallel tools in same iteration do NOT create pairs between each other" do
+      {pid, _table, pairs} = start_test_ledger()
+
+      # Iteration 1: three tools run in parallel (same iteration number)
+      simulate_outcome(pid, "file_read", "lib/a.ex", true, iteration: 1)
+      simulate_outcome(pid, "file_read", "lib/b.ex", true, iteration: 1)
+      simulate_outcome(pid, "web_search", "elixir genserver", true, iteration: 1)
+
+      # No pairs — all within same iteration
+      assert :ets.tab2list(pairs) == []
+
+      GenServer.stop(pid)
+    end
+
+    test "multi-tool iteration does NOT create pairs as predecessor" do
+      {pid, _table, pairs} = start_test_ledger()
+
+      # Iteration 1: two parallel tools (ambiguous predecessor)
+      simulate_outcome(pid, "file_read", "lib/a.ex", true, iteration: 1)
+      simulate_outcome(pid, "file_read", "lib/b.ex", true, iteration: 1)
+
+      # Iteration 2: single tool — should NOT pair because iteration 1 had 2 tools
+      simulate_outcome(pid, "file_edit", "lib/a.ex", true, iteration: 2)
+
+      assert :ets.tab2list(pairs) == []
+
+      GenServer.stop(pid)
+    end
+
     test "tracks failure in pairs" do
       {pid, _table, pairs} = start_test_ledger()
 
-      simulate_outcome(pid, "file_read", "lib/foo.ex", true)
-      simulate_outcome(pid, "file_edit", "lib/foo.ex", false, result: "Error: file not found")
+      simulate_outcome(pid, "file_read", "lib/foo.ex", true, iteration: 1)
+      simulate_outcome(pid, "file_edit", "lib/foo.ex", false,
+        iteration: 2, result: "Error: file not found")
 
       [{_key, pair}] = :ets.tab2list(pairs)
       assert pair.success_count == 0
@@ -344,15 +377,20 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
       GenServer.stop(pid)
     end
 
-    test "accumulates pair counts across multiple sequences" do
+    test "accumulates pair counts across repeated single-tool iterations" do
       {pid, _table, pairs} = start_test_ledger()
 
-      # Simulate: git status -> git log (3 times)
-      # Both derive to shell_execute:git, so pair key = shell_execute:git->shell_execute:git
-      # 6 calls total: call 1 has no pair (first), calls 2-6 each create a pair = 5 pairs
-      for _ <- 1..3 do
-        simulate_outcome(pid, "shell_execute", "git status", true)
-        simulate_outcome(pid, "shell_execute", "git log", true)
+      # Simulate: single git tool per iteration, alternating iterations
+      # iter 1: git status (single) — no predecessor
+      # iter 2: git log   (single) — pairs with iter 1
+      # iter 3: git status (single) — pairs with iter 2
+      # iter 4: git log   (single) — pairs with iter 3
+      # iter 5: git status (single) — pairs with iter 4
+      # iter 6: git log   (single) — pairs with iter 5
+      # = 5 pairs of shell_execute:git->shell_execute:git
+      for i <- 1..6 do
+        cmd = if rem(i, 2) == 1, do: "git status", else: "git log"
+        simulate_outcome(pid, "shell_execute", cmd, true, iteration: i)
       end
 
       pair_entries = :ets.tab2list(pairs)
@@ -367,16 +405,36 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
     test "different sessions don't create cross-session pairs" do
       {pid, _table, pairs} = start_test_ledger()
 
-      # Session A: file_read
-      send(pid, {:tool_outcome, %{name: "file_read", args: "lib/a.ex", success: true, duration_ms: 50, result: "ok", session_id: "session_a"}})
-      :timer.sleep(10)
+      # Session A: file_read at iteration 1
+      simulate_outcome(pid, "file_read", "lib/a.ex", true, iteration: 1, session_id: "session_a")
 
-      # Session B: file_edit (should NOT pair with session A's file_read)
-      send(pid, {:tool_outcome, %{name: "file_edit", args: "lib/b.ex", success: true, duration_ms: 50, result: "ok", session_id: "session_b"}})
-      :timer.sleep(10)
+      # Session B: file_edit at iteration 2 (should NOT pair with session A)
+      simulate_outcome(pid, "file_edit", "lib/b.ex", true, iteration: 2, session_id: "session_b")
 
-      # No pairs should exist (each session only has 1 call)
+      # No pairs — different sessions
       assert :ets.tab2list(pairs) == []
+
+      GenServer.stop(pid)
+    end
+
+    test "realistic parallel-then-sequential flow" do
+      {pid, _table, pairs} = start_test_ledger()
+
+      # Iteration 1: LLM reads 3 files in parallel (no pairs as predecessor)
+      simulate_outcome(pid, "file_read", "lib/a.ex", true, iteration: 1)
+      simulate_outcome(pid, "file_read", "lib/b.ex", true, iteration: 1)
+      simulate_outcome(pid, "file_read", "lib/c.ex", true, iteration: 1)
+
+      # Iteration 2: LLM edits 1 file (multi-tool predecessor, no pairs)
+      simulate_outcome(pid, "file_edit", "lib/a.ex", true, iteration: 2)
+
+      # Iteration 3: LLM runs tests (single predecessor from iter 2, creates pair)
+      simulate_outcome(pid, "shell_execute", "mix test", true, iteration: 3)
+
+      pair_entries = :ets.tab2list(pairs)
+      assert length(pair_entries) == 1
+      [{pair_key, _}] = pair_entries
+      assert pair_key == "file_edit:lib/->shell_execute:mix"
 
       GenServer.stop(pid)
     end

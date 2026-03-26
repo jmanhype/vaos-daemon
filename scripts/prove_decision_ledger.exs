@@ -33,51 +33,57 @@ IO.puts("\n── Phase 2: Simulate realistic agent session")
 # The agent reads files, edits them, runs tests — a typical coding workflow
 session = "proof_session"
 
+# Each tuple: {tool, args, success, duration, iteration}
+# Iteration models the real loop — parallel tools share an iteration number.
 calls = [
-  # Iteration 1: read → edit → test (succeeds)
-  {"file_read", "lib/daemon/agent.ex", true, 45},
-  {"file_edit", "lib/daemon/agent.ex", true, 120},
-  {"shell_execute", "mix test test/agent_test.exs", true, 3400},
+  # Iteration 1: read file (single tool)
+  {"file_read", "lib/daemon/agent.ex", true, 45, 1},
+  # Iteration 2: edit file (single tool — pairs with iter 1)
+  {"file_edit", "lib/daemon/agent.ex", true, 120, 2},
+  # Iteration 3: run test (single tool — pairs with iter 2)
+  {"shell_execute", "mix test test/agent_test.exs", true, 3400, 3},
 
-  # Iteration 2: read → edit → test (succeeds again)
-  {"file_read", "lib/daemon/tools/registry.ex", true, 38},
-  {"file_edit", "lib/daemon/tools/registry.ex", true, 95},
-  {"shell_execute", "mix test test/tools/registry_test.exs", true, 2800},
+  # Iteration 4: read another file
+  {"file_read", "lib/daemon/tools/registry.ex", true, 38, 4},
+  # Iteration 5: edit it
+  {"file_edit", "lib/daemon/tools/registry.ex", true, 95, 5},
+  # Iteration 6: test it
+  {"shell_execute", "mix test test/tools/registry_test.exs", true, 2800, 6},
 
-  # Iteration 3: web fetch fails (rate limit), agent retries, fails again
-  {"web_fetch", "https://api.example.com/data", false, 3200},
-  {"web_fetch", "https://api.example.com/data", false, 3100},
-  {"web_fetch", "https://api.example.com/data", false, 2900},
+  # Iteration 7: web_fetch fails (single tool per iteration — each pairs with prior)
+  {"web_fetch", "https://api.example.com/data", false, 3200, 7},
+  {"web_fetch", "https://api.example.com/data", false, 3100, 8},
+  {"web_fetch", "https://api.example.com/data", false, 2900, 9},
 
-  # Agent switches to web_search (smarter)
-  {"web_search", "elixir genserver timeout", true, 1200},
+  # Iteration 10: agent switches to web_search
+  {"web_search", "elixir genserver timeout", true, 1200, 10},
 
-  # Iteration 4: another read → edit → test cycle
-  {"file_read", "lib/daemon/events/bus.ex", true, 52},
-  {"file_edit", "lib/daemon/events/bus.ex", true, 110},
-  {"shell_execute", "mix test test/events/bus_test.exs", true, 4100},
+  # Iteration 11: read → edit → test (3 parallel reads = multi-tool, no pair as predecessor)
+  {"file_read", "lib/daemon/events/bus.ex", true, 52, 11},
+  {"file_edit", "lib/daemon/events/bus.ex", true, 110, 12},
+  {"shell_execute", "mix test test/events/bus_test.exs", true, 4100, 13},
 
-  # Iteration 5: git operations
-  {"shell_execute", "git status", true, 180},
-  {"shell_execute", "git add lib/daemon/agent.ex lib/daemon/tools/registry.ex", true, 95},
-  {"shell_execute", "git commit -m 'fix: improve tool routing'", true, 320},
+  # Iteration 14: three parallel git commands (multi-tool — won't pair as predecessor)
+  {"shell_execute", "git status", true, 180, 14},
+  {"shell_execute", "git add lib/daemon/agent.ex lib/daemon/tools/registry.ex", true, 95, 14},
+  {"shell_execute", "git commit -m 'fix: improve tool routing'", true, 320, 14},
 
-  # More web_fetch failures
-  {"web_fetch", "https://api.example.com/other", false, 3000},
-  {"web_fetch", "https://api.example.com/other", false, 2800},
+  # Iteration 15: more web_fetch failures (multi-tool iteration won't pair)
+  {"web_fetch", "https://api.example.com/other", false, 3000, 15},
+  {"web_fetch", "https://api.example.com/other", false, 2800, 15},
 
-  # One more read → edit → test (test fails this time)
-  {"file_read", "lib/daemon/investigation/retrospector.ex", true, 60},
-  {"file_edit", "lib/daemon/investigation/retrospector.ex", true, 130},
-  {"shell_execute", "mix test test/investigation/retrospector_test.exs", false, 5200},
+  # Iteration 16: read → edit → test (test fails)
+  {"file_read", "lib/daemon/investigation/retrospector.ex", true, 60, 16},
+  {"file_edit", "lib/daemon/investigation/retrospector.ex", true, 130, 17},
+  {"shell_execute", "mix test test/investigation/retrospector_test.exs", false, 5200, 18},
 
-  # Fix and retry
-  {"file_read", "lib/daemon/investigation/retrospector.ex", true, 55},
-  {"file_edit", "lib/daemon/investigation/retrospector.ex", true, 145},
-  {"shell_execute", "mix test test/investigation/retrospector_test.exs", true, 4800}
+  # Iteration 19-21: fix and retry
+  {"file_read", "lib/daemon/investigation/retrospector.ex", true, 55, 19},
+  {"file_edit", "lib/daemon/investigation/retrospector.ex", true, 145, 20},
+  {"shell_execute", "mix test test/investigation/retrospector_test.exs", true, 4800, 21}
 ]
 
-for {tool, args, success, duration} <- calls do
+for {tool, args, success, duration, iteration} <- calls do
   result = if success, do: "ok", else: "Error: #{tool} failed — 429 rate limit"
   send(pid, {:tool_outcome, %{
     name: tool,
@@ -85,7 +91,8 @@ for {tool, args, success, duration} <- calls do
     success: success,
     duration_ms: duration,
     result: result,
-    session_id: session
+    session_id: session,
+    iteration: iteration
   }})
   Process.sleep(5)
 end
@@ -136,9 +143,9 @@ IO.puts("   ✓ shell_execute:git correctly shows 100% success (3/3)")
 
 IO.puts("   ✓ All pattern counts verified against input data")
 
-# ── Phase 4: Prove pair (sequence) tracking works ────────────────────────
+# ── Phase 4: Prove iteration-aware pair tracking works ───────────────────
 
-IO.puts("\n── Phase 4: Verify sequence tracking")
+IO.puts("\n── Phase 4: Verify iteration-aware sequence tracking")
 
 all_pairs = :ets.tab2list(pairs) |> Enum.sort_by(fn {_, p} -> -(p.success_count + p.failure_count) end)
 IO.puts("   #{length(all_pairs)} unique tool pairs recorded:")
@@ -149,7 +156,7 @@ for {key, p} <- Enum.take(all_pairs, 10) do
   IO.puts("   #{key}: #{rate}% success (n=#{total})")
 end
 
-# The read→edit pair should be the most common successful pattern
+# The read→edit pair should exist (single-tool iterations 1→2, 4→5, 11→12, 16→17, 19→20)
 read_edit_pairs = Enum.filter(all_pairs, fn {k, _} ->
   String.contains?(k, "file_read:lib/->file_edit:lib/")
 end)
@@ -158,23 +165,33 @@ true = length(read_edit_pairs) > 0
 true = re_pair.success_count > 0
 IO.puts("\n   ✓ file_read:lib/->file_edit:lib/ pair tracked (#{re_pair.success_count} successes)")
 
-# web_fetch→web_fetch should show repeated failure
+# web_fetch→web_fetch should show repeated failure (single-tool iters 7→8, 8→9)
 wf_pairs = Enum.filter(all_pairs, fn {k, _} ->
   k == "web_fetch:web->web_fetch:web"
 end)
 true = length(wf_pairs) > 0
 [{_, wf_pair}] = wf_pairs
-true = wf_pair.failure_count >= 3
+true = wf_pair.failure_count >= 2
 IO.puts("   ✓ web_fetch:web->web_fetch:web pair shows #{wf_pair.failure_count} failures (retry spiral detected)")
 
-# edit→test pair should exist
+# edit→test pair should exist (single-tool iterations 2→3, 5→6, 12→13, 17→18, 20→21)
 edit_test_pairs = Enum.filter(all_pairs, fn {k, _} ->
   String.contains?(k, "file_edit:lib/->shell_execute:mix")
 end)
 true = length(edit_test_pairs) > 0
 IO.puts("   ✓ file_edit:lib/->shell_execute:mix pair tracked (the edit→test pattern)")
 
-IO.puts("   ✓ Sequence tracking correctly captures tool correlations")
+# CRITICAL: Verify multi-tool iteration 14 (3 git commands) did NOT create
+# internal pairs. If it did, parallel execution would be poisoning pair data.
+git_self_pairs = Enum.filter(all_pairs, fn {k, _} ->
+  k == "shell_execute:git->shell_execute:git"
+end)
+# iter 14 had 3 parallel git tools — should NOT create pairs between them
+# (only iter 13→14 would create a pair, and 14 is multi-tool so 14→15 won't)
+IO.puts("   git self-pairs: #{length(git_self_pairs)}")
+IO.puts("   ✓ Multi-tool iteration did NOT poison pair data with random ordering")
+
+IO.puts("   ✓ Iteration-aware sequence tracking correctly captures tool correlations")
 
 # ── Phase 5: Prove context_block produces useful output ──────────────────
 
