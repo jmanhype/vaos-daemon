@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """
-Bootstrap training data for GEPA by fetching papers from OpenAlex.
+Bootstrap training data for GEPA from all pipeline paper sources.
 
-OpenAlex has generous rate limits (10 req/s with polite pool) — ideal for
-collecting the paper abstracts needed by the investigation pipeline.
+Sources (matching investigate.ex):
+  - OpenAlex: generous rate limits (10 req/s with polite pool)
+  - Semantic Scholar: 1 req/s without API key, 429s common
+  - HuggingFace Papers: ML/AI papers from arXiv via HF Hub API, no auth
+  - alphaXiv: embedding search (requires MCP OAuth, skipped if unavailable)
 
 Usage:
-    python -m gepa.collect_papers --topics topics.txt --output training_data.jsonl
     python -m gepa.collect_papers --seed --output training_data.jsonl
+    python -m gepa.collect_papers --topics topics.txt --output training_data.jsonl
+    python -m gepa.collect_papers --seed --sources openalex,semantic_scholar,huggingface
 """
 
 import argparse
@@ -18,7 +22,11 @@ from pathlib import Path
 
 import requests
 
+# -- API endpoints --
 OPENALEX_API = "https://api.openalex.org/works"
+SEMANTIC_SCHOLAR_API = "https://api.semanticscholar.org/graph/v1/paper/search"
+HUGGINGFACE_PAPERS_API = "https://huggingface.co/api/papers/search"
+
 POLITE_EMAIL = "vaos-daemon@users.noreply.github.com"
 
 # Default seed topics covering areas the investigation pipeline handles
@@ -40,6 +48,10 @@ SEED_TOPICS = [
     "Reproducibility crisis in machine learning research",
 ]
 
+ALL_SOURCES = ["openalex", "semantic_scholar", "huggingface"]
+
+
+# -- OpenAlex --
 
 def search_openalex(query, per_page=10):
     """Search OpenAlex for papers matching query."""
@@ -56,7 +68,7 @@ def search_openalex(query, per_page=10):
         data = resp.json()
         return data.get("results", [])
     except Exception as e:
-        print(f"  Warning: OpenAlex search failed for '{query[:50]}': {e}", file=sys.stderr)
+        print(f"  [openalex] Failed for '{query[:50]}': {e}", file=sys.stderr)
         return []
 
 
@@ -65,27 +77,22 @@ def reconstruct_abstract(inverted_index):
     if not inverted_index:
         return ""
 
-    # Build word-position pairs
     positions = []
     for word, pos_list in inverted_index.items():
         for pos in pos_list:
             positions.append((pos, word))
 
-    # Sort by position and join
     positions.sort()
     return " ".join(word for _, word in positions)
 
 
-def format_paper(work):
+def format_openalex_paper(work):
     """Convert OpenAlex work to pipeline-compatible format."""
     title = work.get("title", "Unknown")
     year = work.get("publication_year", "unknown")
     citations = work.get("cited_by_count", 0)
-
-    # Reconstruct abstract from inverted index
     abstract = reconstruct_abstract(work.get("abstract_inverted_index"))
 
-    # Extract authors
     authors = []
     for authorship in (work.get("authorships") or [])[:5]:
         author = authorship.get("author", {})
@@ -93,7 +100,6 @@ def format_paper(work):
         if name:
             authors.append(name)
 
-    # Extract DOI
     doi = work.get("doi", "") or ""
     if doi.startswith("https://doi.org/"):
         doi = doi[len("https://doi.org/"):]
@@ -109,6 +115,115 @@ def format_paper(work):
         "paper_id": work.get("id", ""),
     }
 
+
+# -- Semantic Scholar --
+
+def search_semantic_scholar(query, limit=10):
+    """Search Semantic Scholar. Rate-limited: 1 req/s without API key."""
+    params = {
+        "query": query,
+        "limit": limit,
+        "fields": "title,abstract,year,citationCount,authors,externalIds,publicationTypes",
+    }
+
+    # Use API key if available (100 req/s vs 1 req/s)
+    headers = {}
+    ss_key = None
+    try:
+        import os
+        ss_key = os.environ.get("SEMANTIC_SCHOLAR_API_KEY")
+    except Exception:
+        pass
+    if ss_key:
+        headers["x-api-key"] = ss_key
+
+    try:
+        resp = requests.get(SEMANTIC_SCHOLAR_API, params=params, headers=headers, timeout=15)
+        if resp.status_code == 429:
+            print(f"  [semantic_scholar] Rate limited, waiting 2s...", file=sys.stderr)
+            time.sleep(2)
+            resp = requests.get(SEMANTIC_SCHOLAR_API, params=params, headers=headers, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("data", [])
+    except Exception as e:
+        print(f"  [semantic_scholar] Failed for '{query[:50]}': {e}", file=sys.stderr)
+        return []
+
+
+def format_ss_paper(paper):
+    """Convert Semantic Scholar paper to pipeline-compatible format."""
+    authors = []
+    for author in (paper.get("authors") or [])[:5]:
+        name = author.get("name", "")
+        if name:
+            authors.append(name)
+
+    doi = ""
+    ext_ids = paper.get("externalIds") or {}
+    if ext_ids.get("DOI"):
+        doi = ext_ids["DOI"]
+
+    return {
+        "title": paper.get("title", "Unknown"),
+        "abstract": paper.get("abstract") or "",
+        "year": str(paper.get("year") or "unknown"),
+        "citation_count": paper.get("citationCount") or 0,
+        "source": "semantic_scholar",
+        "authors": authors,
+        "doi": doi,
+        "paper_id": paper.get("paperId", ""),
+    }
+
+
+# -- HuggingFace Papers --
+
+def search_huggingface(query, limit=10):
+    """Search HuggingFace Papers API (ML/AI papers from arXiv, no auth)."""
+    params = {"q": query}
+
+    try:
+        resp = requests.get(HUGGINGFACE_PAPERS_API, params=params, timeout=15)
+        resp.raise_for_status()
+        papers = resp.json()
+        if isinstance(papers, list):
+            return papers[:limit]
+        return []
+    except Exception as e:
+        print(f"  [huggingface] Failed for '{query[:50]}': {e}", file=sys.stderr)
+        return []
+
+
+def format_hf_paper(paper):
+    """Convert HuggingFace paper to pipeline-compatible format."""
+    # HF papers API returns {id, title, summary, authors: [{name}], ...}
+    authors = []
+    for author in (paper.get("authors") or [])[:5]:
+        if isinstance(author, dict):
+            name = author.get("name", "")
+        elif isinstance(author, str):
+            name = author
+        else:
+            name = ""
+        if name:
+            authors.append(name)
+
+    arxiv_id = paper.get("id", "")
+
+    return {
+        "title": paper.get("title", "Unknown"),
+        "abstract": paper.get("summary", "") or paper.get("abstract", "") or "",
+        "year": str(paper.get("publishedAt", "unknown"))[:4] if paper.get("publishedAt") else "unknown",
+        "citation_count": paper.get("citationCount", 0) or 0,
+        "source": "huggingface",
+        "authors": authors,
+        "doi": "",
+        "paper_id": arxiv_id,
+        "url": f"https://arxiv.org/abs/{arxiv_id}" if arxiv_id else "",
+    }
+
+
+# -- Shared --
 
 def format_papers_context(papers):
     """Format papers into the context string used by the investigation pipeline."""
@@ -126,41 +241,82 @@ def format_papers_context(papers):
     return "RELEVANT PAPERS FOUND:\n" + "\n\n".join(lines)
 
 
-def collect_for_topic(topic, per_page=10):
-    """Collect papers and format as a training example for one topic."""
+def dedup_papers(papers):
+    """Deduplicate papers by normalized title (matches investigate.ex merge_papers_raw)."""
+    seen = set()
+    deduped = []
+    for p in papers:
+        key = " ".join(
+            sorted(
+                w for w in p["title"].lower().split()
+                if len(w) >= 4
+            )[:5]
+        )
+        if key and key not in seen:
+            seen.add(key)
+            deduped.append(p)
+    return deduped
+
+
+def collect_for_topic(topic, per_page=10, sources=None):
+    """Collect papers from all sources and format as a training example."""
+    if sources is None:
+        sources = ALL_SOURCES
+
     print(f"  Collecting papers for: {topic[:60]}...")
 
-    # Search with multiple query variants
-    queries = [
-        topic,
-        f"systematic review {topic}",
-        f"{topic} meta-analysis",
-    ]
-
     all_papers = []
-    seen_titles = set()
 
-    for query in queries:
-        works = search_openalex(query, per_page=per_page)
-        for work in works:
-            title = (work.get("title") or "").lower().strip()
-            if title and title not in seen_titles:
-                seen_titles.add(title)
-                all_papers.append(format_paper(work))
-        time.sleep(0.15)  # Polite delay
+    # -- OpenAlex (generous limits, multiple query variants) --
+    if "openalex" in sources:
+        oa_queries = [
+            topic,
+            f"systematic review {topic}",
+            f"{topic} meta-analysis",
+        ]
+        for query in oa_queries:
+            works = search_openalex(query, per_page=per_page)
+            for work in works:
+                all_papers.append(format_openalex_paper(work))
+            time.sleep(0.15)
 
-    # Sort by citations (most cited first)
+    # -- Semantic Scholar (rate-limited, 1.5s between requests) --
+    if "semantic_scholar" in sources:
+        ss_queries = [
+            topic,
+            f"systematic review {topic}",
+        ]
+        for query in ss_queries:
+            papers = search_semantic_scholar(query, limit=per_page)
+            for paper in papers:
+                all_papers.append(format_ss_paper(paper))
+            time.sleep(1.5)  # Respect unauthenticated rate limit
+
+    # -- HuggingFace Papers (ML/AI only, no auth needed) --
+    if "huggingface" in sources:
+        hf_papers = search_huggingface(topic, limit=per_page)
+        for paper in hf_papers:
+            all_papers.append(format_hf_paper(paper))
+
+    # Dedup, sort by citations, take top 15
+    all_papers = dedup_papers(all_papers)
     all_papers.sort(key=lambda p: p["citation_count"], reverse=True)
-    all_papers = all_papers[:15]  # Keep top 15
+    all_papers = all_papers[:15]
 
     if not all_papers:
         return None
+
+    # Count by source
+    source_counts = {}
+    for p in all_papers:
+        source_counts[p["source"]] = source_counts.get(p["source"], 0) + 1
 
     return {
         "claim": topic,
         "papers_context": format_papers_context(all_papers),
         "papers": all_papers,
         "prior_evidence": "",
+        "source_counts": source_counts,
     }
 
 
@@ -189,7 +345,19 @@ def main():
         default=10,
         help="Papers per query (default: 10)",
     )
+    parser.add_argument(
+        "--sources",
+        type=str,
+        default=",".join(ALL_SOURCES),
+        help=f"Comma-separated sources to use (default: {','.join(ALL_SOURCES)})",
+    )
     args = parser.parse_args()
+
+    sources = [s.strip() for s in args.sources.split(",")]
+    invalid = [s for s in sources if s not in ALL_SOURCES]
+    if invalid:
+        print(f"ERROR: Unknown sources: {invalid}. Valid: {ALL_SOURCES}", file=sys.stderr)
+        sys.exit(1)
 
     # Load topics
     if args.topics:
@@ -208,16 +376,16 @@ def main():
         print("ERROR: Specify --topics <file> or --seed", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Collecting papers for {len(topics)} topics...")
+    print(f"Collecting papers for {len(topics)} topics from {sources}...")
 
     output_path = Path(args.output)
     collected = 0
+    total_by_source = {}
 
     with open(output_path, "w") as f:
         for topic in topics:
-            example = collect_for_topic(topic, per_page=args.per_page)
+            example = collect_for_topic(topic, per_page=args.per_page, sources=sources)
             if example:
-                # Write without the full papers array (just claim + context for GEPA)
                 training_entry = {
                     "claim": example["claim"],
                     "papers_context": example["papers_context"],
@@ -225,13 +393,16 @@ def main():
                 }
                 f.write(json.dumps(training_entry) + "\n")
                 collected += 1
-                print(f"  -> {len(example['papers'])} papers collected")
+                for src, count in example["source_counts"].items():
+                    total_by_source[src] = total_by_source.get(src, 0) + count
+                print(f"  -> {len(example['papers'])} papers ({example['source_counts']})")
             else:
                 print(f"  -> No papers found, skipping")
 
-            time.sleep(0.5)  # Be polite between topics
+            time.sleep(0.5)
 
-    print(f"\nDone! Collected {collected}/{len(topics)} topics -> {output_path}")
+    print(f"\nDone! {collected}/{len(topics)} topics -> {output_path}")
+    print(f"Papers by source: {total_by_source}")
 
 
 if __name__ == "__main__":
