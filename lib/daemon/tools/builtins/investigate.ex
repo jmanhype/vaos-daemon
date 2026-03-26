@@ -208,8 +208,10 @@ Known failure patterns to avoid:
     # 7. TWO ADVERSARIAL LLM CALLS (sequential for rate-limit safety)
     example_format = """
     Example of correct format:
-    1. [SOURCED] (strength: 8) A meta-analysis of 12 RCTs found significant effects (p<0.05) with moderate effect sizes across multiple conditions. [Paper 3] specifically analyzed 500 patients and found a 23% improvement rate over placebo, suggesting robust clinical benefit.
+    1. [SOURCED] (strength: 8) [Paper 3] reports improved accuracy on mathematical reasoning benchmarks using MCTS-guided search compared to baseline sampling (as stated in the abstract). The paper demonstrates this across multiple task types.
     2. [REASONING] (strength: 5) The mechanism of action is biologically plausible because...
+
+    Important: Only claim what the paper's abstract explicitly states. Do not fabricate statistics or findings not present in the abstract text.
     """
 
     for_prompt = """
@@ -746,7 +748,7 @@ Known failure patterns to avoid:
 
     prompt = """
     Paper title: #{title}
-    Paper abstract: #{String.slice(to_string(abstract), 0, 500)}
+    Paper abstract: #{String.slice(to_string(abstract), 0, 2000)}
 
     Claim: #{evidence.summary}
 
@@ -873,14 +875,15 @@ Known failure patterns to avoid:
       |> Enum.map(fn {p, i} ->
         citations = p["citation_count"] || p["citationCount"] || 0
         source = p["source"] || "unknown"
-        abstract = String.slice(to_string(p["abstract"] || ""), 0, 500)
+        abstract = String.slice(to_string(p["abstract"] || ""), 0, 2000)
         "[Paper #{i}] #{p["title"]} (#{p["year"]}, #{citations} citations, via #{source})\nAbstract: #{abstract}"
       end)
       |> Enum.join("\n\n")
 
     "RELEVANT PAPERS FOUND:\n" <> papers_text <>
       "\n\nPapers are sorted by relevance. Citation counts are shown for each paper." <>
-      "\nWhen citing, prefer papers with higher citation counts and from established journals." <>
+      "\nWhen citing papers, only claim what the abstract actually states. Do NOT infer findings beyond what is written." <>
+      "\nIf a paper's abstract doesn't explicitly support your claim, use [REASONING] instead of citing it." <>
       "\nYou MUST cite specific papers by number [Paper N] when your arguments are based on them."
   end
 
