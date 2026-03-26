@@ -1,14 +1,14 @@
 defmodule Daemon.Investigation.Strategy do
   @moduledoc """
-  Investigation parameter vector for MCTS optimization.
+  Investigation parameter configuration.
 
-  Encapsulates all tunable scoring/classification parameters that were
-  previously hardcoded in investigate.ex. Each parameter has defined bounds
-  for MCTS mutation operations.
+  Encapsulates all tunable scoring/classification parameters for the
+  investigation pipeline. Parameters are loaded from StrategyStore (prior
+  strategies) or fall back to defaults.
   """
 
   defstruct [
-    # Scoring/classification params (optimized by MCTS)
+    # Scoring/classification params
     grounded_threshold: 0.4,
     citation_weight: 0.5,
     publisher_weight: 0.5,

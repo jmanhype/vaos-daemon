@@ -121,4 +121,56 @@ defmodule Daemon.Investigation.SourceScoringTest do
       refute SourceScoring.is_review_or_meta_analysis?("a regular study", ["JournalArticle"])
     end
   end
+
+  describe "classify/3 (Verification-Aware Classification)" do
+    setup do
+      %{strategy: Strategy.default()}
+    end
+
+    test "verified + good source → grounded", %{strategy: s} do
+      assert SourceScoring.classify("verified", 0.4, s) == :grounded
+    end
+
+    test "verified + at floor (0.12) → grounded", %{strategy: s} do
+      assert SourceScoring.classify("verified", 0.12, s) == :grounded
+    end
+
+    test "verified + below floor → belief (rejects junk pub + 0 cites)", %{strategy: s} do
+      assert SourceScoring.classify("verified", 0.11, s) == :belief
+    end
+
+    test "partial + above threshold → grounded", %{strategy: s} do
+      assert SourceScoring.classify("partial", 0.5, s) == :grounded
+    end
+
+    test "partial + below threshold → belief", %{strategy: s} do
+      assert SourceScoring.classify("partial", 0.3, s) == :belief
+    end
+
+    test "unverified + any source quality → belief", %{strategy: s} do
+      assert SourceScoring.classify("unverified", 0.9, s) == :belief
+    end
+
+    test "no_citation → belief", %{strategy: s} do
+      assert SourceScoring.classify("no_citation", 0.15, s) == :belief
+    end
+
+    test "invalid_ref → belief", %{strategy: s} do
+      assert SourceScoring.classify("invalid_ref", 0.1, s) == :belief
+    end
+
+    test "pending → belief (defensive)", %{strategy: s} do
+      assert SourceScoring.classify("pending", 0.5, s) == :belief
+    end
+
+    test "verified + junk pub with high cites (0.225) → grounded", %{strategy: s} do
+      # junk pub (0.05) + 100 cites (log10(100)/5=0.4) → 0.4*0.5 + 0.05*0.5 = 0.225
+      assert SourceScoring.classify("verified", 0.225, s) == :grounded
+    end
+
+    test "verified + junk pub with 0 cites (0.025) → belief", %{strategy: s} do
+      # junk pub (0.05) + 0 cites → 0.0*0.5 + 0.05*0.5 = 0.025
+      assert SourceScoring.classify("verified", 0.025, s) == :belief
+    end
+  end
 end

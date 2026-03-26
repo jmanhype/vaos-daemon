@@ -1,11 +1,10 @@
 defmodule Daemon.Investigation.SourceScoring do
   @moduledoc """
-  Shared publisher/source quality scoring for investigate.ex and optimizer.
+  Shared publisher/source quality scoring and evidence classification.
 
-  Extracted from investigate.ex to eliminate scoring divergence between the
-  investigation pipeline and the MCTS optimizer. Both now use the same
-  pattern lists, the same low-quality journal gate, and the same
-  review-type detection logic.
+  Provides `score/2` for source quality computation and `classify/3` for
+  Verification-Aware Classification (VAC) — gates grounded store entry
+  using both LLM verification status and source quality.
   """
 
   alias Daemon.Investigation.Strategy
@@ -95,9 +94,33 @@ defmodule Daemon.Investigation.SourceScoring do
     Float.round(citation_score * strategy.citation_weight + publisher_score * strategy.publisher_weight, 3)
   end
 
+  # Verified evidence needs only minimal source quality to enter grounded store.
+  # At default weights (cw=0.5, pw=0.5): junk+0cites=0.025 (rejected), junk+10cites=0.125 (passes).
+  @verified_floor 0.12
+
+  @doc """
+  Verification-Aware Classification (VAC).
+
+  Gates grounded store entry using LLM verification status AND source quality:
+  - Unverified/no_citation/invalid_ref/pending → always :belief
+  - Below @verified_floor → always :belief (rejects junk publisher + 0 citations even if "verified")
+  - "verified" + above floor → :grounded
+  - "partial" + above strategy threshold → :grounded
+  - Everything else → :belief
+  """
+  @spec classify(String.t() | nil, float(), Strategy.t()) :: :grounded | :belief
+  def classify(verification, source_quality, %Strategy{} = strategy) do
+    cond do
+      verification in ["unverified", "no_citation", "invalid_ref", "pending"] -> :belief
+      source_quality < @verified_floor -> :belief
+      verification == "verified" -> :grounded
+      verification == "partial" and source_quality >= strategy.grounded_threshold -> :grounded
+      true -> :belief
+    end
+  end
+
   @doc """
   Compute just the publisher score component (no strategy weights).
-  Used by optimizer's enrich_probe_ctx to cache publisher scores in paper_map.
   Returns 0.05, 0.3, or 0.8.
   """
   @spec publisher_score(map()) :: float()

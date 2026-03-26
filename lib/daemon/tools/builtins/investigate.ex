@@ -41,7 +41,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
   alias Vaos.Ledger.Epistemic.Policy
   alias Vaos.Ledger.Research.Pipeline
   alias Vaos.Ledger.ML.CrashLearner
-  alias Daemon.Investigation.{Strategy, StrategyStore, Optimizer, Receipt, SourceScoring}
+  alias Daemon.Investigation.{Strategy, StrategyStore, SourceScoring}
 
   @ledger_path Path.join(System.user_home!(), ".openclaw/investigate_ledger.json")
   @ledger_name :investigate_ledger
@@ -347,7 +347,7 @@ Known failure patterns to avoid:
       true ->
         # Both succeeded — full analysis with citation verification
         run_full_analysis(topic, supporting, opposing, all_papers, paper_map,
-                          source_counts, keywords, prior_evidence, store, depth)
+                          source_counts, keywords, prior_evidence, store, depth, prior_strategy)
     end
   rescue
     e ->
@@ -358,28 +358,10 @@ Known failure patterns to avoid:
   # -- Full analysis (both sides succeeded) ------------------------------
 
   defp run_full_analysis(topic, supporting_raw, opposing_raw, all_papers, paper_map,
-                         source_counts, keywords, prior_evidence, store, depth) do
+                         source_counts, keywords, prior_evidence, store, depth, strategy) do
     # 9. CITATION VERIFICATION + PAPER TYPE CLASSIFICATION — the evidence quality step
     verified_supporting = verify_citations(supporting_raw, paper_map)
     verified_opposing = verify_citations(opposing_raw, paper_map)
-
-    # 9.5 Build probe context for MCTS optimization
-    probe_ctx = %{
-      papers: all_papers,
-      paper_map: paper_map,
-      verified_supporting: verified_supporting,
-      verified_opposing: verified_opposing,
-      topic: topic
-    }
-
-    # 9.6 MCTS optimization — searches over scoring params using EIG as reward
-    # Feature-flagged: off by default for safe rollout
-    {strategy, optimization_receipt} =
-      if Application.get_env(:daemon, :investigate_optimizer_enabled, false) do
-        Optimizer.optimize(probe_ctx)
-      else
-        {Strategy.default(), nil}
-      end
 
     # 9.7 Re-score evidence with winning strategy's hierarchy weights
     verified_supporting = rescore_evidence(verified_supporting, strategy)
@@ -537,7 +519,7 @@ Known failure patterns to avoid:
           source: p["source"] || "unknown"}
       end),
       investigation_id: topic_id,
-      optimization: if(optimization_receipt, do: Receipt.to_map(optimization_receipt), else: nil),
+      optimization: nil,
       suggested_next: try do
         Policy.rank_actions(@ledger_name, limit: 3)
         |> Enum.map(fn a ->
@@ -672,7 +654,6 @@ Known failure patterns to avoid:
       (if prior_evidence != [], do: "\n### Prior Evidence (related topics)\n" <> Enum.join(prior_evidence, "\n") <> "\n", else: "") <>
       deep_note <>
       iteration_note <>
-      format_optimization_note(optimization_receipt) <>
       "\n### Keywords\n  " <> Enum.join(keywords, ", ") <> "\n\n" <>
       "*Claim ID: #{claim_id} -- stored in knowledge graph as #{topic_id}*" <>
       "\n\n<!-- VAOS_JSON:#{json_result} -->"
@@ -842,11 +823,12 @@ Known failure patterns to avoid:
     base * type_weight * citation_bonus
   end
 
-  # -- AEC Two-Store: Source Quality Scoring --------------------------------
+  # -- AEC Two-Store: Verification-Aware Classification (VAC) ----------------
   # Per arxiv.org/abs/2602.03974 — Active Epistemic Control
   # Only grounded (high-quality) evidence can determine the verdict.
   # Belief (low-quality) evidence provides context but cannot flip direction.
-  # Scoring logic in Daemon.Investigation.SourceScoring (shared with optimizer).
+  # Classification uses BOTH LLM verification status AND source quality via
+  # SourceScoring.classify/3 — unverified evidence never enters grounded.
 
   defp classify_evidence_store(verified_evidence, paper_map, %Strategy{} = strategy) do
     Enum.map(verified_evidence, fn ev ->
@@ -859,7 +841,7 @@ Known failure patterns to avoid:
           end
       end
 
-      store = if source_quality >= strategy.grounded_threshold, do: :grounded, else: :belief
+      store = SourceScoring.classify(ev.verification, source_quality, strategy)
       Map.merge(ev, %{source_quality: source_quality, evidence_store: store})
     end)
   end
@@ -1621,23 +1603,6 @@ Known failure patterns to avoid:
           Logger.warning("[investigate] HTTP request failed for #{url}: #{inspect(reason)}")
           {:error, reason}
       end
-    end
-  end
-
-  defp format_optimization_note(nil), do: ""
-  defp format_optimization_note(%Receipt{} = receipt) do
-    if receipt.improvement_pct > 0 do
-      diff_lines = Enum.map(receipt.strategy_diff, fn d ->
-        "  - #{d.param}: #{d.old} -> #{d.new} (delta: #{d.delta})"
-      end)
-
-      "\n### MCTS Optimization\n" <>
-        "EIG improved #{receipt.improvement_pct}% " <>
-        "(#{receipt.baseline_eig} -> #{receipt.winning_eig}) " <>
-        "in #{receipt.iterations_run} iterations (#{receipt.elapsed_ms}ms)\n" <>
-        "Strategy changes:\n" <> Enum.join(diff_lines, "\n") <> "\n"
-    else
-      ""
     end
   end
 
