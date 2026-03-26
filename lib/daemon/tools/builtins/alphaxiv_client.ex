@@ -13,15 +13,21 @@ defmodule Daemon.Tools.Builtins.AlphaXivClient do
 
   def start_link(_opts \\ []) do
     try do
-      headers = load_auth_headers()
-      Logger.info("[alphaxiv] Starting MCP client with #{if map_size(headers) > 0, do: "auth token", else: "no auth"}")
-      Anubis.Client.start_link(
-        name: @client_name,
-        transport: {:streamable_http, base_url: @alphaxiv_base_url, mcp_path: @alphaxiv_mcp_path, headers: headers},
-        client_info: %{"name" => "VAOS", "version" => "1.0.0"},
-        capabilities: %{},
-        protocol_version: "2025-06-18"
-      )
+      case load_auth_headers() do
+        {:expired, exp_date} ->
+          Logger.warning("[alphaxiv] JWT token expired on #{exp_date}. Refresh at: https://alphaxiv.org (login → copy token to #{@token_path})")
+          {:error, :token_expired}
+
+        headers ->
+          Logger.info("[alphaxiv] Starting MCP client with #{if map_size(headers) > 0, do: "auth token", else: "no auth"}")
+          Anubis.Client.start_link(
+            name: @client_name,
+            transport: {:streamable_http, base_url: @alphaxiv_base_url, mcp_path: @alphaxiv_mcp_path, headers: headers},
+            client_info: %{"name" => "VAOS", "version" => "1.0.0"},
+            capabilities: %{},
+            protocol_version: "2025-06-18"
+          )
+      end
     rescue
       e ->
         Logger.warning("[alphaxiv] Failed to start MCP client: #{Exception.message(e)}")
@@ -171,8 +177,49 @@ defmodule Daemon.Tools.Builtins.AlphaXivClient do
     case File.read(@token_path) do
       {:ok, token} ->
         t = String.trim(token)
-        if t != "", do: %{"authorization" => "Bearer " <> t}, else: %{}
+        cond do
+          t == "" -> %{}
+          jwt_expired?(t) -> {:expired, jwt_exp_date(t)}
+          true -> %{"authorization" => "Bearer " <> t}
+        end
       _ -> %{}
     end
+  end
+
+  # Decode JWT payload (base64url, no verification) and check exp claim
+  defp jwt_expired?(token) do
+    case decode_jwt_payload(token) do
+      %{"exp" => exp} when is_integer(exp) ->
+        System.os_time(:second) > exp
+      _ -> false
+    end
+  end
+
+  defp jwt_exp_date(token) do
+    case decode_jwt_payload(token) do
+      %{"exp" => exp} when is_integer(exp) ->
+        exp |> DateTime.from_unix!() |> DateTime.to_iso8601()
+      _ -> "unknown"
+    end
+  end
+
+  defp decode_jwt_payload(token) do
+    case String.split(token, ".") do
+      [_, payload_b64 | _] ->
+        # Add base64url padding
+        padded = case rem(byte_size(payload_b64), 4) do
+          2 -> payload_b64 <> "=="
+          3 -> payload_b64 <> "="
+          _ -> payload_b64
+        end
+        padded = String.replace(padded, "-", "+") |> String.replace("_", "/")
+        case Base.decode64(padded) do
+          {:ok, json} -> Jason.decode!(json)
+          _ -> %{}
+        end
+      _ -> %{}
+    end
+  rescue
+    _ -> %{}
   end
 end

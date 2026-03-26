@@ -1439,7 +1439,20 @@ Known failure patterns to avoid:
       end
     end)
 
-    async_results = Task.await_many(oa_tasks ++ [alphaxiv_task], 30_000)
+    # HuggingFace Papers search (ML/AI papers from arXiv via HF Hub API)
+    hf_task = Task.async(fn ->
+      alias Daemon.Tools.Builtins.HFPapersClient
+      case HFPapersClient.search(topic, limit: 10) do
+        {:ok, papers} when papers != [] ->
+          Logger.debug("[investigate] HuggingFace returned #{length(papers)} papers")
+          {:huggingface, papers}
+        _ ->
+          Logger.debug("[investigate] HuggingFace Papers unavailable")
+          {:huggingface, []}
+      end
+    end)
+
+    async_results = Task.await_many(oa_tasks ++ [alphaxiv_task, hf_task], 30_000)
     results = ss_results ++ async_results
 
     # Collect source counts
@@ -1512,6 +1525,7 @@ Known failure patterns to avoid:
 
   # Categorize source labels into summary keys
   defp source_category("alphaxiv"), do: :alphaxiv
+  defp source_category("huggingface"), do: :huggingface
   defp source_category("ss_" <> _), do: :semantic_scholar
   defp source_category("oa_" <> _), do: :openalex
   defp source_category(_other), do: :other
@@ -1598,12 +1612,12 @@ Known failure patterns to avoid:
     }
   end
 
-  # Already string-keyed (from alphaXiv or legacy formats)
+  # Already string-keyed (from alphaXiv, HuggingFace, or legacy formats)
   defp normalize_paper_format(%{"title" => _} = paper) do
     Map.merge(%{
       "citation_count" => 0,
       "citationCount" => 0,
-      "source" => "alphaxiv",
+      "source" => "unknown",
       "authors" => "",
       "abstract" => "",
       "year" => "unknown",
@@ -1642,6 +1656,7 @@ Known failure patterns to avoid:
   defp safe_to_atom("semantic_scholar"), do: :semantic_scholar
   defp safe_to_atom("openalex"), do: :openalex
   defp safe_to_atom("alphaxiv"), do: :alphaxiv
+  defp safe_to_atom("huggingface"), do: :huggingface
   defp safe_to_atom(_), do: :unknown
 
   defp parse_year(nil), do: nil
