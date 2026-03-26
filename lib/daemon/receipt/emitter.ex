@@ -41,6 +41,15 @@ defmodule Daemon.Receipt.Emitter do
   end
 
   @doc """
+  Return the cached kernel public key, or nil if unavailable.
+  """
+  def get_pubkey do
+    GenServer.call(__MODULE__, :get_pubkey, 1_000)
+  rescue
+    _ -> nil
+  end
+
+  @doc """
   Retry all pending receipts from disk.
   """
   def flush_pending do
@@ -96,14 +105,16 @@ defmodule Daemon.Receipt.Emitter do
       {:ok, %{status: 200, body: %{"confirmed" => true} = resp}} ->
         sig = resp["signature"]
 
-        if sig && pubkey do
-          # The kernel signs the attestation hash (BLAKE2b of entry + chain link).
-          # We don't have the attestation locally, so we trust the kernel returned
-          # a valid signature over its internal attestation. Verification here proves
-          # the kernel holds the private key corresponding to the fetched pubkey.
-          Logger.debug("[Receipt.Emitter] Receipt confirmed with signature for #{bundle.action_name}")
+        attestation = resp["attestation"]
+
+        if sig && pubkey && attestation do
+          if Daemon.Receipt.Verifier.verify(attestation, sig, pubkey) do
+            Logger.debug("[Receipt.Emitter] Signature verified for #{bundle.action_name}")
+          else
+            Logger.warning("[Receipt.Emitter] SIGNATURE MISMATCH for #{bundle.action_name}")
+          end
         else
-          Logger.debug("[Receipt.Emitter] Receipt confirmed (unsigned) for #{bundle.action_name}")
+          Logger.debug("[Receipt.Emitter] Receipt confirmed (unsigned or no attestation) for #{bundle.action_name}")
         end
 
         store_signed_receipt(audit_map, resp)

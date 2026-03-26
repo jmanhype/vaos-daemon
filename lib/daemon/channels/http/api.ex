@@ -213,6 +213,9 @@ defmodule Daemon.Channels.HTTP.API do
     end
   end
 
+  # ── Receipts (audit receipt query + replay-verify) ────────────────────
+  forward "/receipts", to: API.ReceiptRoutes
+
   # ── Catch-all ────────────────────────────────────────────────────────
   match _ do
     body = Jason.encode!(%{error: "not_found", details: "Endpoint not found"})

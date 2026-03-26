@@ -10,20 +10,19 @@ defmodule Daemon.Receipt.VerifierTest do
   end
 
   describe "verify/3" do
-    test "accepts valid signature", %{pub: _pub, priv: priv, pub_hex: pub_hex} do
-      message = "abc123def456"
-      message_bytes = Base.decode16!(message, case: :mixed)
-      sig = :crypto.sign(:eddsa, :none, message_bytes, [priv, :ed25519])
-
+    test "accepts valid signature", %{priv: priv, pub_hex: pub_hex} do
+      # The kernel signs []byte(attestation_hex) — the UTF-8 bytes of the hex string.
+      # So the Verifier must verify against the same raw string bytes.
+      attestation_hex = "abc123def456"
+      sig = :crypto.sign(:eddsa, :none, attestation_hex, [priv, :ed25519])
       sig_hex = Base.encode16(sig, case: :lower)
 
-      assert Verifier.verify(message, sig_hex, pub_hex)
+      assert Verifier.verify(attestation_hex, sig_hex, pub_hex)
     end
 
-    test "rejects tampered data", %{pub: _pub, priv: priv, pub_hex: pub_hex} do
-      message = "abc123def456"
-      message_bytes = Base.decode16!(message, case: :mixed)
-      sig = :crypto.sign(:eddsa, :none, message_bytes, [priv, :ed25519])
+    test "rejects tampered data", %{priv: priv, pub_hex: pub_hex} do
+      attestation_hex = "abc123def456"
+      sig = :crypto.sign(:eddsa, :none, attestation_hex, [priv, :ed25519])
       sig_hex = Base.encode16(sig, case: :lower)
 
       # Tamper with the attestation
@@ -32,16 +31,15 @@ defmodule Daemon.Receipt.VerifierTest do
     end
 
     test "rejects wrong key", %{priv: priv} do
-      message = "abc123def456"
-      message_bytes = Base.decode16!(message, case: :mixed)
-      sig = :crypto.sign(:eddsa, :none, message_bytes, [priv, :ed25519])
+      attestation_hex = "abc123def456"
+      sig = :crypto.sign(:eddsa, :none, attestation_hex, [priv, :ed25519])
       sig_hex = Base.encode16(sig, case: :lower)
 
       # Generate a different keypair
       {wrong_pub, _wrong_priv} = :crypto.generate_key(:eddsa, :ed25519)
       wrong_pub_hex = Base.encode16(wrong_pub, case: :lower)
 
-      refute Verifier.verify(message, sig_hex, wrong_pub_hex)
+      refute Verifier.verify(attestation_hex, sig_hex, wrong_pub_hex)
     end
 
     test "returns false for invalid hex" do

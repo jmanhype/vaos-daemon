@@ -10,10 +10,11 @@ defmodule Daemon.Receipt.Verifier do
   """
   @spec verify(String.t(), String.t(), String.t()) :: boolean()
   def verify(attestation_hex, signature_hex, pubkey_hex) do
-    with {:ok, message} <- decode_hex(attestation_hex),
-         {:ok, sig} <- decode_hex(signature_hex),
+    # The kernel signs []byte(attestation_hex), i.e. the UTF-8 bytes of the
+    # hex string itself — NOT the decoded hash bytes. We must verify the same.
+    with {:ok, sig} <- decode_hex(signature_hex),
          {:ok, pubkey} <- decode_hex(pubkey_hex) do
-      :crypto.verify(:eddsa, :none, message, sig, [pubkey, :ed25519])
+      :crypto.verify(:eddsa, :none, attestation_hex, sig, [pubkey, :ed25519])
     else
       _ -> false
     end
