@@ -41,7 +41,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
   alias Vaos.Ledger.Epistemic.Policy
   alias Vaos.Ledger.Research.Pipeline
   alias Vaos.Ledger.ML.CrashLearner
-  alias Daemon.Investigation.{Strategy, Optimizer, Receipt}
+  alias Daemon.Investigation.{Strategy, StrategyStore, Optimizer, Receipt}
 
   @ledger_path Path.join(System.user_home!(), ".openclaw/investigate_ledger.json")
   @ledger_name :investigate_ledger
@@ -194,6 +194,15 @@ defmodule Daemon.Tools.Builtins.Investigate do
     # 2. Extract keywords for prior knowledge search
     keywords = extract_keywords(topic)
 
+    # 2a. Load prior winning strategy for search/LLM params (scoring params tuned later by optimizer)
+    prior_strategy = case StrategyStore.load_best(topic) do
+      {:ok, strategy} ->
+        Logger.info("[investigate] Loaded prior strategy (gen #{strategy.generation}) for search params")
+        strategy
+      :error ->
+        Strategy.default()
+    end
+
     # 3. Prior knowledge search — fetch prior EVIDENCE, not conclusions
     case ensure_store_started() do
       :ok -> :ok
@@ -204,8 +213,8 @@ defmodule Daemon.Tools.Builtins.Investigate do
     prior_evidence = fetch_prior_evidence_by_keywords(store, keywords)
 
     # 4. MULTI-SOURCE PAPER SEARCH: Semantic Scholar + OpenAlex + alphaXiv (parallel)
-    #    Uses extracted keywords to augment queries for better relevance
-    {all_papers, source_counts} = search_all_papers(topic, keywords)
+    #    Uses prior strategy's top_n_papers and per_query_limit for tuned search breadth
+    {all_papers, source_counts} = search_all_papers(topic, keywords, prior_strategy)
 
     Logger.info("[investigate] Papers: #{length(all_papers)} total (#{inspect(source_counts)})")
 
@@ -302,7 +311,7 @@ Known failure patterns to avoid:
     ]
 
     model = Application.get_env(:daemon, :utility_model)
-    llm_opts = [temperature: 0.1, max_tokens: 8192]
+    llm_opts = [temperature: prior_strategy.adversarial_temperature, max_tokens: 8192]
     llm_opts = if model, do: Keyword.put(llm_opts, :model, model), else: llm_opts
 
     # Run advocates sequentially — concurrent calls trigger rate limits on some
@@ -1399,15 +1408,16 @@ Known failure patterns to avoid:
 
   # -- Multi-source literature search: Semantic Scholar + OpenAlex + alphaXiv --
 
-  defp search_all_papers(topic, keywords \\ []) do
+  defp search_all_papers(topic, keywords \\ [], strategy \\ Strategy.default()) do
     http_fn = literature_http_fn()
     {ss_queries, oa_queries} = build_search_queries(topic, keywords)
+    per_query = strategy.per_query_limit
 
     # SS: sequential with 1.5s delay — unauthenticated rate limit is ~1 req/s.
     # Concurrent requests all hit 429 simultaneously and waste all retries.
     ss_results = Enum.flat_map(Enum.with_index(ss_queries), fn {{label, query, opts}, idx} ->
       if idx > 0, do: Process.sleep(1_500)
-      search_opts = Keyword.merge([limit: 5], opts)
+      search_opts = Keyword.merge([limit: per_query], opts)
       case Literature.search_semantic_scholar(query, http_fn, search_opts) do
         {:ok, papers} -> [{:"ss_#{label}", papers}]
         _ -> [{:"ss_#{label}", []}]
@@ -1417,7 +1427,7 @@ Known failure patterns to avoid:
 
     # OA is more generous with rate limits — send all queries
     oa_tasks = Enum.map(oa_queries, fn {label, query, opts} ->
-      search_opts = Keyword.merge([limit: 5], opts)
+      search_opts = Keyword.merge([limit: per_query], opts)
       Task.async(fn ->
         case Literature.search_openalex(query, http_fn, search_opts) do
           {:ok, papers} -> {:"oa_#{label}", papers}
@@ -1478,10 +1488,10 @@ Known failure patterns to avoid:
       Logger.info("[investigate] Filtered out #{dropped} irrelevant papers")
     end
 
-    # Normalize to string-key format and take top 15
+    # Normalize to string-key format and take top N (tuned by strategy)
     sorted = relevant
     |> Enum.map(&normalize_paper_format/1)
-    |> Enum.take(15)
+    |> Enum.take(strategy.top_n_papers)
 
     {sorted, source_counts}
   end
