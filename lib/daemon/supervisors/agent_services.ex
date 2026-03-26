@@ -41,7 +41,9 @@ defmodule Daemon.Supervisors.AgentServices do
       Daemon.Agent.Cortex,
       Daemon.Agent.ProactiveMode,
       Daemon.Webhooks.Dispatcher,
-      Daemon.Signal.Persistence
+      Daemon.Signal.Persistence,
+      Daemon.Investigation.Retrospector,
+      Daemon.Investigation.SelfDiagnosis
     ]
 
     Supervisor.init(children, strategy: :one_for_one)

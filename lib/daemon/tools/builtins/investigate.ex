@@ -158,12 +158,19 @@ defmodule Daemon.Tools.Builtins.Investigate do
     keywords = extract_keywords(topic)
 
     # 2a. Load prior winning strategy for search/LLM params (scoring params tuned later by optimizer)
+    #     Fallback chain: topic-specific → _global (Retrospector-optimized) → defaults
     prior_strategy = case StrategyStore.load_best(topic) do
       {:ok, strategy} ->
         Logger.info("[investigate] Loaded prior strategy (gen #{strategy.generation}) for search params")
         strategy
       :error ->
-        Strategy.default()
+        case StrategyStore.load_best("_global") do
+          {:ok, strategy} ->
+            Logger.info("[investigate] Loaded _global strategy (gen #{strategy.generation}) from Retrospector")
+            strategy
+          :error ->
+            Strategy.default()
+        end
     end
 
     # 3. Prior knowledge search — fetch prior EVIDENCE, not conclusions
@@ -266,7 +273,9 @@ Known failure patterns to avoid:
       {:error, reason} ->
         Logger.warning("[investigate] FOR-side LLM call failed: #{inspect(reason)}")
         try do
-          CrashLearner.report_crash(:daemon_crash_learner, "investigate_for_#{short_hash(topic)}", inspect(reason), nil, %{topic: topic, side: "for", papers_count: length(all_papers)})
+          unless String.starts_with?(topic, Daemon.Investigation.SelfDiagnosis.self_diagnosis_prefix()) do
+            CrashLearner.report_crash(:daemon_crash_learner, "investigate_for_#{short_hash(topic)}", inspect(reason), nil, %{topic: topic, side: "for", papers_count: length(all_papers)})
+          end
         rescue
           _ -> :ok
         end
@@ -285,7 +294,9 @@ Known failure patterns to avoid:
       {:error, reason} ->
         Logger.warning("[investigate] AGAINST-side LLM call failed: #{inspect(reason)}")
         try do
-          CrashLearner.report_crash(:daemon_crash_learner, "investigate_against_#{short_hash(topic)}", inspect(reason), nil, %{topic: topic, side: "against", papers_count: length(all_papers)})
+          unless String.starts_with?(topic, Daemon.Investigation.SelfDiagnosis.self_diagnosis_prefix()) do
+            CrashLearner.report_crash(:daemon_crash_learner, "investigate_against_#{short_hash(topic)}", inspect(reason), nil, %{topic: topic, side: "against", papers_count: length(all_papers)})
+          end
         rescue
           _ -> :ok
         end
@@ -481,6 +492,7 @@ Known failure patterns to avoid:
       topic: topic,
       claim_id: claim_id,
       direction: direction,
+      strategy_hash: Strategy.param_hash(strategy),
       verified_for: verified_for,
       verified_against: verified_against,
       reasoning_for: reasoning_for,
@@ -584,6 +596,13 @@ Known failure patterns to avoid:
       MiosaKnowledge.assert(store, {atk_id, "vaos:harmful_count", "0"})
       MiosaKnowledge.assert(store, {atk_id, "vaos:summary", atk.description})
     end)
+
+    # Emit investigation_complete event for Retrospector strategy optimization
+    try do
+      Daemon.Events.Bus.emit(:investigation_complete, json_metadata)
+    rescue
+      _ -> :ok
+    end
 
     # Increment helpful counters for prior evidence that was independently regenerated
     increment_helpful_for_reused_evidence(store, prior_evidence, verified_supporting ++ verified_opposing)
