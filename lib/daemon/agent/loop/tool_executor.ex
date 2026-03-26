@@ -140,6 +140,7 @@ defmodule Daemon.Agent.Loop.ToolExecutor do
 
     Bus.emit(:tool_result, %{
       name: tool_call.name,
+      args: arg_hint,
       result: String.slice(result_str, 0, 500),
       success: not (String.starts_with?(result_str, "Error:") or String.starts_with?(result_str, "Blocked:")),
       session_id: state.session_id,
