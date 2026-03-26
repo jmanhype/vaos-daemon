@@ -18,13 +18,17 @@ defmodule Daemon.Intelligence.DecisionLedger do
   alias Vaos.Ledger.Epistemic.Ledger, as: EpistemicLedger
 
   @ets_table :daemon_decision_ledger
+  @ets_pairs_table :daemon_decision_pairs
   @store_dir Path.expand("~/.daemon/intelligence")
   @jsonl_filename "decisions.jsonl"
   @max_patterns 500
+  @max_pairs 200
   @max_recent_errors 3
   @max_jsonl_bytes 10 * 1024 * 1024
   @min_observations 5
+  @min_pair_observations 3
   @max_context_tools 8
+  @max_context_pairs 4
   @sync_interval_ms 60_000
   @knowledge_store "osa_default"
   @ledger_name :investigate_ledger
@@ -84,6 +88,33 @@ defmodule Daemon.Intelligence.DecisionLedger do
   end
 
   @doc """
+  Given the last tool+context used, returns the most successful next tools
+  as `[%{tool: "file_edit", context: "lib/", success_rate: 92.0, n: 12}, ...]`.
+  """
+  @spec best_next_tools(String.t()) :: [map()]
+  def best_next_tools(current_pattern_key) do
+    try do
+      :ets.tab2list(pairs_table_name())
+      |> Enum.filter(fn {pair_key, p} ->
+        String.starts_with?(pair_key, current_pattern_key <> "->") and
+          p.success_count + p.failure_count >= @min_pair_observations
+      end)
+      |> Enum.map(fn {pair_key, p} ->
+        [_, next] = String.split(pair_key, "->", parts: 2)
+        total = p.success_count + p.failure_count
+        %{
+          tool_context: next,
+          success_rate: Float.round(p.success_count / total * 100, 1),
+          n: total
+        }
+      end)
+      |> Enum.sort_by(& &1.success_rate, :desc)
+    rescue
+      ArgumentError -> []
+    end
+  end
+
+  @doc """
   Formatted text block for system prompt injection (~200 tokens max).
   Returns `nil` if insufficient data.
   """
@@ -96,7 +127,7 @@ defmodule Daemon.Intelligence.DecisionLedger do
         nil
 
       list ->
-        lines =
+        tool_lines =
           list
           |> Enum.take(@max_context_tools)
           |> Enum.map(fn p ->
@@ -113,10 +144,37 @@ defmodule Daemon.Intelligence.DecisionLedger do
             "- #{p.tool_name} (#{p.context_type}): #{rate}% success (n=#{total}), avg #{avg}ms#{error_suffix}"
           end)
 
-        "## Tool Reliability Notes\n" <> Enum.join(lines, "\n")
+        pair_lines = build_pair_context_lines()
+
+        sections = ["## Tool Reliability Notes" | tool_lines]
+        sections = if pair_lines != [], do: sections ++ ["Effective sequences:" | pair_lines], else: sections
+
+        Enum.join(sections, "\n")
     end
   rescue
     _ -> nil
+  end
+
+  defp build_pair_context_lines do
+    try do
+      :ets.tab2list(pairs_table_name())
+      |> Enum.filter(fn {_key, p} ->
+        total = p.success_count + p.failure_count
+        total >= @min_pair_observations
+      end)
+      |> Enum.sort_by(fn {_key, p} ->
+        total = p.success_count + p.failure_count
+        -(p.success_count / total)
+      end)
+      |> Enum.take(@max_context_pairs)
+      |> Enum.map(fn {pair_key, p} ->
+        total = p.success_count + p.failure_count
+        rate = Float.round(p.success_count / total * 100, 0) |> trunc()
+        "- #{pair_key}: #{rate}% success (n=#{total})"
+      end)
+    rescue
+      _ -> []
+    end
   end
 
   @doc "Derive the context type from a tool name and argument hint. Public for testing."
@@ -151,17 +209,19 @@ defmodule Daemon.Intelligence.DecisionLedger do
   def init(opts) do
     test_mode = Keyword.get(opts, :test_mode, false)
 
-    {table_name, store_dir} =
+    {table_name, pairs_name, store_dir} =
       if test_mode do
         suffix = :crypto.strong_rand_bytes(4) |> Base.url_encode64(padding: false)
         table = :"daemon_decision_ledger_test_#{suffix}"
+        pairs = :"daemon_decision_pairs_test_#{suffix}"
         dir = Path.join(System.tmp_dir!(), "decision_ledger_test_#{suffix}")
-        {table, dir}
+        {table, pairs, dir}
       else
-        {@ets_table, @store_dir}
+        {@ets_table, @ets_pairs_table, @store_dir}
       end
 
     :ets.new(table_name, [:set, :named_table, :public, read_concurrency: true])
+    :ets.new(pairs_name, [:set, :named_table, :public, read_concurrency: true])
     File.mkdir_p!(store_dir)
 
     jsonl_path = Path.join(store_dir, @jsonl_filename)
@@ -180,9 +240,11 @@ defmodule Daemon.Intelligence.DecisionLedger do
        event_refs: [],
        pending_calls: %{},
        claim_cache: %{},
+       last_tool: %{},
        jsonl_path: jsonl_path,
        sync_timer: sync_timer,
        ets_table: table_name,
+       pairs_table: pairs_name,
        test_mode: test_mode
      }}
   end
@@ -250,6 +312,10 @@ defmodule Daemon.Intelligence.DecisionLedger do
 
       # Update ETS pattern
       upsert_pattern(state.ets_table, pattern_key, tool_name, context_type, success, duration_ms, payload)
+
+      # Update pair tracking (sequence awareness)
+      session_id = payload[:session_id] || "default"
+      state = track_pair(state, session_id, pattern_key, success)
 
       # Append to JSONL
       append_to_jsonl(state.jsonl_path, %{
@@ -368,6 +434,62 @@ defmodule Daemon.Intelligence.DecisionLedger do
       end
 
     :ets.insert(table, {pattern_key, pattern})
+  end
+
+  # ── Pair (sequence) tracking ─────────────────────────────────────────────
+
+  defp track_pair(state, session_id, current_pattern_key, success) do
+    case Map.get(state.last_tool, session_id) do
+      nil ->
+        %{state | last_tool: Map.put(state.last_tool, session_id, current_pattern_key)}
+
+      prev_pattern_key ->
+        pair_key = "#{prev_pattern_key}->#{current_pattern_key}"
+        upsert_pair(state.pairs_table, pair_key, success)
+        enforce_max_pairs(state.pairs_table)
+        %{state | last_tool: Map.put(state.last_tool, session_id, current_pattern_key)}
+    end
+  end
+
+  defp upsert_pair(table, pair_key, success) do
+    existing =
+      case :ets.lookup(table, pair_key) do
+        [{_, p}] -> p
+        _ -> nil
+      end
+
+    pair =
+      if existing do
+        if success do
+          %{existing | success_count: existing.success_count + 1}
+        else
+          %{existing | failure_count: existing.failure_count + 1}
+        end
+      else
+        %{
+          success_count: if(success, do: 1, else: 0),
+          failure_count: if(success, do: 0, else: 1)
+        }
+      end
+
+    :ets.insert(table, {pair_key, pair})
+  end
+
+  defp enforce_max_pairs(table) do
+    all = :ets.tab2list(table)
+
+    if length(all) > @max_pairs do
+      sorted =
+        all
+        |> Enum.sort_by(fn {_key, p} -> p.success_count + p.failure_count end)
+        |> Enum.take(length(all) - @max_pairs)
+
+      for {key, _} <- sorted do
+        :ets.delete(table, key)
+      end
+    end
+  rescue
+    _ -> :ok
   end
 
   # ── Epistemic integration ──────────────────────────────────────────────────
@@ -578,17 +700,9 @@ defmodule Daemon.Intelligence.DecisionLedger do
 
   # ── Helpers ────────────────────────────────────────────────────────────────
 
-  defp ets_table_name do
-    case GenServer.whereis(__MODULE__) do
-      nil -> @ets_table
-      pid ->
-        try do
-          :sys.get_state(pid).ets_table
-        rescue
-          _ -> @ets_table
-        catch
-          :exit, _ -> @ets_table
-        end
-    end
-  end
+  # Production always uses the module-level constant. Test mode uses isolated
+  # tables directly via the GenServer state — tests read ETS by table name,
+  # not through the public API which targets the production table.
+  defp ets_table_name, do: @ets_table
+  defp pairs_table_name, do: @ets_pairs_table
 end

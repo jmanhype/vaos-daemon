@@ -107,6 +107,9 @@ defmodule Daemon.Agent.Loop.ToolExecutor do
         other -> inspect(other)
       end
 
+    # Annotate result with reliability context from DecisionLedger
+    result_str = maybe_annotate_with_reliability(result_str, tool_call.name, arg_hint)
+
     # Run post_tool_use hooks async (cost tracker, telemetry, learning)
     post_payload = %{
       tool_name: tool_call.name,
@@ -137,7 +140,7 @@ defmodule Daemon.Agent.Loop.ToolExecutor do
     Bus.emit(:tool_result, %{
       name: tool_call.name,
       result: String.slice(result_str, 0, 500),
-      success: !match?({:error, _}, tool_result),
+      success: not (String.starts_with?(result_str, "Error:") or String.starts_with?(result_str, "Blocked:")),
       session_id: state.session_id,
       agent: state.session_id
     })
@@ -261,6 +264,40 @@ defmodule Daemon.Agent.Loop.ToolExecutor do
         Logger.warning("[loop] Hooks GenServer unreachable for #{event} (#{inspect(reason)})")
         {:error, :hooks_unavailable}
     end
+  end
+
+  # Append a one-line reliability warning when a tool has low success rate.
+  # Only fires for tools with 5+ observations and <50% success. Never blocks.
+  defp maybe_annotate_with_reliability(result_str, tool_name, args_hint) do
+    context_type = Daemon.Intelligence.DecisionLedger.derive_context(tool_name, to_string(args_hint || ""))
+    pattern_key = "#{tool_name}:#{context_type}"
+
+    case :ets.lookup(:daemon_decision_ledger, pattern_key) do
+      [{_, pattern}] ->
+        total = pattern.success_count + pattern.failure_count
+
+        if total >= 5 do
+          rate = pattern.success_count / total * 100
+
+          cond do
+            rate < 30 ->
+              result_str <> "\n[reliability: #{trunc(rate)}% success in #{context_type} (n=#{total}) — consider an alternative tool]"
+
+            rate < 50 ->
+              result_str <> "\n[reliability: #{trunc(rate)}% success in #{context_type} (n=#{total}) — may be unreliable]"
+
+            true ->
+              result_str
+          end
+        else
+          result_str
+        end
+
+      _ ->
+        result_str
+    end
+  rescue
+    _ -> result_str
   end
 
   # Async hooks — fire-and-forget for post-event hooks (post_tool_use).

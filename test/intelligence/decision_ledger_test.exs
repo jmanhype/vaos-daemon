@@ -6,8 +6,8 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
   # Use test_mode to get isolated ETS tables and temp dirs
   defp start_test_ledger do
     {:ok, pid} = DecisionLedger.start_link(test_mode: true)
-    table = :sys.get_state(pid).ets_table
-    {pid, table}
+    state = :sys.get_state(pid)
+    {pid, state.ets_table, state.pairs_table}
   end
 
   defp simulate_outcome(pid, tool_name, args_hint, success, opts \\ []) do
@@ -31,13 +31,13 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
 
   describe "GenServer lifecycle" do
     test "starts successfully in test mode" do
-      {pid, _table} = start_test_ledger()
+      {pid, _table, _pairs} = start_test_ledger()
       assert Process.alive?(pid)
       GenServer.stop(pid)
     end
 
     test "initial state has empty pending_calls and claim_cache" do
-      {pid, _table} = start_test_ledger()
+      {pid, _table, _pairs} = start_test_ledger()
       state = :sys.get_state(pid)
       assert state.pending_calls == %{}
       assert state.claim_cache == %{}
@@ -45,7 +45,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
     end
 
     test "ETS table is created" do
-      {pid, table} = start_test_ledger()
+      {pid, table, _pairs} = start_test_ledger()
       assert :ets.info(table) != :undefined
       GenServer.stop(pid)
     end
@@ -95,7 +95,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
 
   describe "pattern tracking" do
     test "tool outcome creates pattern in ETS" do
-      {pid, table} = start_test_ledger()
+      {pid, table, _pairs} = start_test_ledger()
 
       simulate_outcome(pid, "shell_execute", "git status", true)
 
@@ -112,7 +112,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
     end
 
     test "success increments success_count" do
-      {pid, table} = start_test_ledger()
+      {pid, table, _pairs} = start_test_ledger()
 
       simulate_outcome(pid, "file_read", "lib/foo.ex", true)
       simulate_outcome(pid, "file_read", "lib/bar.ex", true)
@@ -126,7 +126,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
     end
 
     test "failure increments failure_count and adds to recent_errors" do
-      {pid, table} = start_test_ledger()
+      {pid, table, _pairs} = start_test_ledger()
 
       simulate_outcome(pid, "web_fetch", "https://example.com", false,
         result: "Error: 429 rate limit")
@@ -141,7 +141,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
     end
 
     test "avg_duration_ms is computed correctly" do
-      {pid, table} = start_test_ledger()
+      {pid, table, _pairs} = start_test_ledger()
 
       simulate_outcome(pid, "investigate", "topic", true, duration_ms: 100)
       simulate_outcome(pid, "investigate", "topic2", true, duration_ms: 200)
@@ -157,7 +157,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
 
   describe "meta tool filtering" do
     test "knowledge tool calls are not recorded" do
-      {pid, table} = start_test_ledger()
+      {pid, table, _pairs} = start_test_ledger()
 
       simulate_outcome(pid, "knowledge", "some query", true)
       simulate_outcome(pid, "memory_recall", "something", true)
@@ -173,7 +173,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
 
   describe "buffer limits" do
     test "recent_errors capped at 3" do
-      {pid, table} = start_test_ledger()
+      {pid, table, _pairs} = start_test_ledger()
 
       for i <- 1..5 do
         simulate_outcome(pid, "web_fetch", "https://example.com", false,
@@ -191,7 +191,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
 
   describe "context_block" do
     test "returns nil when no patterns exist" do
-      {pid, _table} = start_test_ledger()
+      {pid, _table, _pairs} = start_test_ledger()
       # context_block reads from the module-level ETS, so we test the function directly
       # with the freshly started ledger that has no data
       # Since test_mode uses a different ETS name, we test the public function separately
@@ -200,7 +200,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
     end
 
     test "returns formatted text when patterns have 5+ observations" do
-      {pid, table} = start_test_ledger()
+      {pid, table, _pairs} = start_test_ledger()
 
       for _ <- 1..6 do
         simulate_outcome(pid, "shell_execute", "git status", true)
@@ -219,7 +219,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
 
   describe "JSONL persistence" do
     test "writes to JSONL and reloads on init" do
-      {pid, _table} = start_test_ledger()
+      {pid, _table, _pairs} = start_test_ledger()
       state = :sys.get_state(pid)
       jsonl_path = state.jsonl_path
 
@@ -257,7 +257,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
 
   describe "outcome correlation" do
     test "tool_call_start + tool_outcome flow records duration" do
-      {pid, table} = start_test_ledger()
+      {pid, table, _pairs} = start_test_ledger()
 
       # Simulate the full event flow
       send(pid, {:tool_call_start, %{name: "shell_execute", args: "git log", session_id: "test"}})
@@ -289,7 +289,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
 
   describe "error handling" do
     test "handles unknown messages gracefully" do
-      {pid, _table} = start_test_ledger()
+      {pid, _table, _pairs} = start_test_ledger()
 
       send(pid, :unknown_message)
       send(pid, {:random, "data"})
@@ -300,13 +300,93 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
     end
 
     test "handles malformed tool_outcome gracefully" do
-      {pid, _table} = start_test_ledger()
+      {pid, _table, _pairs} = start_test_ledger()
 
       send(pid, {:tool_outcome, %{name: nil, success: true}})
       :timer.sleep(10)
 
       assert Process.alive?(pid)
       GenServer.stop(pid)
+    end
+  end
+
+  # ── Pair (sequence) tracking ───────────────────────────────────────────
+
+  describe "pair tracking" do
+    test "records tool pairs across sequential calls" do
+      {pid, _table, pairs} = start_test_ledger()
+
+      # Call 1: file_read (no pair yet — no previous tool)
+      simulate_outcome(pid, "file_read", "lib/foo.ex", true)
+      # Call 2: file_edit (pair: file_read:lib/ -> file_edit:lib/)
+      simulate_outcome(pid, "file_edit", "lib/foo.ex", true)
+
+      pair_entries = :ets.tab2list(pairs)
+      assert length(pair_entries) == 1
+      [{pair_key, pair}] = pair_entries
+      assert pair_key == "file_read:lib/->file_edit:lib/"
+      assert pair.success_count == 1
+      assert pair.failure_count == 0
+
+      GenServer.stop(pid)
+    end
+
+    test "tracks failure in pairs" do
+      {pid, _table, pairs} = start_test_ledger()
+
+      simulate_outcome(pid, "file_read", "lib/foo.ex", true)
+      simulate_outcome(pid, "file_edit", "lib/foo.ex", false, result: "Error: file not found")
+
+      [{_key, pair}] = :ets.tab2list(pairs)
+      assert pair.success_count == 0
+      assert pair.failure_count == 1
+
+      GenServer.stop(pid)
+    end
+
+    test "accumulates pair counts across multiple sequences" do
+      {pid, _table, pairs} = start_test_ledger()
+
+      # Simulate: git status -> git log (3 times)
+      # Both derive to shell_execute:git, so pair key = shell_execute:git->shell_execute:git
+      # 6 calls total: call 1 has no pair (first), calls 2-6 each create a pair = 5 pairs
+      for _ <- 1..3 do
+        simulate_outcome(pid, "shell_execute", "git status", true)
+        simulate_outcome(pid, "shell_execute", "git log", true)
+      end
+
+      pair_entries = :ets.tab2list(pairs)
+      git_pair = Enum.find(pair_entries, fn {k, _} -> k == "shell_execute:git->shell_execute:git" end)
+      assert git_pair != nil
+      {_, p} = git_pair
+      assert p.success_count == 5
+
+      GenServer.stop(pid)
+    end
+
+    test "different sessions don't create cross-session pairs" do
+      {pid, _table, pairs} = start_test_ledger()
+
+      # Session A: file_read
+      send(pid, {:tool_outcome, %{name: "file_read", args: "lib/a.ex", success: true, duration_ms: 50, result: "ok", session_id: "session_a"}})
+      :timer.sleep(10)
+
+      # Session B: file_edit (should NOT pair with session A's file_read)
+      send(pid, {:tool_outcome, %{name: "file_edit", args: "lib/b.ex", success: true, duration_ms: 50, result: "ok", session_id: "session_b"}})
+      :timer.sleep(10)
+
+      # No pairs should exist (each session only has 1 call)
+      assert :ets.tab2list(pairs) == []
+
+      GenServer.stop(pid)
+    end
+  end
+
+  # ── best_next_tools/1 ──────────────────────────────────────────────────
+
+  describe "best_next_tools/1" do
+    test "returns empty list when no pairs exist" do
+      assert DecisionLedger.best_next_tools("shell_execute:git") == []
     end
   end
 end
