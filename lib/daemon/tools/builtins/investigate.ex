@@ -41,7 +41,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
   alias Vaos.Ledger.Epistemic.Policy
   alias Vaos.Ledger.Research.Pipeline
   alias Vaos.Ledger.ML.CrashLearner
-  alias Daemon.Investigation.{Strategy, StrategyStore, SourceScoring, PromptConfig, PromptFeedback}
+  alias Daemon.Investigation.{Strategy, StrategyStore, SourceScoring, PromptConfig, PromptFeedback, PromptSelector}
 
   @ledger_path Path.join(System.user_home!(), ".openclaw/investigate_ledger.json")
   @ledger_name :investigate_ledger
@@ -147,8 +147,12 @@ defmodule Daemon.Tools.Builtins.Investigate do
       _ -> :ok
     end
 
-    # 1b. Load prompt templates (JSON config with fallback chain)
-    prompts = PromptConfig.load()
+    # 1b. Load prompt templates via Thompson Sampling selector
+    {prompts, variant_id} = try do
+      PromptSelector.select()
+    rescue
+      _ -> {PromptConfig.load(), "default"}
+    end
 
     # 2. Extract keywords for prior knowledge search
     keywords = extract_keywords(topic)
@@ -324,7 +328,7 @@ Known failure patterns to avoid:
       true ->
         # Both succeeded — full analysis with citation verification
         run_full_analysis(topic, supporting, opposing, all_papers, paper_map,
-                          source_counts, keywords, prior_evidence, store, depth, prior_strategy, prompts)
+                          source_counts, keywords, prior_evidence, store, depth, prior_strategy, prompts, variant_id)
     end
   rescue
     e ->
@@ -335,7 +339,7 @@ Known failure patterns to avoid:
   # -- Full analysis (both sides succeeded) ------------------------------
 
   defp run_full_analysis(topic, supporting_raw, opposing_raw, all_papers, paper_map,
-                         source_counts, keywords, prior_evidence, store, depth, strategy, prompts) do
+                         source_counts, keywords, prior_evidence, store, depth, strategy, prompts, variant_id) do
     # 9. CITATION VERIFICATION + PAPER TYPE CLASSIFICATION — the evidence quality step
     verified_supporting = verify_citations(supporting_raw, paper_map, prompts)
     verified_opposing = verify_citations(opposing_raw, paper_map, prompts)
@@ -432,6 +436,9 @@ Known failure patterns to avoid:
         unverified: count_unverified_sourced,
         verification_rate: if(total_sourced > 0, do: count_verified / total_sourced, else: 0.0)
       })
+
+      # Update Thompson Sampling posterior for the selected prompt variant
+      PromptSelector.update(variant_id, count_verified, count_unverified_sourced)
     rescue
       e -> Logger.warning("[investigate] Failed to record prompt feedback: #{Exception.message(e)}")
     end

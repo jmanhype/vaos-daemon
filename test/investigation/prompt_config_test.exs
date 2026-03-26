@@ -160,4 +160,63 @@ defmodule Daemon.Investigation.PromptConfigTest do
       assert String.contains?(defaults["against_system"], "AGAINST")
     end
   end
+
+  describe "validate_prompts/1" do
+    test "accepts valid prompt map" do
+      prompts = PromptConfig.hardcoded_defaults()
+      assert :ok == PromptConfig.validate_prompts(prompts)
+    end
+
+    test "rejects map missing required keys" do
+      incomplete = %{"for_system" => "hi", "against_system" => "bye"}
+      assert {:error, msg} = PromptConfig.validate_prompts(incomplete)
+      assert String.contains?(msg, "Missing required prompt keys")
+    end
+
+    test "rejects map with empty string values" do
+      prompts = %{
+        "for_system" => "",
+        "against_system" => "test",
+        "advocate_user_template" => "test",
+        "example_format" => "test",
+        "verify_prompt" => "test",
+        "no_papers_fallback" => "test"
+      }
+
+      assert {:error, msg} = PromptConfig.validate_prompts(prompts)
+      assert String.contains?(msg, "Empty or non-string")
+    end
+
+    test "rejects map with non-string values" do
+      prompts = %{
+        "for_system" => 42,
+        "against_system" => "test",
+        "advocate_user_template" => "test",
+        "example_format" => "test",
+        "verify_prompt" => "test",
+        "no_papers_fallback" => "test"
+      }
+
+      assert {:error, msg} = PromptConfig.validate_prompts(prompts)
+      assert String.contains?(msg, "Empty or non-string")
+    end
+  end
+
+  describe "prompt_hash/1 determinism" do
+    test "same map produces same hash across multiple calls" do
+      prompts = %{"z_key" => "last", "a_key" => "first", "m_key" => "middle"}
+      hash1 = PromptConfig.prompt_hash(prompts)
+      hash2 = PromptConfig.prompt_hash(prompts)
+      hash3 = PromptConfig.prompt_hash(prompts)
+      assert hash1 == hash2
+      assert hash2 == hash3
+    end
+
+    test "map key order does not affect hash" do
+      # Elixir maps don't guarantee order, but we sort keys now
+      p1 = %{"a" => "1", "b" => "2", "c" => "3"}
+      p2 = %{"c" => "3", "a" => "1", "b" => "2"}
+      assert PromptConfig.prompt_hash(p1) == PromptConfig.prompt_hash(p2)
+    end
+  end
 end

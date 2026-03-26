@@ -49,13 +49,22 @@ defmodule Daemon.Investigation.PromptConfig do
 
     File.write!(path, Jason.encode!(data, pretty: true))
     Logger.info("[prompt_config] Saved optimized prompts to #{path}")
+
+    # Auto-register with PromptSelector for Thompson Sampling
+    try do
+      Daemon.Investigation.PromptSelector.register(prompts, source: "gepa", file_path: path)
+    rescue
+      _ -> :ok
+    end
+
     :ok
   end
 
-  @doc "Compute a short hash of the current prompt set (for feedback tracking)."
+  @doc "Compute a short hash of the current prompt set (for feedback tracking). Deterministic across restarts."
   @spec prompt_hash(map()) :: String.t()
   def prompt_hash(prompts) when is_map(prompts) do
-    :crypto.hash(:sha256, Jason.encode!(prompts))
+    sorted = prompts |> Enum.sort_by(fn {k, _} -> k end) |> Enum.map(fn {k, v} -> [k, v] end) |> Jason.encode!()
+    :crypto.hash(:sha256, sorted)
     |> Base.encode16(case: :lower)
     |> String.slice(0, 16)
   end
@@ -71,8 +80,14 @@ defmodule Daemon.Investigation.PromptConfig do
       {:ok, json} ->
         case Jason.decode(json) do
           {:ok, %{"prompts" => prompts}} when is_map(prompts) ->
-            Logger.debug("[prompt_config] Loaded prompts from #{path}")
-            {:ok, prompts}
+            case validate_prompts(prompts) do
+              :ok ->
+                Logger.debug("[prompt_config] Loaded prompts from #{path}")
+                {:ok, prompts}
+              {:error, reason} ->
+                Logger.warning("[prompt_config] #{path} failed validation: #{reason}")
+                :error
+            end
 
           {:ok, %{"version" => _}} ->
             Logger.warning("[prompt_config] #{path} missing 'prompts' key")
@@ -95,15 +110,45 @@ defmodule Daemon.Investigation.PromptConfig do
   defp priv_path(filename) do
     case :code.priv_dir(:daemon) do
       {:error, _} ->
-        # Fallback for dev/test when priv_dir isn't available
-        Path.join(["priv", "prompts", filename])
+        # Fallback: try Application.app_dir, then relative path as last resort
+        case Application.app_dir(:daemon, "priv") do
+          path when is_binary(path) -> Path.join([path, "prompts", filename])
+          _ -> Path.join([File.cwd!(), "priv", "prompts", filename])
+        end
 
       priv ->
         Path.join([to_string(priv), "prompts", filename])
     end
   end
 
-  @doc false
+  @doc "Validate that a prompt map has all required keys as non-empty strings."
+  @spec validate_prompts(map()) :: :ok | {:error, String.t()}
+  def validate_prompts(prompts) when is_map(prompts) do
+    required = ~w(for_system against_system advocate_user_template
+                  example_format verify_prompt no_papers_fallback)
+
+    missing = Enum.filter(required, fn key -> !Map.has_key?(prompts, key) end)
+
+    cond do
+      missing != [] ->
+        {:error, "Missing required prompt keys: #{Enum.join(missing, ", ")}"}
+
+      Enum.any?(required, fn key ->
+        val = prompts[key]
+        !is_binary(val) or String.trim(val) == ""
+      end) ->
+        empty = Enum.filter(required, fn key ->
+          val = prompts[key]
+          !is_binary(val) or String.trim(val) == ""
+        end)
+        {:error, "Empty or non-string prompt values: #{Enum.join(empty, ", ")}"}
+
+      true ->
+        :ok
+    end
+  end
+
+  @doc "Return hardcoded default prompts. Used as fallback and by PromptSelector for the default variant."
   def hardcoded_defaults do
     %{
       "for_system" => "You are an intellectually honest researcher making the strongest case FOR a claim. Vary your strength ratings — not every argument is equally strong.",
