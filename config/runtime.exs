@@ -328,4 +328,4 @@ config :daemon,
 config :daemon,
   production_enabled: System.get_env("DAEMON_PRODUCTION_ENABLED") == "true"
 
-config :daemon, vas_swarm_enabled: System.get_env("VAS_SWARM_ENABLED") == "true"
+config :daemon, receipt_chain_enabled: System.get_env("RECEIPT_CHAIN_ENABLED") == "true"

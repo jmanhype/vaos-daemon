@@ -1,6 +1,6 @@
-defmodule Daemon.VasSwarm.GrpcClient do
+defmodule Daemon.Kernel.Client do
   @moduledoc """
-  gRPC client for VAOS-Kernel communication.
+  Client for VAOS-Kernel communication.
 
   Provides fault-tolerant connection to the Go Kernel service for:
   - JWT token requests with intent hash
@@ -19,7 +19,6 @@ defmodule Daemon.VasSwarm.GrpcClient do
   use GenServer
   require Logger
 
-  alias Daemon.VasSwarm.IntentHash
 
   # Use generated gRPC stubs if available, otherwise use gun-based implementation
   try do

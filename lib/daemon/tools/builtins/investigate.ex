@@ -1106,7 +1106,7 @@ Known failure patterns to avoid:
         agent_id = "osa"
         intent_hash = :crypto.hash(:sha256, code) |> Base.encode16(case: :lower) |> binary_part(0, 16)
 
-        jwt = case Daemon.VasSwarm.GrpcClient.request_token(agent_id, intent_hash, "execute") do
+        jwt = case Daemon.Kernel.Client.request_token(agent_id, intent_hash, "execute") do
           {:ok, token} -> token
           _ -> nil
         end

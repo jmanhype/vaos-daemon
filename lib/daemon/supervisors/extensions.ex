@@ -177,9 +177,9 @@ defmodule Daemon.Supervisors.Extensions do
     end
   end
 
-  # Receipt emission — opt-in via VAS_SWARM_ENABLED=true
+  # Receipt emission — opt-in via RECEIPT_CHAIN_ENABLED=true
   defp receipt_children do
-    if Application.get_env(:daemon, :vas_swarm_enabled, false) do
+    if Application.get_env(:daemon, :receipt_chain_enabled, false) do
       Logger.info("[Extensions] Receipt Emitter enabled — starting Daemon.Receipt.Emitter")
       [Daemon.Receipt.Emitter]
     else

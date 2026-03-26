@@ -1,6 +1,6 @@
-defmodule Daemon.VasSwarm.IntentHash do
+defmodule Daemon.Kernel.IntentHash do
   @moduledoc """
-  Intent hash generation for VAS-Swarm integration.
+  Intent hash generation for Kernel integration.
 
   Computes SHA256 hashes of agent intents for JWT token requests
   and ALCOA+ audit trails.
@@ -125,7 +125,7 @@ defmodule Daemon.VasSwarm.IntentHash do
     fact_content = """
     ---
     type: fact
-    category: vas_swarm
+    category: kernel
     tags: [intent_hash, audit, alcaplus]
 
     Agent: #{intent_hash.agent_id}
