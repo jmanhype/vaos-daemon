@@ -154,6 +154,9 @@ config :daemon,
   # Web search
   brave_api_key: System.get_env("BRAVE_API_KEY"),
 
+  # Investigation optimizer (MCTS parameter tuning)
+  investigate_optimizer_enabled: System.get_env("INVESTIGATE_OPTIMIZER_ENABLED") == "true",
+
   # Provider selection
   default_provider: default_provider,
   # Default model — resolved from DAEMON_MODEL env, or provider-specific env var.
