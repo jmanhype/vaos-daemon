@@ -1,4 +1,4 @@
-# OSA -- the Optimal System Agent
+# Daemon — VAOS Agent Runtime
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Elixir](https://img.shields.io/badge/Elixir-1.17+-purple.svg)](https://elixir-lang.org)
@@ -101,7 +101,7 @@ Ollama tiers are detected dynamically at boot by scanning installed models, sort
               Two-Tier Noise Filter
     Tier 1: <1ms regex | Tier 2: weight thresholds
                         | signals only
-              Events.Bus (:osa_event_router)
+              Events.Bus (:daemon_event_router)
               goldrush-compiled Erlang bytecode
        |            |            |            |
    Agent Loop   Orchestrator   Swarm+PACT   Intelligence
@@ -190,7 +190,7 @@ Daemon.Supervisor (rest_for_one)
 +-- Bandit HTTP                  REST API on port 8089
 ```
 
-7 ETS tables are created at Application.start: `:osa_cancel_flags`, `:osa_files_read`, `:osa_survey_answers`, `:osa_context_cache`, `:osa_survey_responses`, `:osa_session_provider_overrides`, `:osa_pending_questions`.
+7 ETS tables are created at Application.start: `:daemon_cancel_flags`, `:daemon_files_read`, `:daemon_survey_answers`, `:daemon_context_cache`, `:daemon_survey_responses`, `:daemon_session_provider_overrides`, `:daemon_pending_questions`.
 
 ## Swarm Orchestration
 
@@ -230,7 +230,7 @@ Daemon.Supervisor (rest_for_one)
 
 The `investigate` tool (1,862 lines) is notable: it runs full epistemic research with adversarial dual-prompt architecture. Three parallel literature searches (Semantic Scholar + OpenAlex + alphaXiv) feed FOR and AGAINST researchers. Citation verification checks every claim against actual paper abstracts. Evidence hierarchy scoring weights by publication type and citation count. Results are persisted to an AIEQ-Core epistemic ledger with Bayesian belief tracking. See `vaos_ledger` for the underlying defense stack.
 
-MCP tools discovered at runtime from `~/.osa/mcp.json` are available alongside built-in tools.
+MCP tools discovered at runtime from `~/.daemon/mcp.json` are available alongside built-in tools.
 
 ## Providers
 
@@ -254,7 +254,7 @@ Fallback chain with circuit breaker via `MiosaLLM.HealthChecker`. Rate-limited r
 
 ```bash
 # Set provider via environment
-export OSA_DEFAULT_PROVIDER=groq
+export DAEMON_DEFAULT_PROVIDER=groq
 export GROQ_API_KEY=gsk_...
 ```
 
@@ -315,7 +315,7 @@ Importance-weighted retention: tool calls +50%, long content +30% (capped), ackn
 Structured memory system in `vault/` (12 modules):
 
 ```
-~/.osa/vault/
+~/.daemon/vault/
 +-- facts/          +-- decisions/      +-- lessons/
 +-- preferences/    +-- commitments/    +-- relationships/
 +-- projects/       +-- observations/   +-- handoffs/
@@ -333,7 +333,7 @@ Structured memory system in `vault/` (12 modules):
 
 **Signal classification before routing.** Every input is classified by intent, domain, and complexity before touching the reasoning engine. Rationale: prevents expensive models from handling trivial requests, and ensures complex tasks get appropriate compute. Tradeoff: classification adds latency (one LLM call or regex match) to every interaction.
 
-**goldrush for event routing.** Events.Bus and Tools.Registry compile Erlang bytecode modules (`:osa_event_router`, `:osa_tool_dispatcher`) using goldrush's `glc` API. Rationale: compiled bytecode dispatch is faster than GenServer-based routing for high-throughput event streams. Recompiled on tool hot-registration. Tradeoff: debugging compiled dispatch is harder than following GenServer calls. Uses a GitHub fork (`robertohluna/goldrush`).
+**goldrush for event routing.** Events.Bus and Tools.Registry compile Erlang bytecode modules (`:daemon_event_router`, `:daemon_tool_dispatcher`) using goldrush's `glc` API. Rationale: compiled bytecode dispatch is faster than GenServer-based routing for high-throughput event streams. Recompiled on tool hot-registration. Tradeoff: debugging compiled dispatch is harder than following GenServer calls. Uses a GitHub fork (`robertohluna/goldrush`).
 
 **DynamicSupervisor for channels.** Each channel adapter runs under a DynamicSupervisor. Rationale: crash isolation -- a failing Telegram adapter does not take down the CLI or HTTP channel. Tradeoff: no static supervision guarantees; channel availability depends on successful dynamic start.
 
@@ -376,17 +376,17 @@ The path dependencies expect this directory layout:
 
 ```
 ~/Projects/          (or any parent directory)
-+-- vas-swarm/           this repo
++-- vaos-daemon/           this repo
 +-- vaos-ledger-build/   github.com/jmanhype/vaos-ledger
 +-- vaos-knowledge/      github.com/jmanhype/vaos-knowledge
 ```
 
 ```bash
-git clone <vas-swarm-url> vas-swarm
+git clone <vaos-daemon-url> vaos-daemon
 git clone <vaos-ledger-url> vaos-ledger-build
 git clone <vaos-knowledge-url> vaos-knowledge
 
-cd vas-swarm
+cd vaos-daemon
 mix deps.get
 mix compile
 ```
@@ -395,11 +395,11 @@ mix compile
 
 ```bash
 # Set provider and API key
-export OSA_DEFAULT_PROVIDER=anthropic
+export DAEMON_DEFAULT_PROVIDER=anthropic
 export ANTHROPIC_API_KEY=sk-ant-...
 
 # Or use Ollama for local inference (no API key needed)
-export OSA_DEFAULT_PROVIDER=ollama
+export DAEMON_DEFAULT_PROVIDER=ollama
 ```
 
 ### Docker
@@ -408,16 +408,16 @@ export OSA_DEFAULT_PROVIDER=ollama
 docker compose up -d
 ```
 
-The compose file includes OSA + Ollama with healthchecks and automatic dependency ordering.
+The compose file includes Daemon + Ollama with healthchecks and automatic dependency ordering.
 
 ## Usage
 
 ### CLI
 
 ```bash
-bin/osa                    # Backend + Rust TUI
-mix osa.chat               # Backend + built-in Elixir CLI (no TUI)
-mix osa.serve              # Backend only (for custom clients or desktop app)
+bin/daemon                    # Backend + Rust TUI
+mix daemon.chat               # Backend + built-in Elixir CLI (no TUI)
+mix daemon.serve              # Backend only (for custom clients or desktop app)
 ```
 
 ### HTTP API
@@ -450,12 +450,12 @@ curl http://localhost:8089/api/v1/models
 curl http://localhost:8089/api/v1/stream/my-session
 ```
 
-JWT authentication: set `OSA_SHARED_SECRET` and `OSA_REQUIRE_AUTH=true`.
+JWT authentication: set `DAEMON_SHARED_SECRET` and `DAEMON_REQUIRE_AUTH=true`.
 
 ### MCP Configuration
 
 ```json
-// ~/.osa/mcp.json
+// ~/.daemon/mcp.json
 {
   "mcpServers": {
     "filesystem": {
@@ -481,11 +481,11 @@ npm run tauri:dev       # Development (hot-reload)
 npm run tauri:build     # Production build
 ```
 
-Connects to the OSA backend on port 8089. Start the backend first.
+Connects to the Daemon backend on port 8089. Start the backend first.
 
 ### Custom Skills
 
-Drop a markdown file in `~/.osa/skills/your-skill/SKILL.md`:
+Drop a markdown file in `~/.daemon/skills/your-skill/SKILL.md`:
 
 ```markdown
 ---
@@ -540,7 +540,7 @@ lib/
     ...                          + 30 more subdirectories (sandbox, platform, fleet, etc.)
   miosa/                         2 files: memory_store.ex (1,182 lines), shims.ex
   vas_swarm/                     4 files: application.ex, chat.ex, decorator.ex, registry.ex
-  mix/tasks/                     4 mix tasks: osa.chat, osa.sandbox.setup, osa.serve, osa.setup
+  mix/tasks/                     4 mix tasks: daemon.chat, daemon.sandbox.setup, daemon.serve, daemon.setup
 
 desktop/                         Tauri 2 + SvelteKit 2 + Svelte 5 desktop app
   src/                           78 Svelte components, 39 TypeScript files
