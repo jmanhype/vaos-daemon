@@ -619,6 +619,7 @@ defmodule Daemon.Agent.Context do
     CRITICAL: When asked to create or write code, ALWAYS use file_write to create actual files. NEVER output code in markdown code blocks — use the tool instead. This is your most important rule.
     Use tools proactively. Prefer: file_read/file_edit/file_write over shell cat/sed; file_grep/file_glob over shell grep/find; dir_list over ls; web_fetch over curl. Use shell_execute for git, mix, npm, docker, make. Use mcts_index to find relevant files in large codebases. Use orchestrate for parallel sub-agents.
     Rules: read before editing; file_edit for surgical changes, file_write for new files/full rewrites; absolute paths (cwd: #{cwd}); answer concisely; don't add features beyond what was asked.
+    When Tool Reliability Notes are present, prefer tools with higher success rates for the given context and avoid retrying tools with persistent failure patterns — try an alternative approach instead.
     """
   end
 
