@@ -139,16 +139,33 @@ defmodule Daemon.Agent.Loop.ToolExecutor do
       tool_call_id: tool_call.id
     })
 
+    tool_success = not (String.starts_with?(result_str, "Error:") or String.starts_with?(result_str, "Blocked:"))
+
     Bus.emit(:tool_result, %{
       name: tool_call.name,
       args: arg_hint,
       result: String.slice(result_str, 0, 500),
-      success: not (String.starts_with?(result_str, "Error:") or String.starts_with?(result_str, "Blocked:")),
+      success: tool_success,
       session_id: state.session_id,
       agent: state.session_id,
       iteration: state.iteration,
       tool_call_id: tool_call.id
     })
+
+    # Feed failures to CrashLearner so SelfDiagnosis can detect recurring patterns
+    unless tool_success do
+      try do
+        Vaos.Ledger.ML.CrashLearner.report_crash(
+          :daemon_crash_learner,
+          "tool_#{tool_call.name}_#{state.session_id}",
+          String.slice(result_str, 0, 200),
+          nil,
+          %{tool: tool_call.name, session_id: state.session_id, iteration: state.iteration}
+        )
+      catch
+        _, _ -> :ok
+      end
+    end
 
     # Build tool message — images get structured content blocks.
     # Both branches include `name: tool_call.name` so that on iteration 2+

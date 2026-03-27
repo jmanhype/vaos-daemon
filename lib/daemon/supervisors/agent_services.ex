@@ -43,8 +43,10 @@ defmodule Daemon.Supervisors.AgentServices do
       Daemon.Webhooks.Dispatcher,
       Daemon.Signal.Persistence,
       Daemon.Investigation.Retrospector,
+      {Vaos.Ledger.ML.CrashLearner, name: :daemon_crash_learner},
       Daemon.Investigation.SelfDiagnosis,
-      Daemon.Intelligence.DecisionLedger
+      Daemon.Intelligence.DecisionLedger,
+      Daemon.Agent.SkillEvolution
     ]
 
     Supervisor.init(children, strategy: :one_for_one)

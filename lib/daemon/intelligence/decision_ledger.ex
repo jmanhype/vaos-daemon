@@ -286,7 +286,13 @@ defmodule Daemon.Intelligence.DecisionLedger do
     {:noreply, %{state | event_refs: [ref1, ref2]}}
   rescue
     e ->
-      Logger.debug("[DecisionLedger] Bus subscription failed: #{Exception.message(e)}")
+      Logger.warning("[DecisionLedger] Bus subscription failed (rescue): #{Exception.message(e)}, retrying in 10s")
+      Process.send_after(self(), :subscribe, 10_000)
+      {:noreply, state}
+  catch
+    :exit, reason ->
+      Logger.warning("[DecisionLedger] Bus subscription failed (exit): #{inspect(reason)}, retrying in 10s")
+      Process.send_after(self(), :subscribe, 10_000)
       {:noreply, state}
   end
 

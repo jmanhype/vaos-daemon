@@ -100,7 +100,11 @@ defmodule Daemon.Agent.Learning do
   def init(:ok) do
     ensure_table()
     load_from_disk()
-    {:ok, %{observation_count: 0}}
+
+    # Subscribe to Bus events after a short delay (Bus may not be ready yet)
+    Process.send_after(self(), :subscribe_to_bus, 5_000)
+
+    {:ok, %{observation_count: 0, bus_ref: nil}}
   end
 
   @impl true
@@ -146,6 +150,40 @@ defmodule Daemon.Agent.Learning do
     :ets.insert(@table, {{:solution, key}, solution})
     {:noreply, state}
   end
+
+  @impl true
+  def handle_info(:subscribe_to_bus, state) do
+    ref =
+      try do
+        Daemon.Events.Bus.register_handler(:tool_result, fn event ->
+          data = if is_map_key(event, :data), do: event.data, else: event
+          tool = to_string(data[:name] || "unknown")
+          success = data[:success] != false
+
+          observe(%{
+            type: if(success, do: :tool_success, else: :tool_error),
+            tool: tool,
+            context: to_string(data[:args] || "")
+          })
+        end)
+      rescue
+        _ ->
+          Process.send_after(self(), :subscribe_to_bus, 10_000)
+          nil
+      catch
+        :exit, _ ->
+          Process.send_after(self(), :subscribe_to_bus, 10_000)
+          nil
+      end
+
+    if ref do
+      Logger.info("[Learning] Subscribed to :tool_result events on Bus")
+    end
+
+    {:noreply, %{state | bus_ref: ref}}
+  end
+
+  def handle_info(_msg, state), do: {:noreply, state}
 
   @impl true
   def handle_call(:consolidate, _from, state) do

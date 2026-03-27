@@ -140,11 +140,9 @@ defmodule Daemon.Tools.Builtins.Investigate do
     # 1. Start the real epistemic ledger GenServer
     ensure_ledger_started()
 
-    # 1a. Start CrashLearner if not running
-    case CrashLearner.start_link(name: :daemon_crash_learner) do
-      {:ok, _} -> :ok
-      {:error, {:already_started, _}} -> :ok
-      _ -> :ok
+    # 1a. CrashLearner is now supervised by AgentServices — just verify it's alive
+    unless GenServer.whereis(:daemon_crash_learner) do
+      Logger.warning("[investigate] CrashLearner not running — crash reporting will be skipped")
     end
 
     # 1b. Load prompt templates via Thompson Sampling selector
