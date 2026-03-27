@@ -126,20 +126,57 @@ defmodule MiosaSignal.Event do
 end
 
 defmodule MiosaSignal.CloudEvent do
-  @moduledoc "Shim — re-exports Daemon.Protocol.CloudEvent struct and delegates."
+  @moduledoc """
+  CloudEvent implementation (breaks circular delegation with Daemon.Protocol.CloudEvent).
+  """
 
   defstruct [
     :specversion, :type, :source, :subject, :id, :time,
     :datacontenttype, :data
   ]
 
-  @type t :: Daemon.Protocol.CloudEvent.t()
+  @type t :: %__MODULE__{}
 
-  defdelegate new(attrs), to: Daemon.Protocol.CloudEvent
-  defdelegate encode(event), to: Daemon.Protocol.CloudEvent
-  defdelegate decode(json), to: Daemon.Protocol.CloudEvent
-  defdelegate from_bus_event(event_map), to: Daemon.Protocol.CloudEvent
-  defdelegate to_bus_event(event), to: Daemon.Protocol.CloudEvent
+  def new(attrs) when is_map(attrs) do
+    %__MODULE__{
+      specversion: Map.get(attrs, :specversion, "1.0"),
+      type: Map.get(attrs, :type, "unknown"),
+      source: Map.get(attrs, :source, "daemon"),
+      subject: Map.get(attrs, :subject),
+      id: Map.get(attrs, :id, generate_id()),
+      time: Map.get(attrs, :time, DateTime.utc_now() |> DateTime.to_iso8601()),
+      datacontenttype: Map.get(attrs, :datacontenttype, "application/json"),
+      data: Map.get(attrs, :data)
+    }
+  end
+  def new(_), do: new(%{})
+
+  def encode(%__MODULE__{} = event), do: {:ok, Jason.encode!(Map.from_struct(event))}
+  def encode(_), do: {:error, :invalid_event}
+
+  def decode(json) when is_binary(json) do
+    case Jason.decode(json) do
+      {:ok, map} -> {:ok, new(map |> Enum.into(%{}, fn {k, v} -> {String.to_existing_atom(k), v} end))}
+      error -> error
+    end
+  rescue
+    _ -> {:error, :decode_failed}
+  end
+  def decode(_), do: {:error, :invalid_input}
+
+  def from_bus_event(%{} = event) do
+    new(%{
+      type: to_string(Map.get(event, :event_type, Map.get(event, :type, "bus.event"))),
+      source: "daemon.bus",
+      data: event
+    })
+  end
+  def from_bus_event(_), do: new(%{type: "bus.event", source: "daemon.bus"})
+
+  def to_bus_event(%__MODULE__{} = event), do: event.data || %{}
+  def to_bus_event(_), do: %{}
+
+  defp generate_id, do: :crypto.strong_rand_bytes(8) |> Base.hex_encode32(case: :lower, padding: false)
 end
 
 defmodule MiosaSignal.Classifier do
@@ -264,12 +301,23 @@ defmodule MiosaSignal.MessageClassifier do
 end
 
 defmodule MiosaSignal.FailureModes do
-  @moduledoc "Shim — delegates to Daemon.Events.FailureModes."
+  @moduledoc """
+  Failure mode detection (breaks circular delegation with Daemon.Events.FailureModes).
+  """
 
-  @type failure_mode :: Daemon.Events.FailureModes.failure_mode()
+  @type failure_mode :: :doom_loop | :hallucination | :stall | :none
 
-  defdelegate detect(event), to: Daemon.Events.FailureModes
-  defdelegate check(event, mode), to: Daemon.Events.FailureModes
+  def detect(%{} = event) do
+    cond do
+      Map.get(event, :iteration, 0) > 10 -> :doom_loop
+      Map.get(event, :consecutive_failures, 0) > 3 -> :stall
+      true -> :none
+    end
+  end
+  def detect(_), do: :none
+
+  def check(%{} = event, mode) when is_atom(mode), do: detect(event) == mode
+  def check(_, _), do: false
 end
 
 # ---------------------------------------------------------------------------
@@ -422,20 +470,55 @@ defmodule MiosaMemory.Injector do
 end
 
 defmodule MiosaMemory.Taxonomy do
-  @moduledoc "Shim — delegates to Daemon.Agent.Memory.Taxonomy."
+  @moduledoc """
+  Memory taxonomy implementation (breaks circular delegation with Daemon.Agent.Memory.Taxonomy).
+  """
 
   @type t :: map()
-  @type category :: String.t()
-  @type scope :: String.t()
+  @type category :: :pattern | :solution | :fact | :preference | :general
+  @type scope :: :workspace | :session | :global
 
-  defdelegate new(content, opts \\ []), to: Daemon.Agent.Memory.Taxonomy
-  defdelegate categorize(content), to: Daemon.Agent.Memory.Taxonomy
-  defdelegate filter_by(entries, filters), to: Daemon.Agent.Memory.Taxonomy
-  defdelegate categories(), to: Daemon.Agent.Memory.Taxonomy
-  defdelegate scopes(), to: Daemon.Agent.Memory.Taxonomy
-  defdelegate touch(entry), to: Daemon.Agent.Memory.Taxonomy
-  defdelegate valid_category?(cat), to: Daemon.Agent.Memory.Taxonomy
-  defdelegate valid_scope?(scope), to: Daemon.Agent.Memory.Taxonomy
+  @categories [:pattern, :solution, :fact, :preference, :general]
+  @scopes [:workspace, :session, :global]
+
+  def new(content, opts \\ []) do
+    %{
+      content: to_string(content),
+      category: Keyword.get(opts, :category, :general),
+      scope: Keyword.get(opts, :scope, :workspace),
+      created_at: DateTime.utc_now(),
+      accessed_at: DateTime.utc_now()
+    }
+  end
+
+  def categorize(content) when is_binary(content) do
+    cond do
+      String.contains?(content, "->") -> :solution
+      String.contains?(content, ":") and String.contains?(content, "count") -> :pattern
+      true -> :general
+    end
+  end
+  def categorize(_), do: :general
+
+  def filter_by(entries, filters) when is_list(entries) and is_list(filters) do
+    Enum.filter(entries, fn entry ->
+      Enum.all?(filters, fn
+        {:category, cat} -> Map.get(entry, :category) == cat
+        {:scope, scope} -> Map.get(entry, :scope) == scope
+        _ -> true
+      end)
+    end)
+  end
+  def filter_by(entries, _), do: entries
+
+  def categories, do: @categories
+  def scopes, do: @scopes
+
+  def touch(entry) when is_map(entry), do: %{entry | accessed_at: DateTime.utc_now()}
+  def touch(entry), do: entry
+
+  def valid_category?(cat), do: cat in @categories
+  def valid_scope?(scope), do: scope in @scopes
 end
 
 defmodule MiosaMemory.Learning do
