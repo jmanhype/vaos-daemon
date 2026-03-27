@@ -370,13 +370,55 @@ defmodule MiosaMemory.Episodic do
 end
 
 defmodule MiosaMemory.Injector do
-  @moduledoc "Shim — delegates to Daemon.Agent.Memory.Injector."
+  @moduledoc """
+  Shim — provides a basic memory injection implementation.
+
+  NOTE: The original circular delegation (Daemon.Agent.Memory.Injector →
+  MiosaMemory.Injector → back) caused an infinite tail-call loop.
+  This implementation breaks that cycle with a direct filter + format.
+  """
 
   @type injection_context :: map()
 
-  defdelegate inject_relevant(entries, context),
-    to: Daemon.Agent.Memory.Injector
-  defdelegate format_for_prompt(entries), to: Daemon.Agent.Memory.Injector
+  @doc "Filter taxonomy entries relevant to the given context."
+  def inject_relevant(entries, context) when is_list(entries) do
+    task = Map.get(context, :task, "")
+    if task == "" do
+      Enum.take(entries, 5)
+    else
+      task_words =
+        task
+        |> String.downcase()
+        |> String.split(~r/\s+/, trim: true)
+        |> MapSet.new()
+
+      entries
+      |> Enum.filter(fn entry ->
+        content = Map.get(entry, :content, "") |> String.downcase()
+        content_words = String.split(content, ~r/\s+/, trim: true) |> MapSet.new()
+        overlap = MapSet.intersection(task_words, content_words) |> MapSet.size()
+        overlap >= 1
+      end)
+      |> Enum.take(10)
+    end
+  end
+
+  def inject_relevant(_, _), do: []
+
+  @doc "Format injected entries for inclusion in a prompt."
+  def format_for_prompt([]), do: nil
+
+  def format_for_prompt(entries) when is_list(entries) do
+    entries
+    |> Enum.map(fn entry ->
+      content = Map.get(entry, :content, inspect(entry))
+      category = Map.get(entry, :category, :general)
+      "- [#{category}] #{content}"
+    end)
+    |> Enum.join("\n")
+  end
+
+  def format_for_prompt(_), do: nil
 end
 
 defmodule MiosaMemory.Taxonomy do

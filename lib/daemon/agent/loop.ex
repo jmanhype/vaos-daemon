@@ -640,10 +640,8 @@ defmodule Daemon.Agent.Loop do
 
   defp do_run_loop(state) do
     Logger.info("[loop] do_run_loop entered for #{state.session_id}, iteration=#{state.iteration}")
-    File.write!("/tmp/context_trace.log", "#{DateTime.utc_now()} [loop] about to call cached_context\n", [:append])
     # Build context (system prompt + conversation history), using cached system message (Phase 4)
     context = cached_context(state)
-    File.write!("/tmp/context_trace.log", "#{DateTime.utc_now()} [loop] cached_context returned\n", [:append])
     Logger.info("[loop] context built, #{length(context.messages)} messages")
 
     # ── Strategy guidance ────────────────────────────────────────────

@@ -63,10 +63,8 @@ defmodule Daemon.Agent.Context do
   def build(state, _signal), do: build(state)
 
   def build(state) do
-    File.write!("/tmp/context_trace.log", "#{DateTime.utc_now()} [Context.build] start\n", [:append])
     conversation = state.messages || []
     conversation_tokens = estimate_tokens_messages(conversation)
-    File.write!("/tmp/context_trace.log", "#{DateTime.utc_now()} conversation_tokens=#{conversation_tokens}\n", [:append])
 
     max_tok = case Map.get(state, :model) do
       nil -> max_tokens()
@@ -75,16 +73,12 @@ defmodule Daemon.Agent.Context do
     end
 
     # Tier 1: Cached static base
-    File.write!("/tmp/context_trace.log", "#{DateTime.utc_now()} loading static_base\n", [:append])
     static_base = Soul.static_base()
     static_tokens = Soul.static_token_count()
-    File.write!("/tmp/context_trace.log", "#{DateTime.utc_now()} static_base loaded, #{static_tokens} tokens\n", [:append])
 
     # Tier 2: Dynamic context
     dynamic_budget = max(max_tok - @response_reserve - conversation_tokens - static_tokens, 1_000)
-    File.write!("/tmp/context_trace.log", "#{DateTime.utc_now()} assembling dynamic, budget=#{dynamic_budget}\n", [:append])
     dynamic_context = assemble_dynamic_context(state, dynamic_budget)
-    File.write!("/tmp/context_trace.log", "#{DateTime.utc_now()} dynamic context assembled\n", [:append])
 
     dynamic_tokens = estimate_tokens(dynamic_context)
     total_tokens = static_tokens + dynamic_tokens + conversation_tokens + @response_reserve
@@ -209,9 +203,7 @@ defmodule Daemon.Agent.Context do
 
     blocks_spec
     |> Enum.map(fn {label, priority, fun} ->
-      File.write!("/tmp/context_trace.log", "#{DateTime.utc_now()} block #{label} start\n", [:append])
       content = fun.()
-      File.write!("/tmp/context_trace.log", "#{DateTime.utc_now()} block #{label} done\n", [:append])
       {content, priority, to_string(label)}
     end)
     |> Enum.reject(fn {content, _, _} -> is_nil(content) or content == "" end)
@@ -337,8 +329,6 @@ defmodule Daemon.Agent.Context do
 
   defp memory_block_relevant(state) do
     latest_user_msg = find_latest_user_message(state.messages)
-    File.write!("/tmp/context_trace.log", "#{DateTime.utc_now()} memory: recall start\n", [:append])
-
     content =
       if latest_user_msg do
         try do
@@ -352,10 +342,8 @@ defmodule Daemon.Agent.Context do
         full_recall()
       end
 
-    File.write!("/tmp/context_trace.log", "#{DateTime.utc_now()} memory: recall done, taxonomy_inject start\n", [:append])
     # Append taxonomy-classified memories via Injector (if available)
     taxonomy_addendum = taxonomy_inject(state, latest_user_msg)
-    File.write!("/tmp/context_trace.log", "#{DateTime.utc_now()} memory: taxonomy done\n", [:append])
 
     combined =
       case {content, taxonomy_addendum} do
