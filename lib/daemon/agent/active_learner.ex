@@ -3,14 +3,19 @@ defmodule Daemon.Agent.ActiveLearner do
   Closes the investigation → topic selection loop with outcome-weighted learning.
 
   Subscribes to `:investigation_complete` events and extracts `suggested_next`
-  topics (ranked by information gain via `Policy.rank_actions`). Uses ε-greedy
-  selection to pick the best suggestion and appends it to HEARTBEAT.md as a new
-  pending task.
+  topics (ranked by information gain via `Policy.rank_actions`) plus emergent
+  questions synthesized from evidence tension. Uses **Thompson Sampling** with
+  per-source Beta distributions to learn which source (emergent vs policy)
+  produces better investigations.
 
-  **Learning loop**: Tracks which auto-added topics produced high-quality
-  investigations. Maintains a correction factor (predicted IG vs actual quality)
-  that improves topic selection over time. Without this, we'd just be an infinite
-  loop — with it, we're an infinite loop that gets better at picking topics.
+  **Learning loop**: Two arms — `:emergent` and `:policy` — each with a Beta(α, β)
+  posterior. When a topic we added completes an investigation, we update the arm:
+  quality >= threshold → α += 1 (success), else β += 1 (failure). Thompson
+  Sampling naturally explores uncertain sources and exploits proven ones —
+  no ε-greedy needed.
+
+  **Persistence**: Arms, outcomes, and seen topics are persisted to
+  `<config_dir>/active_learner_state.json` and survive daemon restarts.
 
   Seen topics expire after 7 days, allowing re-investigation when new evidence
   accumulates.
@@ -19,17 +24,18 @@ defmodule Daemon.Agent.ActiveLearner do
   require Logger
 
   alias Daemon.Investigation.Retrospector
+  alias Daemon.Investigation.PromptSelector
   alias Daemon.Agent.Scheduler
   alias Daemon.Agent.Scheduler.Heartbeat
 
   @quality_threshold 0.25
-  @epsilon 0.20
   @max_pending_tasks 20
   @subscribe_delay_ms 5_000
   @task_prefix "Investigate: "
   @seen_topics_table :active_learner_seen_topics
   @outcomes_table :active_learner_outcomes
   @seen_ttl_seconds 7 * 24 * 3600
+  @persistence_file "active_learner_state.json"
 
   # ── Public API ──────────────────────────────────────────────────────
 
@@ -37,15 +43,15 @@ defmodule Daemon.Agent.ActiveLearner do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  @doc "Returns stats: topics_added count, last_added_at, and learning correction factor."
+  @doc "Returns stats: topics_added, arms, correction factor, lineage."
   @spec stats() :: map()
   def stats do
     try do
       GenServer.call(__MODULE__, :stats)
     rescue
-      _ -> %{topics_added: 0, last_added_at: nil, correction_factor: 1.0, outcomes_count: 0}
+      _ -> %{topics_added: 0, last_added_at: nil, arms: default_arms(), outcomes_count: 0}
     catch
-      :exit, _ -> %{topics_added: 0, last_added_at: nil, correction_factor: 1.0, outcomes_count: 0}
+      :exit, _ -> %{topics_added: 0, last_added_at: nil, arms: default_arms(), outcomes_count: 0}
     end
   end
 
@@ -55,9 +61,22 @@ defmodule Daemon.Agent.ActiveLearner do
   def init(_opts) do
     ensure_ets_table(@seen_topics_table)
     ensure_ets_table(@outcomes_table)
+
+    # Load persisted state (arms, outcomes, seen topics)
+    persisted = load_persisted_state()
+    hydrate_ets(persisted)
+
+    arms = Map.get(persisted, "arms", %{}) |> parse_arms()
+
     Process.send_after(self(), :subscribe, @subscribe_delay_ms)
-    Logger.info("[ActiveLearner] Started")
-    {:ok, %{event_ref: nil, topics_added: 0, last_added_at: nil}}
+    Logger.info("[ActiveLearner] Started (arms: emergent=#{format_arm(arms.emergent)}, policy=#{format_arm(arms.policy)})")
+
+    {:ok, %{
+      event_ref: nil,
+      topics_added: Map.get(persisted, "topics_added", 0),
+      last_added_at: parse_datetime(Map.get(persisted, "last_added_at")),
+      arms: arms
+    }}
   end
 
   @impl true
@@ -79,6 +98,10 @@ defmodule Daemon.Agent.ActiveLearner do
     reply = %{
       topics_added: state.topics_added,
       last_added_at: state.last_added_at,
+      arms: %{
+        emergent: state.arms.emergent,
+        policy: state.arms.policy
+      },
       correction_factor: compute_correction_factor(),
       outcomes_count: count_outcomes(),
       lineage: build_lineage()
@@ -88,12 +111,16 @@ defmodule Daemon.Agent.ActiveLearner do
   end
 
   @impl true
-  def terminate(_reason, %{event_ref: ref}) when not is_nil(ref) do
+  def terminate(_reason, %{event_ref: ref} = state) when not is_nil(ref) do
+    persist_state(state)
     Daemon.Events.Bus.unregister_handler(:investigation_complete, ref)
     :ok
   end
 
-  def terminate(_, _), do: :ok
+  def terminate(_reason, state) do
+    persist_state(state)
+    :ok
+  end
 
   # ── Event Handler (runs in bus process — must be fast) ──────────────
 
@@ -112,8 +139,8 @@ defmodule Daemon.Agent.ActiveLearner do
   defp process_event(data, state) do
     quality = Retrospector.compute_quality(data)
 
-    # Record outcome if this investigation was an ActiveLearner-originated topic
-    record_outcome_if_ours(data, quality)
+    # Record outcome and update Thompson arm if this was our topic
+    state = record_outcome_if_ours(data, quality, state)
 
     if quality < @quality_threshold do
       Logger.debug("[ActiveLearner] Skipping — quality #{Float.round(quality, 3)} below threshold #{@quality_threshold}")
@@ -124,19 +151,16 @@ defmodule Daemon.Agent.ActiveLearner do
   end
 
   defp maybe_add_topic(data, quality, state) do
-    # Prefer emergent questions (novel, forward-looking) over suggested_next (backward-looking)
     emergent = extract_emergent_questions(data)
     suggested = extract_suggested_next(data)
     source_topic = Map.get(data, :topic) || Map.get(data, "topic") || "unknown"
 
-    # Emergent questions first, then Policy suggestions as fallback
     all_suggestions = emergent ++ suggested
 
     if all_suggestions == [] do
       Logger.debug("[ActiveLearner] No suggestions in event data")
       state
     else
-      # Read heartbeat file ONCE for both dedup and cap check
       {pending_tasks, completed_tasks} = read_heartbeat_tasks()
       pending_len = length(pending_tasks)
 
@@ -144,8 +168,7 @@ defmodule Daemon.Agent.ActiveLearner do
         Logger.info("[ActiveLearner] #{length(emergent)} emergent question(s) + #{length(suggested)} policy suggestion(s)")
       end
 
-      # Try suggestions in order until one sticks (don't bail on first dupe)
-      ranked = rank_suggestions(all_suggestions)
+      ranked = rank_suggestions(all_suggestions, state.arms)
       try_add_suggestion(ranked, quality, source_topic, pending_tasks, completed_tasks, pending_len, state)
     end
   end
@@ -173,10 +196,14 @@ defmodule Daemon.Agent.ActiveLearner do
         case safe_add_heartbeat_task(task_text) do
           :ok ->
             ig = get_ig(suggestion)
-            Logger.info("[ActiveLearner] Added: '#{task_text}' (ig: #{Float.round(ig * 1.0, 3)}, quality: #{Float.round(quality, 3)}, from: '#{source_topic}')")
+            source = get_source(suggestion)
+            arm = Map.get(state.arms, source, %{alpha: 1.0, beta: 1.0})
+            Logger.info("[ActiveLearner] Added: '#{task_text}' (ig: #{Float.round(ig * 1.0, 3)}, source: #{source}, arm: #{format_arm(arm)}, from: '#{source_topic}')")
             mark_seen(task_text)
-            record_prediction(task_text, ig, source_topic)
-            %{state | topics_added: state.topics_added + 1, last_added_at: DateTime.utc_now()}
+            record_prediction(task_text, ig, source_topic, source)
+            state = %{state | topics_added: state.topics_added + 1, last_added_at: DateTime.utc_now()}
+            persist_state(state)
+            state
 
           {:error, reason} ->
             Logger.warning("[ActiveLearner] Failed to add task: #{inspect(reason)}")
@@ -190,7 +217,6 @@ defmodule Daemon.Agent.ActiveLearner do
 
     case emergent do
       list when is_list(list) ->
-        # Normalize to have claim_title key (emergent questions use :title)
         Enum.map(list, fn q ->
           title = Map.get(q, :title) || Map.get(q, "title") || ""
           ig = Map.get(q, :information_gain) || Map.get(q, "information_gain") || 0.90
@@ -206,24 +232,60 @@ defmodule Daemon.Agent.ActiveLearner do
     suggested = Map.get(data, :suggested_next) || Map.get(data, "suggested_next") || []
 
     case suggested do
-      list when is_list(list) -> list
+      list when is_list(list) ->
+        Enum.map(list, fn s ->
+          if is_map(s), do: Map.put_new(s, :source, :policy), else: s
+        end)
+
       _ -> []
     end
   end
 
-  defp rank_suggestions(suggestions) do
-    correction = compute_correction_factor()
+  # ── Thompson Sampling ─────────────────────────────────────────────
 
-    if :rand.uniform() < @epsilon do
-      Enum.shuffle(suggestions)
-    else
-      Enum.sort_by(suggestions, fn s -> -(get_ig(s) * correction) end)
-    end
+  defp rank_suggestions(suggestions, arms) do
+    Enum.sort_by(suggestions, fn s ->
+      source = get_source(s)
+      arm = Map.get(arms, source, %{alpha: 1.0, beta: 1.0})
+      theta = PromptSelector.sample_beta(arm.alpha, arm.beta)
+      -(get_ig(s) * theta)
+    end)
   end
 
   defp get_ig(suggestion) do
     Map.get(suggestion, :information_gain, Map.get(suggestion, "information_gain", 0.0))
   end
+
+  defp get_source(suggestion) do
+    case Map.get(suggestion, :source, Map.get(suggestion, "source", :policy)) do
+      s when s in [:emergent, :policy] -> s
+      "emergent" -> :emergent
+      _ -> :policy
+    end
+  end
+
+  defp update_arm(arms, source, quality) do
+    arm = Map.get(arms, source, %{alpha: 1.0, beta: 1.0})
+
+    updated = if quality >= @quality_threshold do
+      %{arm | alpha: arm.alpha + 1.0}
+    else
+      %{arm | beta: arm.beta + 1.0}
+    end
+
+    Map.put(arms, source, updated)
+  end
+
+  defp default_arms do
+    %{emergent: %{alpha: 1.0, beta: 1.0}, policy: %{alpha: 1.0, beta: 1.0}}
+  end
+
+  defp format_arm(%{alpha: a, beta: b}) do
+    mean = Float.round(a / (a + b), 3)
+    "Beta(#{Float.round(a, 1)}, #{Float.round(b, 1)}) μ=#{mean}"
+  end
+
+  # ── Suggestion Building ────────────────────────────────────────────
 
   defp build_task_text(suggestion) do
     title =
@@ -291,30 +353,29 @@ defmodule Daemon.Agent.ActiveLearner do
     end
   end
 
-  # ── Outcome Tracking (Learning Loop) ────────────────────────────────
-  # Records predicted_ig when we add a topic, then actual_quality when
-  # that topic's investigation completes. The ratio becomes a correction
-  # factor that makes future IG predictions more accurate.
+  # ── Outcome Tracking ───────────────────────────────────────────────
+  # Records predicted_ig + source when we add a topic, then actual_quality
+  # when that topic's investigation completes. Updates the Thompson arm
+  # for the source that originated the suggestion.
 
-  defp record_prediction(task_text, predicted_ig, source_topic) do
+  defp record_prediction(task_text, predicted_ig, source_topic, source) do
     key = normalize_topic(task_text)
 
     :ets.insert(@outcomes_table, {key, %{
       predicted_ig: predicted_ig,
       actual_quality: nil,
       source_topic: source_topic,
+      source: source,
       added_at: System.system_time(:second)
     }})
   rescue
     _ -> :ok
   end
 
-  defp record_outcome_if_ours(data, quality) do
+  defp record_outcome_if_ours(data, quality, state) do
     topic = Map.get(data, :topic) || Map.get(data, "topic") || ""
-    # Strip "Investigate: " prefix if present — heartbeat agent may or may not include it
     stripped = String.replace(topic, ~r/^Investigate:\s*/i, "")
 
-    # Try both with and without prefix to handle either case
     candidates = [
       normalize_topic(@task_prefix <> stripped),
       normalize_topic(stripped)
@@ -331,13 +392,18 @@ defmodule Daemon.Agent.ActiveLearner do
     case matched do
       {key, record} ->
         :ets.insert(@outcomes_table, {key, %{record | actual_quality: quality}})
-        Logger.info("[ActiveLearner] Recorded outcome for '#{stripped}': quality=#{Float.round(quality, 3)}")
+        source = Map.get(record, :source, :policy)
+        arms = update_arm(state.arms, source, quality)
+        Logger.info("[ActiveLearner] Outcome for '#{stripped}': quality=#{Float.round(quality, 3)}, source=#{source}, arm→#{format_arm(arms[source])}")
+        state = %{state | arms: arms}
+        persist_state(state)
+        state
 
       nil ->
-        :ok
+        state
     end
   rescue
-    _ -> :ok
+    _ -> state
   end
 
   defp compute_correction_factor do
@@ -371,6 +437,7 @@ defmodule Daemon.Agent.ActiveLearner do
       %{
         topic: topic_key,
         source: Map.get(record, :source_topic, "seed"),
+        selection_source: Map.get(record, :source, :unknown),
         predicted_ig: record.predicted_ig,
         actual_quality: record.actual_quality,
         added_at: record.added_at
@@ -380,6 +447,144 @@ defmodule Daemon.Agent.ActiveLearner do
   rescue
     _ -> []
   end
+
+  # ── File-Backed Persistence ────────────────────────────────────────
+
+  defp persistence_path do
+    config_dir = Application.get_env(:daemon, :config_dir, "~/.daemon") |> Path.expand()
+    Path.join(config_dir, @persistence_file)
+  end
+
+  defp persist_state(state) do
+    data = %{
+      "version" => 2,
+      "arms" => %{
+        "emergent" => %{"alpha" => state.arms.emergent.alpha, "beta" => state.arms.emergent.beta},
+        "policy" => %{"alpha" => state.arms.policy.alpha, "beta" => state.arms.policy.beta}
+      },
+      "topics_added" => state.topics_added,
+      "last_added_at" => if(state.last_added_at, do: DateTime.to_iso8601(state.last_added_at)),
+      "outcomes" => serialize_outcomes(),
+      "seen_topics" => serialize_seen_topics()
+    }
+
+    path = persistence_path()
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, Jason.encode!(data, pretty: true))
+  rescue
+    e ->
+      Logger.warning("[ActiveLearner] Failed to persist state: #{Exception.message(e)}")
+  end
+
+  defp load_persisted_state do
+    case File.read(persistence_path()) do
+      {:ok, json} ->
+        case Jason.decode(json) do
+          {:ok, %{"version" => _} = data} -> data
+          _ ->
+            Logger.warning("[ActiveLearner] Corrupted state file, starting fresh")
+            %{}
+        end
+
+      {:error, _} ->
+        %{}
+    end
+  rescue
+    _ -> %{}
+  end
+
+  defp hydrate_ets(persisted) do
+    # Restore outcomes
+    outcomes = Map.get(persisted, "outcomes", [])
+    Enum.each(outcomes, fn entry ->
+      key = Map.get(entry, "key", "")
+      record = %{
+        predicted_ig: Map.get(entry, "predicted_ig", 0.0),
+        actual_quality: Map.get(entry, "actual_quality"),
+        source_topic: Map.get(entry, "source_topic", "unknown"),
+        source: parse_source(Map.get(entry, "source", "policy")),
+        added_at: Map.get(entry, "added_at", 0)
+      }
+      if key != "", do: :ets.insert(@outcomes_table, {key, record})
+    end)
+
+    # Restore seen topics
+    seen = Map.get(persisted, "seen_topics", [])
+    now = System.system_time(:second)
+    Enum.each(seen, fn entry ->
+      key = Map.get(entry, "key", "")
+      seen_at = Map.get(entry, "seen_at", 0)
+      # Only restore if not expired
+      if key != "" and (now - seen_at) < @seen_ttl_seconds do
+        :ets.insert(@seen_topics_table, {key, seen_at})
+      end
+    end)
+
+    restored_outcomes = length(outcomes)
+    restored_seen = length(seen)
+    if restored_outcomes > 0 or restored_seen > 0 do
+      Logger.info("[ActiveLearner] Restored #{restored_outcomes} outcomes, #{restored_seen} seen topics from disk")
+    end
+  rescue
+    e ->
+      Logger.warning("[ActiveLearner] Failed to hydrate ETS: #{Exception.message(e)}")
+  end
+
+  defp serialize_outcomes do
+    @outcomes_table
+    |> :ets.tab2list()
+    |> Enum.map(fn {key, record} ->
+      %{
+        "key" => key,
+        "predicted_ig" => record.predicted_ig,
+        "actual_quality" => record.actual_quality,
+        "source_topic" => Map.get(record, :source_topic, "unknown"),
+        "source" => Atom.to_string(Map.get(record, :source, :policy)),
+        "added_at" => record.added_at
+      }
+    end)
+  rescue
+    _ -> []
+  end
+
+  defp serialize_seen_topics do
+    @seen_topics_table
+    |> :ets.tab2list()
+    |> Enum.map(fn {key, seen_at} ->
+      %{"key" => key, "seen_at" => seen_at}
+    end)
+  rescue
+    _ -> []
+  end
+
+  defp parse_arms(raw) when is_map(raw) do
+    %{
+      emergent: parse_single_arm(Map.get(raw, "emergent", %{})),
+      policy: parse_single_arm(Map.get(raw, "policy", %{}))
+    }
+  end
+
+  defp parse_arms(_), do: default_arms()
+
+  defp parse_single_arm(%{"alpha" => a, "beta" => b})
+    when is_number(a) and is_number(b) and a > 0 and b > 0 do
+    %{alpha: a / 1.0, beta: b / 1.0}
+  end
+
+  defp parse_single_arm(_), do: %{alpha: 1.0, beta: 1.0}
+
+  defp parse_source("emergent"), do: :emergent
+  defp parse_source("policy"), do: :policy
+  defp parse_source(_), do: :policy
+
+  defp parse_datetime(nil), do: nil
+  defp parse_datetime(iso) when is_binary(iso) do
+    case DateTime.from_iso8601(iso) do
+      {:ok, dt, _} -> dt
+      _ -> nil
+    end
+  end
+  defp parse_datetime(_), do: nil
 
   # ── ETS Dedup with TTL ──────────────────────────────────────────────
 
@@ -402,7 +607,6 @@ defmodule Daemon.Agent.ActiveLearner do
       [{^key, seen_at}] ->
         age = System.system_time(:second) - seen_at
         if age > @seen_ttl_seconds do
-          # Expired — delete and treat as unseen
           :ets.delete(@seen_topics_table, key)
           false
         else
