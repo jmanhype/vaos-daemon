@@ -156,6 +156,7 @@ defmodule Daemon.Agent.ActiveLearner do
       adaptive_threshold: adaptive_threshold(state.quality_window),
       consecutive_skips: state.consecutive_skips,
       quality_window: state.quality_window,
+      bottleneck: diagnose_bottleneck(get_recent_outcomes(10)),
       lineage: build_lineage()
     }
 
@@ -515,6 +516,27 @@ defmodule Daemon.Agent.ActiveLearner do
         |> then(fn qs -> Enum.sum(qs) / length(qs) end)
         |> Float.round(3)
 
+      # Diagnose the bottleneck from quality component decomposition
+      diagnosis = diagnose_bottleneck(outcomes)
+
+      diagnosis_text = if diagnosis do
+        """
+
+        **QUALITY BOTTLENECK DIAGNOSIS (CRITICAL — address this first):**
+        Primary bottleneck: #{diagnosis.bottleneck}
+        #{diagnosis.prescription}
+
+        Component averages:
+        - verification_rate: #{diagnosis.avg_verification_rate} (weight: 0.4)
+        - grounded_ratio: #{diagnosis.avg_grounded_ratio} (weight: 0.3)
+        - fraud_penalty: #{diagnosis.avg_fraud_penalty} (weight: -0.2)
+        - certainty: #{diagnosis.avg_certainty} (weight: 0.1)
+        - avg papers found: #{diagnosis.avg_papers_found}
+        """
+      else
+        ""
+      end
+
       messages = [
         %{role: "user", content: """
         You are optimizing investigation prompts for an autonomous research system.
@@ -527,15 +549,12 @@ defmodule Daemon.Agent.ActiveLearner do
 
         Recent outcomes (avg quality: #{avg_quality}):
         #{summary}
-
+        #{diagnosis_text}
         Current prompts (variant: #{current_variant}):
         #{Jason.encode!(current_prompts)}
 
-        Generate IMPROVED prompts. Focus on:
-        - Higher citation accuracy (only cite what abstracts explicitly state)
-        - More grounded evidence from papers
-        - Clearer instructions that reduce hallucinated citations
-        - Better argument structure for higher verification rates
+        Generate IMPROVED prompts that specifically address the bottleneck diagnosis above.
+        The biggest quality lever right now is improving the weakest component.
 
         Return ONLY a JSON object with these exact keys (all non-empty strings):
         for_system, against_system, advocate_user_template, example_format, verify_prompt, no_papers_fallback, citation_instructions
@@ -717,6 +736,7 @@ defmodule Daemon.Agent.ActiveLearner do
     :ets.insert(@outcomes_table, {key, %{
       predicted_ig: predicted_ig,
       actual_quality: nil,
+      quality_components: nil,
       source_topic: source_topic,
       source: source,
       depth: depth,
@@ -745,7 +765,8 @@ defmodule Daemon.Agent.ActiveLearner do
 
     case matched do
       {key, record} ->
-        :ets.insert(@outcomes_table, {key, %{record | actual_quality: quality}})
+        components = decompose_quality(data)
+        :ets.insert(@outcomes_table, {key, %{record | actual_quality: quality, quality_components: components}})
         source = Map.get(record, :source, :policy)
 
         # Causal attribution: only update Thompson arm when signal is genuine.
@@ -756,7 +777,9 @@ defmodule Daemon.Agent.ActiveLearner do
 
         if is_number(papers) and papers > 0 do
           arms = update_arm(state.arms, source, quality)
-          Logger.info("[ActiveLearner] Outcome: quality=#{Float.round(quality, 3)}, papers=#{papers}, source=#{source}, arm→#{format_arm(arms[source])}")
+          # Log with component breakdown for visibility
+          c = components
+          Logger.info("[ActiveLearner] Outcome: quality=#{Float.round(quality, 3)}, papers=#{papers}, source=#{source}, arm→#{format_arm(arms[source])} [v=#{c.verification_rate} g=#{c.grounded_ratio} f=#{c.fraud_penalty} c=#{c.certainty}]")
           state = %{state | arms: arms}
           persist_state(state)
           maybe_evolve_prompts(state)
@@ -771,6 +794,115 @@ defmodule Daemon.Agent.ActiveLearner do
     end
   rescue
     _ -> state
+  end
+
+  # ── Quality Decomposition ──────────────────────────────────────────
+  # Break quality score into components to diagnose WHY quality is low.
+  # Each component maps to a specific corrective action in prompt evolution.
+
+  defp decompose_quality(data) do
+    supporting = Map.get(data, :supporting) || Map.get(data, "supporting") || []
+    opposing = Map.get(data, :opposing) || Map.get(data, "opposing") || []
+    all_evidence = supporting ++ opposing
+    total_evidence = length(all_evidence)
+
+    grounded_for = Map.get(data, :grounded_for_count) || Map.get(data, "grounded_for_count") || 0
+    grounded_against = Map.get(data, :grounded_against_count) || Map.get(data, "grounded_against_count") || 0
+    grounded_count = grounded_for + grounded_against
+
+    fraud = Map.get(data, :fraudulent_citations) || Map.get(data, "fraudulent_citations") || 0
+    uncertainty = Map.get(data, :uncertainty) || Map.get(data, "uncertainty") || 1.0
+    papers = Map.get(data, :papers_found) || Map.get(data, "papers_found") || 0
+
+    # Count verified from evidence lists (mirrors Retrospector.compute_quality)
+    sourced = Enum.filter(all_evidence, fn ev ->
+      is_map(ev) and (Map.get(ev, :source_type) == :sourced or Map.get(ev, "source_type") == "sourced")
+    end)
+    total_sourced = length(sourced)
+    count_verified = Enum.count(sourced, fn ev ->
+      v = Map.get(ev, :verification) || Map.get(ev, "verification")
+      v in ["verified", :verified]
+    end)
+
+    %{
+      verification_rate: if(total_sourced > 0, do: Float.round(count_verified / total_sourced, 3), else: 0.0),
+      grounded_ratio: if(total_evidence > 0, do: Float.round(grounded_count / total_evidence, 3), else: 0.0),
+      fraud_penalty: if(total_evidence > 0, do: Float.round(fraud / total_evidence, 3), else: 0.0),
+      certainty: Float.round(max(0.0, 1.0 - uncertainty), 3),
+      papers_found: papers,
+      total_evidence: total_evidence,
+      total_sourced: total_sourced,
+      count_verified: count_verified
+    }
+  rescue
+    _ -> %{verification_rate: 0.0, grounded_ratio: 0.0, fraud_penalty: 0.0, certainty: 0.0, papers_found: 0, total_evidence: 0, total_sourced: 0, count_verified: 0}
+  end
+
+  defp diagnose_bottleneck(outcomes) do
+    components = outcomes
+      |> Enum.map(& &1.quality_components)
+      |> Enum.reject(&is_nil/1)
+
+    if components == [] do
+      nil
+    else
+      n = length(components)
+      avg_verification = Enum.sum(Enum.map(components, & &1.verification_rate)) / n
+      avg_grounded = Enum.sum(Enum.map(components, & &1.grounded_ratio)) / n
+      avg_fraud = Enum.sum(Enum.map(components, & &1.fraud_penalty)) / n
+      avg_certainty = Enum.sum(Enum.map(components, & &1.certainty)) / n
+      avg_papers = Enum.sum(Enum.map(components, & &1.papers_found)) / n
+
+      # Identify the weakest component (weighted by its impact on quality score)
+      # quality = 0.4*verification + 0.3*grounded - 0.2*fraud + 0.1*certainty
+      weighted_gaps = [
+        {:low_verification, 0.4 * (1.0 - avg_verification), avg_verification},
+        {:low_grounded, 0.3 * (1.0 - avg_grounded), avg_grounded},
+        {:high_fraud, 0.2 * avg_fraud, avg_fraud},
+        {:low_certainty, 0.1 * (1.0 - avg_certainty), avg_certainty}
+      ]
+
+      {bottleneck, _gap, avg_value} = Enum.max_by(weighted_gaps, fn {_, gap, _} -> gap end)
+
+      %{
+        bottleneck: bottleneck,
+        avg_verification_rate: Float.round(avg_verification, 3),
+        avg_grounded_ratio: Float.round(avg_grounded, 3),
+        avg_fraud_penalty: Float.round(avg_fraud, 3),
+        avg_certainty: Float.round(avg_certainty, 3),
+        avg_papers_found: Float.round(avg_papers, 1),
+        prescription: bottleneck_prescription(bottleneck, avg_value)
+      }
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp bottleneck_prescription(:low_verification, avg) do
+    "Verification rate is only #{Float.round(avg * 100, 1)}%. " <>
+    "Focus on: (1) Only cite claims explicitly stated in paper abstracts, " <>
+    "(2) Include page numbers or section references, " <>
+    "(3) If a paper doesn't directly support the claim, classify evidence as 'belief' not 'grounded'."
+  end
+
+  defp bottleneck_prescription(:low_grounded, avg) do
+    "Grounded evidence ratio is only #{Float.round(avg * 100, 1)}%. " <>
+    "Focus on: (1) Base arguments primarily on paper findings, not general knowledge, " <>
+    "(2) Each claim needs at least one paper citation, " <>
+    "(3) Prefer fewer, well-sourced arguments over many unsourced ones."
+  end
+
+  defp bottleneck_prescription(:high_fraud, avg) do
+    "Fraudulent citation rate is #{Float.round(avg * 100, 1)}%. " <>
+    "Focus on: (1) NEVER fabricate paper titles, authors, or DOIs, " <>
+    "(2) Only reference papers actually found in the search results, " <>
+    "(3) If no relevant paper exists for a claim, state it as expert opinion."
+  end
+
+  defp bottleneck_prescription(:low_certainty, avg) do
+    "Certainty is only #{Float.round(avg * 100, 1)}%. " <>
+    "This often means investigating genuinely contested topics — consider focusing on " <>
+    "more specific sub-questions where evidence can be more decisive."
   end
 
   defp lookup_depth(source_topic) do
@@ -886,9 +1018,26 @@ defmodule Daemon.Agent.ActiveLearner do
     outcomes = Map.get(persisted, "outcomes", [])
     Enum.each(outcomes, fn entry ->
       key = Map.get(entry, "key", "")
+      raw_components = Map.get(entry, "quality_components")
+      components = if is_map(raw_components) do
+        %{
+          verification_rate: Map.get(raw_components, "verification_rate", 0.0),
+          grounded_ratio: Map.get(raw_components, "grounded_ratio", 0.0),
+          fraud_penalty: Map.get(raw_components, "fraud_penalty", 0.0),
+          certainty: Map.get(raw_components, "certainty", 0.0),
+          papers_found: Map.get(raw_components, "papers_found", 0),
+          total_evidence: Map.get(raw_components, "total_evidence", 0),
+          total_sourced: Map.get(raw_components, "total_sourced", 0),
+          count_verified: Map.get(raw_components, "count_verified", 0)
+        }
+      else
+        nil
+      end
+
       record = %{
         predicted_ig: Map.get(entry, "predicted_ig", 0.0),
         actual_quality: Map.get(entry, "actual_quality"),
+        quality_components: components,
         source_topic: Map.get(entry, "source_topic", "unknown"),
         source: parse_source(Map.get(entry, "source", "policy")),
         depth: Map.get(entry, "depth", 0),
@@ -923,10 +1072,12 @@ defmodule Daemon.Agent.ActiveLearner do
     @outcomes_table
     |> :ets.tab2list()
     |> Enum.map(fn {key, record} ->
+      components = Map.get(record, :quality_components)
       %{
         "key" => key,
         "predicted_ig" => record.predicted_ig,
         "actual_quality" => record.actual_quality,
+        "quality_components" => if(is_map(components), do: Map.new(components, fn {k, v} -> {Atom.to_string(k), v} end), else: nil),
         "source_topic" => Map.get(record, :source_topic, "unknown"),
         "source" => Atom.to_string(Map.get(record, :source, :policy)),
         "depth" => Map.get(record, :depth, 0),
