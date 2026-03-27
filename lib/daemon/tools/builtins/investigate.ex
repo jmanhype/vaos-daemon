@@ -1403,7 +1403,20 @@ Known failure patterns to avoid:
       end
     end)
 
-    async_results = Task.await_many(oa_tasks ++ [alphaxiv_task, hf_task], 30_000)
+    # yield_many instead of await_many — gracefully handle timeouts so
+    # investigations proceed with whatever papers are available.
+    all_tasks = oa_tasks ++ [alphaxiv_task, hf_task]
+    yielded = Task.yield_many(all_tasks, 30_000)
+    async_results = Enum.flat_map(yielded, fn
+      {_task, {:ok, result}} -> [result]
+      {_task, {:exit, reason}} ->
+        Logger.warning("[investigate] Paper search task crashed: #{inspect(reason)}")
+        []
+      {task, nil} ->
+        Logger.warning("[investigate] Paper search task timed out — proceeding without")
+        Task.shutdown(task, :brutal_kill)
+        []
+    end)
     results = ss_results ++ async_results
 
     # Collect source counts
