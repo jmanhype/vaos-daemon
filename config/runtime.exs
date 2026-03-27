@@ -153,6 +153,8 @@ config :daemon,
   slack_bot_token: System.get_env("SLACK_BOT_TOKEN"),
   # Web search
   brave_api_key: System.get_env("BRAVE_API_KEY"),
+  # Academic paper search (Semantic Scholar)
+  semantic_scholar_api_key: System.get_env("SEMANTIC_SCHOLAR_API_KEY"),
 
   # Provider selection
   default_provider: default_provider,

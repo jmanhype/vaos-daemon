@@ -1338,9 +1338,11 @@ Known failure patterns to avoid:
 
     # SS: sequential with 1.5s delay — unauthenticated rate limit is ~1 req/s.
     # Concurrent requests all hit 429 simultaneously and waste all retries.
+    ss_api_key = Application.get_env(:daemon, :semantic_scholar_api_key)
     ss_results = Enum.flat_map(Enum.with_index(ss_queries), fn {{label, query, opts}, idx} ->
-      if idx > 0, do: Process.sleep(1_500)
+      if idx > 0 and is_nil(ss_api_key), do: Process.sleep(1_500)
       search_opts = Keyword.merge([limit: per_query], opts)
+      search_opts = if ss_api_key, do: Keyword.put(search_opts, :api_key, ss_api_key), else: search_opts
       case Literature.search_semantic_scholar(query, http_fn, search_opts) do
         {:ok, papers} -> [{:"ss_#{label}", papers}]
         _ -> [{:"ss_#{label}", []}]
