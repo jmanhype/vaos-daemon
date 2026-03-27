@@ -31,6 +31,7 @@ defmodule Daemon.Agent.ActiveLearner do
 
   alias Daemon.Investigation.Retrospector
   alias Daemon.Investigation.PromptSelector
+  alias Daemon.Investigation.PromptConfig
   alias Daemon.Agent.Scheduler
   alias Daemon.Agent.Scheduler.Heartbeat
 
@@ -51,6 +52,12 @@ defmodule Daemon.Agent.ActiveLearner do
   @chain_enabled true
   @chain_cooldown_ms 60_000      # 60s between chained investigations (respects API rate limits)
   @chain_max_per_session 100     # Hard cap per daemon lifetime
+
+  # Prompt self-authoring — generate new investigation prompt variants from outcomes
+  @prompt_evolution_enabled true
+  @prompt_evolution_interval 10        # Every N completed outcomes
+  @prompt_evolution_cooldown_ms 1_800_000  # At least 30 min between evolutions
+  @evolved_prompts_dir Path.expand("~/.daemon/prompts/evolved")
 
   # ── Public API ──────────────────────────────────────────────────────
 
@@ -93,7 +100,9 @@ defmodule Daemon.Agent.ActiveLearner do
       arms: arms,
       chain_in_flight: false,
       chain_count: 0,
-      last_chain_at: nil
+      last_chain_at: nil,
+      last_prompt_evolution: nil,
+      prompt_evolutions: 0
     }}
   end
 
@@ -138,6 +147,7 @@ defmodule Daemon.Agent.ActiveLearner do
       outcomes_count: count_outcomes(),
       chain_count: state.chain_count,
       chain_in_flight: state.chain_in_flight,
+      prompt_evolutions: state.prompt_evolutions,
       lineage: build_lineage()
     }
 
@@ -401,6 +411,166 @@ defmodule Daemon.Agent.ActiveLearner do
     end
   end
 
+  # ── Prompt Self-Authoring ─────────────────────────────────────────
+  # After every @prompt_evolution_interval outcomes, the system generates
+  # a NEW investigation prompt variant from its own experience and registers
+  # it with PromptSelector. Thompson Sampling naturally A/B tests it —
+  # bad prompts get demoted, good ones get promoted. This is the system
+  # literally writing its own instructions.
+
+  alias MiosaProviders.Registry, as: Providers
+
+  defp maybe_evolve_prompts(state) do
+    completed = count_outcomes()
+
+    cond do
+      not @prompt_evolution_enabled ->
+        state
+
+      completed < @prompt_evolution_interval ->
+        state
+
+      rem(completed, @prompt_evolution_interval) != 0 ->
+        state
+
+      not evolution_cooldown_elapsed?(state) ->
+        state
+
+      true ->
+        Logger.info("[ActiveLearner] Prompt evolution triggered (#{completed} outcomes)")
+        spawn_prompt_evolution()
+        %{state | last_prompt_evolution: System.monotonic_time(:millisecond), prompt_evolutions: state.prompt_evolutions + 1}
+    end
+  end
+
+  defp evolution_cooldown_elapsed?(state) do
+    case state.last_prompt_evolution do
+      nil -> true
+      last -> (System.monotonic_time(:millisecond) - last) >= @prompt_evolution_cooldown_ms
+    end
+  end
+
+  defp spawn_prompt_evolution do
+    spawn(fn ->
+      try do
+        evolve_prompts()
+      rescue
+        e -> Logger.warning("[ActiveLearner] Prompt evolution error: #{Exception.message(e)}")
+      catch
+        :exit, reason -> Logger.warning("[ActiveLearner] Prompt evolution exit: #{inspect(reason)}")
+      end
+    end)
+  end
+
+  defp evolve_prompts do
+    outcomes = get_recent_outcomes(@prompt_evolution_interval)
+
+    if outcomes == [] do
+      Logger.debug("[ActiveLearner] Prompt evolution: no outcomes to learn from")
+    else
+      {current_prompts, current_variant} = PromptSelector.select()
+      summary = summarize_outcomes_for_evolution(outcomes)
+
+      avg_quality =
+        outcomes
+        |> Enum.map(& &1.actual_quality)
+        |> then(fn qs -> Enum.sum(qs) / length(qs) end)
+        |> Float.round(3)
+
+      messages = [
+        %{role: "user", content: """
+        You are optimizing investigation prompts for an autonomous research system.
+
+        The system investigates academic topics by:
+        1. Searching for papers on Semantic Scholar, OpenAlex, and HuggingFace
+        2. Having an LLM argue FOR and AGAINST a claim using found papers
+        3. Verifying citations against paper abstracts
+        4. Quality = 0.4*verification_rate + 0.3*grounded_ratio - 0.2*fraud_penalty + 0.1*certainty
+
+        Recent outcomes (avg quality: #{avg_quality}):
+        #{summary}
+
+        Current prompts (variant: #{current_variant}):
+        #{Jason.encode!(current_prompts)}
+
+        Generate IMPROVED prompts. Focus on:
+        - Higher citation accuracy (only cite what abstracts explicitly state)
+        - More grounded evidence from papers
+        - Clearer instructions that reduce hallucinated citations
+        - Better argument structure for higher verification rates
+
+        Return ONLY a JSON object with these exact keys (all non-empty strings):
+        for_system, against_system, advocate_user_template, example_format, verify_prompt, no_papers_fallback, citation_instructions
+
+        No markdown, no explanation, just raw JSON.
+        """}
+      ]
+
+      case Providers.chat(messages, temperature: 0.4, max_tokens: 4000) do
+        {:ok, %{content: response}} ->
+          case parse_evolved_prompts(response) do
+            {:ok, new_prompts} ->
+              case PromptConfig.validate_prompts(new_prompts) do
+                :ok ->
+                  hash = PromptConfig.prompt_hash(new_prompts)
+                  filename = "evolved_#{Date.utc_today() |> to_string() |> String.replace("-", "")}_#{String.slice(hash, 0, 6)}.json"
+                  path = Path.join(@evolved_prompts_dir, filename)
+                  File.mkdir_p!(@evolved_prompts_dir)
+                  File.write!(path, Jason.encode!(%{"version" => 1, "prompts" => new_prompts}, pretty: true))
+
+                  case PromptSelector.register(new_prompts, source: "active_learner", file_path: path) do
+                    {:ok, variant_id} ->
+                      Logger.info("[ActiveLearner] Prompt evolution SUCCESS: registered variant '#{variant_id}' (avg quality was #{avg_quality})")
+                    {:error, reason} ->
+                      Logger.warning("[ActiveLearner] Prompt evolution: registration failed: #{inspect(reason)}")
+                  end
+
+                {:error, reason} ->
+                  Logger.warning("[ActiveLearner] Prompt evolution: invalid prompts: #{reason}")
+              end
+
+            {:error, _} ->
+              Logger.warning("[ActiveLearner] Prompt evolution: failed to parse LLM response")
+          end
+
+        {:error, reason} ->
+          Logger.warning("[ActiveLearner] Prompt evolution LLM call failed: #{inspect(reason)}")
+      end
+    end
+  end
+
+  defp get_recent_outcomes(n) do
+    @outcomes_table
+    |> :ets.tab2list()
+    |> Enum.filter(fn {_k, v} -> v.actual_quality != nil end)
+    |> Enum.sort_by(fn {_k, v} -> -v.added_at end)
+    |> Enum.take(n)
+    |> Enum.map(fn {k, v} -> Map.put(v, :topic_key, k) end)
+  rescue
+    _ -> []
+  end
+
+  defp summarize_outcomes_for_evolution(outcomes) do
+    outcomes
+    |> Enum.map(fn o ->
+      "- quality=#{Float.round(o.actual_quality, 3)}, source=#{o.source}, depth=#{o.depth}, topic: #{String.slice(o.topic_key, 0, 80)}"
+    end)
+    |> Enum.join("\n")
+  end
+
+  defp parse_evolved_prompts(response) do
+    cleaned =
+      response
+      |> String.replace(~r/^```json\s*/m, "")
+      |> String.replace(~r/^```\s*/m, "")
+      |> String.trim()
+
+    case Jason.decode(cleaned) do
+      {:ok, prompts} when is_map(prompts) -> {:ok, prompts}
+      _ -> {:error, :invalid_json}
+    end
+  end
+
   # ── Suggestion Building ────────────────────────────────────────────
 
   defp build_task_text(suggestion) do
@@ -551,7 +721,7 @@ defmodule Daemon.Agent.ActiveLearner do
           Logger.info("[ActiveLearner] Outcome: quality=#{Float.round(quality, 3)}, papers=#{papers}, source=#{source}, arm→#{format_arm(arms[source])}")
           state = %{state | arms: arms}
           persist_state(state)
-          state
+          maybe_evolve_prompts(state)
         else
           Logger.info("[ActiveLearner] Outcome: quality=#{Float.round(quality, 3)}, papers=#{papers || 0}, source=#{source} — arm update SKIPPED (no papers = confounded signal)")
           persist_state(state)
