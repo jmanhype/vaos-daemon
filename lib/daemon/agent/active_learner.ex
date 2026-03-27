@@ -28,7 +28,7 @@ defmodule Daemon.Agent.ActiveLearner do
   alias Daemon.Agent.Scheduler
   alias Daemon.Agent.Scheduler.Heartbeat
 
-  @quality_threshold 0.25
+  @quality_threshold 0.20  # Lowered from 0.25 — Z.AI proxy verification rates are lower
   @max_pending_tasks 20
   @subscribe_delay_ms 5_000
   @task_prefix "Investigate: "
