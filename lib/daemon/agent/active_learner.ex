@@ -20,6 +20,11 @@ defmodule Daemon.Agent.ActiveLearner do
   the agent loop LLM overhead (~15s). Investigations chain in ~60s intervals,
   creating a self-sustaining research pipeline.
 
+  **Bottleneck-reactive steering**: Quality decomposition identifies the weakest
+  component (verification, grounding, fraud, certainty). Steering instructions
+  are injected directly into chained investigations' advocate system prompts —
+  immediate correction with no A/B test delay.
+
   **Persistence**: Arms, outcomes, and seen topics are persisted to
   `<config_dir>/active_learner_state.json` and survive daemon restarts.
 
@@ -55,6 +60,10 @@ defmodule Daemon.Agent.ActiveLearner do
   @chain_enabled true
   @chain_cooldown_ms 60_000      # 60s between chained investigations (respects API rate limits)
   @chain_max_per_session 100     # Hard cap per daemon lifetime
+
+  # Bottleneck-reactive steering — inject diagnosis-derived instructions into chained investigations
+  @steering_enabled true
+  @steering_min_outcomes 3       # Need at least 3 outcomes before steering is meaningful
 
   # Prompt self-authoring — generate new investigation prompt variants from outcomes
   @prompt_evolution_enabled true
@@ -167,6 +176,7 @@ defmodule Daemon.Agent.ActiveLearner do
       consecutive_skips: state.consecutive_skips,
       quality_window: state.quality_window,
       bottleneck: diagnose_bottleneck(get_recent_outcomes(10)),
+      steering_active: build_steering_context(state) != "",
       lineage: build_lineage()
     }
 
@@ -312,9 +322,15 @@ defmodule Daemon.Agent.ActiveLearner do
           {:error, _} -> Logger.debug("[ActiveLearner] Heartbeat write deferred (scheduler busy)")
         end
 
+        # Track which bottleneck steering will be active for this investigation
+        current_bottleneck = case diagnose_bottleneck(get_recent_outcomes(@steering_min_outcomes)) do
+          %{bottleneck: b} -> b
+          _ -> nil
+        end
+
         Logger.info("[ActiveLearner] Selected: '#{task_text}' (ig: #{Float.round(ig * 1.0, 3)}, source: #{source}, depth: #{child_depth}, arm: #{format_arm(arm)}, from: '#{source_topic}')")
         mark_seen(task_text)
-        record_prediction(task_text, ig, source_topic, source, child_depth)
+        record_prediction(task_text, ig, source_topic, source, child_depth, current_bottleneck)
         state = %{state | topics_added: state.topics_added + 1, last_added_at: DateTime.utc_now()}
         persist_state(state)
         # Trigger direct investigation — bypasses heartbeat polling + agent loop
@@ -422,19 +438,26 @@ defmodule Daemon.Agent.ActiveLearner do
         state
 
       true ->
+        steering = build_steering_context(state)
+        if steering != "" do
+          Logger.info("[ActiveLearner] Chain: steering active — #{String.slice(steering, 0, 80)}...")
+        end
         Logger.info("[ActiveLearner] Chain: directly investigating '#{String.slice(topic, 0, 80)}...'")
-        ref = spawn_investigation(topic)
+        ref = spawn_investigation(topic, steering)
         %{state | chain_in_flight: true, chain_count: state.chain_count + 1, last_chain_at: System.monotonic_time(:millisecond)}
     end
   end
 
-  defp spawn_investigation(topic) do
+  defp spawn_investigation(topic, steering \\ "") do
     parent = self()
     ref = make_ref()
 
+    args = %{"topic" => topic}
+    args = if steering != "", do: Map.put(args, "steering", steering), else: args
+
     {_pid, monitor_ref} = spawn_monitor(fn ->
       try do
-        Daemon.Tools.Builtins.Investigate.execute(%{"topic" => topic})
+        Daemon.Tools.Builtins.Investigate.execute(args)
       rescue
         e -> Logger.warning("[ActiveLearner] Chain investigation failed: #{Exception.message(e)}")
       catch
@@ -459,6 +482,106 @@ defmodule Daemon.Agent.ActiveLearner do
       nil -> 0
       last -> max(0, @chain_cooldown_ms - (System.monotonic_time(:millisecond) - last))
     end
+  end
+
+  # ── Bottleneck-Reactive Steering ───────────────────────────────────
+  # Generates investigation instructions from the current bottleneck diagnosis.
+  # Injected into advocate system prompts via Investigate's `steering` parameter.
+  # This closes the loop between DIAGNOSIS (quality decomposition) and ACTION
+  # (investigation behavior) — immediate correction, no A/B test delay.
+
+  defp build_steering_context(state) do
+    if not @steering_enabled do
+      ""
+    else
+      outcomes = get_recent_outcomes(@steering_min_outcomes)
+
+      if length(outcomes) < @steering_min_outcomes do
+        ""
+      else
+        diagnosis = diagnose_bottleneck(outcomes)
+        build_steering_from_diagnosis(diagnosis)
+      end
+    end
+  rescue
+    _ -> ""
+  end
+
+  defp build_steering_from_diagnosis(nil), do: ""
+
+  defp build_steering_from_diagnosis(%{bottleneck: :low_verification, avg_verification_rate: avg_v}) do
+    """
+    QUALITY STEERING (from #{Float.round(avg_v * 100, 0)}% verification rate across recent investigations):
+    1. For EVERY claim you attribute to a paper, quote the EXACT sentence from the abstract that supports it
+    2. If the abstract does not EXPLICITLY state your claim, do NOT attribute it to that paper — instead present it as analytical inference
+    3. Use the format: "According to [Author et al.], '[exact quote from abstract]', which suggests [your claim]"
+    4. Fewer well-verified claims are worth MORE than many unverified ones
+    5. When a paper is only tangentially related, say "While [paper] addresses [related topic], this specific claim is our analytical assessment"
+    """
+  end
+
+  defp build_steering_from_diagnosis(%{bottleneck: :high_fraud, avg_fraud_penalty: avg_f}) do
+    """
+    QUALITY STEERING (#{Float.round(avg_f * 100, 0)}% fraudulent citations detected recently):
+    1. ONLY reference papers that appear in the provided search results above
+    2. NEVER fabricate paper titles, authors, DOIs, or publication years
+    3. If no paper supports a claim, state it as expert analysis without citation
+    4. Double-check every author name and title against the papers context
+    """
+  end
+
+  defp build_steering_from_diagnosis(%{bottleneck: :low_grounded, avg_grounded_ratio: avg_g}) do
+    """
+    QUALITY STEERING (only #{Float.round(avg_g * 100, 0)}% of evidence grounded in papers):
+    1. Base EVERY argument primarily on findings from the provided papers
+    2. Each claim needs at least one paper citation from the search results
+    3. Prefer fewer, well-sourced arguments over many unsourced ones
+    4. If you make a claim without paper support, explicitly mark it as [UNSOURCED ANALYSIS]
+    """
+  end
+
+  defp build_steering_from_diagnosis(%{bottleneck: :low_certainty}) do
+    # Certainty is driven by topic difficulty — steering has limited impact
+    ""
+  end
+
+  defp build_steering_from_diagnosis(_), do: ""
+
+  # Compare steered outcome's targeted component against the pre-steering baseline.
+  # This lets us measure whether steering actually helps.
+  defp log_steering_effectiveness(record, components) do
+    case Map.get(record, :steering_bottleneck) do
+      nil -> :ok
+      bottleneck ->
+        # Get the targeted component value from this outcome
+        {component_name, current_val} = case bottleneck do
+          :low_verification -> {"verification_rate", components.verification_rate}
+          :high_fraud -> {"fraud_penalty", components.fraud_penalty}
+          :low_grounded -> {"grounded_ratio", components.grounded_ratio}
+          :low_certainty -> {"certainty", components.certainty}
+          _ -> {nil, nil}
+        end
+
+        if component_name do
+          # Compare against outcomes that WEREN'T steered for this bottleneck
+          unsteered = get_recent_outcomes(20)
+            |> Enum.reject(fn o -> Map.get(o, :steering_bottleneck) == bottleneck end)
+            |> Enum.map(fn o -> o.quality_components end)
+            |> Enum.reject(&is_nil/1)
+
+          if length(unsteered) >= 2 do
+            baseline = unsteered
+              |> Enum.map(fn c -> Map.get(c, String.to_existing_atom(component_name), 0.0) end)
+              |> then(fn vals -> Enum.sum(vals) / length(vals) end)
+
+            delta = Float.round(current_val - baseline, 3)
+            direction = if delta > 0, do: "+", else: ""
+            Logger.info("[ActiveLearner] Steering effect: #{bottleneck} → #{component_name}=#{current_val} (baseline=#{Float.round(baseline, 3)}, delta=#{direction}#{delta})")
+          end
+        end
+    end
+  rescue
+    _ -> :ok
   end
 
   # ── Prompt Self-Authoring ─────────────────────────────────────────
@@ -923,7 +1046,7 @@ defmodule Daemon.Agent.ActiveLearner do
   # when that topic's investigation completes. Updates the Thompson arm
   # for the source that originated the suggestion.
 
-  defp record_prediction(task_text, predicted_ig, source_topic, source, depth \\ 0) do
+  defp record_prediction(task_text, predicted_ig, source_topic, source, depth \\ 0, steering_bottleneck \\ nil) do
     key = normalize_topic(task_text)
 
     :ets.insert(@outcomes_table, {key, %{
@@ -933,6 +1056,7 @@ defmodule Daemon.Agent.ActiveLearner do
       source_topic: source_topic,
       source: source,
       depth: depth,
+      steering_bottleneck: steering_bottleneck,
       added_at: System.system_time(:second)
     }})
   rescue
@@ -972,7 +1096,15 @@ defmodule Daemon.Agent.ActiveLearner do
           arms = update_arm(state.arms, source, quality)
           # Log with component breakdown for visibility
           c = components
-          Logger.info("[ActiveLearner] Outcome: quality=#{Float.round(quality, 3)}, papers=#{papers}, source=#{source}, arm→#{format_arm(arms[source])} [v=#{c.verification_rate} g=#{c.grounded_ratio} f=#{c.fraud_penalty} c=#{c.certainty}]")
+          steering_tag = case Map.get(record, :steering_bottleneck) do
+            nil -> ""
+            b -> " steered=#{b}"
+          end
+          Logger.info("[ActiveLearner] Outcome: quality=#{Float.round(quality, 3)}, papers=#{papers}, source=#{source}, arm→#{format_arm(arms[source])} [v=#{c.verification_rate} g=#{c.grounded_ratio} f=#{c.fraud_penalty} c=#{c.certainty}]#{steering_tag}")
+
+          # Log steering effectiveness when applicable
+          log_steering_effectiveness(record, components)
+
           state = %{state | arms: arms}
           persist_state(state)
           state = maybe_evolve_prompts(state)
@@ -1237,6 +1369,7 @@ defmodule Daemon.Agent.ActiveLearner do
         source_topic: Map.get(entry, "source_topic", "unknown"),
         source: parse_source(Map.get(entry, "source", "policy")),
         depth: Map.get(entry, "depth", 0),
+        steering_bottleneck: parse_steering_bottleneck(Map.get(entry, "steering_bottleneck")),
         added_at: Map.get(entry, "added_at", 0)
       }
       if key != "", do: :ets.insert(@outcomes_table, {key, record})
@@ -1269,6 +1402,12 @@ defmodule Daemon.Agent.ActiveLearner do
     |> :ets.tab2list()
     |> Enum.map(fn {key, record} ->
       components = Map.get(record, :quality_components)
+      steering_bn = case Map.get(record, :steering_bottleneck) do
+        nil -> nil
+        atom when is_atom(atom) -> Atom.to_string(atom)
+        other -> other
+      end
+
       %{
         "key" => key,
         "predicted_ig" => record.predicted_ig,
@@ -1277,6 +1416,7 @@ defmodule Daemon.Agent.ActiveLearner do
         "source_topic" => Map.get(record, :source_topic, "unknown"),
         "source" => Atom.to_string(Map.get(record, :source, :policy)),
         "depth" => Map.get(record, :depth, 0),
+        "steering_bottleneck" => steering_bn,
         "added_at" => record.added_at
       }
     end)
@@ -1315,6 +1455,13 @@ defmodule Daemon.Agent.ActiveLearner do
   defp parse_source("policy"), do: :policy
   defp parse_source("synthesis"), do: :synthesis
   defp parse_source(_), do: :policy
+
+  defp parse_steering_bottleneck(nil), do: nil
+  defp parse_steering_bottleneck("low_verification"), do: :low_verification
+  defp parse_steering_bottleneck("high_fraud"), do: :high_fraud
+  defp parse_steering_bottleneck("low_grounded"), do: :low_grounded
+  defp parse_steering_bottleneck("low_certainty"), do: :low_certainty
+  defp parse_steering_bottleneck(_), do: nil
 
   defp parse_datetime(nil), do: nil
   defp parse_datetime(iso) when is_binary(iso) do

@@ -88,6 +88,10 @@ defmodule Daemon.Tools.Builtins.Investigate do
           "type" => "string",
           "enum" => ["standard", "deep"],
           "description" => "standard = adversarial debate + citation verification; deep = standard + research pipeline (hypotheses, testing, report)"
+        },
+        "steering" => %{
+          "type" => "string",
+          "description" => "Optional steering context injected into advocate system prompts (from ActiveLearner bottleneck diagnosis)"
         }
       },
       "required" => ["topic"]
@@ -98,19 +102,20 @@ defmodule Daemon.Tools.Builtins.Investigate do
   def execute(args) do
     topic = Map.get(args, "topic") || ""
     depth = Map.get(args, "depth") || "standard"
+    steering = Map.get(args, "steering") || ""
 
     topic = String.trim(to_string(topic))
 
     if topic == "" do
       {:error, "Missing topic"}
     else
-      run_investigation(topic, depth)
+      run_investigation(topic, depth, steering)
     end
   end
 
   # -- Main pipeline ---------------------------------------------------
 
-  defp run_investigation(topic, depth) do
+  defp run_investigation(topic, depth, steering \\ "") do
     :inets.start()
     :ssl.start()
 
@@ -217,6 +222,13 @@ Known failure patterns to avoid:
       ""
     end
 
+    # 6b. Steering context from ActiveLearner bottleneck diagnosis
+    steering_context = if is_binary(steering) and steering != "" do
+      "\n\n" <> steering
+    else
+      ""
+    end
+
     # 7. TWO ADVERSARIAL LLM CALLS (sequential for rate-limit safety)
     example_format = prompts["example_format"]
 
@@ -243,12 +255,12 @@ Known failure patterns to avoid:
     )
 
     for_messages = [
-      %{role: "system", content: prompts["for_system"] <> pitfall_context},
+      %{role: "system", content: prompts["for_system"] <> pitfall_context <> steering_context},
       %{role: "user", content: for_prompt}
     ]
 
     against_messages = [
-      %{role: "system", content: prompts["against_system"] <> pitfall_context},
+      %{role: "system", content: prompts["against_system"] <> pitfall_context <> steering_context},
       %{role: "user", content: against_prompt}
     ]
 
