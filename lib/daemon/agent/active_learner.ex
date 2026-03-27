@@ -80,7 +80,8 @@ defmodule Daemon.Agent.ActiveLearner do
       topics_added: state.topics_added,
       last_added_at: state.last_added_at,
       correction_factor: compute_correction_factor(),
-      outcomes_count: count_outcomes()
+      outcomes_count: count_outcomes(),
+      lineage: build_lineage()
     }
 
     {:reply, reply, state}
@@ -124,6 +125,7 @@ defmodule Daemon.Agent.ActiveLearner do
 
   defp maybe_add_topic(data, quality, state) do
     suggested = extract_suggested_next(data)
+    source_topic = Map.get(data, :topic) || Map.get(data, "topic") || "unknown"
 
     if suggested == [] do
       Logger.debug("[ActiveLearner] No suggested_next in event data")
@@ -135,13 +137,13 @@ defmodule Daemon.Agent.ActiveLearner do
 
       # Try suggestions in order until one sticks (don't bail on first dupe)
       ranked = rank_suggestions(suggested)
-      try_add_suggestion(ranked, quality, pending_tasks, completed_tasks, pending_len, state)
+      try_add_suggestion(ranked, quality, source_topic, pending_tasks, completed_tasks, pending_len, state)
     end
   end
 
-  defp try_add_suggestion([], _quality, _pending, _completed, _pending_len, state), do: state
+  defp try_add_suggestion([], _quality, _source, _pending, _completed, _pending_len, state), do: state
 
-  defp try_add_suggestion([suggestion | rest], quality, pending, completed, pending_len, state) do
+  defp try_add_suggestion([suggestion | rest], quality, source_topic, pending, completed, pending_len, state) do
     task_text = build_task_text(suggestion)
 
     cond do
@@ -151,20 +153,20 @@ defmodule Daemon.Agent.ActiveLearner do
 
       seen_fresh?(task_text) ->
         Logger.debug("[ActiveLearner] Already seen: '#{task_text}'")
-        try_add_suggestion(rest, quality, pending, completed, pending_len, state)
+        try_add_suggestion(rest, quality, source_topic, pending, completed, pending_len, state)
 
       heartbeat_has_task?(task_text, pending, completed) ->
         Logger.debug("[ActiveLearner] Already in HEARTBEAT.md: '#{task_text}'")
         mark_seen(task_text)
-        try_add_suggestion(rest, quality, pending, completed, pending_len, state)
+        try_add_suggestion(rest, quality, source_topic, pending, completed, pending_len, state)
 
       true ->
         case safe_add_heartbeat_task(task_text) do
           :ok ->
             ig = get_ig(suggestion)
-            Logger.info("[ActiveLearner] Added: '#{task_text}' (ig: #{Float.round(ig * 1.0, 3)}, quality: #{Float.round(quality, 3)})")
+            Logger.info("[ActiveLearner] Added: '#{task_text}' (ig: #{Float.round(ig * 1.0, 3)}, quality: #{Float.round(quality, 3)}, from: '#{source_topic}')")
             mark_seen(task_text)
-            record_prediction(task_text, ig)
+            record_prediction(task_text, ig, source_topic)
             %{state | topics_added: state.topics_added + 1, last_added_at: DateTime.utc_now()}
 
           {:error, reason} ->
@@ -268,12 +270,13 @@ defmodule Daemon.Agent.ActiveLearner do
   # that topic's investigation completes. The ratio becomes a correction
   # factor that makes future IG predictions more accurate.
 
-  defp record_prediction(task_text, predicted_ig) do
+  defp record_prediction(task_text, predicted_ig, source_topic) do
     key = normalize_topic(task_text)
 
     :ets.insert(@outcomes_table, {key, %{
       predicted_ig: predicted_ig,
       actual_quality: nil,
+      source_topic: source_topic,
       added_at: System.system_time(:second)
     }})
   rescue
@@ -318,6 +321,23 @@ defmodule Daemon.Agent.ActiveLearner do
     |> Enum.count(fn {_k, v} -> v.actual_quality != nil end)
   rescue
     _ -> 0
+  end
+
+  defp build_lineage do
+    @outcomes_table
+    |> :ets.tab2list()
+    |> Enum.map(fn {topic_key, record} ->
+      %{
+        topic: topic_key,
+        source: Map.get(record, :source_topic, "seed"),
+        predicted_ig: record.predicted_ig,
+        actual_quality: record.actual_quality,
+        added_at: record.added_at
+      }
+    end)
+    |> Enum.sort_by(& &1.added_at)
+  rescue
+    _ -> []
   end
 
   # ── ETS Dedup with TTL ──────────────────────────────────────────────
