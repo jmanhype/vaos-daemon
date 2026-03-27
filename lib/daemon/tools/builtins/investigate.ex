@@ -1854,7 +1854,10 @@ Known failure patterns to avoid:
       full_url = if query_string == "", do: url, else: "#{url}?#{query_string}"
       req_headers = [{"user-agent", "VAOS-Daemon/1.0 (#{@openalex_mailto})"} | Enum.map(headers, fn {k, v} -> {to_string(k), to_string(v)} end)]
 
-      case Req.get(full_url, headers: req_headers, receive_timeout: 15_000, connect_options: [timeout: 5_000]) do
+      # retry: false — investigation pipeline handles failures via circuit breaker;
+      # Req's default transient retry adds 15-20s per attempt, pushing past yield_many timeout.
+      # pool_timeout: 5s — prevent Finch connection pool queuing when pool is saturated.
+      case Req.get(full_url, headers: req_headers, receive_timeout: 15_000, connect_options: [timeout: 5_000], pool_timeout: 5_000, retry: false) do
         {:ok, %{status: 200, body: body}} when is_map(body) ->
           {:ok, body}
 
