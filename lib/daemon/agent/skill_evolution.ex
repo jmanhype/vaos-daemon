@@ -214,16 +214,19 @@ defmodule Daemon.Agent.SkillEvolution do
 
   # Called from the bus handler (runs in bus process context — must be fast)
   defp handle_bus_event(payload) do
-    event = Map.get(payload, :event) || Map.get(payload, "event")
-    session_id = Map.get(payload, :session_id) || Map.get(payload, "session_id")
+    # Bus delivers Event maps with :data containing the actual event data
+    inner = Map.get(payload, :data, payload)
+    inner = if is_map(inner), do: inner, else: payload
+    event = Map.get(inner, :event) || Map.get(inner, "event")
+    session_id = Map.get(inner, :session_id) || Map.get(inner, "session_id")
 
     cond do
       event in [:doom_loop_detected, :agent_cancelled] and is_binary(session_id) ->
         failure_info = %{
           reason: event,
-          iteration: Map.get(payload, :iteration),
-          tool_signature: Map.get(payload, :tool_signature),
-          consecutive_failures: Map.get(payload, :consecutive_failures)
+          iteration: Map.get(inner, :iteration),
+          tool_signature: Map.get(inner, :tool_signature),
+          consecutive_failures: Map.get(inner, :consecutive_failures)
         }
 
         # Dispatch to our GenServer to avoid blocking the bus

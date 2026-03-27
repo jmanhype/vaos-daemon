@@ -84,12 +84,14 @@ defmodule Daemon.Investigation.Retrospector do
   def terminate(_, _), do: :ok
 
   # -- Event handler callback (runs in Task, sends to GenServer) --------
+  # Bus delivers full Event maps with :data containing the investigation metadata.
 
-  defp handle_event(%{payload: payload}) when is_map(payload) do
-    send(__MODULE__, {:investigation_outcome, payload})
+  defp handle_event(%{data: data}) when is_map(data) do
+    send(__MODULE__, {:investigation_outcome, data})
   end
 
   defp handle_event(meta) when is_map(meta) do
+    # Fallback: if the map itself contains investigation keys, use it directly
     send(__MODULE__, {:investigation_outcome, meta})
   end
 
