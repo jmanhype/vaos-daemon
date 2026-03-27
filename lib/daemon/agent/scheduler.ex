@@ -57,7 +57,7 @@ defmodule Daemon.Agent.Scheduler do
   alias Daemon.Agent.Scheduler.{CronEngine, Persistence, JobExecutor, Heartbeat}
   alias Daemon.Events.Bus
 
-  defp heartbeat_interval, do: Application.get_env(:daemon, :heartbeat_interval, 1_800_000)
+  defp heartbeat_interval, do: Application.get_env(:daemon, :heartbeat_interval, 300_000)
 
   @circuit_breaker_limit 3
 

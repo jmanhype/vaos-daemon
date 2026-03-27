@@ -15,6 +15,11 @@ defmodule Daemon.Agent.ActiveLearner do
   investigation contributes 19x more to α than a quality-0.05 one. Thompson
   Sampling naturally explores uncertain sources and exploits proven ones.
 
+  **Direct chaining**: When a topic is selected, ActiveLearner directly calls
+  `Investigate.execute/1` — bypassing the 5-min heartbeat polling delay and
+  the agent loop LLM overhead (~15s). Investigations chain in ~60s intervals,
+  creating a self-sustaining research pipeline.
+
   **Persistence**: Arms, outcomes, and seen topics are persisted to
   `<config_dir>/active_learner_state.json` and survive daemon restarts.
 
@@ -38,6 +43,11 @@ defmodule Daemon.Agent.ActiveLearner do
   @outcomes_table :active_learner_outcomes
   @seen_ttl_seconds 7 * 24 * 3600
   @persistence_file "active_learner_state.json"
+
+  # Direct investigation chaining — bypasses heartbeat polling + agent loop overhead
+  @chain_enabled true
+  @chain_cooldown_ms 60_000      # 60s between chained investigations (respects API rate limits)
+  @chain_max_per_session 100     # Hard cap per daemon lifetime
 
   # ── Public API ──────────────────────────────────────────────────────
 
@@ -77,7 +87,10 @@ defmodule Daemon.Agent.ActiveLearner do
       event_ref: nil,
       topics_added: Map.get(persisted, "topics_added", 0),
       last_added_at: parse_datetime(Map.get(persisted, "last_added_at")),
-      arms: arms
+      arms: arms,
+      chain_in_flight: false,
+      chain_count: 0,
+      last_chain_at: nil
     }}
   end
 
@@ -93,6 +106,20 @@ defmodule Daemon.Agent.ActiveLearner do
     {:noreply, state}
   end
 
+  def handle_info({:chain_investigation, topic}, state) do
+    state = maybe_chain_investigation(topic, state)
+    {:noreply, state}
+  end
+
+  def handle_info({:chain_complete, _ref}, state) do
+    {:noreply, %{state | chain_in_flight: false}}
+  end
+
+  def handle_info({:DOWN, _ref, :process, _pid, _reason}, state) do
+    # Chained investigation task crashed — mark not in flight so next one can start
+    {:noreply, %{state | chain_in_flight: false}}
+  end
+
   def handle_info(_msg, state), do: {:noreply, state}
 
   @impl true
@@ -106,6 +133,8 @@ defmodule Daemon.Agent.ActiveLearner do
       },
       correction_factor: compute_correction_factor(),
       outcomes_count: count_outcomes(),
+      chain_count: state.chain_count,
+      chain_in_flight: state.chain_in_flight,
       lineage: build_lineage()
     }
 
@@ -216,6 +245,9 @@ defmodule Daemon.Agent.ActiveLearner do
             record_prediction(task_text, ig, source_topic, source, child_depth)
             state = %{state | topics_added: state.topics_added + 1, last_added_at: DateTime.utc_now()}
             persist_state(state)
+            # Trigger direct investigation — bypasses heartbeat polling + agent loop
+            topic_for_investigate = String.replace(task_text, ~r/^Investigate:\s*/i, "")
+            send(self(), {:chain_investigation, topic_for_investigate})
             state
 
           {:error, reason} ->
@@ -294,6 +326,71 @@ defmodule Daemon.Agent.ActiveLearner do
   defp format_arm(%{alpha: a, beta: b}) do
     mean = Float.round(a / (a + b), 3)
     "Beta(#{Float.round(a, 1)}, #{Float.round(b, 1)}) μ=#{mean}"
+  end
+
+  # ── Direct Investigation Chaining ─────────────────────────────────
+  # Bypasses heartbeat polling (5 min) and agent loop overhead (~15s).
+  # Calls Investigate.execute/1 directly, which emits :investigation_complete
+  # that we're already subscribed to — creating a self-sustaining pipeline.
+
+  defp maybe_chain_investigation(topic, state) do
+    cond do
+      not @chain_enabled ->
+        state
+
+      state.chain_in_flight ->
+        Logger.debug("[ActiveLearner] Chain: already in flight, skipping '#{String.slice(topic, 0, 60)}...'")
+        state
+
+      state.chain_count >= @chain_max_per_session ->
+        Logger.info("[ActiveLearner] Chain: session cap reached (#{@chain_max_per_session})")
+        state
+
+      not chain_cooldown_elapsed?(state) ->
+        # Schedule retry after cooldown
+        remaining = chain_cooldown_remaining(state)
+        Logger.debug("[ActiveLearner] Chain: cooling down, retrying in #{remaining}ms")
+        Process.send_after(self(), {:chain_investigation, topic}, remaining)
+        state
+
+      true ->
+        Logger.info("[ActiveLearner] Chain: directly investigating '#{String.slice(topic, 0, 80)}...'")
+        ref = spawn_investigation(topic)
+        %{state | chain_in_flight: true, chain_count: state.chain_count + 1, last_chain_at: System.monotonic_time(:millisecond)}
+    end
+  end
+
+  defp spawn_investigation(topic) do
+    parent = self()
+    ref = make_ref()
+
+    {_pid, monitor_ref} = spawn_monitor(fn ->
+      try do
+        Daemon.Tools.Builtins.Investigate.execute(%{"topic" => topic})
+      rescue
+        e -> Logger.warning("[ActiveLearner] Chain investigation failed: #{Exception.message(e)}")
+      catch
+        :exit, reason -> Logger.warning("[ActiveLearner] Chain investigation exited: #{inspect(reason)}")
+      after
+        send(parent, {:chain_complete, ref})
+      end
+    end)
+
+    monitor_ref
+  end
+
+  defp chain_cooldown_elapsed?(state) do
+    case state.last_chain_at do
+      nil -> true
+      last -> (System.monotonic_time(:millisecond) - last) >= @chain_cooldown_ms
+    end
+  end
+
+  defp chain_cooldown_remaining(state) do
+    case state.last_chain_at do
+      nil -> 0
+      last -> max(0, @chain_cooldown_ms - (System.monotonic_time(:millisecond) - last))
+    end
   end
 
   # ── Suggestion Building ────────────────────────────────────────────
