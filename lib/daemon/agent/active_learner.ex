@@ -62,6 +62,12 @@ defmodule Daemon.Agent.ActiveLearner do
   @prompt_evolution_cooldown_ms 1_800_000  # At least 30 min between evolutions
   @evolved_prompts_dir Path.expand("~/.daemon/prompts/evolved")
 
+  # Cross-investigation synthesis — compound knowledge from accumulated findings
+  @synthesis_enabled true
+  @synthesis_interval 15                   # Every N completed outcomes
+  @synthesis_cooldown_ms 3_600_000         # At least 60 min between syntheses
+  @synthesis_dir Path.expand("~/.daemon/syntheses")
+
   # ── Public API ──────────────────────────────────────────────────────
 
   def start_link(opts \\ []) do
@@ -94,7 +100,7 @@ defmodule Daemon.Agent.ActiveLearner do
     arms = Map.get(persisted, "arms", %{}) |> parse_arms()
 
     Process.send_after(self(), :subscribe, @subscribe_delay_ms)
-    Logger.info("[ActiveLearner] Started (arms: emergent=#{format_arm(arms.emergent)}, policy=#{format_arm(arms.policy)})")
+    Logger.info("[ActiveLearner] Started (arms: emergent=#{format_arm(arms.emergent)}, policy=#{format_arm(arms.policy)}, synthesis=#{format_arm(arms.synthesis)})")
 
     {:ok, %{
       event_ref: nil,
@@ -106,6 +112,8 @@ defmodule Daemon.Agent.ActiveLearner do
       last_chain_at: nil,
       last_prompt_evolution: nil,
       prompt_evolutions: 0,
+      last_synthesis: nil,
+      synthesis_count: Map.get(persisted, "synthesis_count", 0),
       quality_window: Map.get(persisted, "quality_window", []) |> Enum.take(@quality_window_size),
       consecutive_skips: 0
     }}
@@ -146,13 +154,15 @@ defmodule Daemon.Agent.ActiveLearner do
       last_added_at: state.last_added_at,
       arms: %{
         emergent: state.arms.emergent,
-        policy: state.arms.policy
+        policy: state.arms.policy,
+        synthesis: state.arms.synthesis
       },
       correction_factor: compute_correction_factor(),
       outcomes_count: count_outcomes(),
       chain_count: state.chain_count,
       chain_in_flight: state.chain_in_flight,
       prompt_evolutions: state.prompt_evolutions,
+      synthesis_count: state.synthesis_count,
       adaptive_threshold: adaptive_threshold(state.quality_window),
       consecutive_skips: state.consecutive_skips,
       quality_window: state.quality_window,
@@ -360,8 +370,9 @@ defmodule Daemon.Agent.ActiveLearner do
 
   defp get_source(suggestion) do
     case Map.get(suggestion, :source, Map.get(suggestion, "source", :policy)) do
-      s when s in [:emergent, :policy] -> s
+      s when s in [:emergent, :policy, :synthesis] -> s
       "emergent" -> :emergent
+      "synthesis" -> :synthesis
       _ -> :policy
     end
   end
@@ -377,7 +388,7 @@ defmodule Daemon.Agent.ActiveLearner do
   end
 
   defp default_arms do
-    %{emergent: %{alpha: 1.0, beta: 1.0}, policy: %{alpha: 1.0, beta: 1.0}}
+    %{emergent: %{alpha: 1.0, beta: 1.0}, policy: %{alpha: 1.0, beta: 1.0}, synthesis: %{alpha: 1.0, beta: 1.0}}
   end
 
   defp format_arm(%{alpha: a, beta: b}) do
@@ -596,6 +607,188 @@ defmodule Daemon.Agent.ActiveLearner do
     end
   end
 
+  # ── Cross-Investigation Knowledge Synthesis ──────────────────────
+  # Periodically synthesize findings across all completed investigations,
+  # identify convergences, contradictions, and unexplored gaps.
+  # Gap-derived topics become a third Thompson arm (:synthesis).
+
+  defp maybe_synthesize(state) do
+    completed = count_outcomes()
+
+    cond do
+      not @synthesis_enabled ->
+        state
+
+      completed < @synthesis_interval ->
+        state
+
+      rem(completed, @synthesis_interval) != 0 ->
+        state
+
+      not synthesis_cooldown_elapsed?(state) ->
+        state
+
+      true ->
+        Logger.info("[ActiveLearner] Knowledge synthesis triggered (#{completed} outcomes)")
+        spawn_synthesis(state)
+        %{state | last_synthesis: System.monotonic_time(:millisecond), synthesis_count: state.synthesis_count + 1}
+    end
+  end
+
+  defp synthesis_cooldown_elapsed?(state) do
+    case state.last_synthesis do
+      nil -> true
+      last -> (System.monotonic_time(:millisecond) - last) >= @synthesis_cooldown_ms
+    end
+  end
+
+  defp spawn_synthesis(state) do
+    # Capture what we need — don't close over the full GenServer state
+    arms = state.arms
+    spawn(fn ->
+      try do
+        run_synthesis(arms)
+      rescue
+        e -> Logger.warning("[ActiveLearner] Synthesis error: #{Exception.message(e)}")
+      catch
+        :exit, reason -> Logger.warning("[ActiveLearner] Synthesis exit: #{inspect(reason)}")
+      end
+    end)
+  end
+
+  defp run_synthesis(arms) do
+    outcomes = get_all_completed_outcomes()
+
+    if length(outcomes) < 5 do
+      Logger.debug("[ActiveLearner] Synthesis: too few outcomes (#{length(outcomes)})")
+    else
+      # Build the synthesis context from outcome data
+      summary = outcomes
+        |> Enum.sort_by(& &1.added_at)
+        |> Enum.map(fn o ->
+          components = o.quality_components
+          comp_str = if is_map(components) do
+            " [v=#{components.verification_rate} g=#{components.grounded_ratio} f=#{components.fraud_penalty}]"
+          else
+            ""
+          end
+          "- #{o.topic_key} (quality=#{Float.round(o.actual_quality || 0.0, 3)}, source=#{o.source}, depth=#{o.depth}#{comp_str})"
+        end)
+        |> Enum.join("\n")
+
+      arm_str = "emergent=#{format_arm(arms.emergent)}, policy=#{format_arm(arms.policy)}, synthesis=#{format_arm(arms.synthesis)}"
+
+      messages = [
+        %{role: "user", content: """
+        You are a research synthesis engine. Given #{length(outcomes)} investigation outcomes
+        from an autonomous research system, produce a knowledge synthesis.
+
+        ## Investigation Outcomes
+        #{summary}
+
+        ## Thompson Sampling Arms
+        #{arm_str}
+
+        ## Instructions
+        Produce a JSON response with exactly these keys:
+        1. "themes": Array of 3-5 major themes that emerge across investigations. Each theme: {"name": "...", "finding": "...", "confidence": "high|medium|low", "supporting_topics": ["..."]}
+        2. "contradictions": Array of 0-3 contradictions between findings. Each: {"topic_a": "...", "topic_b": "...", "nature": "..."}
+        3. "gaps": Array of 3-5 unexplored research gaps that would most reduce uncertainty. Each: {"topic": "concise investigation topic (under 100 chars)", "rationale": "why this matters", "information_gain": 0.0-1.0}
+        4. "meta_insight": One sentence about what the system should focus on next.
+
+        Return ONLY valid JSON. No markdown, no explanation.
+        """}
+      ]
+
+      case Providers.chat(messages, temperature: 0.3, max_tokens: 4000) do
+        {:ok, %{content: response}} ->
+          case parse_synthesis(response) do
+            {:ok, synthesis} ->
+              # Save the synthesis report
+              save_synthesis_report(synthesis, outcomes)
+
+              # Extract gap-derived topics and inject them
+              gaps = Map.get(synthesis, "gaps", [])
+              inject_synthesis_topics(gaps)
+
+              theme_count = length(Map.get(synthesis, "themes", []))
+              gap_count = length(gaps)
+              Logger.info("[ActiveLearner] Synthesis complete: #{theme_count} themes, #{gap_count} gaps identified, meta: #{Map.get(synthesis, "meta_insight", "")}")
+
+            {:error, _} ->
+              Logger.warning("[ActiveLearner] Synthesis: failed to parse LLM response")
+          end
+
+        {:error, reason} ->
+          Logger.warning("[ActiveLearner] Synthesis LLM call failed: #{inspect(reason)}")
+      end
+    end
+  end
+
+  defp get_all_completed_outcomes do
+    @outcomes_table
+    |> :ets.tab2list()
+    |> Enum.filter(fn {_k, v} -> v.actual_quality != nil end)
+    |> Enum.map(fn {k, v} -> Map.put(v, :topic_key, k) end)
+  rescue
+    _ -> []
+  end
+
+  defp parse_synthesis(response) do
+    cleaned =
+      response
+      |> String.replace(~r/^```json\s*/m, "")
+      |> String.replace(~r/^```\s*/m, "")
+      |> String.trim()
+
+    case Jason.decode(cleaned) do
+      {:ok, synthesis} when is_map(synthesis) -> {:ok, synthesis}
+      _ -> {:error, :invalid_json}
+    end
+  end
+
+  defp save_synthesis_report(synthesis, outcomes) do
+    File.mkdir_p!(@synthesis_dir)
+    timestamp = DateTime.utc_now() |> DateTime.to_iso8601() |> String.replace(~r/[:\.]/, "-")
+    path = Path.join(@synthesis_dir, "synthesis_#{timestamp}.json")
+
+    report = %{
+      "version" => 1,
+      "generated_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+      "outcomes_count" => length(outcomes),
+      "synthesis" => synthesis
+    }
+
+    File.write!(path, Jason.encode!(report, pretty: true))
+    Logger.info("[ActiveLearner] Synthesis saved to #{path}")
+  rescue
+    e -> Logger.warning("[ActiveLearner] Failed to save synthesis: #{Exception.message(e)}")
+  end
+
+  defp inject_synthesis_topics(gaps) when is_list(gaps) do
+    Enum.each(gaps, fn gap ->
+      topic = Map.get(gap, "topic", "")
+      ig = Map.get(gap, "information_gain", 0.8)
+
+      if topic != "" and not seen_fresh?(@task_prefix <> topic) do
+        task_text = @task_prefix <> distill_topic(topic)
+
+        case safe_add_heartbeat_task(task_text) do
+          :ok -> :ok
+          {:error, _} -> :ok  # Best effort
+        end
+
+        mark_seen(task_text)
+        record_prediction(task_text, ig, "synthesis", :synthesis, 0)
+        Logger.info("[ActiveLearner] Synthesis gap injected: '#{task_text}' (ig: #{ig})")
+      end
+    end)
+  rescue
+    _ -> :ok
+  end
+
+  defp inject_synthesis_topics(_), do: :ok
+
   defp get_recent_outcomes(n) do
     @outcomes_table
     |> :ets.tab2list()
@@ -782,7 +975,8 @@ defmodule Daemon.Agent.ActiveLearner do
           Logger.info("[ActiveLearner] Outcome: quality=#{Float.round(quality, 3)}, papers=#{papers}, source=#{source}, arm→#{format_arm(arms[source])} [v=#{c.verification_rate} g=#{c.grounded_ratio} f=#{c.fraud_penalty} c=#{c.certainty}]")
           state = %{state | arms: arms}
           persist_state(state)
-          maybe_evolve_prompts(state)
+          state = maybe_evolve_prompts(state)
+          maybe_synthesize(state)
         else
           Logger.info("[ActiveLearner] Outcome: quality=#{Float.round(quality, 3)}, papers=#{papers || 0}, source=#{source} — arm update SKIPPED (no papers = confounded signal)")
           persist_state(state)
@@ -980,8 +1174,10 @@ defmodule Daemon.Agent.ActiveLearner do
       "quality_window" => state.quality_window,
       "arms" => %{
         "emergent" => %{"alpha" => state.arms.emergent.alpha, "beta" => state.arms.emergent.beta},
-        "policy" => %{"alpha" => state.arms.policy.alpha, "beta" => state.arms.policy.beta}
+        "policy" => %{"alpha" => state.arms.policy.alpha, "beta" => state.arms.policy.beta},
+        "synthesis" => %{"alpha" => state.arms.synthesis.alpha, "beta" => state.arms.synthesis.beta}
       },
+      "synthesis_count" => state.synthesis_count,
       "topics_added" => state.topics_added,
       "last_added_at" => if(state.last_added_at, do: DateTime.to_iso8601(state.last_added_at)),
       "outcomes" => serialize_outcomes(),
@@ -1101,7 +1297,8 @@ defmodule Daemon.Agent.ActiveLearner do
   defp parse_arms(raw) when is_map(raw) do
     %{
       emergent: parse_single_arm(Map.get(raw, "emergent", %{})),
-      policy: parse_single_arm(Map.get(raw, "policy", %{}))
+      policy: parse_single_arm(Map.get(raw, "policy", %{})),
+      synthesis: parse_single_arm(Map.get(raw, "synthesis", %{}))
     }
   end
 
@@ -1116,6 +1313,7 @@ defmodule Daemon.Agent.ActiveLearner do
 
   defp parse_source("emergent"), do: :emergent
   defp parse_source("policy"), do: :policy
+  defp parse_source("synthesis"), do: :synthesis
   defp parse_source(_), do: :policy
 
   defp parse_datetime(nil), do: nil
