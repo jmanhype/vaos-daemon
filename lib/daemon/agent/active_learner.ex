@@ -240,26 +240,28 @@ defmodule Daemon.Agent.ActiveLearner do
         try_add_suggestion(rest, quality, source_topic, depth, pending, completed, pending_len, state)
 
       true ->
-        case safe_add_heartbeat_task(task_text) do
-          :ok ->
-            ig = get_ig(suggestion)
-            source = get_source(suggestion)
-            child_depth = depth + 1
-            arm = Map.get(state.arms, source, %{alpha: 1.0, beta: 1.0})
-            Logger.info("[ActiveLearner] Added: '#{task_text}' (ig: #{Float.round(ig * 1.0, 3)}, source: #{source}, depth: #{child_depth}, arm: #{format_arm(arm)}, from: '#{source_topic}')")
-            mark_seen(task_text)
-            record_prediction(task_text, ig, source_topic, source, child_depth)
-            state = %{state | topics_added: state.topics_added + 1, last_added_at: DateTime.utc_now()}
-            persist_state(state)
-            # Trigger direct investigation — bypasses heartbeat polling + agent loop
-            topic_for_investigate = String.replace(task_text, ~r/^Investigate:\s*/i, "")
-            send(self(), {:chain_investigation, topic_for_investigate})
-            state
+        ig = get_ig(suggestion)
+        source = get_source(suggestion)
+        child_depth = depth + 1
+        arm = Map.get(state.arms, source, %{alpha: 1.0, beta: 1.0})
 
-          {:error, reason} ->
-            Logger.warning("[ActiveLearner] Failed to add task: #{inspect(reason)}")
-            state
+        # Best-effort heartbeat addition (scheduler may be busy running tasks).
+        # Chain fires regardless — heartbeat is for persistence across restarts,
+        # the chain is the actual pipeline.
+        case safe_add_heartbeat_task(task_text) do
+          :ok -> :ok
+          {:error, _} -> Logger.debug("[ActiveLearner] Heartbeat write deferred (scheduler busy)")
         end
+
+        Logger.info("[ActiveLearner] Selected: '#{task_text}' (ig: #{Float.round(ig * 1.0, 3)}, source: #{source}, depth: #{child_depth}, arm: #{format_arm(arm)}, from: '#{source_topic}')")
+        mark_seen(task_text)
+        record_prediction(task_text, ig, source_topic, source, child_depth)
+        state = %{state | topics_added: state.topics_added + 1, last_added_at: DateTime.utc_now()}
+        persist_state(state)
+        # Trigger direct investigation — bypasses heartbeat polling + agent loop
+        topic_for_investigate = String.replace(task_text, ~r/^Investigate:\s*/i, "")
+        send(self(), {:chain_investigation, topic_for_investigate})
+        state
     end
   end
 
