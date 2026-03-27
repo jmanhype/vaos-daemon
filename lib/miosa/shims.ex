@@ -307,16 +307,20 @@ defmodule MiosaSignal.FailureModes do
 
   @type failure_mode :: :doom_loop | :hallucination | :stall | :none
 
+  @spec detect(map()) :: [{failure_mode(), String.t()}]
   def detect(%{} = event) do
-    cond do
-      Map.get(event, :iteration, 0) > 10 -> :doom_loop
-      Map.get(event, :consecutive_failures, 0) > 3 -> :stall
-      true -> :none
-    end
+    violations = []
+    violations = if Map.get(event, :iteration, 0) > 10,
+      do: [{:doom_loop, "iteration count exceeded 10"} | violations], else: violations
+    violations = if Map.get(event, :consecutive_failures, 0) > 3,
+      do: [{:stall, "consecutive failures exceeded 3"} | violations], else: violations
+    violations
   end
-  def detect(_), do: :none
+  def detect(_), do: []
 
-  def check(%{} = event, mode) when is_atom(mode), do: detect(event) == mode
+  def check(%{} = event, mode) when is_atom(mode) do
+    event |> detect() |> Enum.any?(fn {m, _} -> m == mode end)
+  end
   def check(_, _), do: false
 end
 
