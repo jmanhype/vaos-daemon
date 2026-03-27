@@ -1465,6 +1465,7 @@ Known failure patterns to avoid:
     per_query = strategy.per_query_limit
 
     # Log circuit breaker state for observability (read-only peek, no state transitions)
+    ensure_circuit_table()
     open_circuits = @circuit_sources
     |> Enum.filter(fn s ->
       case :ets.lookup(@circuit_table, s) do
