@@ -44,6 +44,9 @@ defmodule Daemon.Agent.ActiveLearner do
   @seen_ttl_seconds 7 * 24 * 3600
   @persistence_file "active_learner_state.json"
 
+  # Topic distillation — compress verbose emergent questions into search-friendly queries
+  @max_topic_length 120
+
   # Direct investigation chaining — bypasses heartbeat polling + agent loop overhead
   @chain_enabled true
   @chain_cooldown_ms 60_000      # 60s between chained investigations (respects API rate limits)
@@ -406,7 +409,36 @@ defmodule Daemon.Agent.ActiveLearner do
         Map.get(suggestion, "title") ||
         "unknown topic"
 
-    @task_prefix <> title
+    @task_prefix <> distill_topic(title)
+  end
+
+  # Compress verbose emergent questions into search-friendly queries.
+  # "How does the 'HHH' (Helpful, Harmless, Honest) framework's inherent tension..."
+  # → "HHH framework tension helpfulness harmlessness training data curation"
+  defp distill_topic(topic) when byte_size(topic) <= @max_topic_length, do: topic
+
+  defp distill_topic(topic) do
+    topic
+    # Strip question preamble: "How does X manifest" → "X manifest"
+    |> String.replace(~r/^(How|What|Why|Does|Can|Is|Are|Do|When|Where|Which|Could|Would|Should|Has|Have|Had)\s+(does|do|can|is|are|did|was|were|has|have|had|would|could|should|might|may)?\s*/i, "")
+    # Remove parenthetical asides: "(Helpful, Harmless, Honest)" → " "
+    |> String.replace(~r/\s*\([^)]{3,}\)\s*/, " ")
+    # Remove quoted terms: 'HHH' → HHH
+    |> String.replace(~r/['"]/, "")
+    # Drop high-frequency stopwords that hurt search precision
+    |> String.replace(~r/\b(the|a|an|of|in|for|to|and|or|but|with|by|from|on|at|as|into|through|during|between|specific|particular|inherent|various|different|potential|possible|significant|important|proposed|certain|existing|current|methodological|approaches|been|that|this|these|those|which|what|how|such|their|its|our|your|manifest|process)\b/i, "")
+    |> String.replace(~r/\s+/, " ")
+    |> String.trim()
+    |> truncate_at_word_boundary(@max_topic_length)
+  end
+
+  defp truncate_at_word_boundary(text, max_len) when byte_size(text) <= max_len, do: text
+
+  defp truncate_at_word_boundary(text, max_len) do
+    text
+    |> String.slice(0, max_len)
+    |> String.replace(~r/\s+\S*$/, "")
+    |> String.trim()
   end
 
   defp read_heartbeat_tasks do
@@ -505,11 +537,24 @@ defmodule Daemon.Agent.ActiveLearner do
       {key, record} ->
         :ets.insert(@outcomes_table, {key, %{record | actual_quality: quality}})
         source = Map.get(record, :source, :policy)
-        arms = update_arm(state.arms, source, quality)
-        Logger.info("[ActiveLearner] Outcome for '#{stripped}': quality=#{Float.round(quality, 3)}, source=#{source}, arm→#{format_arm(arms[source])}")
-        state = %{state | arms: arms}
-        persist_state(state)
-        state
+
+        # Causal attribution: only update Thompson arm when signal is genuine.
+        # When papers_found == 0, quality is ALWAYS 0.0 (all compute_quality terms are 0).
+        # This tells us nothing about topic quality — only that the search failed
+        # (rate limits, verbose query, API errors). Don't poison the arm with noise.
+        papers = Map.get(data, :papers_found) || Map.get(data, "papers_found")
+
+        if is_number(papers) and papers > 0 do
+          arms = update_arm(state.arms, source, quality)
+          Logger.info("[ActiveLearner] Outcome: quality=#{Float.round(quality, 3)}, papers=#{papers}, source=#{source}, arm→#{format_arm(arms[source])}")
+          state = %{state | arms: arms}
+          persist_state(state)
+          state
+        else
+          Logger.info("[ActiveLearner] Outcome: quality=#{Float.round(quality, 3)}, papers=#{papers || 0}, source=#{source} — arm update SKIPPED (no papers = confounded signal)")
+          persist_state(state)
+          state
+        end
 
       nil ->
         state
