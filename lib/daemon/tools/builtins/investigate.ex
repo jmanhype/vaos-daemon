@@ -600,6 +600,8 @@ Known failure patterns to avoid:
       Daemon.Events.Bus.emit(:investigation_complete, json_metadata)
     rescue
       _ -> :ok
+    catch
+      :exit, _ -> :ok
     end
 
     # Increment helpful counters for prior evidence that was independently regenerated
