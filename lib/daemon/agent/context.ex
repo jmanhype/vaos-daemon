@@ -63,8 +63,10 @@ defmodule Daemon.Agent.Context do
   def build(state, _signal), do: build(state)
 
   def build(state) do
+    Logger.debug("[Context.build] start")
     conversation = state.messages || []
     conversation_tokens = estimate_tokens_messages(conversation)
+    Logger.debug("[Context.build] conversation_tokens=#{conversation_tokens}")
 
     max_tok = case Map.get(state, :model) do
       nil -> max_tokens()
@@ -73,12 +75,16 @@ defmodule Daemon.Agent.Context do
     end
 
     # Tier 1: Cached static base
+    Logger.debug("[Context.build] loading static_base")
     static_base = Soul.static_base()
     static_tokens = Soul.static_token_count()
+    Logger.debug("[Context.build] static_base loaded, #{static_tokens} tokens")
 
     # Tier 2: Dynamic context
     dynamic_budget = max(max_tok - @response_reserve - conversation_tokens - static_tokens, 1_000)
+    Logger.debug("[Context.build] assembling dynamic context, budget=#{dynamic_budget}")
     dynamic_context = assemble_dynamic_context(state, dynamic_budget)
+    Logger.debug("[Context.build] dynamic context assembled")
 
     dynamic_tokens = estimate_tokens(dynamic_context)
     total_tokens = static_tokens + dynamic_tokens + conversation_tokens + @response_reserve
@@ -186,20 +192,28 @@ defmodule Daemon.Agent.Context do
   # ---------------------------------------------------------------------------
 
   defp gather_dynamic_blocks(state) do
-    [
-      {tool_process_block(state), 1, "tool_process"},
-      {runtime_block(state), 1, "runtime"},
-      {environment_block(state), 1, "environment"},
-      {plan_mode_block(state), 1, "plan_mode"},
-      {memory_block_relevant(state), 1, "memory"},
-      {episodic_block(state), 1, "episodic"},
-      {task_state_block(state), 1, "task_state"},
-      {workflow_block(state), 1, "workflow"},
-      {skills_block(state), 2, "skills"},
-      {scratchpad_block(state), 1, "scratchpad"},
-      {vault_block(state), 2, "vault"},
-      {decision_intelligence_block(state), 2, "decision_intelligence"}
+    blocks_spec = [
+      {:tool_process, 1, fn -> tool_process_block(state) end},
+      {:runtime, 1, fn -> runtime_block(state) end},
+      {:environment, 1, fn -> environment_block(state) end},
+      {:plan_mode, 1, fn -> plan_mode_block(state) end},
+      {:memory, 1, fn -> memory_block_relevant(state) end},
+      {:episodic, 1, fn -> episodic_block(state) end},
+      {:task_state, 1, fn -> task_state_block(state) end},
+      {:workflow, 1, fn -> workflow_block(state) end},
+      {:skills, 2, fn -> skills_block(state) end},
+      {:scratchpad, 1, fn -> scratchpad_block(state) end},
+      {:vault, 2, fn -> vault_block(state) end},
+      {:decision_intelligence, 2, fn -> decision_intelligence_block(state) end}
     ]
+
+    blocks_spec
+    |> Enum.map(fn {label, priority, fun} ->
+      Logger.debug("[Context.build] gathering block: #{label}")
+      content = fun.()
+      Logger.debug("[Context.build] block #{label} done")
+      {content, priority, to_string(label)}
+    end)
     |> Enum.reject(fn {content, _, _} -> is_nil(content) or content == "" end)
   end
 
