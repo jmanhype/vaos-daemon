@@ -15,7 +15,7 @@ defmodule Daemon.Agent.Scheduler.Heartbeat do
   @circuit_breaker_limit 3
 
   defp heartbeat_interval,
-    do: Application.get_env(:daemon, :heartbeat_interval, 1_800_000)
+    do: Application.get_env(:daemon, :heartbeat_interval, 300_000)
 
   defp config_dir,
     do: Application.get_env(:daemon, :config_dir, "~/.daemon") |> Path.expand()

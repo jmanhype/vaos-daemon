@@ -208,6 +208,10 @@ config :daemon,
   # Fleet management
   fleet_enabled: System.get_env("DAEMON_FLEET_ENABLED") == "true",
 
+  # Heartbeat interval (ms) — how often the scheduler checks HEARTBEAT.md
+  # Default: 300_000 (5 min). Set HEARTBEAT_INTERVAL_MS to override.
+  heartbeat_interval: String.to_integer(System.get_env("HEARTBEAT_INTERVAL_MS") || "300000"),
+
   # Wallet integration
   wallet_enabled: System.get_env("DAEMON_WALLET_ENABLED") == "true",
   wallet_provider: System.get_env("DAEMON_WALLET_PROVIDER") || "mock",
