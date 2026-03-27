@@ -544,6 +544,7 @@ Known failure patterns to avoid:
           verification: ev.verification, paper_type: Atom.to_string(ev.paper_type),
           citation_count: ev.citation_count, strength_display: ev.strength,
           source_quality: Map.get(ev, :source_quality, 0),
+          source_type: ev.source_type,
           evidence_store: Atom.to_string(Map.get(ev, :evidence_store, :unknown))}
       end),
       opposing: Enum.map(verified_opposing, fn ev ->
@@ -551,6 +552,7 @@ Known failure patterns to avoid:
           verification: ev.verification, paper_type: Atom.to_string(ev.paper_type),
           citation_count: ev.citation_count, strength_display: ev.strength,
           source_quality: Map.get(ev, :source_quality, 0),
+          source_type: ev.source_type,
           evidence_store: Atom.to_string(Map.get(ev, :evidence_store, :unknown))}
       end),
       papers_found: length(all_papers),
