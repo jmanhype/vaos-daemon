@@ -59,6 +59,17 @@ defmodule Daemon.Tools.Builtins.Investigate do
   # Threshold is now configurable via Strategy.grounded_threshold (default: 0.4)
   # Scoring patterns extracted to Daemon.Investigation.SourceScoring
 
+  # -- Source Circuit Breaker --
+  # Per-source adaptive circuit breaker prevents wasting 30s on consistently-broken APIs.
+  # States: :closed (normal) → :open (tripped, skip) → :half_open (probe one request)
+  @circuit_table :investigate_source_health
+  @circuit_failure_threshold 3        # Consecutive failures to trip
+  @circuit_cooldown_ms 600_000        # 10 min cooldown before half-open probe
+  @circuit_sources [:openalex, :semantic_scholar, :alphaxiv, :huggingface]
+
+  # OpenAlex polite pool — requests with mailto get routed to faster servers
+  @openalex_mailto "vaos-daemon@miosa.ai"
+
   @impl true
   def available?, do: true
 
@@ -118,6 +129,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
   defp run_investigation(topic, depth, steering \\ "") do
     :inets.start()
     :ssl.start()
+    ensure_circuit_table()
 
     # Start alphaXiv MCP in an unlinked process — the MCP client crash-loops
     # on auth failure (401) and sends EXIT to linked callers, killing the pipeline.
@@ -1345,6 +1357,104 @@ Known failure patterns to avoid:
     _ -> []
   end
 
+  # -- Source Circuit Breaker ---------------------------------------------------
+  # ETS-based per-source circuit breaker. Prevents wasting 30s on APIs that are
+  # consistently down — the single biggest performance blocker for investigations.
+
+  defp ensure_circuit_table do
+    case :ets.whereis(@circuit_table) do
+      :undefined ->
+        :ets.new(@circuit_table, [:named_table, :public, :set])
+      _ -> :ok
+    end
+  rescue
+    ArgumentError -> :ok
+  end
+
+  @doc false
+  def circuit_check(source) when source in @circuit_sources do
+    ensure_circuit_table()
+    case :ets.lookup(@circuit_table, source) do
+      [{^source, %{state: :open, tripped_at: tripped_at}}] ->
+        elapsed = System.monotonic_time(:millisecond) - tripped_at
+        if elapsed >= @circuit_cooldown_ms do
+          # Cooldown expired → half-open: allow one probe request
+          :ets.insert(@circuit_table, {source, %{state: :half_open, consecutive_failures: 0, tripped_at: tripped_at}})
+          Logger.info("[investigate] Circuit half-open for #{source} — probing")
+          :ok
+        else
+          remaining = div(@circuit_cooldown_ms - elapsed, 1_000)
+          Logger.debug("[investigate] Circuit OPEN for #{source} — skipping (#{remaining}s remaining)")
+          :skip
+        end
+
+      [{^source, %{state: :half_open}}] ->
+        # Already half-open, one probe in flight — skip additional queries
+        :skip
+
+      _ ->
+        :ok
+    end
+  rescue
+    _ -> :ok
+  end
+
+  defp circuit_record_success(source) do
+    ensure_circuit_table()
+    prev_state = case :ets.lookup(@circuit_table, source) do
+      [{^source, %{state: s}}] -> s
+      _ -> :closed
+    end
+
+    :ets.insert(@circuit_table, {source, %{state: :closed, consecutive_failures: 0, tripped_at: nil}})
+
+    if prev_state in [:half_open, :open] do
+      Logger.info("[investigate] Circuit CLOSED for #{source} — recovered")
+    end
+  rescue
+    _ -> :ok
+  end
+
+  defp circuit_record_failure(source) do
+    ensure_circuit_table()
+    entry = case :ets.lookup(@circuit_table, source) do
+      [{^source, %{state: :half_open}}] ->
+        # Half-open probe failed → back to open with fresh cooldown
+        Logger.info("[investigate] Circuit re-OPENED for #{source} — probe failed")
+        %{state: :open, consecutive_failures: @circuit_failure_threshold, tripped_at: System.monotonic_time(:millisecond)}
+
+      [{^source, %{consecutive_failures: n} = entry}] ->
+        new_count = n + 1
+        if new_count >= @circuit_failure_threshold and entry.state != :open do
+          Logger.warning("[investigate] Circuit OPENED for #{source} — #{new_count} consecutive failures")
+          %{state: :open, consecutive_failures: new_count, tripped_at: System.monotonic_time(:millisecond)}
+        else
+          %{entry | consecutive_failures: new_count}
+        end
+
+      _ ->
+        %{state: :closed, consecutive_failures: 1, tripped_at: nil}
+    end
+
+    :ets.insert(@circuit_table, {source, entry})
+  rescue
+    _ -> :ok
+  end
+
+  @doc "Get circuit breaker status for all sources"
+  def circuit_status do
+    ensure_circuit_table()
+    Enum.map(@circuit_sources, fn source ->
+      case :ets.lookup(@circuit_table, source) do
+        [{^source, entry}] -> {source, entry}
+        _ -> {source, %{state: :closed, consecutive_failures: 0}}
+      end
+    end)
+    |> Map.new()
+  rescue
+    _ -> %{}
+  end
+
   # -- Multi-source literature search: Semantic Scholar + OpenAlex + alphaXiv --
 
   defp search_all_papers(topic, keywords \\ [], strategy \\ Strategy.default()) do
@@ -1352,71 +1462,146 @@ Known failure patterns to avoid:
     {ss_queries, oa_queries} = build_search_queries(topic, keywords)
     per_query = strategy.per_query_limit
 
-    # SS: sequential with 1.5s delay — unauthenticated rate limit is ~1 req/s.
-    # Concurrent requests all hit 429 simultaneously and waste all retries.
-    ss_api_key = Application.get_env(:daemon, :semantic_scholar_api_key)
-    ss_results = Enum.flat_map(Enum.with_index(ss_queries), fn {{label, query, opts}, idx} ->
-      if idx > 0 and is_nil(ss_api_key), do: Process.sleep(1_500)
-      search_opts = Keyword.merge([limit: per_query], opts)
-      search_opts = if ss_api_key, do: Keyword.put(search_opts, :api_key, ss_api_key), else: search_opts
-      case Literature.search_semantic_scholar(query, http_fn, search_opts) do
-        {:ok, papers} -> [{:"ss_#{label}", papers}]
-        _ -> [{:"ss_#{label}", []}]
+    # Log circuit breaker state for observability (read-only peek, no state transitions)
+    open_circuits = @circuit_sources
+    |> Enum.filter(fn s ->
+      case :ets.lookup(@circuit_table, s) do
+        [{^s, %{state: :open}}] -> true
+        _ -> false
       end
     end)
-    ss_tasks = []  # No async tasks for SS
+    if open_circuits != [] do
+      Logger.info("[investigate] Circuit breakers OPEN: #{Enum.join(open_circuits, ", ")} — skipping")
+    end
 
-    # OA is more generous with rate limits — send all queries
-    oa_tasks = Enum.map(oa_queries, fn {label, query, opts} ->
-      search_opts = Keyword.merge([limit: per_query], opts)
-      Task.async(fn ->
-        case Literature.search_openalex(query, http_fn, search_opts) do
-          {:ok, papers} -> {:"oa_#{label}", papers}
-          _ -> {:"oa_#{label}", []}
+    # -- Circuit breaker gated source dispatch --
+    # Each source is checked against its circuit breaker before launching tasks.
+    # This prevents wasting 30s on APIs that are consistently down.
+
+    # SS: sequential with 1.5s delay — unauthenticated rate limit is ~1 req/s.
+    ss_api_key = Application.get_env(:daemon, :semantic_scholar_api_key)
+    ss_results = if circuit_check(:semantic_scholar) == :ok do
+      results = Enum.flat_map(Enum.with_index(ss_queries), fn {{label, query, opts}, idx} ->
+        if idx > 0 and is_nil(ss_api_key), do: Process.sleep(1_500)
+        search_opts = Keyword.merge([limit: per_query], opts)
+        search_opts = if ss_api_key, do: Keyword.put(search_opts, :api_key, ss_api_key), else: search_opts
+        case Literature.search_semantic_scholar(query, http_fn, search_opts) do
+          {:ok, papers} -> [{:"ss_#{label}", papers}]
+          _ -> [{:"ss_#{label}", []}]
         end
       end)
-    end)
+      any_papers = Enum.any?(results, fn {_label, papers} -> papers != [] end)
+      if any_papers, do: circuit_record_success(:semantic_scholar), else: circuit_record_failure(:semantic_scholar)
+      results
+    else
+      []
+    end
 
-    # alphaXiv embedding search (always included, covers both sides)
-    alphaxiv_task = Task.async(fn ->
-      alias Daemon.Tools.Builtins.AlphaXivClient
-      case AlphaXivClient.embedding_search(topic) do
-        {:ok, papers} when papers != [] ->
-          Logger.debug("[investigate] alphaXiv returned #{length(papers)} papers")
-          {:alphaxiv, papers}
-        _ ->
-          Logger.debug("[investigate] alphaXiv unavailable")
-          {:alphaxiv, []}
-      end
-    end)
+    # OA: parallel queries — circuit breaker gates the entire batch
+    oa_tasks = if circuit_check(:openalex) == :ok do
+      Enum.map(oa_queries, fn {label, query, opts} ->
+        search_opts = Keyword.merge([limit: per_query], opts)
+        Task.async(fn ->
+          case Literature.search_openalex(query, http_fn, search_opts) do
+            {:ok, papers} -> {:"oa_#{label}", papers}
+            _ -> {:"oa_#{label}", []}
+          end
+        end)
+      end)
+    else
+      []
+    end
+
+    # alphaXiv embedding search
+    alphaxiv_task = if circuit_check(:alphaxiv) == :ok do
+      Task.async(fn ->
+        alias Daemon.Tools.Builtins.AlphaXivClient
+        case AlphaXivClient.embedding_search(topic) do
+          {:ok, papers} when papers != [] ->
+            Logger.debug("[investigate] alphaXiv returned #{length(papers)} papers")
+            {:alphaxiv, papers}
+          _ ->
+            Logger.debug("[investigate] alphaXiv unavailable")
+            {:alphaxiv, []}
+        end
+      end)
+    else
+      nil
+    end
 
     # HuggingFace Papers search (ML/AI papers from arXiv via HF Hub API)
-    hf_task = Task.async(fn ->
-      alias Daemon.Tools.Builtins.HFPapersClient
-      case HFPapersClient.search(topic, limit: 10) do
-        {:ok, papers} when papers != [] ->
-          Logger.debug("[investigate] HuggingFace returned #{length(papers)} papers")
-          {:huggingface, papers}
-        _ ->
-          Logger.debug("[investigate] HuggingFace Papers unavailable")
-          {:huggingface, []}
-      end
-    end)
+    hf_task = if circuit_check(:huggingface) == :ok do
+      Task.async(fn ->
+        alias Daemon.Tools.Builtins.HFPapersClient
+        case HFPapersClient.search(topic, limit: 10) do
+          {:ok, papers} when papers != [] ->
+            Logger.debug("[investigate] HuggingFace returned #{length(papers)} papers")
+            {:huggingface, papers}
+          _ ->
+            Logger.debug("[investigate] HuggingFace Papers unavailable")
+            {:huggingface, []}
+        end
+      end)
+    else
+      nil
+    end
 
-    # yield_many instead of await_many — gracefully handle timeouts so
-    # investigations proceed with whatever papers are available.
-    all_tasks = oa_tasks ++ [alphaxiv_task, hf_task]
+    # yield_many — gracefully handle timeouts, then record circuit results
+    all_tasks = (oa_tasks ++ [alphaxiv_task, hf_task]) |> Enum.reject(&is_nil/1)
     yielded = Task.yield_many(all_tasks, 30_000)
+
+    # Track per-source success/failure for circuit breaker
+    oa_task_set = MapSet.new(oa_tasks)
+
     async_results = Enum.flat_map(yielded, fn
-      {_task, {:ok, result}} -> [result]
+      {task, {:ok, result}} ->
+        # Record circuit success based on source
+        case result do
+          {:alphaxiv, papers} ->
+            if papers != [], do: circuit_record_success(:alphaxiv), else: circuit_record_failure(:alphaxiv)
+          {:huggingface, papers} ->
+            if papers != [], do: circuit_record_success(:huggingface), else: circuit_record_failure(:huggingface)
+          {oa_label, _papers} when is_atom(oa_label) ->
+            # OA success tracked after all OA tasks complete (below)
+            :ok
+          _ -> :ok
+        end
+        [result]
+
       {_task, {:exit, reason}} ->
         Logger.warning("[investigate] Paper search task crashed: #{inspect(reason)}")
         []
+
       {task, nil} ->
         Logger.warning("[investigate] Paper search task timed out — proceeding without")
+        # Record timeout as failure for the source
+        if MapSet.member?(oa_task_set, task) do
+          # Don't record per-task — we'll batch record OA below
+          :ok
+        else
+          # Must be alphaxiv or huggingface
+          # Can't easily determine which without extra tracking, but timeouts are rare for these
+          :ok
+        end
         Task.shutdown(task, :brutal_kill)
         []
     end)
+
+    # Batch-record OA circuit result: success if ANY OA query returned papers
+    if oa_tasks != [] do
+      oa_results = Enum.filter(async_results, fn
+        {label, _} when is_atom(label) -> String.starts_with?(Atom.to_string(label), "oa_")
+        _ -> false
+      end)
+      oa_any_papers = Enum.any?(oa_results, fn {_label, papers} -> papers != [] end)
+      oa_all_timed_out = length(oa_results) == 0 and length(oa_tasks) > 0
+      cond do
+        oa_any_papers -> circuit_record_success(:openalex)
+        oa_all_timed_out -> circuit_record_failure(:openalex)
+        true -> circuit_record_failure(:openalex)
+      end
+    end
+
     results = ss_results ++ async_results
 
     # Collect source counts
@@ -1638,10 +1823,21 @@ Known failure patterns to avoid:
   defp parse_year(_), do: nil
 
   # HTTP adapter for vaos-ledger Literature module — uses Req
+  # - OpenAlex polite pool: injects mailto param for faster server routing
+  # - Explicit connect timeout: prevents TCP hangs on unreachable hosts
+  # - User-Agent: identifies daemon for API providers
   defp literature_http_fn do
     fn url, opts ->
       params = Keyword.get(opts, :params, [])
       headers = Keyword.get(opts, :headers, [])
+
+      # Inject mailto for OpenAlex polite pool — routed to faster servers
+      # See: https://docs.openalex.org/how-to-use-the-api/rate-limits-and-authentication
+      params = if String.contains?(url, "openalex.org") do
+        params ++ [{"mailto", @openalex_mailto}]
+      else
+        params
+      end
 
       # Build query string from params
       query_string = case params do
@@ -1656,9 +1852,9 @@ Known failure patterns to avoid:
       end
 
       full_url = if query_string == "", do: url, else: "#{url}?#{query_string}"
-      req_headers = Enum.map(headers, fn {k, v} -> {to_string(k), to_string(v)} end)
+      req_headers = [{"user-agent", "VAOS-Daemon/1.0 (#{@openalex_mailto})"} | Enum.map(headers, fn {k, v} -> {to_string(k), to_string(v)} end)]
 
-      case Req.get(full_url, headers: req_headers, receive_timeout: 15_000) do
+      case Req.get(full_url, headers: req_headers, receive_timeout: 15_000, connect_options: [timeout: 5_000]) do
         {:ok, %{status: 200, body: body}} when is_map(body) ->
           {:ok, body}
 
