@@ -337,6 +337,7 @@ defmodule Daemon.Agent.Context do
 
   defp memory_block_relevant(state) do
     latest_user_msg = find_latest_user_message(state.messages)
+    File.write!("/tmp/context_trace.log", "#{DateTime.utc_now()} memory: recall start\n", [:append])
 
     content =
       if latest_user_msg do
@@ -351,8 +352,10 @@ defmodule Daemon.Agent.Context do
         full_recall()
       end
 
+    File.write!("/tmp/context_trace.log", "#{DateTime.utc_now()} memory: recall done, taxonomy_inject start\n", [:append])
     # Append taxonomy-classified memories via Injector (if available)
     taxonomy_addendum = taxonomy_inject(state, latest_user_msg)
+    File.write!("/tmp/context_trace.log", "#{DateTime.utc_now()} memory: taxonomy done\n", [:append])
 
     combined =
       case {content, taxonomy_addendum} do
