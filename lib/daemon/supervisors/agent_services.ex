@@ -46,7 +46,8 @@ defmodule Daemon.Supervisors.AgentServices do
       {Vaos.Ledger.ML.CrashLearner, name: :daemon_crash_learner},
       Daemon.Investigation.SelfDiagnosis,
       Daemon.Intelligence.DecisionLedger,
-      Daemon.Agent.SkillEvolution
+      Daemon.Agent.SkillEvolution,
+      Daemon.Agent.ActiveLearner
     ]
 
     Supervisor.init(children, strategy: :one_for_one)
