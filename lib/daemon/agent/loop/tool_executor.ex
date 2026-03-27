@@ -103,7 +103,7 @@ defmodule Daemon.Agent.Loop.ToolExecutor do
     result_str =
       case tool_result do
         {:image, _mt, _b64, path} -> "[image: #{path}]"
-        text when is_binary(text) -> text
+        text when is_binary(text) -> sanitize_utf8(text)
         other -> inspect(other)
       end
 
@@ -377,6 +377,16 @@ defmodule Daemon.Agent.Loop.ToolExecutor do
   # Pre-tool hooks stay sync so security_check/spend_guard can block.
   # Logs a warning if the Hooks GenServer is down so the issue is visible,
   # but does not block — post-event side effects are non-critical.
+  defp sanitize_utf8(binary) when is_binary(binary) do
+    case :unicode.characters_to_binary(binary, :utf8) do
+      {:error, valid, _} -> valid
+      {:incomplete, valid, _} -> valid
+      valid when is_binary(valid) -> valid
+    end
+  end
+
+  defp sanitize_utf8(other), do: to_string(other)
+
   defp run_hooks_async(event, payload) do
     try do
       Hooks.run_async(event, payload)

@@ -35,7 +35,10 @@ defmodule Daemon.Agent.ActiveLearner do
   alias Daemon.Agent.Scheduler
   alias Daemon.Agent.Scheduler.Heartbeat
 
-  @quality_threshold 0.20  # Lowered from 0.25 — Z.AI proxy verification rates are lower
+  @quality_floor 0.08       # Absolute minimum — below this, investigation is useless
+  @quality_ceiling 0.25     # Maximum threshold — even in good times, don't over-filter
+  @quality_window_size 10   # Rolling window for adaptive threshold
+  @starvation_limit 5       # After N consecutive skips, force-accept best suggestion
   @max_pending_tasks 20
   @max_research_depth 3    # Suppress emergent questions beyond depth 3 to prevent narrowing spiral
   @subscribe_delay_ms 5_000
@@ -102,7 +105,9 @@ defmodule Daemon.Agent.ActiveLearner do
       chain_count: 0,
       last_chain_at: nil,
       last_prompt_evolution: nil,
-      prompt_evolutions: 0
+      prompt_evolutions: 0,
+      quality_window: Map.get(persisted, "quality_window", []) |> Enum.take(@quality_window_size),
+      consecutive_skips: 0
     }}
   end
 
@@ -148,6 +153,9 @@ defmodule Daemon.Agent.ActiveLearner do
       chain_count: state.chain_count,
       chain_in_flight: state.chain_in_flight,
       prompt_evolutions: state.prompt_evolutions,
+      adaptive_threshold: adaptive_threshold(state.quality_window),
+      consecutive_skips: state.consecutive_skips,
+      quality_window: state.quality_window,
       lineage: build_lineage()
     }
 
@@ -186,15 +194,45 @@ defmodule Daemon.Agent.ActiveLearner do
     # Mark that an investigation just completed — enforces cooldown before chaining
     state = %{state | last_chain_at: System.monotonic_time(:millisecond)}
 
+    # Update rolling quality window (used for adaptive threshold)
+    window = [quality | state.quality_window] |> Enum.take(@quality_window_size)
+    state = %{state | quality_window: window}
+
     # Record outcome and update Thompson arm if this was our topic
     state = record_outcome_if_ours(data, quality, state)
 
-    if quality < @quality_threshold do
-      Logger.debug("[ActiveLearner] Skipping — quality #{Float.round(quality, 3)} below threshold #{@quality_threshold}")
-      state
-    else
-      maybe_add_topic(data, quality, state)
+    threshold = adaptive_threshold(window)
+
+    cond do
+      quality >= threshold ->
+        state = %{state | consecutive_skips: 0}
+        maybe_add_topic(data, quality, state)
+
+      state.consecutive_skips + 1 >= @starvation_limit ->
+        # Starvation recovery: force-accept to prevent pipeline death
+        Logger.info("[ActiveLearner] Starvation recovery: #{state.consecutive_skips + 1} consecutive skips, forcing through (quality=#{Float.round(quality, 3)}, threshold=#{Float.round(threshold, 3)})")
+        state = %{state | consecutive_skips: 0}
+        maybe_add_topic(data, quality, state)
+
+      true ->
+        skips = state.consecutive_skips + 1
+        Logger.debug("[ActiveLearner] Skipping — quality #{Float.round(quality, 3)} below adaptive threshold #{Float.round(threshold, 3)} (skip #{skips}/#{@starvation_limit})")
+        %{state | consecutive_skips: skips}
     end
+  end
+
+  defp adaptive_threshold(window) when length(window) < 3 do
+    # Not enough data — use conservative default
+    @quality_floor * 2
+  end
+
+  defp adaptive_threshold(window) do
+    sorted = Enum.sort(window)
+    # 25th percentile: accept the top 75% of recent quality
+    idx = max(0, div(length(sorted), 4))
+    p25 = Enum.at(sorted, idx, @quality_floor)
+    # Clamp between floor and ceiling
+    min(@quality_ceiling, max(@quality_floor, p25))
   end
 
   defp maybe_add_topic(data, quality, state) do
@@ -806,7 +844,8 @@ defmodule Daemon.Agent.ActiveLearner do
 
   defp persist_state(state) do
     data = %{
-      "version" => 2,
+      "version" => 3,
+      "quality_window" => state.quality_window,
       "arms" => %{
         "emergent" => %{"alpha" => state.arms.emergent.alpha, "beta" => state.arms.emergent.beta},
         "policy" => %{"alpha" => state.arms.policy.alpha, "beta" => state.arms.policy.beta}

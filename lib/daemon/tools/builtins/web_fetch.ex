@@ -39,7 +39,7 @@ defmodule Daemon.Tools.Builtins.WebFetch do
     else
       case Req.get(url, headers: [{"user-agent", "OSA/1.0"}], receive_timeout: @timeout_ms, connect_options: [timeout: 5_000]) do
         {:ok, %Req.Response{status: status, body: body}} when status in 200..299 ->
-          text = body |> to_string() |> strip_html() |> String.slice(0, @max_body_bytes)
+          text = body |> to_string() |> sanitize_utf8() |> strip_html() |> String.slice(0, @max_body_bytes)
 
           if params["prompt"] && String.length(text) > 100 do
             extract_with_llm(text, params["prompt"], url)
@@ -106,12 +106,23 @@ defmodule Daemon.Tools.Builtins.WebFetch do
     end
   end
 
+  defp sanitize_utf8(binary) when is_binary(binary) do
+    case :unicode.characters_to_binary(binary, :utf8) do
+      {:error, valid, _} -> valid
+      {:incomplete, valid, _} -> valid
+      valid when is_binary(valid) -> valid
+    end
+  end
+
+  defp sanitize_utf8(other), do: to_string(other)
+
   defp strip_html(body) when is_binary(body) do
     body
     |> String.replace(~r/<script[^>]*>[\s\S]*?<\/script>/i, "")
     |> String.replace(~r/<style[^>]*>[\s\S]*?<\/style>/i, "")
     |> String.replace(~r/<[^>]+>/, " ")
     |> String.replace(~r/&nbsp;/, " ")
+    |> String.replace(<<0xA0>>, " ")
     |> String.replace(~r/&amp;/, "&")
     |> String.replace(~r/&lt;/, "<")
     |> String.replace(~r/&gt;/, ">")
