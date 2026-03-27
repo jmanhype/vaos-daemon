@@ -170,6 +170,9 @@ defmodule Daemon.Agent.ActiveLearner do
   defp process_event(data, state) do
     quality = Retrospector.compute_quality(data)
 
+    # Mark that an investigation just completed — enforces cooldown before chaining
+    state = %{state | last_chain_at: System.monotonic_time(:millisecond)}
+
     # Record outcome and update Thompson arm if this was our topic
     state = record_outcome_if_ours(data, quality, state)
 
