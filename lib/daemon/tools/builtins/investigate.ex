@@ -482,6 +482,9 @@ Known failure patterns to avoid:
     # 12. Persist ledger to disk
     EpistemicLedger.save(@ledger_name)
 
+    # 12b. Emergent question synthesis — extract novel research questions from evidence tension
+    emergent_questions = extract_emergent_questions(topic, direction, verified_supporting, verified_opposing, uncertainty)
+
     # 13. Store in knowledge graph
     topic_id = "investigate:" <> short_hash(topic)
     claim_id = claim.id
@@ -545,7 +548,8 @@ Known failure patterns to avoid:
         end)
       rescue
         _ -> []
-      end
+      end,
+      emergent_questions: emergent_questions
     }
     json_result = Jason.encode!(json_metadata)
 
@@ -1967,6 +1971,100 @@ Known failure patterns to avoid:
       _pid ->
         :ok
     end
+  end
+
+  # ── Emergent Question Synthesis ────────────────────────────────────
+  # After each investigation, ask the LLM to identify 1-2 genuinely novel
+  # research questions that emerge from the TENSION between evidence.
+  # These questions don't exist in the ledger — they're forward-looking.
+
+  defp extract_emergent_questions(topic, direction, supporting, opposing, uncertainty) do
+    if supporting == [] and opposing == [] do
+      []
+    else
+      for_summaries = supporting
+        |> Enum.take(3)
+        |> Enum.map(fn ev -> "- FOR: #{ev.summary}" end)
+        |> Enum.join("\n")
+
+      against_summaries = opposing
+        |> Enum.take(3)
+        |> Enum.map(fn ev -> "- AGAINST: #{ev.summary}" end)
+        |> Enum.join("\n")
+
+      prompt = """
+      You just completed an investigation on: "#{topic}"
+
+      Direction: #{direction} (uncertainty: #{Float.round(uncertainty * 1.0, 2)})
+
+      Key evidence FOR:
+      #{for_summaries}
+
+      Key evidence AGAINST:
+      #{against_summaries}
+
+      Based on the TENSION between these findings, generate exactly 2 novel research questions that:
+      1. Are NOT the same as the original topic
+      2. Emerge from contradictions, gaps, or surprising connections in the evidence
+      3. Would advance understanding of the broader field
+      4. Are specific and investigable (not vague)
+
+      Respond with ONLY a JSON array of objects, nothing else:
+      [{"title": "question text", "reason": "why this emerges from the evidence tension"}]
+      """
+
+      messages = [
+        %{role: "system", content: "You are a research question generator. Output ONLY valid JSON."},
+        %{role: "user", content: prompt}
+      ]
+
+      model = Application.get_env(:daemon, :utility_model)
+      opts = [temperature: 0.7, max_tokens: 1024]
+      opts = if model, do: Keyword.put(opts, :model, model), else: opts
+
+      case Providers.chat(messages, opts) do
+        {:ok, %{content: response}} when is_binary(response) and response != "" ->
+          parse_emergent_questions(response)
+
+        _ ->
+          Logger.debug("[investigate] Emergent question extraction failed or empty")
+          []
+      end
+    end
+  rescue
+    e ->
+      Logger.warning("[investigate] Emergent question extraction error: #{Exception.message(e)}")
+      []
+  catch
+    :exit, _ -> []
+  end
+
+  defp parse_emergent_questions(response) do
+    # Strip markdown code fences if present
+    cleaned = response
+      |> String.replace(~r/^```json?\s*/m, "")
+      |> String.replace(~r/```\s*$/m, "")
+      |> String.trim()
+
+    case Jason.decode(cleaned) do
+      {:ok, questions} when is_list(questions) ->
+        questions
+        |> Enum.take(2)
+        |> Enum.map(fn q ->
+          %{
+            title: Map.get(q, "title", ""),
+            reason: Map.get(q, "reason", ""),
+            information_gain: 0.90
+          }
+        end)
+        |> Enum.reject(fn q -> q.title == "" end)
+
+      _ ->
+        Logger.debug("[investigate] Failed to parse emergent questions JSON: #{String.slice(cleaned, 0, 200)}")
+        []
+    end
+  rescue
+    _ -> []
   end
 
   defp store_ref, do: "osa_default"

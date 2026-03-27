@@ -124,19 +124,28 @@ defmodule Daemon.Agent.ActiveLearner do
   end
 
   defp maybe_add_topic(data, quality, state) do
+    # Prefer emergent questions (novel, forward-looking) over suggested_next (backward-looking)
+    emergent = extract_emergent_questions(data)
     suggested = extract_suggested_next(data)
     source_topic = Map.get(data, :topic) || Map.get(data, "topic") || "unknown"
 
-    if suggested == [] do
-      Logger.debug("[ActiveLearner] No suggested_next in event data")
+    # Emergent questions first, then Policy suggestions as fallback
+    all_suggestions = emergent ++ suggested
+
+    if all_suggestions == [] do
+      Logger.debug("[ActiveLearner] No suggestions in event data")
       state
     else
       # Read heartbeat file ONCE for both dedup and cap check
       {pending_tasks, completed_tasks} = read_heartbeat_tasks()
       pending_len = length(pending_tasks)
 
+      if emergent != [] do
+        Logger.info("[ActiveLearner] #{length(emergent)} emergent question(s) + #{length(suggested)} policy suggestion(s)")
+      end
+
       # Try suggestions in order until one sticks (don't bail on first dupe)
-      ranked = rank_suggestions(suggested)
+      ranked = rank_suggestions(all_suggestions)
       try_add_suggestion(ranked, quality, source_topic, pending_tasks, completed_tasks, pending_len, state)
     end
   end
@@ -173,6 +182,23 @@ defmodule Daemon.Agent.ActiveLearner do
             Logger.warning("[ActiveLearner] Failed to add task: #{inspect(reason)}")
             state
         end
+    end
+  end
+
+  defp extract_emergent_questions(data) do
+    emergent = Map.get(data, :emergent_questions) || Map.get(data, "emergent_questions") || []
+
+    case emergent do
+      list when is_list(list) ->
+        # Normalize to have claim_title key (emergent questions use :title)
+        Enum.map(list, fn q ->
+          title = Map.get(q, :title) || Map.get(q, "title") || ""
+          ig = Map.get(q, :information_gain) || Map.get(q, "information_gain") || 0.90
+          %{claim_title: title, information_gain: ig, source: :emergent}
+        end)
+        |> Enum.reject(fn q -> q.claim_title == "" end)
+
+      _ -> []
     end
   end
 
