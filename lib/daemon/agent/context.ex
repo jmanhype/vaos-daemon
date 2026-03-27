@@ -63,10 +63,10 @@ defmodule Daemon.Agent.Context do
   def build(state, _signal), do: build(state)
 
   def build(state) do
-    Logger.debug("[Context.build] start")
+    File.write!("/tmp/context_trace.log", "#{DateTime.utc_now()} [Context.build] start\n", [:append])
     conversation = state.messages || []
     conversation_tokens = estimate_tokens_messages(conversation)
-    Logger.debug("[Context.build] conversation_tokens=#{conversation_tokens}")
+    File.write!("/tmp/context_trace.log", "#{DateTime.utc_now()} conversation_tokens=#{conversation_tokens}\n", [:append])
 
     max_tok = case Map.get(state, :model) do
       nil -> max_tokens()
@@ -75,16 +75,16 @@ defmodule Daemon.Agent.Context do
     end
 
     # Tier 1: Cached static base
-    Logger.debug("[Context.build] loading static_base")
+    File.write!("/tmp/context_trace.log", "#{DateTime.utc_now()} loading static_base\n", [:append])
     static_base = Soul.static_base()
     static_tokens = Soul.static_token_count()
-    Logger.debug("[Context.build] static_base loaded, #{static_tokens} tokens")
+    File.write!("/tmp/context_trace.log", "#{DateTime.utc_now()} static_base loaded, #{static_tokens} tokens\n", [:append])
 
     # Tier 2: Dynamic context
     dynamic_budget = max(max_tok - @response_reserve - conversation_tokens - static_tokens, 1_000)
-    Logger.debug("[Context.build] assembling dynamic context, budget=#{dynamic_budget}")
+    File.write!("/tmp/context_trace.log", "#{DateTime.utc_now()} assembling dynamic, budget=#{dynamic_budget}\n", [:append])
     dynamic_context = assemble_dynamic_context(state, dynamic_budget)
-    Logger.debug("[Context.build] dynamic context assembled")
+    File.write!("/tmp/context_trace.log", "#{DateTime.utc_now()} dynamic context assembled\n", [:append])
 
     dynamic_tokens = estimate_tokens(dynamic_context)
     total_tokens = static_tokens + dynamic_tokens + conversation_tokens + @response_reserve
@@ -209,9 +209,9 @@ defmodule Daemon.Agent.Context do
 
     blocks_spec
     |> Enum.map(fn {label, priority, fun} ->
-      Logger.debug("[Context.build] gathering block: #{label}")
+      File.write!("/tmp/context_trace.log", "#{DateTime.utc_now()} block #{label} start\n", [:append])
       content = fun.()
-      Logger.debug("[Context.build] block #{label} done")
+      File.write!("/tmp/context_trace.log", "#{DateTime.utc_now()} block #{label} done\n", [:append])
       {content, priority, to_string(label)}
     end)
     |> Enum.reject(fn {content, _, _} -> is_nil(content) or content == "" end)
