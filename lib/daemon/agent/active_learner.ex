@@ -52,6 +52,7 @@ defmodule Daemon.Agent.ActiveLearner do
   @outcomes_table :active_learner_outcomes
   @seen_ttl_seconds 7 * 24 * 3600
   @persistence_file "active_learner_state.json"
+  @measurement_version 2    # Bump when quality formula/measurement changes; triggers arm recomputation
 
   # Topic distillation — compress verbose emergent questions into search-friendly queries
   @max_topic_length 120
@@ -106,7 +107,7 @@ defmodule Daemon.Agent.ActiveLearner do
     persisted = load_persisted_state()
     hydrate_ets(persisted)
 
-    arms = Map.get(persisted, "arms", %{}) |> parse_arms()
+    arms = load_or_recompute_arms(persisted)
 
     Process.send_after(self(), :subscribe, @subscribe_delay_ms)
     Logger.info("[ActiveLearner] Started (arms: emergent=#{format_arm(arms.emergent)}, policy=#{format_arm(arms.policy)}, synthesis=#{format_arm(arms.synthesis)})")
@@ -405,6 +406,43 @@ defmodule Daemon.Agent.ActiveLearner do
 
   defp default_arms do
     %{emergent: %{alpha: 1.0, beta: 1.0}, policy: %{alpha: 1.0, beta: 1.0}, synthesis: %{alpha: 1.0, beta: 1.0}}
+  end
+
+  # ── Measurement Versioning ────────────────────────────────────────
+  # When quality formula or measurement changes (e.g., source_type fix),
+  # old outcomes were measured with a "broken ruler" and contaminate the
+  # Thompson arms. On restart, detect version mismatch and recompute arms
+  # from only current-version outcomes.
+
+  defp load_or_recompute_arms(persisted) do
+    stored_version = Map.get(persisted, "arms_measurement_version", 1)
+
+    if stored_version == @measurement_version do
+      Map.get(persisted, "arms", %{}) |> parse_arms()
+    else
+      recompute_arms_from_current_outcomes()
+    end
+  end
+
+  defp recompute_arms_from_current_outcomes do
+    all = :ets.tab2list(@outcomes_table)
+
+    current = Enum.filter(all, fn {_key, record} ->
+      Map.get(record, :measurement_version, 1) == @measurement_version and
+        is_number(record.actual_quality) and
+        (get_in(record, [:quality_components, :papers_found]) || 0) > 0
+    end)
+
+    legacy_count = length(all) - length(current)
+
+    arms = Enum.reduce(current, default_arms(), fn {_key, record}, acc ->
+      update_arm(acc, Map.get(record, :source, :policy), record.actual_quality)
+    end)
+
+    Logger.info("[ActiveLearner] Measurement v#{@measurement_version}: recomputed arms from #{length(current)} current outcomes (#{legacy_count} legacy archived)")
+    arms
+  rescue
+    _ -> default_arms()
   end
 
   defp format_arm(%{alpha: a, beta: b}) do
@@ -1057,6 +1095,7 @@ defmodule Daemon.Agent.ActiveLearner do
       source: source,
       depth: depth,
       steering_bottleneck: steering_bottleneck,
+      measurement_version: @measurement_version,
       added_at: System.system_time(:second)
     }})
   rescue
@@ -1304,6 +1343,7 @@ defmodule Daemon.Agent.ActiveLearner do
     data = %{
       "version" => 3,
       "quality_window" => state.quality_window,
+      "arms_measurement_version" => @measurement_version,
       "arms" => %{
         "emergent" => %{"alpha" => state.arms.emergent.alpha, "beta" => state.arms.emergent.beta},
         "policy" => %{"alpha" => state.arms.policy.alpha, "beta" => state.arms.policy.beta},
@@ -1370,6 +1410,7 @@ defmodule Daemon.Agent.ActiveLearner do
         source: parse_source(Map.get(entry, "source", "policy")),
         depth: Map.get(entry, "depth", 0),
         steering_bottleneck: parse_steering_bottleneck(Map.get(entry, "steering_bottleneck")),
+        measurement_version: Map.get(entry, "measurement_version", 1),
         added_at: Map.get(entry, "added_at", 0)
       }
       if key != "", do: :ets.insert(@outcomes_table, {key, record})
@@ -1417,6 +1458,7 @@ defmodule Daemon.Agent.ActiveLearner do
         "source" => Atom.to_string(Map.get(record, :source, :policy)),
         "depth" => Map.get(record, :depth, 0),
         "steering_bottleneck" => steering_bn,
+        "measurement_version" => Map.get(record, :measurement_version, 1),
         "added_at" => record.added_at
       }
     end)
