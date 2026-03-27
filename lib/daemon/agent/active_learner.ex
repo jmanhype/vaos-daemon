@@ -285,14 +285,29 @@ defmodule Daemon.Agent.ActiveLearner do
 
   defp record_outcome_if_ours(data, quality) do
     topic = Map.get(data, :topic) || Map.get(data, "topic") || ""
-    key = normalize_topic(@task_prefix <> topic)
+    # Strip "Investigate: " prefix if present — heartbeat agent may or may not include it
+    stripped = String.replace(topic, ~r/^Investigate:\s*/i, "")
 
-    case :ets.lookup(@outcomes_table, key) do
-      [{^key, %{actual_quality: nil} = record}] ->
+    # Try both with and without prefix to handle either case
+    candidates = [
+      normalize_topic(@task_prefix <> stripped),
+      normalize_topic(stripped)
+    ] |> Enum.uniq()
+
+    matched =
+      Enum.find_value(candidates, fn key ->
+        case :ets.lookup(@outcomes_table, key) do
+          [{^key, %{actual_quality: nil} = record}] -> {key, record}
+          _ -> nil
+        end
+      end)
+
+    case matched do
+      {key, record} ->
         :ets.insert(@outcomes_table, {key, %{record | actual_quality: quality}})
-        Logger.debug("[ActiveLearner] Recorded outcome for '#{topic}': quality=#{Float.round(quality, 3)}")
+        Logger.info("[ActiveLearner] Recorded outcome for '#{stripped}': quality=#{Float.round(quality, 3)}")
 
-      _ ->
+      nil ->
         :ok
     end
   rescue
