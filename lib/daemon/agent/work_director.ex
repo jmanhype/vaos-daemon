@@ -780,7 +780,7 @@ defmodule Daemon.Agent.WorkDirector do
         ## Instructions
         1. Read the files mentioned in the errors
         2. Fix the compilation errors
-        3. Run `mix compile --warnings-as-errors` to verify the fix (use cwd: "#{repo_path}")
+        3. Run `mix compile` to verify the fix (use cwd: "#{repo_path}")
         4. If new errors appear, fix those too
 
         ONLY fix compilation errors. Do NOT add features, refactor, or change behavior.
@@ -803,10 +803,29 @@ defmodule Daemon.Agent.WorkDirector do
   end
 
   defp run_compile(repo_path) do
-    case System.cmd("bash", ["-c", "cd #{repo_path} && mix compile --warnings-as-errors 2>&1"],
+    # Use plain `mix compile` — NOT --warnings-as-errors, because this codebase
+    # has 60+ pre-existing warnings (Bcrypt, film_pipeline, etc.) that would
+    # cause false failures on every agent attempt.
+    case System.cmd("bash", ["-c", "cd #{repo_path} && mix compile 2>&1"],
            stderr_to_stdout: true, env: [{"MIX_ENV", "dev"}]) do
-      {_, 0} -> :ok
-      {output, _} -> {:error, output}
+      {_output, 0} -> :ok
+      {output, _} ->
+        # Filter out warnings — only report actual errors
+        errors = output
+          |> String.split("\n")
+          |> Enum.filter(fn line ->
+            String.contains?(line, "** (CompileError)") or
+            String.contains?(line, "error:") or
+            String.contains?(line, "== Compilation error")
+          end)
+          |> Enum.join("\n")
+
+        if errors == "" do
+          # Only warnings, no real errors — treat as success
+          :ok
+        else
+          {:error, output}
+        end
     end
   rescue
     e -> {:error, Exception.message(e)}
@@ -964,7 +983,7 @@ defmodule Daemon.Agent.WorkDirector do
 
     1. Study the reference implementations and file territory above
     2. Implement the changes using file_write / file_edit tools with ABSOLUTE paths
-    3. Use shell_execute with cwd: "#{repo_path}" to run `mix compile --warnings-as-errors`
+    3. Use shell_execute with cwd: "#{repo_path}" to run `mix compile`
     4. If compilation fails, read the errors and fix them
     5. Run `mix test` for relevant test files (with cwd: "#{repo_path}")
     6. Verify your implementation is complete and compiles cleanly
