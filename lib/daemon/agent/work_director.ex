@@ -447,21 +447,37 @@ defmodule Daemon.Agent.WorkDirector do
   defp refresh_backlog(state) do
     Logger.debug("[WorkDirector] Refreshing backlog from #{length(@source_modules)} static sources...")
 
-    # Fetch from static sources with timeout protection
+    # Fetch each source independently with timeout
     static_items =
-      try do
-        task = Task.async(fn -> Source.fetch_all(@source_modules) end)
-        case Task.yield(task, 30_000) || Task.shutdown(task) do
-          {:ok, items} -> items
-          _ ->
-            Logger.warning("[WorkDirector] Static source fetch timed out")
+      Enum.flat_map(@source_modules, fn mod ->
+        source_name = mod |> Module.split() |> List.last()
+        Logger.debug("[WorkDirector] Fetching from #{source_name}...")
+
+        try do
+          task = Task.async(fn -> mod.fetch() end)
+          case Task.yield(task, 15_000) || Task.shutdown(task) do
+            {:ok, {:ok, items}} ->
+              Logger.debug("[WorkDirector] #{source_name}: #{length(items)} items")
+              items
+
+            {:ok, {:error, reason}} ->
+              Logger.warning("[WorkDirector] #{source_name} error: #{inspect(reason)}")
+              []
+
+            nil ->
+              Logger.warning("[WorkDirector] #{source_name} timed out (15s)")
+              []
+          end
+        rescue
+          e ->
+            Logger.warning("[WorkDirector] #{source_name} crashed: #{Exception.message(e)}")
+            []
+        catch
+          :exit, reason ->
+            Logger.warning("[WorkDirector] #{source_name} exit: #{inspect(reason)}")
             []
         end
-      rescue
-        _ -> []
-      catch
-        :exit, _ -> []
-      end
+      end)
 
     Logger.debug("[WorkDirector] Static sources returned #{length(static_items)} items")
 
