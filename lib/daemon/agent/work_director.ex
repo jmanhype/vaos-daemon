@@ -169,7 +169,7 @@ defmodule Daemon.Agent.WorkDirector do
     {:ok, manual_buffer} = Source.Manual.start_buffer()
     Logger.debug("[WorkDirector] Buffers started")
 
-    # Subscribe to investigation_complete events
+    # Subscribe to investigation_complete events (async — don't block bootstrap)
     investigation_ref =
       try do
         handler = fn event ->
@@ -177,7 +177,14 @@ defmodule Daemon.Agent.WorkDirector do
           Source.Investigation.push(inv_buffer, data)
         end
 
-        Daemon.Events.Bus.register_handler(:investigation_complete, handler)
+        # Use a timeout to avoid blocking if Bus is busy
+        task = Task.async(fn -> Daemon.Events.Bus.register_handler(:investigation_complete, handler) end)
+        case Task.yield(task, 5_000) || Task.shutdown(task) do
+          {:ok, ref} -> ref
+          _ ->
+            Logger.warning("[WorkDirector] Bus subscription timed out — skipping")
+            nil
+        end
       rescue
         e ->
           Logger.warning("[WorkDirector] Failed to subscribe to events: #{Exception.message(e)}")
@@ -188,6 +195,8 @@ defmodule Daemon.Agent.WorkDirector do
           nil
       end
 
+    Logger.debug("[WorkDirector] Event subscription done (ref=#{inspect(investigation_ref)})")
+
     # Load persisted backlog
     persisted =
       try do
@@ -197,6 +206,8 @@ defmodule Daemon.Agent.WorkDirector do
           Logger.warning("[WorkDirector] Failed to load backlog: #{Exception.message(e)}")
           %{}
       end
+
+    Logger.debug("[WorkDirector] Backlog loaded (#{map_size(persisted)} items)")
 
     state = %{state |
       investigation_buffer: inv_buffer,
