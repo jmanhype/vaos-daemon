@@ -579,8 +579,15 @@ defmodule Daemon.Agent.WorkDirector do
           "This task was manually submitted by a human operator."
       end
 
+    repo_path = Application.get_env(:daemon, :repo_path, Path.expand("~/vas-swarm"))
+
     """
     #{source_context}
+
+    ## Repository
+    The codebase is located at: `#{repo_path}`
+    All shell commands MUST use `cwd: "#{repo_path}"` or `cd #{repo_path} &&` prefix.
+    This is an Elixir/OTP project using Mix.
 
     ## Task
     **#{item.title}**
@@ -588,7 +595,7 @@ defmodule Daemon.Agent.WorkDirector do
     #{item.description}
 
     ## Instructions
-    1. Create branch `#{branch}` from main
+    1. `cd #{repo_path}` then create branch `#{branch}` from main: `git checkout -b #{branch} main`
     2. Implement the changes described above
     3. Run `mix compile --warnings-as-errors` to verify compilation
     4. Run `mix test` for relevant test files
