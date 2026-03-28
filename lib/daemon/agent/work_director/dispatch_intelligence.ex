@@ -73,9 +73,12 @@ defmodule Daemon.Agent.WorkDirector.DispatchIntelligence do
     # Suggest file territory based on task analysis
     file_territory = suggest_file_territory(title, description, files_with_symbols, repo_path)
 
+    # Auto-detect codebase conventions (zero LLM cost)
+    conventions = detect_conventions(repo_path)
+
     # Build the execution trace string
     trace = build_execution_trace(
-      title, files_with_symbols, reference_code, integration_points, file_territory
+      title, files_with_symbols, reference_code, integration_points, file_territory, conventions
     )
 
     {:ok, %{
@@ -83,6 +86,7 @@ defmodule Daemon.Agent.WorkDirector.DispatchIntelligence do
       reference_code: reference_code,
       integration_points: integration_points,
       file_territory: file_territory,
+      conventions: conventions,
       execution_trace: trace
     }}
   rescue
@@ -327,7 +331,7 @@ defmodule Daemon.Agent.WorkDirector.DispatchIntelligence do
 
   # -- Execution Trace Builder --
 
-  defp build_execution_trace(_title, relevant_files, reference_code, integration_points, file_territory) do
+  defp build_execution_trace(_title, relevant_files, reference_code, integration_points, file_territory, conventions) do
     # Section 1: Relevant files with symbols
     file_section =
       relevant_files
@@ -342,7 +346,16 @@ defmodule Daemon.Agent.WorkDirector.DispatchIntelligence do
       end)
       |> Enum.join("\n")
 
-    sections = ["## Relevant Files\n#{file_section}"]
+    # Section 0: Codebase conventions (MUST come first — sets ground rules)
+    conventions_section =
+      if conventions != [] do
+        rules = Enum.map_join(conventions, "\n", &("- #{&1}"))
+        ["## Codebase Conventions (MANDATORY — violating these will cause your work to be rejected)\n#{rules}"]
+      else
+        []
+      end
+
+    sections = conventions_section ++ ["## Relevant Files\n#{file_section}"]
 
     # Section 2: Reference implementations
     ref_section =
@@ -388,5 +401,135 @@ defmodule Daemon.Agent.WorkDirector.DispatchIntelligence do
     sections = sections ++ ["## File Territory (you may ONLY touch these files)\n#{territory_section}"]
 
     Enum.join(sections, "\n\n")
+  end
+
+  # -- Codebase Convention Detection --
+
+  @doc """
+  Auto-detect codebase conventions from static analysis.
+  Returns a list of rule strings to inject into the dispatch prompt.
+  Zero LLM cost — pure file system inspection.
+  """
+  def detect_conventions(repo_path) do
+    rules = []
+
+    # 1. Detect module namespace prefix
+    rules = rules ++ detect_namespace(repo_path)
+
+    # 2. Detect web framework (Phoenix vs Plug.Router vs none)
+    rules = rules ++ detect_web_framework(repo_path)
+
+    # 3. Detect file structure patterns
+    rules = rules ++ detect_file_patterns(repo_path)
+
+    # 4. Detect test conventions
+    rules = rules ++ detect_test_patterns(repo_path)
+
+    rules
+  rescue
+    _ -> []
+  end
+
+  defp detect_namespace(repo_path) do
+    # Sample the first 10 .ex files in lib/ for their defmodule prefix
+    case System.cmd("bash", ["-c",
+      "grep -rh '^defmodule ' #{repo_path}/lib/ --include='*.ex' 2>/dev/null | head -20"],
+      stderr_to_stdout: true) do
+      {output, 0} when byte_size(output) > 0 ->
+        prefixes =
+          output
+          |> String.split("\n", trim: true)
+          |> Enum.flat_map(fn line ->
+            case Regex.run(~r/defmodule\s+([\w]+)\./, line) do
+              [_, prefix] -> [prefix]
+              _ -> []
+            end
+          end)
+          |> Enum.frequencies()
+          |> Enum.sort_by(fn {_, count} -> count end, :desc)
+
+        case prefixes do
+          [{top_prefix, _} | _] ->
+            anti_prefixes =
+              ~w(Phoenix VasSwarm VasSwarmWeb MyApp App Web)
+              |> Enum.reject(&(&1 == top_prefix))
+              |> Enum.join(", ")
+
+            ["Module namespace: ALL modules MUST start with `#{top_prefix}.` — NEVER use #{anti_prefixes} or any other prefix"]
+          _ -> []
+        end
+
+      _ -> []
+    end
+  end
+
+  defp detect_web_framework(repo_path) do
+    rules = []
+
+    # Check if Phoenix is in deps
+    has_phoenix = File.exists?(Path.join(repo_path, "lib/daemon_web")) or
+                  File.exists?(Path.join(repo_path, "lib/vas_swarm_web"))
+
+    # Check if Plug.Router is used
+    has_plug_router =
+      case System.cmd("bash", ["-c",
+        "grep -rl 'use Plug.Router' #{repo_path}/lib/ --include='*.ex' 2>/dev/null | wc -l"],
+        stderr_to_stdout: true) do
+        {count, 0} -> String.trim(count) |> String.to_integer() > 0
+        _ -> false
+      end
+
+    rules = if not has_phoenix and has_plug_router do
+      rules ++ [
+        "This project uses raw Plug.Router for HTTP — NOT Phoenix. Do NOT create Phoenix controllers, views, templates, or LiveView modules",
+        "HTTP route modules go in `lib/daemon/channels/http/api/` and use `use Plug.Router`",
+        "Do NOT create files in any `*_web/` directory — this directory does not exist"
+      ]
+    else
+      rules
+    end
+
+    # Detect the HTTP API entry point
+    api_path = Path.join(repo_path, "lib/daemon/channels/http/api.ex")
+    if File.exists?(api_path) do
+      rules ++ [
+        "New HTTP endpoints: create a route module in `lib/daemon/channels/http/api/` then add `forward \"/path\", to: API.YourRoutes` in `lib/daemon/channels/http/api.ex`"
+      ]
+    else
+      rules
+    end
+  end
+
+  defp detect_file_patterns(repo_path) do
+    rules = []
+
+    # Detect the lib/ structure depth
+    lib_dirs =
+      case System.cmd("bash", ["-c",
+        "ls -d #{repo_path}/lib/daemon/*/ 2>/dev/null | head -15"],
+        stderr_to_stdout: true) do
+        {output, 0} ->
+          output
+          |> String.split("\n", trim: true)
+          |> Enum.map(&Path.basename(String.trim_trailing(&1, "/")))
+        _ -> []
+      end
+
+    if lib_dirs != [] do
+      dir_list = Enum.join(lib_dirs, ", ")
+      rules ++ ["Existing lib/daemon/ subdirectories: #{dir_list} — place new files in the appropriate existing directory"]
+    else
+      rules
+    end
+  end
+
+  defp detect_test_patterns(repo_path) do
+    test_dir = Path.join(repo_path, "test")
+
+    if File.dir?(test_dir) do
+      ["Tests go in `test/` mirroring the `lib/` structure. Test files end with `_test.exs`"]
+    else
+      []
+    end
   end
 end
