@@ -57,10 +57,16 @@ defmodule Daemon.Events.Bus do
     * `:signal_sn` - signal-to-noise ratio (0.0-1.0)
   """
   def emit(event_type, payload \\ %{}, opts \\ []) when event_type in @event_types do
-    # Run entire emit body in a spawned process to never block the caller.
-    # The old goldrush + auto_classify pipeline can deadlock or timeout.
-    spawn(fn -> do_emit(event_type, payload, opts) end)
-    {:ok, nil}
+    # Check if system is shutting down
+    if Daemon.GracefulShutdown.shutting_down?() do
+      Logger.warning("[Bus] Rejecting new event during shutdown: #{event_type}")
+      {:error, :shutting_down}
+    else
+      # Run entire emit body in a spawned process to never block the caller.
+      # The old goldrush + auto_classify pipeline can deadlock or timeout.
+      spawn(fn -> do_emit(event_type, payload, opts) end)
+      {:ok, nil}
+    end
   end
 
   defp do_emit(event_type, payload, opts) do
@@ -106,15 +112,17 @@ defmodule Daemon.Events.Bus do
     Task.Supervisor.start_child(
       Daemon.Events.TaskSupervisor,
       fn ->
-        try do
-          :glc.handle(:daemon_event_router, gre_event)
-        catch
-          :error, reason ->
-            Logger.warning("[Bus] Router dispatch error: #{inspect(reason)}")
+        Daemon.GracefulShutdown.track_task(fn ->
+          try do
+            :glc.handle(:daemon_event_router, gre_event)
+          catch
+            :error, reason ->
+              Logger.warning("[Bus] Router dispatch error: #{inspect(reason)}")
 
-          :exit, reason ->
-            Logger.warning("[Bus] Router dispatch exit: #{inspect(reason)}")
-        end
+            :exit, reason ->
+              Logger.warning("[Bus] Router dispatch exit: #{inspect(reason)}")
+          end
+        end)
       end,
       max_children: 1000
     )
@@ -186,6 +194,16 @@ defmodule Daemon.Events.Bus do
 
   @doc "List all registered event types."
   def event_types, do: @event_types
+
+  @doc """
+  Signal the event bus to stop accepting new events.
+
+  Called by Daemon.GracefulShutdown during shutdown sequence.
+  """
+  def shutdown do
+    Logger.info("[Bus] Shutdown signal received - stopping new event acceptance")
+    :ok
+  end
 
   @impl true
   def init(:ok) do
@@ -266,17 +284,19 @@ defmodule Daemon.Events.Bus do
 
   defp dispatch_with_dlq(type, payload, handler) do
     Task.Supervisor.start_child(Daemon.Events.TaskSupervisor, fn ->
-      try do
-        handler.(payload)
-      rescue
-        e ->
-          Logger.warning("[Bus] Handler crash for #{type}: #{Exception.message(e)}")
-          Daemon.Events.DLQ.enqueue(type, payload, handler, Exception.message(e))
-      catch
-        kind, reason ->
-          Logger.warning("[Bus] Handler #{kind} for #{type}: #{inspect(reason)}")
-          Daemon.Events.DLQ.enqueue(type, payload, handler, "#{kind}: #{inspect(reason)}")
-      end
+      Daemon.GracefulShutdown.track_task(fn ->
+        try do
+          handler.(payload)
+        rescue
+          e ->
+            Logger.warning("[Bus] Handler crash for #{type}: #{Exception.message(e)}")
+            Daemon.Events.DLQ.enqueue(type, payload, handler, Exception.message(e))
+        catch
+          kind, reason ->
+            Logger.warning("[Bus] Handler #{kind} for #{type}: #{inspect(reason)}")
+            Daemon.Events.DLQ.enqueue(type, payload, handler, "#{kind}: #{inspect(reason)}")
+        end
+      end)
     end)
   end
 end

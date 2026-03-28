@@ -65,49 +65,69 @@ defmodule Daemon.Channels.HTTP do
 
   # ── Health (no auth) ────────────────────────────────────────────────
 
+  @doc """
+  Health check endpoint with graceful shutdown status.
+
+  Returns 503 Service Unavailable if system is shutting down.
+  """
   get "/health" do
-    provider =
-      Application.get_env(:daemon, :default_provider, "unknown")
-      |> to_string()
-
-    model_name =
-      case Application.get_env(:daemon, :default_model) do
-        nil ->
-          # Resolve from provider's default model
-          prov = Application.get_env(:daemon, :default_provider, :ollama)
-
-          case MiosaProviders.Registry.provider_info(prov) do
-            {:ok, info} -> to_string(info.default_model)
-            _ -> to_string(prov)
-          end
-
-        m ->
-          to_string(m)
-      end
-
-    version =
-      case Application.spec(:daemon, :vsn) do
-        nil -> "0.2.5"
-        vsn -> to_string(vsn)
-      end
-
-    uptime = System.system_time(:second) - Application.get_env(:daemon, :start_time, System.system_time(:second))
-
-    context_window = MiosaProviders.Registry.context_window(model_name)
-
-    body =
-      Jason.encode!(%{
-        status: "ok",
-        version: version,
-        uptime_seconds: uptime,
-        provider: provider,
-        model: model_name,
-        context_window: context_window
+    # Check if system is shutting down
+    if Daemon.GracefulShutdown.shutting_down?() do
+      body = Jason.encode!(%{
+        status: "shutting_down",
+        message: "System is gracefully shutting down"
       })
 
-    conn
-    |> put_resp_content_type("application/json")
-    |> send_resp(200, body)
+      conn
+      |> put_resp_content_type("application/json")
+      |> send_resp(503, body)
+    else
+      provider =
+        Application.get_env(:daemon, :default_provider, "unknown")
+        |> to_string()
+
+      model_name =
+        case Application.get_env(:daemon, :default_model) do
+          nil ->
+            # Resolve from provider's default model
+            prov = Application.get_env(:daemon, :default_provider, :ollama)
+
+            case MiosaProviders.Registry.provider_info(prov) do
+              {:ok, info} -> to_string(info.default_model)
+              _ -> to_string(prov)
+            end
+
+          m ->
+            to_string(m)
+        end
+
+      version =
+        case Application.spec(:daemon, :vsn) do
+          nil -> "0.2.5"
+          vsn -> to_string(vsn)
+        end
+
+      uptime = System.system_time(:second) - Application.get_env(:daemon, :start_time, System.system_time(:second))
+
+      context_window = MiosaProviders.Registry.context_window(model_name)
+
+      in_flight_tasks = Daemon.GracefulShutdown.task_count()
+
+      body =
+        Jason.encode!(%{
+          status: "ok",
+          version: version,
+          uptime_seconds: uptime,
+          provider: provider,
+          model: model_name,
+          context_window: context_window,
+          in_flight_tasks: in_flight_tasks
+        })
+
+      conn
+      |> put_resp_content_type("application/json")
+      |> send_resp(200, body)
+    end
   end
 
   # ── Onboarding (no auth) ──────────────────────────────────────
