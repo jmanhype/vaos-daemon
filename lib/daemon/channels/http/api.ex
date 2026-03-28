@@ -304,7 +304,7 @@ defmodule Daemon.Channels.HTTP.API do
             if Application.get_env(:daemon, :require_auth, false) do
               conn
               |> put_resp_content_type("application/json")
-              |> send_resp(401, Jason.encode!(%{error: "unauthorized", code: "INVALID_TOKEN"}))
+              |> send_resp(401, Jason.encode!(%{error: %{code: "unauthorized", message: "Invalid or expired token"}}))
               |> halt()
             else
               Logger.warning("Invalid/expired token ignored (require_auth=false): #{inspect(reason)}")
