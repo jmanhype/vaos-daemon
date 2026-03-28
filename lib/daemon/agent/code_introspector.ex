@@ -67,6 +67,13 @@ defmodule Daemon.Agent.CodeIntrospector do
   @max_consecutive_failures  3             # Disable after N consecutive investigation failures
   @resolution_window_polls   6             # ~1 hour (6 * 10min) of no recurrence = resolved
 
+  # Architectural diagnostic thresholds
+  @mailbox_threshold 500
+  @wiener_min_subscribers 0  # event types with 0 subscribers = open loop
+  @ashby_min_occurrences 3   # crash patterns must recur 3+ times
+  @arch_cooldown_seconds 86_400  # 24 hours — much longer than metric cooldown (2hr)
+  @self_modification_blocked ["code_introspector.ex", "insight_actuator.ex", "investigate.ex"]
+
   # ── Public API ──────────────────────────────────────────────────────
 
   def start_link(opts \\ []) do
@@ -233,6 +240,39 @@ defmodule Daemon.Agent.CodeIntrospector do
     # Prune investigated_anomalies older than cooldown
     state = prune_investigated(state, now)
 
+    # Architectural diagnostics — fast path (no investigation needed)
+    arch_anomalies = detect_architectural_anomalies(signals)
+
+    arch_anomalies
+    |> Enum.reject(fn a -> arch_recently_emitted?(a.hash, state) end)
+    |> Enum.reject(fn a -> self_modification_target?(a) end)
+    |> Enum.take(2)
+    |> Enum.each(fn anomaly ->
+      payload = %{
+        source_module: "code_introspector",
+        diagnostic_type: anomaly.diagnostic_type,
+        severity: anomaly.severity,
+        topic: anomaly.topic,
+        direction: "for",
+        grounded_for_count: 1,
+        fraudulent_citations: 0,
+        supporting: [%{
+          source_type: :sourced,
+          verification: :verified,
+          claim: anomaly.evidence_summary,
+          source_title: "CodeIntrospector architectural diagnostic (#{anomaly.diagnostic_type})"
+        }],
+        opposing: [],
+        evidence_summary: anomaly.evidence_summary,
+        suggested_fix: anomaly.suggested_fix,
+        target_files: anomaly.target_files
+      }
+
+      Logger.info("[CodeIntrospector] Emitting architectural finding: #{anomaly.diagnostic_type}")
+      Daemon.Events.Bus.emit(:architectural_finding, payload)
+      mark_seen(anomaly.hash)
+    end)
+
     persist_state(state)
     state
   end
@@ -267,7 +307,10 @@ defmodule Daemon.Agent.CodeIntrospector do
       circuit_breakers: safe_call(fn -> :ets.tab2list(:daemon_circuit_breakers) end, []),
       cost: safe_call(fn -> Daemon.Agent.CostTracker.get_summary() end, %{}),
       self_diagnosis: safe_call(fn -> Daemon.Investigation.SelfDiagnosis.get_findings() end, []),
-      active_learner: safe_call(fn -> Daemon.Agent.ActiveLearner.stats() end, %{})
+      active_learner: safe_call(fn -> Daemon.Agent.ActiveLearner.stats() end, %{}),
+      mailbox_depths: safe_call(fn -> collect_mailbox_depths() end, []),
+      bus_event_types: safe_call(fn -> Daemon.Events.Bus.event_types() end, []),
+      bus_handlers: safe_call(fn -> collect_bus_handlers() end, %{})
     }
   end
 
@@ -278,6 +321,33 @@ defmodule Daemon.Agent.CodeIntrospector do
       _ -> default
     catch
       :exit, _ -> default
+    end
+  end
+
+  defp collect_mailbox_depths do
+    supervisors = [
+      Daemon.Supervisors.Infrastructure,
+      Daemon.Supervisors.AgentServices
+    ]
+
+    for sup <- supervisors,
+        {name, pid, _type, _modules} <- safe_call(fn -> Supervisor.which_children(sup) end, []),
+        is_pid(pid) do
+      case Process.info(pid, :message_queue_len) do
+        {:message_queue_len, len} -> {name, len}
+        _ -> nil
+      end
+    end
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp collect_bus_handlers do
+    try do
+      :ets.tab2list(:daemon_event_handlers)
+      |> Enum.group_by(fn {event_type, _ref, _fn} -> event_type end)
+      |> Map.new(fn {k, v} -> {k, length(v)} end)
+    rescue
+      _ -> %{}
     end
   end
 
@@ -549,6 +619,124 @@ defmodule Daemon.Agent.CodeIntrospector do
     end)
 
     acc ++ anomalies
+  end
+
+  # ── Architectural Anomaly Detection ─────────────────────────────────
+  # These detect structural violations (Shannon, Ashby, Wiener) that don't
+  # need paper research — they go directly to InsightActuator via fast path.
+
+  defp detect_architectural_anomalies(signals) do
+    []
+    |> detect_shannon_violations(signals)
+    |> detect_ashby_violations(signals)
+    |> detect_wiener_violations(signals)
+  end
+
+  # Shannon: channel saturation — mailbox depth exceeds processing capacity
+  defp detect_shannon_violations(acc, signals) do
+    overloaded =
+      signals.mailbox_depths
+      |> Enum.filter(fn {_name, len} -> len > @mailbox_threshold end)
+      |> Enum.sort_by(fn {_name, len} -> -len end)
+
+    if overloaded == [] do
+      acc
+    else
+      {name, len} = hd(overloaded)
+      severity = if len > @mailbox_threshold * 3, do: :high, else: :medium
+
+      anomaly = %{
+        diagnostic_type: :shannon_violation,
+        severity: severity,
+        hash: anomaly_hash(:shannon_violation, inspect(name)),
+        topic: "Shannon violation: GenServer #{inspect(name)} mailbox depth #{len} exceeds capacity",
+        evidence_summary: "Process #{inspect(name)} has #{len} pending messages " <>
+          "(threshold: #{@mailbox_threshold}). " <>
+          "#{length(overloaded)} total overloaded processes: " <>
+          Enum.map_join(overloaded, ", ", fn {n, l} -> "#{inspect(n)}=#{l}" end),
+        suggested_fix: "Investigate why #{inspect(name)} is processing slower than message arrival rate. " <>
+          "Consider: adding backpressure, increasing processing throughput, or shedding low-priority work.",
+        target_files: [],
+        overloaded_processes: overloaded
+      }
+      acc ++ [anomaly]
+    end
+  end
+
+  # Ashby: requisite variety — recurring crash patterns without specific handlers
+  defp detect_ashby_violations(acc, signals) do
+    pitfalls = case signals.crashes do
+      {:ok, list} when is_list(list) -> list
+      list when is_list(list) -> list
+      _ -> []
+    end
+
+    recurring = Enum.filter(pitfalls, fn p ->
+      count = Map.get(p, :count, 0)
+      count >= @ashby_min_occurrences
+    end)
+
+    if recurring == [] do
+      acc
+    else
+      total = length(recurring)
+      worst = Enum.max_by(recurring, fn p -> Map.get(p, :count, 0) end)
+      severity = if total >= 5, do: :high, else: :medium
+
+      anomaly = %{
+        diagnostic_type: :ashby_violation,
+        severity: severity,
+        hash: anomaly_hash(:ashby_violation, "pitfalls_#{total}"),
+        topic: "Ashby violation: #{total} recurring crash patterns without specific handlers",
+        evidence_summary: "CrashLearner shows #{total} distinct failure patterns recurring #{@ashby_min_occurrences}+ times. " <>
+          "Worst: \"#{String.slice(Map.get(worst, :summary, ""), 0, 100)}\" (#{Map.get(worst, :count, 0)}x). " <>
+          "Each pattern represents a failure mode the system handles generically rather than specifically.",
+        suggested_fix: "Add targeted rescue/catch clauses or error handlers for each recurring crash pattern. " <>
+          "Patterns: " <> Enum.map_join(Enum.take(recurring, 5), "; ", fn p ->
+            "\"#{String.slice(Map.get(p, :pattern, ""), 0, 80)}\" (#{Map.get(p, :count, 0)}x)"
+          end),
+        target_files: [],
+        unhandled_patterns: Enum.map(recurring, fn p -> Map.get(p, :pattern, "") end)
+      }
+      acc ++ [anomaly]
+    end
+  end
+
+  # Wiener: open feedback loops — event types with zero subscribers
+  defp detect_wiener_violations(acc, signals) do
+    event_types = signals.bus_event_types
+    handler_map = signals.bus_handlers
+
+    unsubscribed = Enum.filter(event_types, fn type ->
+      Map.get(handler_map, type, 0) <= @wiener_min_subscribers
+    end)
+
+    # Exclude event types that are inherently fire-and-forget
+    expected_no_handler = [:channel_connected, :channel_disconnected, :channel_error]
+    true_violations = unsubscribed -- expected_no_handler
+
+    if true_violations == [] do
+      acc
+    else
+      severity = if length(true_violations) >= 3, do: :high, else: :medium
+
+      anomaly = %{
+        diagnostic_type: :wiener_violation,
+        severity: severity,
+        hash: anomaly_hash(:wiener_violation, "open_loops_#{length(true_violations)}"),
+        topic: "Wiener violation: #{length(true_violations)} event types with no subscribers (open feedback loops)",
+        evidence_summary: "Event types emitted on the bus with zero handlers: #{inspect(true_violations)}. " <>
+          "These signals are produced but never consumed — information flows into the void " <>
+          "with no feedback path. Total event types: #{length(event_types)}, " <>
+          "subscribed: #{length(event_types) - length(unsubscribed)}.",
+        suggested_fix: "For each unsubscribed event type, either: (1) add a handler that tracks outcomes, " <>
+          "or (2) remove the event emission if the signal serves no purpose. " <>
+          "Unsubscribed: #{inspect(true_violations)}",
+        target_files: ["lib/daemon/events/bus.ex"],
+        open_loops: true_violations
+      }
+      acc ++ [anomaly]
+    end
   end
 
   # ── Baseline & Z-Score ──────────────────────────────────────────────
@@ -872,6 +1060,24 @@ defmodule Daemon.Agent.CodeIntrospector do
     _ -> :ok
   end
 
+  # ── Architectural Self-Protection ────────────────────────────────────
+
+  defp arch_recently_emitted?(hash, state) do
+    case Map.get(state.investigated_anomalies, hash) do
+      nil -> false
+      dt -> DateTime.diff(DateTime.utc_now(), dt) < @arch_cooldown_seconds
+    end
+  end
+
+  defp self_modification_target?(anomaly) do
+    targets = Map.get(anomaly, :target_files, [])
+    Enum.any?(targets, fn path ->
+      Enum.any?(@self_modification_blocked, fn blocked ->
+        String.contains?(path, blocked)
+      end)
+    end)
+  end
+
   # ── Helpers ─────────────────────────────────────────────────────────
 
   defp anomaly_hash(type, identifier) do
@@ -984,6 +1190,9 @@ defmodule Daemon.Agent.CodeIntrospector do
         "crash_pattern" -> :crash_pattern
         "learner_degradation" -> :learner_degradation
         "correlated_incident" -> :correlated_incident
+        "shannon_violation" -> :shannon_violation
+        "ashby_violation" -> :ashby_violation
+        "wiener_violation" -> :wiener_violation
         _ -> nil
       end
 

@@ -131,6 +131,7 @@ defmodule Daemon.Agent.InsightActuator do
 
     state = %{
       event_ref: nil,
+      arch_event_ref: nil,
       prs_created: Map.get(persisted, "prs_created", 0),
       prs_today: 0,
       last_pr_at: nil,
@@ -151,8 +152,9 @@ defmodule Daemon.Agent.InsightActuator do
   @impl true
   def handle_info(:subscribe, state) do
     ref = Daemon.Events.Bus.register_handler(:investigation_complete, &handle_event/1)
-    Logger.info("[InsightActuator] Subscribed to :investigation_complete events")
-    {:noreply, %{state | event_ref: ref}}
+    arch_ref = Daemon.Events.Bus.register_handler(:architectural_finding, &handle_arch_event/1)
+    Logger.info("[InsightActuator] Subscribed to :investigation_complete and :architectural_finding events")
+    {:noreply, %{state | event_ref: ref, arch_event_ref: arch_ref}}
   end
 
   def handle_info({:insight_candidate, data}, state) do
@@ -160,6 +162,17 @@ defmodule Daemon.Agent.InsightActuator do
 
     if state.enabled do
       state = process_finding(data, state)
+      {:noreply, state}
+    else
+      {:noreply, state}
+    end
+  end
+
+  def handle_info({:arch_candidate, data}, state) do
+    state = maybe_reset_daily_count(state)
+
+    if state.enabled do
+      state = process_architectural_finding(data, state)
       {:noreply, state}
     else
       {:noreply, state}
@@ -227,11 +240,15 @@ defmodule Daemon.Agent.InsightActuator do
   def terminate(_reason, %{event_ref: ref} = state) when not is_nil(ref) do
     persist_state(state)
     Daemon.Events.Bus.unregister_handler(:investigation_complete, ref)
+    arch_ref = Map.get(state, :arch_event_ref)
+    if arch_ref, do: Daemon.Events.Bus.unregister_handler(:architectural_finding, arch_ref)
     :ok
   end
 
   def terminate(_reason, state) do
     persist_state(state)
+    arch_ref = Map.get(state, :arch_event_ref)
+    if arch_ref, do: Daemon.Events.Bus.unregister_handler(:architectural_finding, arch_ref)
     :ok
   end
 
@@ -246,6 +263,16 @@ defmodule Daemon.Agent.InsightActuator do
   end
 
   defp handle_event(_), do: :ok
+
+  defp handle_arch_event(%{data: data}) when is_map(data) do
+    send(__MODULE__, {:arch_candidate, data})
+  end
+
+  defp handle_arch_event(meta) when is_map(meta) do
+    send(__MODULE__, {:arch_candidate, meta})
+  end
+
+  defp handle_arch_event(_), do: :ok
 
   # ── Core Pipeline ──────────────────────────────────────────────
 
@@ -292,6 +319,40 @@ defmodule Daemon.Agent.InsightActuator do
 
       _ ->
         state
+    end
+  end
+
+  # ── Architectural Finding Fast Path ──────────────────────────────
+  # Skips Tier 1 entirely — architectural findings are pre-classified as
+  # daemon-relevant. Goes directly to Tier 2 for actionability, then dispatch.
+
+  defp process_architectural_finding(data, state) do
+    topic = Map.get(data, :topic) || Map.get(data, "topic") || "unknown"
+    diagnostic_type = Map.get(data, :diagnostic_type) || Map.get(data, "diagnostic_type")
+
+    if seen_fresh?(topic) do
+      Logger.debug("[InsightActuator] Dedup: architectural finding already seen")
+      state
+    else
+      Logger.info("[InsightActuator] Fast path: #{diagnostic_type} — skipping Tier 1, going to Tier 2")
+      quality = safe_compute_quality(data)
+
+      with :ok <- quality_gate(quality),
+           :ok <- rate_limit_check(state),
+           {:ok, change_spec} <- tier2_classify(data, ["architectural_diagnostic"]),
+           :ok <- risk_gate(change_spec, topic),
+           {:ok, state} <- thompson_gate(topic, change_spec, state) do
+        mark_seen(topic)
+        dispatch_to_orchestrator(data, change_spec, quality, state)
+      else
+        {:skip, reason} ->
+          Logger.info("[InsightActuator] Fast path rejected: #{reason}")
+          record_rejection(topic, reason, quality, state)
+        {:blocked, reason} ->
+          Logger.info("[InsightActuator] Fast path blocked: #{reason}")
+          record_rejection(topic, reason, quality, state)
+        _ -> state
+      end
     end
   end
 
