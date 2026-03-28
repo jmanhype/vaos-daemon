@@ -608,15 +608,19 @@ defmodule Daemon.Agent.WorkDirector do
                 # Poll Orchestrator.progress until task completes or times out
                 case await_orchestrator_completion(task_id) do
                   {:completed, synthesis} ->
-                    # Verify the branch actually exists
-                    case verify_branch_exists(branch, repo_path) do
-                      true ->
-                        Logger.info("[WorkDirector] Task #{task_id} completed, branch #{branch} exists")
-                        {:ok, synthesis, branch}
-
-                      false ->
+                    # Verify the branch exists AND has commits beyond main
+                    cond do
+                      not verify_branch_exists(branch, repo_path) ->
                         Logger.warning("[WorkDirector] Task #{task_id} completed but branch #{branch} not found")
                         {:error, {:no_branch, synthesis}}
+
+                      not branch_has_commits?(branch, repo_path) ->
+                        Logger.warning("[WorkDirector] Task #{task_id} completed but branch #{branch} has 0 commits beyond main")
+                        {:error, {:empty_branch, synthesis}}
+
+                      true ->
+                        Logger.info("[WorkDirector] Task #{task_id} completed, branch #{branch} verified with commits")
+                        {:ok, synthesis, branch}
                     end
 
                   {:failed, error} ->
@@ -981,6 +985,20 @@ defmodule Daemon.Agent.WorkDirector do
     _ -> {:failed, :poll_error}
   catch
     :exit, _ -> {:failed, :poll_exit}
+  end
+
+  defp branch_has_commits?(branch, repo_path) do
+    case System.cmd("git", ["rev-list", "--count", "main..#{branch}"],
+           cd: repo_path, stderr_to_stdout: true) do
+      {output, 0} ->
+        count = output |> String.trim() |> String.to_integer()
+        count > 0
+
+      _ ->
+        false
+    end
+  rescue
+    _ -> false
   end
 
   defp verify_branch_exists(branch, repo_path) do
