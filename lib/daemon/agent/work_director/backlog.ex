@@ -11,7 +11,7 @@ defmodule Daemon.Agent.WorkDirector.Backlog do
 
   @persistence_dir Path.expand("~/.daemon/work_director")
   @persistence_file Path.join(@persistence_dir, "backlog.json")
-  @cooldown_ms :timer.hours(4)
+  @cooldown_ms :timer.minutes(15)
   @max_attempts 3
   @stale_ms :timer.hours(24)
   @recycle_ms :timer.hours(8)
