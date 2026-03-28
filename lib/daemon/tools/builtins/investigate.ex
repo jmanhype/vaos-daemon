@@ -103,6 +103,10 @@ defmodule Daemon.Tools.Builtins.Investigate do
         "steering" => %{
           "type" => "string",
           "description" => "Optional steering context injected into advocate system prompts (from ActiveLearner bottleneck diagnosis)"
+        },
+        "metadata" => %{
+          "type" => "object",
+          "description" => "Optional metadata merged into :investigation_complete event payload (e.g. source_module, anomaly_type)"
         }
       },
       "required" => ["topic"]
@@ -114,19 +118,20 @@ defmodule Daemon.Tools.Builtins.Investigate do
     topic = Map.get(args, "topic") || ""
     depth = Map.get(args, "depth") || "standard"
     steering = Map.get(args, "steering") || ""
+    caller_metadata = Map.get(args, "metadata") || %{}
 
     topic = String.trim(to_string(topic))
 
     if topic == "" do
       {:error, "Missing topic"}
     else
-      run_investigation(topic, depth, steering)
+      run_investigation(topic, depth, steering, caller_metadata)
     end
   end
 
   # -- Main pipeline ---------------------------------------------------
 
-  defp run_investigation(topic, depth, steering \\ "") do
+  defp run_investigation(topic, depth, steering, caller_metadata) do
     :inets.start()
     :ssl.start()
     ensure_circuit_table()
@@ -361,7 +366,7 @@ Known failure patterns to avoid:
       true ->
         # Both succeeded — full analysis with citation verification
         run_full_analysis(topic, supporting, opposing, all_papers, paper_map,
-                          source_counts, keywords, prior_evidence, store, depth, prior_strategy, prompts, variant_id)
+                          source_counts, keywords, prior_evidence, store, depth, prior_strategy, prompts, variant_id, caller_metadata)
     end
   rescue
     e ->
@@ -372,7 +377,7 @@ Known failure patterns to avoid:
   # -- Full analysis (both sides succeeded) ------------------------------
 
   defp run_full_analysis(topic, supporting_raw, opposing_raw, all_papers, paper_map,
-                         source_counts, keywords, prior_evidence, store, depth, strategy, prompts, variant_id) do
+                         source_counts, keywords, prior_evidence, store, depth, strategy, prompts, variant_id, caller_metadata) do
     # 9. CITATION VERIFICATION + PAPER TYPE CLASSIFICATION — the evidence quality step
     verified_supporting = verify_citations(supporting_raw, paper_map, prompts)
     verified_opposing = verify_citations(opposing_raw, paper_map, prompts)
@@ -624,6 +629,9 @@ Known failure patterns to avoid:
       MiosaKnowledge.assert(store, {atk_id, "vaos:harmful_count", "0"})
       MiosaKnowledge.assert(store, {atk_id, "vaos:summary", atk.description})
     end)
+
+    # Merge caller metadata (e.g. source_module from CodeIntrospector) into event payload
+    json_metadata = Map.merge(json_metadata, caller_metadata)
 
     # Emit investigation_complete event for Retrospector strategy optimization
     try do
