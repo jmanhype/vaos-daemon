@@ -75,6 +75,8 @@ defmodule Daemon.Agent.WorkDirector.DispatchIntelligence do
 
     # Auto-detect codebase conventions (zero LLM cost)
     conventions = detect_conventions(repo_path)
+    Logger.info("[DispatchIntelligence] Detected #{length(conventions)} conventions for #{repo_path}")
+    if conventions != [], do: Logger.debug("[DispatchIntelligence] Conventions: #{inspect(conventions)}")
 
     # Build the execution trace string
     trace = build_execution_trace(

@@ -1043,18 +1043,17 @@ defmodule Daemon.Agent.WorkDirector do
 
     ## Repository
     The codebase is located at: `#{repo_path}`
-    This is an Elixir/OTP project using Mix.
 
     CRITICAL: For ALL shell commands, use the `cwd` parameter set to `#{repo_path}`.
     Example: shell_execute(command: "mix compile", cwd: "#{repo_path}")
     For file operations, use ABSOLUTE paths starting with `#{repo_path}/`.
 
+    #{codebase_context}
+
     ## Task
     **#{item.title}**
 
     #{item.description}
-
-    #{codebase_context}
 
     ## Instructions
     You are already on branch with the codebase ready. Your ONLY job is to implement the changes.
