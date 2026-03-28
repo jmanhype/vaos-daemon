@@ -2313,4 +2313,304 @@ Known failure patterns to avoid:
         {:error, reason}
     end
   end
+
+  # ── Streaming Execution (for API SSE endpoint) ────────────────────────
+
+  @doc """
+  Execute investigation with streaming callbacks for SSE.
+
+  Takes the same arguments as execute/1, plus a callback function that receives
+  streaming events as the investigation progresses.
+
+  Callback signature: callback(event)
+  Events:
+    - {:status, message} — progress update
+    - {:papers_found, papers, source_counts} — paper search completed
+    - {:evidence_for, evidence} — verified evidence for the claim
+    - {:evidence_against, evidence} — verified evidence against the claim
+    - {:result, result} — final investigation result (markdown)
+    - {:done, result} — stream complete
+
+  Returns: :ok | {:error, reason}
+  """
+  def execute_with_stream(args, callback) when is_function(callback, 1) do
+    topic = Map.get(args, "topic") || ""
+    depth = Map.get(args, "depth") || "standard"
+    steering = Map.get(args, "steering") || ""
+    caller_metadata = Map.get(args, "metadata") || %{}
+
+    topic = String.trim(to_string(topic))
+
+    if topic == "" do
+      callback.({:error, "Missing topic"})
+      {:error, "Missing topic"}
+    else
+      do_stream_investigation(topic, depth, steering, caller_metadata, callback)
+    end
+  end
+
+  defp do_stream_investigation(topic, _depth, steering, _caller_metadata, callback) do
+    :inets.start()
+    :ssl.start()
+    ensure_circuit_table()
+
+    callback.({:status, "Initializing investigation..."})
+
+    # Start alphaXiv MCP
+    old_trap = Process.flag(:trap_exit, true)
+    try do
+      Daemon.Tools.Builtins.AlphaXivClient.start_link()
+      receive do
+        {:EXIT, _pid, reason} ->
+          Logger.warning("[investigate] alphaXiv MCP crashed during init: #{inspect(reason)}")
+      after
+        2_000 -> :ok
+      end
+    catch
+      :exit, reason ->
+        Logger.warning("[investigate] alphaXiv MCP unavailable: #{inspect(reason)}")
+    after
+      Process.flag(:trap_exit, old_trap)
+    end
+
+    ensure_scorer_cache()
+    ensure_ledger_started()
+
+    unless GenServer.whereis(:daemon_crash_learner) do
+      Logger.warning("[investigate] CrashLearner not running — crash reporting will be skipped")
+    end
+
+    {prompts, _variant_id} = try do
+      PromptSelector.select()
+    rescue
+      _ -> {PromptConfig.load(), "default"}
+    end
+
+    keywords = extract_keywords(topic)
+
+    prior_strategy = case StrategyStore.load_best(topic) do
+      {:ok, strategy} -> strategy
+      :error ->
+        case StrategyStore.load_best("_global") do
+          {:ok, strategy} -> strategy
+          :error -> Strategy.default()
+        end
+    end
+
+    callback.({:status, "Searching prior evidence..."})
+    case ensure_store_started() do
+      :ok -> :ok
+      {:error, reason} ->
+        Logger.warning("[investigate] Knowledge store unavailable: #{inspect(reason)}")
+    end
+    store = store_ref()
+    prior_evidence = fetch_prior_evidence_by_keywords(store, keywords)
+
+    callback.({:status, "Searching papers across multiple sources..."})
+    {all_papers, source_counts} = search_all_papers(topic, keywords, prior_strategy)
+
+    callback.({:status, "Found #{length(all_papers)} papers from #{inspect(source_counts)}"})
+    callback.({:papers_found, all_papers, source_counts})
+
+    papers_context = format_papers(all_papers, prompts)
+
+    prior_text = if prior_evidence == [] do
+      ""
+    else
+      "\n\nPreviously investigated evidence on related topics:\n" <>
+        Enum.join(prior_evidence, "\n") <> "\n"
+    end
+
+    pitfalls = try do
+      {:ok, plist} = CrashLearner.get_pitfalls(:daemon_crash_learner)
+      plist
+    rescue
+      _ -> []
+    end
+
+    pitfall_context = if pitfalls != [] do
+      text = Enum.map(pitfalls, fn p -> "- #{p.summary}" end) |> Enum.join("\n")
+      "\n\nKnown failure patterns to avoid:\n#{text}\n"
+    else
+      ""
+    end
+
+    steering_context = if is_binary(steering) and steering != "" do
+      "\n\n" <> steering
+    else
+      ""
+    end
+
+    example_format = prompts["example_format"]
+
+    for_prompt = PromptConfig.render(prompts["advocate_user_template"],
+      position: "TRUE",
+      direction: "",
+      claim: topic,
+      papers_context: papers_context,
+      prior_text: prior_text,
+      arg_type: "arguments",
+      example_format: example_format,
+      arg_word: "argument"
+    )
+
+    against_prompt = PromptConfig.render(prompts["advocate_user_template"],
+      position: "FALSE",
+      direction: " AGAINST it",
+      claim: topic,
+      papers_context: papers_context,
+      prior_text: prior_text,
+      arg_type: "counterarguments",
+      example_format: example_format,
+      arg_word: "counterargument"
+    )
+
+    for_messages = [
+      %{role: "system", content: prompts["for_system"] <> pitfall_context <> steering_context},
+      %{role: "user", content: for_prompt}
+    ]
+
+    against_messages = [
+      %{role: "system", content: prompts["against_system"] <> pitfall_context <> steering_context},
+      %{role: "user", content: against_prompt}
+    ]
+
+    model = Application.get_env(:daemon, :utility_model)
+    llm_opts = [temperature: prior_strategy.adversarial_temperature, max_tokens: 8192]
+    llm_opts = if model, do: Keyword.put(llm_opts, :model, model), else: llm_opts
+
+    callback.({:status, "Running FOR advocate..."})
+    for_result = Providers.chat(for_messages, llm_opts)
+
+    callback.({:status, "Running AGAINST advocate..."})
+    against_result = Providers.chat(against_messages, llm_opts)
+
+    supporting = case for_result do
+      {:ok, %{content: response}} when is_binary(response) and response != "" ->
+        parse_adversarial_evidence(response)
+      {:ok, %{content: ""}} ->
+        Logger.warning("[investigate] FOR-side LLM returned empty content")
+        []
+      {:error, reason} ->
+        Logger.warning("[investigate] FOR-side LLM call failed: #{inspect(reason)}")
+        []
+      _ ->
+        Logger.warning("[investigate] FOR-side LLM call failed")
+        []
+    end
+
+    opposing = case against_result do
+      {:ok, %{content: response}} when is_binary(response) and response != "" ->
+        parse_adversarial_evidence(response)
+      {:ok, %{content: ""}} ->
+        Logger.warning("[investigate] AGAINST-side LLM returned empty content")
+        []
+      {:error, reason} ->
+        Logger.warning("[investigate] AGAINST-side LLM call failed: #{inspect(reason)}")
+        []
+      _ ->
+        Logger.warning("[investigate] AGAINST-side LLM call failed")
+        []
+    end
+
+    cond do
+      supporting == [] and opposing == [] ->
+        callback.({:error, "Both adversarial LLM calls failed"})
+        {:error, "Both adversarial LLM calls failed"}
+
+      supporting == [] or opposing == [] ->
+        callback.({:status, "Partial results — one-sided analysis"})
+        # Return partial result
+        partial_result = "## Investigation: #{topic}\n\n" <>
+          "**Status: PARTIAL** -- Only one-sided analysis completed\n\n"
+        callback.({:result, partial_result})
+        callback.({:done, partial_result})
+        :ok
+
+      true ->
+        callback.({:status, "Verifying citations and classifying evidence..."})
+
+        paper_map = all_papers
+          |> Enum.with_index(1)
+          |> Map.new(fn {p, i} -> {i, p} end)
+
+        verified_supporting = verify_citations(supporting, paper_map, prompts)
+        verified_opposing = verify_citations(opposing, paper_map, prompts)
+
+        verified_supporting = rescore_evidence(verified_supporting, prior_strategy)
+        verified_opposing = rescore_evidence(verified_opposing, prior_strategy)
+
+        classified_supporting = classify_evidence_store(verified_supporting, paper_map, prior_strategy)
+        classified_opposing = classify_evidence_store(verified_opposing, paper_map, prior_strategy)
+
+        callback.({:evidence_for, classified_supporting})
+        callback.({:evidence_against, classified_opposing})
+
+        callback.({:status, "Computing verdict..."})
+
+        grounded_for = Enum.filter(classified_supporting, & &1.evidence_store == :grounded)
+        grounded_against = Enum.filter(classified_opposing, & &1.evidence_store == :grounded)
+
+        grounded_for_score = Enum.sum(Enum.map(grounded_for, & &1.score))
+        grounded_against_score = Enum.sum(Enum.map(grounded_against, & &1.score))
+        total_for_score = Enum.sum(Enum.map(classified_supporting, & &1.score))
+        total_against_score = Enum.sum(Enum.map(classified_opposing, & &1.score))
+
+        direction = cond do
+          grounded_for_score > 0 and grounded_against_score > 0 ->
+            if grounded_for_score > grounded_against_score * prior_strategy.direction_ratio do
+              "supporting"
+            else
+              if grounded_against_score > grounded_for_score * prior_strategy.direction_ratio do
+                "opposing"
+              else
+                "genuinely_contested"
+              end
+            end
+
+          grounded_against_score == 0 and grounded_for_score > 0 ->
+            "asymmetric_evidence_for"
+          grounded_for_score == 0 and grounded_against_score > 0 ->
+            "asymmetric_evidence_against"
+
+          true ->
+            if total_against_score > total_for_score * prior_strategy.belief_fallback_ratio do
+              "belief_consensus_against"
+            else
+              if total_for_score > total_against_score * prior_strategy.belief_fallback_ratio do
+                "belief_consensus_for"
+              else
+                "belief_contested"
+              end
+            end
+        end
+
+        callback.({:status, "Formatting final result..."})
+
+        for_arguments = format_verified_evidence(classified_supporting,
+          "Case For (grounded: #{Float.round(grounded_for_score * 1.0, 2)}, total: #{Float.round(total_for_score * 1.0, 2)})")
+        against_arguments = format_verified_evidence(classified_opposing,
+          "Case Against (grounded: #{Float.round(grounded_against_score * 1.0, 2)}, total: #{Float.round(total_against_score * 1.0, 2)})")
+        paper_list = format_paper_list(all_papers)
+
+        result =
+          "## Investigation: #{topic}\n\n" <>
+          "**Direction: #{direction}** (AEC grounded-only verdict)\n" <>
+          "**Grounded score: #{Float.round(grounded_for_score * 1.0, 2)} for vs #{Float.round(grounded_against_score * 1.0, 2)} against**\n" <>
+          "**Total score (incl. belief): #{Float.round(total_for_score * 1.0, 2)} for vs #{Float.round(total_against_score * 1.0, 2)} against**\n\n" <>
+          "### #{for_arguments}\n\n" <>
+          "### #{against_arguments}\n\n" <>
+          "### Papers Consulted\n#{paper_list}\n" <>
+          "\n*Streaming investigation complete*"
+
+        callback.({:result, result})
+        callback.({:done, result})
+        :ok
+    end
+  rescue
+    e ->
+      Logger.error("[investigate] Streaming investigation failed: #{Exception.message(e)}")
+      callback.({:error, Exception.message(e)})
+      {:error, Exception.message(e)}
+  end
 end

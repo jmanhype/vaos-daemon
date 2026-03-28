@@ -178,6 +178,9 @@ defmodule Daemon.Channels.HTTP.API do
   # ── Signals ──────────────────────────────────────────────────────────
   forward "/signals", to: API.SignalRoutes
 
+  # ── Investigate ──────────────────────────────────────────────────────
+  forward "/investigate", to: API.InvestigateRoutes
+
   # ── Config revisions ─────────────────────────────────────────────────
   forward "/config", to: API.ConfigRoutes
 
