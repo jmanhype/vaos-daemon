@@ -84,12 +84,31 @@ defmodule Daemon.Agent.WorkDirector.GroundedVerifier do
 
   # -- Diff Parsing --
 
-  defp get_diff(branch, repo_path) do
-    case System.cmd("git", ["diff", "--unified=0", "main...#{branch}", "--", "*.ex", "*.exs"],
+  defp get_diff(_branch, repo_path) do
+    # Compare working tree (unstaged changes) against main — at Stage 2.5
+    # the agent has written files but they haven't been committed yet
+    case System.cmd("git", ["diff", "--unified=0", "main", "--", "*.ex", "*.exs"],
            cd: repo_path, stderr_to_stdout: true) do
-      {output, 0} -> {:ok, output}
+      {output, 0} when byte_size(output) > 0 -> {:ok, output}
+      {output, 0} ->
+        # Also check untracked files (new files created by the agent)
+        case System.cmd("git", ["ls-files", "--others", "--exclude-standard", "--", "*.ex", "*.exs"],
+               cd: repo_path, stderr_to_stdout: true) do
+          {files, 0} when byte_size(files) > 0 ->
+            # Read new files and format as synthetic diff
+            new_files = String.split(files, "\n", trim: true)
+            synthetic_diff = Enum.map_join(new_files, "\n", fn file ->
+              full_path = Path.join(repo_path, file)
+              content = File.read!(full_path) |> String.split("\n") |> Enum.map_join("\n", &("+#{&1}"))
+              "--- /dev/null\n+++ b/#{file}\n#{content}"
+            end)
+            {:ok, synthetic_diff}
+          _ -> {:ok, output}
+        end
       {output, _} -> {:error, output}
     end
+  rescue
+    e -> {:error, Exception.message(e)}
   end
 
   defp extract_added_lines(diff) do

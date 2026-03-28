@@ -732,6 +732,11 @@ defmodule Daemon.Agent.WorkDirector do
       _ -> :ok  # might already be on main
     end
 
+    # Delete stale local branch if it exists (from a previous failed cycle)
+    System.cmd("git", ["branch", "-D", branch], cd: repo_path, stderr_to_stdout: true)
+    # Delete stale remote branch if it exists (prevents push rejection)
+    System.cmd("git", ["push", "origin", "--delete", branch], cd: repo_path, stderr_to_stdout: true)
+
     case System.cmd("git", ["checkout", "-b", branch, "main"], cd: repo_path, stderr_to_stdout: true) do
       {_, 0} -> :ok
       {output, _} -> {:error, "git checkout -b failed: #{String.trim(output)}"}
