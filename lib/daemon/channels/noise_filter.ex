@@ -174,6 +174,54 @@ defmodule Daemon.Channels.NoiseFilter do
     end
   end
 
+  @doc """
+  Check if the message should be filtered given current circuit breaker state.
+
+  This is a complementary check to the noise filter. When providers are
+  experiencing high failure rates or are rate-limited, we should be more
+  aggressive about filtering low-signal messages to reduce load.
+
+  Returns `true` if the message should be filtered due to low signal AND
+  poor provider health, `false` otherwise.
+
+  ## Examples
+
+      # Provider is healthy — normal filtering applies
+      filter_with_circuit_breaker?(message, 0.15, :anthropic)
+      # => false (message passes through)
+
+      # Provider circuit is open — more aggressive filtering
+      filter_with_circuit_breaker?(message, 0.15, :groq)
+      # => true (message filtered to avoid loading failing provider)
+
+  """
+  @spec filter_with_circuit_breaker?(String.t(), float() | nil, atom()) :: boolean()
+  def filter_with_circuit_breaker?(message, signal_weight, provider) do
+    alias Daemon.Providers.HealthChecker
+
+    # Check if provider is available
+    provider_available = HealthChecker.is_available?(provider)
+
+    case check(message, signal_weight) do
+      # Always pass high-signal messages
+      :pass ->
+        false
+
+      # Filtered messages stay filtered regardless of circuit state
+      {:filtered, _ack} ->
+        true
+
+      # Clarify messages: if provider is struggling, filter instead of clarifying
+      {:clarify, _prompt} ->
+        if provider_available do
+          false  # Provider healthy, allow clarification
+        else
+          # Provider circuit open or rate-limited — filter to reduce load
+          true
+        end
+    end
+  end
+
   # --- Private ---
 
   defp compiled_tier1_patterns do

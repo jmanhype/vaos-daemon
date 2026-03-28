@@ -216,6 +216,71 @@ defmodule Daemon.Channels.HTTP.API do
   # ── Receipts (audit receipt query + replay-verify) ────────────────────
   forward "/receipts", to: API.ReceiptRoutes
 
+  # ── Circuit Breaker Status (inline — single endpoint) ──────────────────
+  get "/models/status" do
+    alias Daemon.Providers.HealthChecker
+
+    breaker_state = HealthChecker.state()
+
+    # Transform state into a more API-friendly format
+    providers =
+      Enum.map(breaker_state, fn {provider, data} ->
+        now = System.monotonic_time(:millisecond)
+
+        circuit_info = %{
+          provider: provider,
+          circuit: data.circuit,
+          consecutive_failures: data.consecutive_failures,
+          available: true
+        }
+
+        # Add rate limit info if applicable
+        circuit_info =
+          if data.rate_limited_until do
+            remaining_ms = max(0, data.rate_limited_until - now)
+            %{circuit_info |
+              rate_limited: true,
+              rate_limited_until: data.rate_limited_until,
+              rate_limited_remaining_seconds: div(remaining_ms, 1000),
+              available: false
+            }
+          else
+            Map.put(circuit_info, :rate_limited, false)
+          end
+
+        # Add circuit open info if applicable
+        circuit_info =
+          if data.circuit == :open and data.opened_at do
+            remaining_ms = max(0, 30_000 - (now - data.opened_at))
+            %{circuit_info |
+              opened_at: data.opened_at,
+              cooldown_remaining_seconds: div(remaining_ms, 1000),
+              available: false
+            }
+          else
+            circuit_info
+          end
+
+        circuit_info
+      end)
+
+    body =
+      Jason.encode!(%{
+        providers: providers,
+        summary: %{
+          total: length(providers),
+          available: Enum.count(providers, & &1.available),
+          unavailable: Enum.count(providers, &(not &1.available)),
+          rate_limited: Enum.count(providers, & &1.rate_limited),
+          circuits_open: Enum.count(providers, fn p -> p.circuit == :open end)
+        }
+      })
+
+    conn
+    |> Plug.Conn.put_resp_content_type("application/json")
+    |> Plug.Conn.send_resp(200, body)
+  end
+
   # ── Catch-all ────────────────────────────────────────────────────────
   match _ do
     body = Jason.encode!(%{error: "not_found", details: "Endpoint not found"})

@@ -27,6 +27,25 @@ defmodule Daemon.Channels.Starter do
   @impl true
   def handle_continue(:start_channels, state) do
     Logger.info("Channels.Starter: starting configured channel adapters")
+
+    # Log circuit breaker state before starting channels
+    alias Daemon.Providers.HealthChecker
+    breaker_state = HealthChecker.state()
+
+    if map_size(breaker_state) > 0 do
+      Logger.info(
+        "Channels.Starter: circuit breaker state: " <>
+          Enum.map_join(breaker_state, ", ", fn {provider, data} ->
+            "#{provider}=#{data.circuit}" <>
+              if data.rate_limited_until do
+                " (rate-limited)"
+              else
+                ""
+              end
+          end)
+      )
+    end
+
     Daemon.Channels.Manager.start_configured_channels()
     {:noreply, state}
   end
