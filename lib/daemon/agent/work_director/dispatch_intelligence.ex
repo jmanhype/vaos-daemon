@@ -433,9 +433,9 @@ defmodule Daemon.Agent.WorkDirector.DispatchIntelligence do
   end
 
   defp detect_namespace(repo_path) do
-    # Sample the first 10 .ex files in lib/ for their defmodule prefix
+    # Sample defmodule declarations, excluding shims/compatibility files
     case System.cmd("bash", ["-c",
-      "grep -rh '^defmodule ' #{repo_path}/lib/ --include='*.ex' 2>/dev/null | head -20"],
+      "grep -rh '^defmodule ' #{repo_path}/lib/ --include='*.ex' --exclude='shims.ex' --exclude='*_compat.ex' 2>/dev/null | head -100"],
       stderr_to_stdout: true) do
       {output, 0} when byte_size(output) > 0 ->
         prefixes =
