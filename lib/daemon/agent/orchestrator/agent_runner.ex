@@ -407,8 +407,9 @@ defmodule Daemon.Agent.Orchestrator.AgentRunner do
               case Map.get(skills, to_string(name)) do
                 nil -> []
                 skill ->
-                  inst = skill.instructions |> to_string() |> String.trim()
-                  if inst != "", do: ["### Inherited Skill: #{skill.name}\n\n#{inst}"], else: []
+                  inst = Map.get(skill, :instructions, "") |> to_string() |> String.trim()
+                  name = Map.get(skill, :name, name)
+                  if inst != "", do: ["### Inherited Skill: #{name}\n\n#{inst}"], else: []
               end
             end)
             |> Enum.join("\n\n")
