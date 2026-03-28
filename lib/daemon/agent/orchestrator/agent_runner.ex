@@ -52,10 +52,12 @@ defmodule Daemon.Agent.Orchestrator.AgentRunner do
     agent_tier = resolve_agent_tier(sub_task)
     provider = Application.get_env(:daemon, :default_provider, :ollama)
 
+    max_iter_override = Keyword.get(opts, :max_iterations_override)
+
     tier_opts = %{
       model: Tier.model_for(agent_tier, provider),
       temperature: Tier.temperature(agent_tier),
-      max_iterations: Tier.max_iterations(agent_tier),
+      max_iterations: max_iter_override || Tier.max_iterations(agent_tier),
       max_response_tokens: Tier.max_response_tokens(agent_tier),
       tier: agent_tier
     }

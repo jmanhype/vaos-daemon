@@ -587,11 +587,12 @@ defmodule Daemon.Agent.WorkDirector do
   end
 
   @orchestrator_poll_interval_ms 10_000
-  @orchestrator_timeout_ms :timer.minutes(10)
+  @orchestrator_timeout_ms :timer.minutes(15)
+  @compile_fix_max_attempts 2
+  @agent_max_iterations 35
 
   defp do_dispatch_item(state, %WorkItem{} = item, branch) do
     session_id = "workdir-#{:erlang.unique_integer([:positive])}"
-    prompt = build_prompt(item, branch)
 
     Logger.info("[WorkDirector] Dispatching: #{item.title} (source=#{item.source}, priority=#{item.base_priority})")
 
@@ -603,38 +604,7 @@ defmodule Daemon.Agent.WorkDirector do
       spawn_monitor(fn ->
         result =
           try do
-            case Orchestrator.execute(prompt, session_id, []) do
-              {:ok, task_id} ->
-                # Poll Orchestrator.progress until task completes or times out
-                case await_orchestrator_completion(task_id) do
-                  {:completed, synthesis} ->
-                    # Verify the branch exists AND has commits beyond main
-                    cond do
-                      not verify_branch_exists(branch, repo_path) ->
-                        Logger.warning("[WorkDirector] Task #{task_id} completed but branch #{branch} not found")
-                        {:error, {:no_branch, synthesis}}
-
-                      not branch_has_commits?(branch, repo_path) ->
-                        Logger.warning("[WorkDirector] Task #{task_id} completed but branch #{branch} has 0 commits beyond main")
-                        {:error, {:empty_branch, synthesis}}
-
-                      true ->
-                        Logger.info("[WorkDirector] Task #{task_id} completed, branch #{branch} verified with commits")
-                        {:ok, synthesis, branch}
-                    end
-
-                  {:failed, error} ->
-                    Logger.warning("[WorkDirector] Task #{task_id} failed: #{inspect(error)}")
-                    {:error, {:orchestrator_failed, error}}
-
-                  {:timeout, last_status} ->
-                    Logger.warning("[WorkDirector] Task #{task_id} timed out (status=#{last_status})")
-                    {:error, {:timeout, last_status}}
-                end
-
-              {:error, reason} ->
-                {:error, reason}
-            end
+            staged_dispatch(item, branch, session_id, repo_path)
           rescue
             e -> {:error, {:exception, Exception.message(e)}}
           catch
@@ -673,7 +643,272 @@ defmodule Daemon.Agent.WorkDirector do
     }
   end
 
-  defp build_prompt(item, branch) do
+  # -- Staged Execution Pipeline --
+  # Stage 0: Create branch (zero LLM cost)
+  # Stage 1: Send code-only prompt to Orchestrator (single agent, high iterations)
+  # Stage 2: Verify compilation, retry if needed (zero LLM cost for verify, LLM for fix)
+  # Stage 3: Git add/commit/push/PR (zero LLM cost)
+
+  defp staged_dispatch(item, branch, session_id, repo_path) do
+    # Stage 0: Create the branch ourselves
+    Logger.info("[WorkDirector] Stage 0: Creating branch #{branch}")
+    case create_branch(branch, repo_path) do
+      :ok -> :ok
+      {:error, reason} ->
+        Logger.warning("[WorkDirector] Stage 0 failed: #{inspect(reason)}")
+        throw({:stage0_failed, reason})
+    end
+
+    # Stage 1: Implementation — agent only writes code, no git operations
+    Logger.info("[WorkDirector] Stage 1: Dispatching implementation to Orchestrator")
+    prompt = build_implementation_prompt(item, repo_path)
+
+    case execute_and_poll(prompt, session_id) do
+      {:completed, synthesis} ->
+        Logger.info("[WorkDirector] Stage 1 complete: agent finished implementation")
+
+        # Stage 2: Verify compilation (with retry loop)
+        case verify_and_fix_compilation(item, branch, session_id, repo_path, 0) do
+          :ok ->
+            Logger.info("[WorkDirector] Stage 2 complete: compilation verified")
+
+            # Stage 3: Commit, push, PR
+            case finalize_branch(item, branch, repo_path) do
+              {:ok, _pr_info} ->
+                Logger.info("[WorkDirector] Stage 3 complete: branch #{branch} committed and pushed")
+                {:ok, synthesis, branch}
+
+              {:error, :no_changes} ->
+                Logger.warning("[WorkDirector] Stage 3 failed: no file changes detected")
+                cleanup_branch(branch, repo_path)
+                {:error, {:empty_branch, synthesis}}
+
+              {:error, reason} ->
+                Logger.warning("[WorkDirector] Stage 3 failed: #{inspect(reason)}")
+                {:error, {:commit_failed, reason}}
+            end
+
+          {:error, reason} ->
+            Logger.warning("[WorkDirector] Stage 2 failed: compilation cannot be fixed")
+            cleanup_branch(branch, repo_path)
+            {:error, {:compilation_unfixable, reason}}
+        end
+
+      {:failed, error} ->
+        Logger.warning("[WorkDirector] Stage 1 failed: #{inspect(error)}")
+        cleanup_branch(branch, repo_path)
+        {:error, {:orchestrator_failed, error}}
+
+      {:timeout, last_status} ->
+        Logger.warning("[WorkDirector] Stage 1 timed out")
+        cleanup_branch(branch, repo_path)
+        {:error, {:timeout, last_status}}
+    end
+  catch
+    {:stage0_failed, reason} -> {:error, {:no_branch, reason}}
+  end
+
+  defp create_branch(branch, repo_path) do
+    # Ensure we're on main first
+    case System.cmd("git", ["checkout", "main"], cd: repo_path, stderr_to_stdout: true) do
+      {_, 0} -> :ok
+      _ -> :ok  # might already be on main
+    end
+
+    case System.cmd("git", ["checkout", "-b", branch, "main"], cd: repo_path, stderr_to_stdout: true) do
+      {_, 0} -> :ok
+      {output, _} -> {:error, "git checkout -b failed: #{String.trim(output)}"}
+    end
+  rescue
+    e -> {:error, Exception.message(e)}
+  end
+
+  defp cleanup_branch(branch, repo_path) do
+    # Switch back to main and delete the failed branch
+    System.cmd("git", ["checkout", "main"], cd: repo_path, stderr_to_stdout: true)
+    System.cmd("git", ["branch", "-D", branch], cd: repo_path, stderr_to_stdout: true)
+  rescue
+    _ -> :ok
+  end
+
+  defp execute_and_poll(prompt, session_id) do
+    case Orchestrator.execute(prompt, session_id, [
+      force_simple: true,
+      max_iterations: @agent_max_iterations,
+      tier: :elite
+    ]) do
+      {:ok, task_id} ->
+        await_orchestrator_completion(task_id)
+
+      {:error, reason} ->
+        {:failed, reason}
+    end
+  end
+
+  defp verify_and_fix_compilation(_item, _branch, _session_id, repo_path, attempt)
+       when attempt >= @compile_fix_max_attempts do
+    # Last attempt — just check compilation without fixing
+    case run_compile(repo_path) do
+      :ok -> :ok
+      {:error, errors} -> {:error, {:max_fix_attempts, errors}}
+    end
+  end
+
+  defp verify_and_fix_compilation(item, branch, session_id, repo_path, attempt) do
+    case run_compile(repo_path) do
+      :ok ->
+        :ok
+
+      {:error, errors} ->
+        Logger.info("[WorkDirector] Stage 2: Compilation failed (attempt #{attempt + 1}), dispatching fix agent")
+
+        fix_prompt = """
+        Fix the following compilation errors in this Elixir/OTP codebase.
+
+        ## Repository
+        The codebase is at: `#{repo_path}`
+        You are on branch `#{branch}`.
+
+        CRITICAL: For ALL shell commands, use the `cwd` parameter set to `#{repo_path}`.
+        For file operations, use ABSOLUTE paths starting with `#{repo_path}/`.
+
+        ## Compilation Errors
+        ```
+        #{String.slice(errors, 0, 3000)}
+        ```
+
+        ## Instructions
+        1. Read the files mentioned in the errors
+        2. Fix the compilation errors
+        3. Run `mix compile --warnings-as-errors` to verify the fix (use cwd: "#{repo_path}")
+        4. If new errors appear, fix those too
+
+        ONLY fix compilation errors. Do NOT add features, refactor, or change behavior.
+        Do NOT modify: application.ex, supervisors/, security/, loop.ex, runtime.exs, mix.exs, or mix.lock.
+        """
+
+        fix_session = "#{session_id}-fix-#{attempt}"
+
+        case execute_and_poll(fix_prompt, fix_session) do
+          {:completed, _} ->
+            verify_and_fix_compilation(item, branch, session_id, repo_path, attempt + 1)
+
+          {:failed, reason} ->
+            {:error, {:fix_agent_failed, reason}}
+
+          {:timeout, _} ->
+            {:error, :fix_agent_timeout}
+        end
+    end
+  end
+
+  defp run_compile(repo_path) do
+    case System.cmd("bash", ["-c", "cd #{repo_path} && mix compile --warnings-as-errors 2>&1"],
+           stderr_to_stdout: true, env: [{"MIX_ENV", "dev"}]) do
+      {_, 0} -> :ok
+      {output, _} -> {:error, output}
+    end
+  rescue
+    e -> {:error, Exception.message(e)}
+  end
+
+  defp finalize_branch(item, branch, repo_path) do
+    # Check what files changed
+    case System.cmd("git", ["diff", "--name-only", "HEAD"], cd: repo_path, stderr_to_stdout: true) do
+      {output, 0} when byte_size(output) > 2 ->
+        files = output |> String.split("\n", trim: true) |> filter_safe_files()
+
+        if files == [] do
+          {:error, :no_changes}
+        else
+          # Git add only safe files
+          System.cmd("git", ["add" | files], cd: repo_path, stderr_to_stdout: true)
+
+          # Commit
+          commit_msg = "feat: #{item.title}\n\nSource: #{item.source}\nPriority: #{item.base_priority}\n\nAutonomously generated by WorkDirector staged execution."
+          case System.cmd("git", ["commit", "-m", commit_msg], cd: repo_path, stderr_to_stdout: true) do
+            {_, 0} ->
+              # Push
+              case System.cmd("git", ["push", "origin", branch], cd: repo_path, stderr_to_stdout: true) do
+                {_, 0} ->
+                  # Create draft PR
+                  pr_body = "Source: #{item.source}\nPriority: #{item.base_priority}\n\n#{String.slice(item.description || "", 0, 500)}\n\n---\n_Autonomously generated by WorkDirector staged execution._"
+                  pr_result = System.cmd("gh", [
+                    "pr", "create", "--draft",
+                    "--title", item.title,
+                    "--repo", @daemon_repo,
+                    "--body", pr_body
+                  ], cd: repo_path, stderr_to_stdout: true)
+
+                  case pr_result do
+                    {url, 0} -> {:ok, %{pr_url: String.trim(url)}}
+                    {_, _} -> {:ok, %{pr_url: nil, note: "pushed but PR creation failed"}}
+                  end
+
+                {push_err, _} ->
+                  {:error, {:push_failed, push_err}}
+              end
+
+            {commit_err, _} ->
+              {:error, {:commit_failed, commit_err}}
+          end
+        end
+
+      _ ->
+        # Also check untracked files
+        case System.cmd("git", ["status", "--porcelain"], cd: repo_path, stderr_to_stdout: true) do
+          {output, 0} when byte_size(output) > 2 ->
+            # There are changes — extract file paths
+            files =
+              output
+              |> String.split("\n", trim: true)
+              |> Enum.map(fn line -> String.slice(line, 3..-1//1) |> String.trim() end)
+              |> Enum.reject(&(&1 == ""))
+              |> filter_safe_files()
+
+            if files == [] do
+              {:error, :no_changes}
+            else
+              System.cmd("git", ["add" | files], cd: repo_path, stderr_to_stdout: true)
+              commit_msg = "feat: #{item.title}\n\nSource: #{item.source}\nPriority: #{item.base_priority}\n\nAutonomously generated by WorkDirector staged execution."
+              case System.cmd("git", ["commit", "-m", commit_msg], cd: repo_path, stderr_to_stdout: true) do
+                {_, 0} ->
+                  case System.cmd("git", ["push", "origin", branch], cd: repo_path, stderr_to_stdout: true) do
+                    {_, 0} ->
+                      pr_body = "Source: #{item.source}\nPriority: #{item.base_priority}\n\n#{String.slice(item.description || "", 0, 500)}"
+                      pr_result = System.cmd("gh", [
+                        "pr", "create", "--draft",
+                        "--title", item.title,
+                        "--repo", @daemon_repo,
+                        "--body", pr_body
+                      ], cd: repo_path, stderr_to_stdout: true)
+                      case pr_result do
+                        {url, 0} -> {:ok, %{pr_url: String.trim(url)}}
+                        {_, _} -> {:ok, %{pr_url: nil}}
+                      end
+                    {err, _} -> {:error, {:push_failed, err}}
+                  end
+                {err, _} -> {:error, {:commit_failed, err}}
+              end
+            end
+
+          _ ->
+            {:error, :no_changes}
+        end
+    end
+  rescue
+    e -> {:error, {:finalize_exception, Exception.message(e)}}
+  end
+
+  defp filter_safe_files(files) do
+    regexes = Enum.map(@protected_path_patterns, &Regex.compile!/1)
+
+    Enum.reject(files, fn file ->
+      Enum.any?(regexes, fn regex -> Regex.match?(regex, file) end)
+    end)
+  end
+
+  defp build_implementation_prompt(item, repo_path) do
     source_context =
       case item.source do
         :vision ->
@@ -692,8 +927,6 @@ defmodule Daemon.Agent.WorkDirector do
         :manual ->
           "This task was manually submitted by a human operator."
       end
-
-    repo_path = Application.get_env(:daemon, :repo_path, Path.expand("~/vas-swarm"))
 
     # Pre-compute codebase context via DispatchIntelligence (zero LLM cost)
     codebase_context =
@@ -717,7 +950,6 @@ defmodule Daemon.Agent.WorkDirector do
     CRITICAL: For ALL shell commands, use the `cwd` parameter set to `#{repo_path}`.
     Example: shell_execute(command: "mix compile", cwd: "#{repo_path}")
     For file operations, use ABSOLUTE paths starting with `#{repo_path}/`.
-    For git operations, use the git tool with path: "#{repo_path}".
 
     ## Task
     **#{item.title}**
@@ -727,19 +959,18 @@ defmodule Daemon.Agent.WorkDirector do
     #{codebase_context}
 
     ## Instructions
-    1. Use the git tool to create branch `#{branch}` from main
-    2. Study the reference implementations above, then implement the changes
+    You are already on branch with the codebase ready. Your ONLY job is to implement the changes.
+    Do NOT create branches, commit, push, or create PRs — that is handled automatically after you finish.
+
+    1. Study the reference implementations and file territory above
+    2. Implement the changes using file_write / file_edit tools with ABSOLUTE paths
     3. Use shell_execute with cwd: "#{repo_path}" to run `mix compile --warnings-as-errors`
-    4. If compilation fails, read the errors and fix them before proceeding
+    4. If compilation fails, read the errors and fix them
     5. Run `mix test` for relevant test files (with cwd: "#{repo_path}")
-    6. Use the git tool to add ONLY the specific files you changed
-    7. Use the git tool to commit with a descriptive message
-    8. Use shell_execute with cwd: "#{repo_path}" to push: `git push origin #{branch}`
-    9. Use shell_execute with cwd: "#{repo_path}" to create a draft PR:
-       `gh pr create --draft --title "#{escape_shell(item.title)}" --repo #{@daemon_repo} --body "Source: #{item.source}\\nPriority: #{item.base_priority}"`
+    6. Verify your implementation is complete and compiles cleanly
 
     IMPORTANT: Do NOT modify any files matching: application.ex, supervisors/, security/, loop.ex, runtime.exs, mix.exs, or mix.lock.
-    You MUST compile successfully and commit your changes. An empty branch with no commits is a failure.
+    You MUST make at least one meaningful code change. Finish your implementation — do NOT just explore the codebase.
     """
   end
 
@@ -753,10 +984,6 @@ defmodule Daemon.Agent.WorkDirector do
       |> String.trim_trailing("-")
 
     "workdir/#{slug}"
-  end
-
-  defp escape_shell(str) do
-    String.replace(str, ~S("), ~S(\"))
   end
 
   defp verify_safety(branch) do
@@ -925,10 +1152,12 @@ defmodule Daemon.Agent.WorkDirector do
 
   # -- Failure Classification --
 
-  defp classify_failure({:empty_branch, _synthesis}), do: :empty_branch
-  defp classify_failure({:no_branch, _synthesis}), do: :no_branch_created
+  defp classify_failure({:empty_branch, _}), do: :empty_branch
+  defp classify_failure({:no_branch, _}), do: :no_branch_created
   defp classify_failure({:orchestrator_failed, _}), do: :orchestrator_error
   defp classify_failure({:timeout, _}), do: :timeout
+  defp classify_failure({:compilation_unfixable, _}), do: :compilation_error
+  defp classify_failure({:commit_failed, _}), do: :commit_error
   defp classify_failure({:exception, msg}) when is_binary(msg) do
     cond do
       String.contains?(msg, "compile") -> :compilation_error
@@ -941,11 +1170,12 @@ defmodule Daemon.Agent.WorkDirector do
 
   # Reward based on how far the dispatch got
   # These partial signals help Thompson learn which sources produce completable tasks
-  defp failure_class_reward(:empty_branch), do: 0.10       # Branch created but no commits (agent couldn't implement)
-  defp failure_class_reward(:no_branch_created), do: 0.15  # Orchestrator ran but nothing materialized
+  defp failure_class_reward(:empty_branch), do: 0.10       # Agent wrote no code
+  defp failure_class_reward(:no_branch_created), do: 0.05  # Branch creation failed
   defp failure_class_reward(:orchestrator_error), do: 0.05  # Orchestrator itself failed
   defp failure_class_reward(:timeout), do: 0.10             # Task was too large
-  defp failure_class_reward(:compilation_error), do: 0.10   # Code was written but broken
+  defp failure_class_reward(:compilation_error), do: 0.15   # Code written but won't compile
+  defp failure_class_reward(:commit_error), do: 0.20        # Code compiles but commit failed
   defp failure_class_reward(:test_failure), do: 0.20        # Code compiled but tests failed (close!)
   defp failure_class_reward(:process_crash), do: 0.0        # Total failure
   defp failure_class_reward(_), do: 0.05
@@ -985,35 +1215,6 @@ defmodule Daemon.Agent.WorkDirector do
     _ -> {:failed, :poll_error}
   catch
     :exit, _ -> {:failed, :poll_exit}
-  end
-
-  defp branch_has_commits?(branch, repo_path) do
-    case System.cmd("git", ["rev-list", "--count", "main..#{branch}"],
-           cd: repo_path, stderr_to_stdout: true) do
-      {output, 0} ->
-        count = output |> String.trim() |> String.to_integer()
-        count > 0
-
-      _ ->
-        false
-    end
-  rescue
-    _ -> false
-  end
-
-  defp verify_branch_exists(branch, repo_path) do
-    # Check local branches first, then remote
-    case System.cmd("git", ["branch", "--list", branch], cd: repo_path, stderr_to_stdout: true) do
-      {output, 0} when byte_size(output) > 0 -> true
-      _ ->
-        # Check remote
-        case System.cmd("git", ["ls-remote", "--heads", "origin", branch], cd: repo_path, stderr_to_stdout: true) do
-          {output, 0} when byte_size(output) > 0 -> true
-          _ -> false
-        end
-    end
-  rescue
-    _ -> false
   end
 
   # -- Arm Persistence --

@@ -84,7 +84,8 @@ defmodule Daemon.Agent.Orchestrator do
       wave_refs: %{},
       current_wave: 0,
       pending_waves: [],
-      cached_tools: []
+      cached_tools: [],
+      max_iterations_override: nil
     ]
   end
 
@@ -168,6 +169,8 @@ defmodule Daemon.Agent.Orchestrator do
   def handle_call({:execute, message, session_id, opts}, _from, state) do
     task_id = generate_id("task")
     strategy = Keyword.get(opts, :strategy, "auto")
+    force_simple = Keyword.get(opts, :force_simple, false)
+    max_iterations_override = Keyword.get(opts, :max_iterations)
     # Tools may be pre-cached by the caller to avoid GenServer deadlock
     cached_tools = Keyword.get(opts, :cached_tools, [])
 
@@ -213,6 +216,47 @@ defmodule Daemon.Agent.Orchestrator do
       end)
 
       {:reply, {:ok, task_id}, state}
+
+    # force_simple: single agent, no decomposition, optional iteration override.
+    # Used by WorkDirector to avoid shattering sequential workflows across sub-agents.
+    else if force_simple do
+      tier = Keyword.get(opts, :tier, :elite)
+
+      sub_tasks = [
+        %SubTask{
+          name: "execute",
+          description: message,
+          role: :lead,
+          tools_needed: ["file_read", "file_write", "file_edit", "shell_execute", "git", "code_symbols"],
+          depends_on: []
+        }
+      ]
+
+      task_state = %TaskState{
+        id: task_id,
+        message: message,
+        session_id: session_id,
+        strategy: "force_simple",
+        status: :running,
+        sub_tasks: sub_tasks,
+        started_at: DateTime.utc_now(),
+        cached_tools: cached_tools,
+        max_iterations_override: max_iterations_override
+      }
+
+      machine = StateMachine.new(task_id)
+      {:ok, machine} = StateMachine.transition(machine, :start_planning)
+      plan = %{sub_tasks: sub_tasks, complexity_score: 3, estimated_tokens: 0}
+      {:ok, machine} = StateMachine.set_plan(machine, plan)
+      {:ok, machine} = StateMachine.transition(machine, :approve_plan)
+
+      state = %{state | tasks: Map.put(state.tasks, task_id, task_state), machines: Map.put(state.machines, task_id, machine)}
+
+      Logger.info("[Orchestrator] Force-simple execution: task=#{task_id}, tier=#{tier}, max_iter=#{max_iterations_override || "default"}")
+
+      {:reply, {:ok, task_id}, state,
+       {:continue, {:start_execution, task_id}}}
+
     else
 
     # For complex tasks (score >= 7), ask clarifying questions before decomposition
@@ -402,7 +446,8 @@ defmodule Daemon.Agent.Orchestrator do
 
         {:reply, {:error, reason}, state}
     end
-    end  # end pact else
+    end  # end force_simple else
+    end  # end pact if
   end
 
   @impl true
@@ -714,8 +759,14 @@ defmodule Daemon.Agent.Orchestrator do
             dep_context = Decomposer.build_dependency_context(sub_task.depends_on, task_state.results)
             sub_task_with_context = %{sub_task | context: dep_context, inherited_skills: parent_triggered_skills}
 
+            spawn_opts = [
+              batch_id: batch_id,
+              permission_tier: permission_tier,
+              max_iterations_override: task_state.max_iterations_override
+            ]
+
             {agent_id, agent_state, task_ref} =
-              AgentRunner.spawn_agent(sub_task_with_context, task_id, session_id, cached_tools, batch_id: batch_id, permission_tier: permission_tier)
+              AgentRunner.spawn_agent(sub_task_with_context, task_id, session_id, cached_tools, spawn_opts)
 
             subtask_id = "#{task_id}_#{sub_task.name}"
             {agent_id, agent_state, task_ref, sub_task.name, subtask_id}
