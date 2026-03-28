@@ -247,12 +247,25 @@ defmodule Daemon.Agent.WorkDirector.GroundedVerifier do
       |> Enum.map(&Macro.underscore/1)
       |> Enum.join("/")
 
-    [
+    base_paths = [
       "lib/#{snake}.ex",
       "lib/#{snake}/#{Path.basename(snake)}.ex",
-      # Also check test paths
       "test/#{snake}_test.exs"
     ]
+
+    # Also check if this might be an aliased short module name.
+    # E.g., "API.PrometheusRoutes" in api.ex likely means
+    # "Daemon.Channels.HTTP.API.PrometheusRoutes" via alias.
+    # Try common expansions based on the module prefix.
+    alias_paths =
+      case String.split(module, ".") do
+        ["API" | rest] ->
+          expanded_snake = (["daemon", "channels", "http", "api"] ++ Enum.map(rest, &Macro.underscore/1)) |> Enum.join("/")
+          ["lib/#{expanded_snake}.ex"]
+        _ -> []
+      end
+
+    base_paths ++ alias_paths
   end
 
   # -- Soft Checks --

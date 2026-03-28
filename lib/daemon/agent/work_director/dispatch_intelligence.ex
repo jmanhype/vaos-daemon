@@ -495,7 +495,8 @@ defmodule Daemon.Agent.WorkDirector.DispatchIntelligence do
     api_path = Path.join(repo_path, "lib/daemon/channels/http/api.ex")
     if File.exists?(api_path) do
       rules ++ [
-        "New HTTP endpoints: create a route module in `lib/daemon/channels/http/api/` then add `forward \"/path\", to: API.YourRoutes` in `lib/daemon/channels/http/api.ex`"
+        "New HTTP endpoints: FIRST create a route module file in `lib/daemon/channels/http/api/your_routes.ex` with `use Plug.Router`, THEN add `forward \"/path\", to: Daemon.Channels.HTTP.API.YourRoutes` in `lib/daemon/channels/http/api.ex`. NEVER add a forward without creating the target module file FIRST.",
+        "Route module names must use FULL module path: `Daemon.Channels.HTTP.API.YourRoutes`, NOT just `API.YourRoutes`"
       ]
     else
       rules
