@@ -37,12 +37,18 @@ defmodule Daemon.Agent.ExecutionAwaiter do
 
         case poll_until_complete(task_id, deadline) do
           {:completed, synthesis} ->
-            if branch_exists?(branch, repo_path) do
-              Logger.info("[ExecutionAwaiter] Task #{task_id} completed, branch #{branch} verified")
-              {:ok, synthesis, branch}
-            else
-              Logger.warning("[ExecutionAwaiter] Task #{task_id} completed but branch #{branch} not found")
-              {:partial, synthesis}
+            cond do
+              not branch_exists?(branch, repo_path) ->
+                Logger.warning("[ExecutionAwaiter] Task #{task_id} completed but branch #{branch} not found")
+                {:partial, synthesis}
+
+              not branch_has_commits?(branch, repo_path) ->
+                Logger.warning("[ExecutionAwaiter] Task #{task_id} completed but branch #{branch} has 0 commits beyond main")
+                {:error, {:empty_branch, synthesis}}
+
+              true ->
+                Logger.info("[ExecutionAwaiter] Task #{task_id} completed, branch #{branch} verified with commits")
+                {:ok, synthesis, branch}
             end
 
           {:failed, error} ->
@@ -63,6 +69,7 @@ defmodule Daemon.Agent.ExecutionAwaiter do
 
   @doc "Classify a failure reason into a structured failure class."
   @spec classify_failure(term()) :: atom()
+  def classify_failure({:empty_branch, _}), do: :empty_branch
   def classify_failure({:orchestrator_failed, _}), do: :orchestrator_error
   def classify_failure({:timeout, _}), do: :timeout
   def classify_failure({:exception, msg}) when is_binary(msg) do
@@ -104,6 +111,20 @@ defmodule Daemon.Agent.ExecutionAwaiter do
     _ -> {:failed, :poll_error}
   catch
     :exit, _ -> {:failed, :poll_exit}
+  end
+
+  defp branch_has_commits?(branch, repo_path) do
+    case System.cmd("git", ["rev-list", "--count", "main..#{branch}"],
+           cd: repo_path, stderr_to_stdout: true) do
+      {output, 0} ->
+        count = output |> String.trim() |> String.to_integer()
+        count > 0
+
+      _ ->
+        false
+    end
+  rescue
+    _ -> false
   end
 
   defp branch_exists?(branch, repo_path) do

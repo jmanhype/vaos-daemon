@@ -18,6 +18,7 @@ defmodule Daemon.Agent.WorkDirector do
 
   alias Daemon.Agent.WorkDirector.Backlog
   alias Daemon.Agent.WorkDirector.Backlog.WorkItem
+  alias Daemon.Agent.WorkDirector.DispatchIntelligence
   alias Daemon.Agent.WorkDirector.Source
   alias Daemon.Agent.Orchestrator
   alias Daemon.Intelligence.DecisionJournal
@@ -673,35 +674,51 @@ defmodule Daemon.Agent.WorkDirector do
 
     repo_path = Application.get_env(:daemon, :repo_path, Path.expand("~/vas-swarm"))
 
+    # Pre-compute codebase context via DispatchIntelligence (zero LLM cost)
+    codebase_context =
+      case DispatchIntelligence.enrich(item.title, item.description || "", repo_path) do
+        {:ok, %{execution_trace: trace}} ->
+          Logger.debug("[WorkDirector] DispatchIntelligence enriched prompt for '#{item.title}'")
+          trace
+
+        {:error, reason} ->
+          Logger.warning("[WorkDirector] DispatchIntelligence failed: #{inspect(reason)}")
+          ""
+      end
+
     """
     #{source_context}
 
     ## Repository
     The codebase is located at: `#{repo_path}`
-    All shell commands MUST use `cwd: "#{repo_path}"` or `cd #{repo_path} &&` prefix.
     This is an Elixir/OTP project using Mix.
+
+    CRITICAL: For ALL shell commands, use the `cwd` parameter set to `#{repo_path}`.
+    Example: shell_execute(command: "mix compile", cwd: "#{repo_path}")
+    For file operations, use ABSOLUTE paths starting with `#{repo_path}/`.
+    For git operations, use the git tool with path: "#{repo_path}".
 
     ## Task
     **#{item.title}**
 
     #{item.description}
 
-    ## Instructions
-    1. `cd #{repo_path}` then create branch `#{branch}` from main: `git checkout -b #{branch} main`
-    2. Implement the changes described above
-    3. Run `mix compile --warnings-as-errors` to verify compilation
-    4. Run `mix test` for relevant test files
-    5. Stage only the specific files you changed (no mix.lock, no config/)
-    6. Commit with a descriptive message
-    7. Push the branch: `git push origin #{branch}`
-    8. Create a draft PR:
-       ```
-       gh pr create --draft --title "#{escape_shell(item.title)}" \\
-         --repo #{@daemon_repo} \\
-         --body "Source: #{item.source}\\nPriority: #{item.base_priority}\\n\\n#{escape_shell(String.slice(item.description, 0, 500))}"
-       ```
+    #{codebase_context}
 
-    IMPORTANT: Do NOT modify any files in application.ex, supervisors/, security/, loop.ex, runtime.exs, mix.exs, or mix.lock.
+    ## Instructions
+    1. Use the git tool to create branch `#{branch}` from main
+    2. Study the reference implementations above, then implement the changes
+    3. Use shell_execute with cwd: "#{repo_path}" to run `mix compile --warnings-as-errors`
+    4. If compilation fails, read the errors and fix them before proceeding
+    5. Run `mix test` for relevant test files (with cwd: "#{repo_path}")
+    6. Use the git tool to add ONLY the specific files you changed
+    7. Use the git tool to commit with a descriptive message
+    8. Use shell_execute with cwd: "#{repo_path}" to push: `git push origin #{branch}`
+    9. Use shell_execute with cwd: "#{repo_path}" to create a draft PR:
+       `gh pr create --draft --title "#{escape_shell(item.title)}" --repo #{@daemon_repo} --body "Source: #{item.source}\\nPriority: #{item.base_priority}"`
+
+    IMPORTANT: Do NOT modify any files matching: application.ex, supervisors/, security/, loop.ex, runtime.exs, mix.exs, or mix.lock.
+    You MUST compile successfully and commit your changes. An empty branch with no commits is a failure.
     """
   end
 
@@ -887,6 +904,7 @@ defmodule Daemon.Agent.WorkDirector do
 
   # -- Failure Classification --
 
+  defp classify_failure({:empty_branch, _synthesis}), do: :empty_branch
   defp classify_failure({:no_branch, _synthesis}), do: :no_branch_created
   defp classify_failure({:orchestrator_failed, _}), do: :orchestrator_error
   defp classify_failure({:timeout, _}), do: :timeout
@@ -902,6 +920,7 @@ defmodule Daemon.Agent.WorkDirector do
 
   # Reward based on how far the dispatch got
   # These partial signals help Thompson learn which sources produce completable tasks
+  defp failure_class_reward(:empty_branch), do: 0.10       # Branch created but no commits (agent couldn't implement)
   defp failure_class_reward(:no_branch_created), do: 0.15  # Orchestrator ran but nothing materialized
   defp failure_class_reward(:orchestrator_error), do: 0.05  # Orchestrator itself failed
   defp failure_class_reward(:timeout), do: 0.10             # Task was too large
