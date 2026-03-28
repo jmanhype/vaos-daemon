@@ -335,10 +335,11 @@ defmodule Daemon.Agent.InsightActuator do
       state
     else
       Logger.info("[InsightActuator] Fast path: #{diagnostic_type} — skipping Tier 1, going to Tier 2")
-      quality = safe_compute_quality(data)
+      # Architectural findings are pre-qualified by runtime diagnostics — don't
+      # run them through Retrospector's quality gate (designed for paper evidence).
+      quality = 1.0
 
-      with :ok <- quality_gate(quality),
-           :ok <- rate_limit_check(state),
+      with :ok <- rate_limit_check(state),
            {:ok, change_spec} <- tier2_classify(data, ["architectural_diagnostic"]),
            :ok <- risk_gate(change_spec, topic),
            {:ok, state} <- thompson_gate(topic, change_spec, state) do

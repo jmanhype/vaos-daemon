@@ -344,7 +344,10 @@ defmodule Daemon.Agent.CodeIntrospector do
   defp collect_bus_handlers do
     try do
       :ets.tab2list(:daemon_event_handlers)
-      |> Enum.group_by(fn {event_type, _ref, _fn} -> event_type end)
+      |> Enum.group_by(fn
+        {event_type, _ref, _fn} -> event_type
+        {event_type, _fn} -> event_type
+      end)
       |> Map.new(fn {k, v} -> {k, length(v)} end)
     rescue
       _ -> %{}
@@ -671,9 +674,12 @@ defmodule Daemon.Agent.CodeIntrospector do
       _ -> []
     end
 
+    # Only count patterns in the Ashby range: recurring enough to signal a variety
+    # deficit, but below the metric detector's threshold (count >= 5) to avoid
+    # overlapping with detect_crash_pattern which spawns full investigations.
     recurring = Enum.filter(pitfalls, fn p ->
       count = Map.get(p, :count, 0)
-      count >= @ashby_min_occurrences
+      count >= @ashby_min_occurrences and count < 5
     end)
 
     if recurring == [] do
@@ -1027,9 +1033,11 @@ defmodule Daemon.Agent.CodeIntrospector do
   end
 
   defp prune_investigated(state, now) do
+    # Use max cooldown to avoid pruning architectural entries (24hr) at metric cadence (4hr)
+    max_cooldown = max(@cooldown_seconds, @arch_cooldown_seconds)
     pruned = state.investigated_anomalies
       |> Enum.filter(fn {_hash, last_at} ->
-        DateTime.diff(now, last_at, :second) < @cooldown_seconds * 2
+        DateTime.diff(now, last_at, :second) < max_cooldown * 2
       end)
       |> Map.new()
 
