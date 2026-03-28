@@ -34,6 +34,7 @@ defmodule Daemon.Channels.HTTP.API do
     /classify    → inline            POST / (signal classification)
     /knowledge   → KnowledgeRoutes   GET /triples|/count|/context/:id, POST /assert|/retract|/sparql|/reason
     /config      → ConfigRoutes      GET /revisions/:type/:id, GET /revisions/:type/:id/:n, POST /revisions/:type/:id/rollback, GET /revisions/:type/:id/diff
+    /metrics     → PrometheusRoutes  GET / (Prometheus text format scrape endpoint)
   """
   use Plug.Router
   import Daemon.Channels.HTTP.API.Shared
@@ -216,6 +217,9 @@ defmodule Daemon.Channels.HTTP.API do
   # ── Receipts (audit receipt query + replay-verify) ────────────────────
   forward "/receipts", to: API.ReceiptRoutes
 
+  # ── Prometheus metrics (public scrape endpoint, no auth required) ──────
+  forward "/metrics", to: API.PrometheusRoutes
+
   # ── Catch-all ────────────────────────────────────────────────────────
   match _ do
     body = Jason.encode!(%{error: "not_found", details: "Endpoint not found"})
@@ -289,6 +293,7 @@ defmodule Daemon.Channels.HTTP.API do
   defp authenticate(%{request_path: "/api/v1/auth/" <> _} = conn, _opts), do: conn
   defp authenticate(%{request_path: "/api/v1/channels/" <> _} = conn, _opts), do: conn
   defp authenticate(%{request_path: "/api/v1/platform/auth/" <> _} = conn, _opts), do: conn
+  defp authenticate(%{request_path: "/api/v1/metrics" <> _} = conn, _opts), do: conn
 
   defp authenticate(conn, _opts) do
     case get_req_header(conn, "authorization") do
