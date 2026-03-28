@@ -162,6 +162,11 @@ defmodule Daemon.Providers.HealthChecker do
     {:reply, state, state}
   end
 
+  def handle_call({:reset, provider}, _from, state) do
+    Logger.info("[HealthChecker] #{provider}: circuit reset (forced closed)")
+    {:reply, :ok, Map.put(state, provider, empty_entry())}
+  end
+
   # --- Private ---
 
   defp empty_entry do
