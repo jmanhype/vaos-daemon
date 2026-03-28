@@ -27,6 +27,8 @@ defmodule Daemon.Agent.WorkDirector do
   @max_completed_prs 50
   @circuit_breaker_threshold 5
   @circuit_breaker_ms :timer.hours(24)
+  @pact_poll_interval_ms :timer.seconds(30)
+  @pact_max_wait_ms :timer.minutes(10)
   @daemon_repo "jmanhype/vaos-daemon"
 
   @protected_path_patterns [
@@ -455,8 +457,15 @@ defmodule Daemon.Agent.WorkDirector do
         result =
           try do
             case Orchestrator.execute(prompt, session_id, strategy: "pact") do
-              {:ok, output} -> {:ok, output, branch}
-              {:error, reason} -> {:error, reason}
+              {:ok, task_id} ->
+                # PACT is fire-and-forget — poll progress until done
+                case await_pact_completion(task_id) do
+                  {:ok, output} -> {:ok, output, branch}
+                  {:error, reason} -> {:error, reason}
+                end
+
+              {:error, reason} ->
+                {:error, reason}
             end
           rescue
             e -> {:error, {:exception, Exception.message(e)}}
@@ -494,6 +503,60 @@ defmodule Daemon.Agent.WorkDirector do
       },
       dispatches_today: state.dispatches_today + 1
     }
+  end
+
+  defp await_pact_completion(task_id) do
+    deadline = System.monotonic_time(:millisecond) + @pact_max_wait_ms
+    do_await_pact(task_id, deadline)
+  end
+
+  defp do_await_pact(task_id, deadline) do
+    if System.monotonic_time(:millisecond) >= deadline do
+      Logger.warning("[WorkDirector] PACT task #{task_id} timed out after #{div(@pact_max_wait_ms, 1000)}s")
+      {:error, :pact_timeout}
+    else
+      Process.sleep(@pact_poll_interval_ms)
+
+      try do
+        case Orchestrator.progress(task_id) do
+          {:ok, %{status: :completed} = progress} ->
+            output = Map.get(progress, :result, "completed")
+            {:ok, output}
+
+          {:ok, %{status: :failed} = progress} ->
+            error = Map.get(progress, :error, "unknown failure")
+            {:error, {:pact_failed, error}}
+
+          {:ok, _in_progress} ->
+            do_await_pact(task_id, deadline)
+
+          {:error, :not_found} ->
+            # Task may have been cleaned up — check one more time after delay
+            Process.sleep(5_000)
+
+            case Orchestrator.progress(task_id) do
+              {:error, :not_found} -> {:error, :task_not_found}
+              other -> handle_progress_result(other, task_id, deadline)
+            end
+        end
+      rescue
+        _ -> do_await_pact(task_id, deadline)
+      catch
+        :exit, _ -> do_await_pact(task_id, deadline)
+      end
+    end
+  end
+
+  defp handle_progress_result({:ok, %{status: :completed} = progress}, _task_id, _deadline) do
+    {:ok, Map.get(progress, :result, "completed")}
+  end
+
+  defp handle_progress_result({:ok, %{status: :failed} = progress}, _task_id, _deadline) do
+    {:error, {:pact_failed, Map.get(progress, :error, "unknown")}}
+  end
+
+  defp handle_progress_result(_, task_id, deadline) do
+    do_await_pact(task_id, deadline)
   end
 
   defp build_prompt(item, branch) do
