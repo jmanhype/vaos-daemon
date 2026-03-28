@@ -243,6 +243,11 @@ defmodule Daemon.Agent.CodeIntrospector do
     # Architectural diagnostics — fast path (no investigation needed)
     arch_anomalies = detect_architectural_anomalies(signals)
 
+    Logger.info("[CodeIntrospector] Architectural scan: #{length(arch_anomalies)} findings " <>
+      "(mailbox_depths=#{length(signals.mailbox_depths)}, " <>
+      "bus_types=#{length(signals.bus_event_types)}, " <>
+      "bus_handlers=#{map_size(signals.bus_handlers)})")
+
     arch_anomalies
     |> Enum.reject(fn a -> arch_recently_emitted?(a.hash, state) end)
     |> Enum.reject(fn a -> self_modification_target?(a) end)
