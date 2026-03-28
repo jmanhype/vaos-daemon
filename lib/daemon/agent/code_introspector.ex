@@ -69,7 +69,8 @@ defmodule Daemon.Agent.CodeIntrospector do
 
   # Architectural diagnostic thresholds
   @mailbox_threshold 500
-  @wiener_min_subscribers 0  # event types with 0 subscribers = open loop
+  @wiener_min_subscribers 1  # Bridge.PubSub registers 1 broadcast handler per type;
+                             # event types with ONLY the bridge = no real consumer = open loop
   @ashby_min_occurrences 3   # crash patterns must recur 3+ times
   @arch_cooldown_seconds 86_400  # 24 hours — much longer than metric cooldown (2hr)
   @self_modification_blocked ["code_introspector.ex", "insight_actuator.ex", "investigate.ex"]
