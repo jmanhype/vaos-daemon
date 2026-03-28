@@ -85,27 +85,42 @@ defmodule Daemon.Agent.WorkDirector.GroundedVerifier do
   # -- Diff Parsing --
 
   defp get_diff(_branch, repo_path) do
-    # Compare working tree (unstaged changes) against main — at Stage 2.5
-    # the agent has written files but they haven't been committed yet
-    case System.cmd("git", ["diff", "--unified=0", "main", "--", "*.ex", "*.exs"],
-           cd: repo_path, stderr_to_stdout: true) do
-      {output, 0} when byte_size(output) > 0 -> {:ok, output}
-      {output, 0} ->
-        # Also check untracked files (new files created by the agent)
-        case System.cmd("git", ["ls-files", "--others", "--exclude-standard", "--", "*.ex", "*.exs"],
-               cd: repo_path, stderr_to_stdout: true) do
-          {files, 0} when byte_size(files) > 0 ->
-            # Read new files and format as synthetic diff
-            new_files = String.split(files, "\n", trim: true)
-            synthetic_diff = Enum.map_join(new_files, "\n", fn file ->
-              full_path = Path.join(repo_path, file)
-              content = File.read!(full_path) |> String.split("\n") |> Enum.map_join("\n", &("+#{&1}"))
-              "--- /dev/null\n+++ b/#{file}\n#{content}"
-            end)
-            {:ok, synthetic_diff}
-          _ -> {:ok, output}
+    # Get ALL changes vs main: committed + uncommitted + untracked
+    # Agent may or may not have committed during Stage 1
+
+    # 1. Committed changes on branch vs main
+    {committed, _} = System.cmd("git", ["diff", "--unified=0", "main...HEAD", "--", "*.ex", "*.exs"],
+                       cd: repo_path, stderr_to_stdout: true)
+
+    # 2. Uncommitted working tree changes
+    {uncommitted, _} = System.cmd("git", ["diff", "--unified=0", "HEAD", "--", "*.ex", "*.exs"],
+                         cd: repo_path, stderr_to_stdout: true)
+
+    # 3. Untracked new files
+    {untracked_list, _} = System.cmd("git", ["ls-files", "--others", "--exclude-standard", "--", "*.ex", "*.exs"],
+                            cd: repo_path, stderr_to_stdout: true)
+
+    synthetic =
+      untracked_list
+      |> String.split("\n", trim: true)
+      |> Enum.map_join("\n", fn file ->
+        full_path = Path.join(repo_path, file)
+        case File.read(full_path) do
+          {:ok, content} ->
+            lines = content |> String.split("\n") |> Enum.map_join("\n", &("+#{&1}"))
+            "--- /dev/null\n+++ b/#{file}\n#{lines}"
+          _ -> ""
         end
-      {output, _} -> {:error, output}
+      end)
+
+    combined = [committed, uncommitted, synthetic]
+               |> Enum.reject(&(&1 == ""))
+               |> Enum.join("\n")
+
+    if byte_size(combined) > 0 do
+      {:ok, combined}
+    else
+      {:ok, ""}
     end
   rescue
     e -> {:error, Exception.message(e)}
