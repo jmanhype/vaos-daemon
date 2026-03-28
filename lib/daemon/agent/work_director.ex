@@ -874,6 +874,7 @@ defmodule Daemon.Agent.WorkDirector do
 
       {:error, violations} ->
         Logger.warning("[WorkDirector] Stage 2.5: #{length(violations)} phantom reference(s) found (attempt #{attempt + 1})")
+        Enum.each(violations, fn v -> Logger.warning("[WorkDirector] Stage 2.5 violation: #{v}") end)
 
         fix_prompt = """
         Fix the following reference errors in this Elixir/OTP codebase.
