@@ -445,8 +445,25 @@ defmodule Daemon.Agent.WorkDirector do
   # -- Internal --
 
   defp refresh_backlog(state) do
-    # Fetch from static sources
-    static_items = Source.fetch_all(@source_modules)
+    Logger.debug("[WorkDirector] Refreshing backlog from #{length(@source_modules)} static sources...")
+
+    # Fetch from static sources with timeout protection
+    static_items =
+      try do
+        task = Task.async(fn -> Source.fetch_all(@source_modules) end)
+        case Task.yield(task, 30_000) || Task.shutdown(task) do
+          {:ok, items} -> items
+          _ ->
+            Logger.warning("[WorkDirector] Static source fetch timed out")
+            []
+        end
+      rescue
+        _ -> []
+      catch
+        :exit, _ -> []
+      end
+
+    Logger.debug("[WorkDirector] Static sources returned #{length(static_items)} items")
 
     # Fetch from buffer-based sources
     inv_items =
