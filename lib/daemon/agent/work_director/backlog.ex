@@ -12,8 +12,9 @@ defmodule Daemon.Agent.WorkDirector.Backlog do
   @persistence_dir Path.expand("~/.daemon/work_director")
   @persistence_file Path.join(@persistence_dir, "backlog.json")
   @cooldown_ms :timer.hours(4)
-  @max_attempts 2
+  @max_attempts 3
   @stale_ms :timer.hours(24)
+  @recycle_ms :timer.hours(8)
 
   defmodule WorkItem do
     @moduledoc "A unit of work in the WorkDirector backlog."
@@ -101,8 +102,26 @@ defmodule Daemon.Agent.WorkDirector.Backlog do
           updated = %{existing | metadata: item.metadata, base_priority: item.base_priority}
           Map.put(acc, item.content_hash, updated)
 
-        _completed_or_failed ->
-          acc
+        %WorkItem{status: status, last_attempted_at: last} = existing
+            when status in [:completed, :failed] ->
+          # Recycle items that failed or "completed" without a real PR branch
+          # after cooldown period, if they haven't exceeded max attempts
+          recyclable =
+            existing.attempt_count < @max_attempts and
+              last != nil and
+              DateTime.diff(DateTime.utc_now(), last, :millisecond) >= @recycle_ms
+
+          if recyclable do
+            recycled = %{existing |
+              status: :pending,
+              result: nil,
+              metadata: item.metadata,
+              base_priority: item.base_priority
+            }
+            Map.put(acc, item.content_hash, recycled)
+          else
+            acc
+          end
       end
     end)
   end

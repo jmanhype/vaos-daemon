@@ -35,7 +35,6 @@ defmodule Daemon.Agent.InsightActuator do
 
   alias Daemon.Investigation.Retrospector
   alias Daemon.Investigation.PromptSelector
-  alias Daemon.Agent.Orchestrator
   alias Daemon.Governance.Approvals
   alias Daemon.Intelligence.DecisionJournal
   alias MiosaProviders.Registry, as: Providers
@@ -732,6 +731,7 @@ defmodule Daemon.Agent.InsightActuator do
 
   defp do_dispatch_to_orchestrator(data, change_spec, quality, state, topic, top_evidence, branch_name) do
     session_id = "insight-#{System.unique_integer([:positive])}"
+    repo_path = Application.get_env(:daemon, :repo_path, Path.expand("~/vas-swarm"))
 
     prompt = build_orchestration_prompt(topic, quality, top_evidence, change_spec, branch_name, data)
 
@@ -741,8 +741,12 @@ defmodule Daemon.Agent.InsightActuator do
     {_pid, _monitor_ref} = spawn_monitor(fn ->
       result =
         try do
-          case Orchestrator.execute(prompt, session_id, strategy: "pact") do
-            {:ok, output} -> {:ok, output, branch_name}
+          case Daemon.Agent.ExecutionAwaiter.execute_and_await(
+            prompt, session_id, branch_name, repo_path,
+            strategy: [strategy: "pact"]
+          ) do
+            {:ok, synthesis, branch} -> {:ok, synthesis, branch}
+            {:partial, synthesis} -> {:error, {:no_branch, synthesis}}
             {:error, reason} -> {:error, reason}
           end
         rescue

@@ -313,12 +313,20 @@ defmodule Daemon.Agent.WorkDirector do
           end
 
         {:error, reason} ->
-          Logger.warning("[WorkDirector] Dispatch failed: #{inspect(reason)}")
-          DecisionJournal.record_outcome(dispatch.branch, :failure, %{reason: inspect(reason)})
+          failure_class = classify_failure(reason)
+          Logger.warning("[WorkDirector] Dispatch failed: #{failure_class} — #{inspect(reason)}")
+          DecisionJournal.record_outcome(dispatch.branch, :failure, %{
+            reason: inspect(reason),
+            failure_class: failure_class
+          })
+
+          # Reward based on failure class — partial signals
+          reward = failure_class_reward(failure_class)
           failures = state.consecutive_failures + 1
 
           state
           |> update_backlog_failed(dispatch.content_hash)
+          |> reward_arm(dispatch.source, reward)
           |> Map.put(:consecutive_failures, failures)
           |> maybe_trip_circuit_breaker(failures)
       end
@@ -560,6 +568,9 @@ defmodule Daemon.Agent.WorkDirector do
     end
   end
 
+  @orchestrator_poll_interval_ms 10_000
+  @orchestrator_timeout_ms :timer.minutes(10)
+
   defp do_dispatch_item(state, %WorkItem{} = item, branch) do
     session_id = "workdir-#{:erlang.unique_integer([:positive])}"
     prompt = build_prompt(item, branch)
@@ -568,14 +579,39 @@ defmodule Daemon.Agent.WorkDirector do
 
     parent = self()
     ref = make_ref()
+    repo_path = Application.get_env(:daemon, :repo_path, Path.expand("~/vas-swarm"))
 
     {_pid, _monitor_ref} =
       spawn_monitor(fn ->
         result =
           try do
             case Orchestrator.execute(prompt, session_id, []) do
-              {:ok, output} -> {:ok, output, branch}
-              {:error, reason} -> {:error, reason}
+              {:ok, task_id} ->
+                # Poll Orchestrator.progress until task completes or times out
+                case await_orchestrator_completion(task_id) do
+                  {:completed, synthesis} ->
+                    # Verify the branch actually exists
+                    case verify_branch_exists(branch, repo_path) do
+                      true ->
+                        Logger.info("[WorkDirector] Task #{task_id} completed, branch #{branch} exists")
+                        {:ok, synthesis, branch}
+
+                      false ->
+                        Logger.warning("[WorkDirector] Task #{task_id} completed but branch #{branch} not found")
+                        {:error, {:no_branch, synthesis}}
+                    end
+
+                  {:failed, error} ->
+                    Logger.warning("[WorkDirector] Task #{task_id} failed: #{inspect(error)}")
+                    {:error, {:orchestrator_failed, error}}
+
+                  {:timeout, last_status} ->
+                    Logger.warning("[WorkDirector] Task #{task_id} timed out (status=#{last_status})")
+                    {:error, {:timeout, last_status}}
+                end
+
+              {:error, reason} ->
+                {:error, reason}
             end
           rescue
             e -> {:error, {:exception, Exception.message(e)}}
@@ -847,6 +883,83 @@ defmodule Daemon.Agent.WorkDirector do
 
   defp schedule_pr_poll do
     Process.send_after(self(), :poll_pr_outcomes, @pr_poll_ms)
+  end
+
+  # -- Failure Classification --
+
+  defp classify_failure({:no_branch, _synthesis}), do: :no_branch_created
+  defp classify_failure({:orchestrator_failed, _}), do: :orchestrator_error
+  defp classify_failure({:timeout, _}), do: :timeout
+  defp classify_failure({:exception, msg}) when is_binary(msg) do
+    cond do
+      String.contains?(msg, "compile") -> :compilation_error
+      String.contains?(msg, "test") -> :test_failure
+      true -> :exception
+    end
+  end
+  defp classify_failure({:exit, _}), do: :process_crash
+  defp classify_failure(_), do: :unknown
+
+  # Reward based on how far the dispatch got
+  # These partial signals help Thompson learn which sources produce completable tasks
+  defp failure_class_reward(:no_branch_created), do: 0.15  # Orchestrator ran but nothing materialized
+  defp failure_class_reward(:orchestrator_error), do: 0.05  # Orchestrator itself failed
+  defp failure_class_reward(:timeout), do: 0.10             # Task was too large
+  defp failure_class_reward(:compilation_error), do: 0.10   # Code was written but broken
+  defp failure_class_reward(:test_failure), do: 0.20        # Code compiled but tests failed (close!)
+  defp failure_class_reward(:process_crash), do: 0.0        # Total failure
+  defp failure_class_reward(_), do: 0.05
+
+  # -- Orchestrator Completion Polling --
+
+  defp await_orchestrator_completion(task_id) do
+    deadline = System.monotonic_time(:millisecond) + @orchestrator_timeout_ms
+    poll_orchestrator(task_id, deadline)
+  end
+
+  defp poll_orchestrator(task_id, deadline) do
+    if System.monotonic_time(:millisecond) > deadline do
+      {:timeout, :deadline_exceeded}
+    else
+      case Orchestrator.progress(task_id) do
+        {:ok, %{status: :completed, synthesis: synthesis}} ->
+          {:completed, synthesis || ""}
+
+        {:ok, %{status: :failed, error: error}} ->
+          {:failed, error}
+
+        {:ok, %{status: status}} when status in [:running, :planning] ->
+          Process.sleep(@orchestrator_poll_interval_ms)
+          poll_orchestrator(task_id, deadline)
+
+        {:error, :not_found} ->
+          # Task may have been cleaned up — treat as failure
+          {:failed, :task_not_found}
+
+        _ ->
+          Process.sleep(@orchestrator_poll_interval_ms)
+          poll_orchestrator(task_id, deadline)
+      end
+    end
+  rescue
+    _ -> {:failed, :poll_error}
+  catch
+    :exit, _ -> {:failed, :poll_exit}
+  end
+
+  defp verify_branch_exists(branch, repo_path) do
+    # Check local branches first, then remote
+    case System.cmd("git", ["branch", "--list", branch], cd: repo_path, stderr_to_stdout: true) do
+      {output, 0} when byte_size(output) > 0 -> true
+      _ ->
+        # Check remote
+        case System.cmd("git", ["ls-remote", "--heads", "origin", branch], cd: repo_path, stderr_to_stdout: true) do
+          {output, 0} when byte_size(output) > 0 -> true
+          _ -> false
+        end
+    end
+  rescue
+    _ -> false
   end
 
   # -- Arm Persistence --

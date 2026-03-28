@@ -404,7 +404,29 @@ defmodule Daemon.Intelligence.DecisionJournal do
 
   # ── ALCOA Provenance ──────────────────────────────────────
 
+  @ledger_path Path.join(System.user_home!(), ".openclaw/investigate_ledger.json")
+
+  defp ensure_ledger_started do
+    case Process.whereis(@ledger_name) do
+      pid when is_pid(pid) -> :ok
+      nil ->
+        case EpistemicLedger.start_link(path: @ledger_path, name: @ledger_name) do
+          {:ok, _pid} ->
+            Logger.info("[DecisionJournal] Started EpistemicLedger (#{@ledger_name})")
+            :ok
+          {:error, {:already_started, _pid}} -> :ok
+          {:error, reason} ->
+            Logger.warning("[DecisionJournal] Failed to start EpistemicLedger: #{inspect(reason)}")
+            {:error, reason}
+        end
+    end
+  rescue
+    _ -> {:error, :start_failed}
+  end
+
   defp create_provenance_claim(source_module, action_type, context) do
+    ensure_ledger_started()
+
     topic = Map.get(context, :topic, "unknown")
     branch = Map.get(context, :branch, "unknown")
 
@@ -445,6 +467,8 @@ defmodule Daemon.Intelligence.DecisionJournal do
   end
 
   defp add_outcome_evidence(claim_id, outcome, metadata) do
+    ensure_ledger_started()
+
     {direction, strength} = case outcome do
       :merged -> {:support, 1.0}
       :success -> {:support, 0.7}

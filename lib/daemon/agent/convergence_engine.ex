@@ -17,7 +17,7 @@ defmodule Daemon.Agent.ConvergenceEngine do
   use GenServer
   require Logger
 
-  alias Daemon.Agent.Orchestrator
+  alias Daemon.Agent.ExecutionAwaiter
   alias Daemon.Fitness
   alias Daemon.Intelligence.DecisionJournal
 
@@ -344,8 +344,9 @@ defmodule Daemon.Agent.ConvergenceEngine do
       spawn_monitor(fn ->
         result =
           try do
-            case Orchestrator.execute(prompt, session_id, strategy: "pact") do
-              {:ok, output} -> {:ok, output, branch_name}
+            case ExecutionAwaiter.execute_and_await(prompt, session_id, branch_name, repo_path, strategy: [strategy: "pact"]) do
+              {:ok, synthesis, branch} -> {:ok, synthesis, branch}
+              {:partial, synthesis} -> {:error, {:no_branch, synthesis}}
               {:error, reason} -> {:error, reason}
             end
           rescue
