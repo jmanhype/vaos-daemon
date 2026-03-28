@@ -14,6 +14,7 @@ defmodule Daemon.Machines do
   """
   use GenServer
   require Logger
+  import Daemon.Logger, only: [info: 2, warning: 2]
 
   defstruct active_machines: [:core], config: %{}
 
@@ -42,7 +43,7 @@ defmodule Daemon.Machines do
   def init(:ok) do
     config = load_config()
     active = determine_active_machines(config)
-    Logger.info("Machines activated: #{inspect(active)}")
+    info("Machines activated", machines: inspect(active))
     {:ok, %__MODULE__{active_machines: active, config: config}}
   end
 
@@ -64,8 +65,7 @@ defmodule Daemon.Machines do
   end
 
   def handle_call(msg, _from, state) do
-    require Logger
-    Logger.warning("Machines received unexpected call: #{inspect(msg)}")
+    warning("Machines received unexpected call", message: inspect(msg))
     {:reply, {:error, :unknown_call}, state}
   end
 

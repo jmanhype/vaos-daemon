@@ -631,6 +631,7 @@ defmodule MiosaBudget.Budget do
   """
   use GenServer
   require Logger
+  import Daemon.Logger, only: [info: 2, warning: 2, error: 2]
 
   @daily_default_usd   50.0
   @monthly_default_usd 200.0
@@ -738,16 +739,36 @@ defmodule MiosaBudget.Budget do
       monthly_spent: state.monthly_spent + cost,
       entries: Enum.take([entry | state.entries], 10_000)
     }
+
+    info("Budget: Cost recorded",
+      provider: provider,
+      model: model,
+      tokens_in: tokens_in,
+      tokens_out: tokens_out,
+      cost_usd: Float.round(cost, 6),
+      daily_spent: Float.round(state.daily_spent, 4),
+      monthly_spent: Float.round(state.monthly_spent, 4),
+      session_id: session_id
+    )
+
     {:noreply, state}
   end
 
   @impl true
   def handle_cast(:reset_daily, state) do
+    info("Budget: Daily reset triggered",
+      previous_spent: Float.round(state.daily_spent, 4),
+      reset_at: DateTime.to_iso8601(state.daily_reset_at)
+    )
     {:noreply, %{state | daily_spent: 0.0, daily_reset_at: tomorrow_midnight()}}
   end
 
   @impl true
   def handle_cast(:reset_monthly, state) do
+    info("Budget: Monthly reset triggered",
+      previous_spent: Float.round(state.monthly_spent, 4),
+      reset_at: DateTime.to_iso8601(state.monthly_reset_at)
+    )
     {:noreply, %{state | monthly_spent: 0.0, monthly_reset_at: next_month_midnight()}}
   end
 

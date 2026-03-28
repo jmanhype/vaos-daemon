@@ -31,6 +31,7 @@ defmodule Daemon.Channels.Feishu do
   use GenServer
   @behaviour Daemon.Channels.Behaviour
   require Logger
+  import Daemon.Logger, only: [info: 2, warning: 2, debug: 2, error: 2]
 
   alias Daemon.Agent.Loop
   alias Daemon.Channels.Session
@@ -101,11 +102,11 @@ defmodule Daemon.Channels.Feishu do
 
     case app_id do
       nil ->
-        Logger.info("Feishu: No app_id configured, adapter disabled")
+        info("Feishu: No app_id configured, adapter disabled", %{})
         :ignore
 
       _ ->
-        Logger.info("Feishu: Adapter started (app_id=#{app_id})")
+        info("Feishu: Adapter started", app_id: app_id)
         send(self(), :refresh_token)
 
         {:ok,
@@ -148,7 +149,7 @@ defmodule Daemon.Channels.Feishu do
         {:reply, result, state}
 
       {:error, reason} ->
-        Logger.warning("Feishu: Decryption failed: #{inspect(reason)}")
+        warning("Feishu: Decryption failed", error: inspect(reason))
         {:reply, {:error, :decryption_failed}, state}
     end
   end
@@ -171,7 +172,7 @@ defmodule Daemon.Channels.Feishu do
 
   # URL verification challenge
   defp route_event(%{"type" => "url_verification", "challenge" => challenge}, _state) do
-    Logger.info("Feishu: URL verification challenge")
+    info("Feishu: URL verification challenge", %{})
     {:challenge, challenge}
   end
 
@@ -188,7 +189,7 @@ defmodule Daemon.Channels.Feishu do
   end
 
   defp route_event(body, _state) do
-    Logger.debug("Feishu: Unhandled event shape: #{inspect(Map.keys(body))}")
+    debug("Feishu: Unhandled event shape", keys: inspect(Map.keys(body)))
     :ok
   end
 
@@ -206,7 +207,7 @@ defmodule Daemon.Channels.Feishu do
       end
 
     if text != "" and chat_id do
-      Logger.debug("Feishu: Message from #{sender_id} in #{chat_id}: #{text}")
+      debug("Feishu: Message received", sender_id: sender_id, chat_id: chat_id, message: text)
       session_id = "feishu_#{chat_id}_#{sender_id}"
       Session.ensure_loop(session_id, sender_id, :feishu)
 
@@ -217,16 +218,16 @@ defmodule Daemon.Channels.Feishu do
           do_send_message(state, chat_id, response, receive_id_type: "chat_id")
 
         {:filtered, signal} ->
-          Logger.debug("Feishu: Signal filtered (weight=#{signal.weight})")
+          debug("Feishu: Signal filtered", weight: signal.weight)
 
         {:error, reason} ->
-          Logger.warning("Feishu: Agent error for #{chat_id}: #{inspect(reason)}")
+          error("Feishu: Agent error", chat_id: chat_id, error: inspect(reason))
       end
     end
   end
 
   defp dispatch_event(event_type, _event, _state) do
-    Logger.debug("Feishu: Unhandled event type: #{event_type}")
+    debug("Feishu: Unhandled event type", event_type: event_type)
   end
 
   # ── HTTP Helpers ─────────────────────────────────────────────────────
@@ -256,15 +257,15 @@ defmodule Daemon.Channels.Feishu do
 
       {:ok, %{status: 429, headers: headers}} ->
         retry_after = get_retry_after(headers)
-        Logger.warning("Feishu: Rate limited. Retry after #{retry_after}s")
+        warning("Feishu: Rate limited", retry_after_seconds: retry_after)
         {:error, {:rate_limited, retry_after}}
 
       {:ok, %{body: body}} ->
-        Logger.warning("Feishu: Send failed: #{inspect(body)}")
+        warning("Feishu: Send failed", response: inspect(body))
         {:error, body}
 
       {:error, reason} ->
-        Logger.warning("Feishu: HTTP error: #{inspect(reason)}")
+        error("Feishu: HTTP error", error: inspect(reason))
         {:error, reason}
     end
   end
@@ -278,16 +279,16 @@ defmodule Daemon.Channels.Feishu do
          ) do
       {:ok,
        %{status: 200, body: %{"code" => 0, "tenant_access_token" => token, "expire" => expire}}} ->
-        Logger.debug("Feishu: Access token refreshed (expires in #{expire}s)")
+        debug("Feishu: Access token refreshed", expires_in_seconds: expire)
         expires_at = System.system_time(:second) + expire
         %{state | tenant_access_token: token, token_expires_at: expires_at}
 
       {:ok, %{body: body}} ->
-        Logger.warning("Feishu: Token refresh failed: #{inspect(body)}")
+        warning("Feishu: Token refresh failed", response: inspect(body))
         state
 
       {:error, reason} ->
-        Logger.warning("Feishu: Token refresh HTTP error: #{inspect(reason)}")
+        error("Feishu: Token refresh HTTP error", error: inspect(reason))
         state
     end
   end
