@@ -271,13 +271,30 @@ defmodule Daemon.Agent.WorkDirector do
         {:noreply, state}
 
       true ->
-        case Backlog.pick_next(state.backlog, state.arms) do
-          :empty ->
-            {:noreply, state}
+        state = try_dispatch_loop(state, MapSet.new(), 5)
+        {:noreply, state}
+    end
+  end
 
-          {:ok, item} ->
-            state = dispatch_item(state, item)
-            {:noreply, state}
+  # Try to dispatch, skipping conflicted items up to max_attempts
+  defp try_dispatch_loop(state, _skip_set, 0), do: state
+
+  defp try_dispatch_loop(state, skip_set, attempts_left) do
+    eligible_backlog =
+      Map.reject(state.backlog, fn {hash, _} -> MapSet.member?(skip_set, hash) end)
+
+    case Backlog.pick_next(eligible_backlog, state.arms) do
+      :empty ->
+        state
+
+      {:ok, item} ->
+        case dispatch_item(state, item) do
+          {:conflict, updated_state} ->
+            # Item conflicted — skip it and try next
+            try_dispatch_loop(updated_state, MapSet.put(skip_set, item.content_hash), attempts_left - 1)
+
+          updated_state ->
+            updated_state
         end
     end
   end
@@ -562,7 +579,7 @@ defmodule Daemon.Agent.WorkDirector do
     }) do
       {:conflict, reason} ->
         Logger.info("[WorkDirector] Journal conflict for '#{item.title}': #{reason}")
-        state
+        {:conflict, state}
 
       :approved ->
         do_dispatch_item(state, item, branch)
