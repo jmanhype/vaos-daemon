@@ -272,4 +272,93 @@ defmodule OSA.SDK do
 
   @doc "Alias for the Permission module."
   def permission, do: Daemon.SDK.Permission
+
+  # ── Investigation Pipeline ─────────────────────────────────────────
+
+  @doc """
+  Investigate a claim or topic using the epistemic investigation pipeline.
+
+  Runs multi-source paper search (Semantic Scholar + OpenAlex + alphaXiv)
+  with FOR, AGAINST, and REVIEWS queries, then performs dual adversarial
+  LLM analysis with citation verification and evidence hierarchy scoring.
+
+  ## Options
+
+    * `:depth` - Either `:standard` (adversarial debate + citation verification)
+      or `:deep` (standard + research pipeline with hypotheses and testing)
+    * `:strategy` - A map with investigation parameters (optional, uses defaults if not provided)
+
+  ## Returns
+
+    * `{:ok, result}` - Map with investigation results including verdict,
+      supporting/opposing evidence, quality scores, and metadata
+    * `{:error, reason}` - If investigation fails
+
+  ## Example
+
+      {:ok, result} = OSA.SDK.investigate("Does MCTS improve LLM reasoning?")
+  """
+  defdelegate investigate(topic, opts \\ []), to: Daemon.SDK.Investigation
+
+  @doc """
+  Get the current investigation strategy for a topic.
+
+  Returns the strategy parameters that will be used for investigations.
+  """
+  defdelegate investigation_strategy(topic), to: Daemon.SDK.Investigation, as: :get_strategy
+
+  @doc """
+  Update investigation strategy parameters for a topic.
+
+  Allows fine-tuning of investigation behavior including scoring weights,
+  thresholds, and search limits.
+  """
+  defdelegate update_investigation_strategy(topic, params),
+    to: Daemon.SDK.Investigation,
+    as: :update_strategy
+
+  @doc """
+  List all available investigation prompt variants with their stats.
+
+  Returns a list of prompt variants with Thompson Sampling posterior
+  statistics (alpha, beta, total_trials).
+  """
+  defdelegate list_investigation_prompts(), to: Daemon.SDK.Investigation, as: :list_prompts
+
+  @doc """
+  Register a new investigation prompt variant.
+
+  Allows adding custom prompt templates for A/B testing via Thompson Sampling.
+  """
+  defdelegate register_investigation_prompt(prompts, opts \\ []),
+    to: Daemon.SDK.Investigation,
+    as: :register_prompt
+
+  @doc """
+  Get investigation quality metrics and retrospector statistics.
+
+  Returns information about investigation outcomes, experiment status,
+  and optimization results.
+  """
+  defdelegate investigation_metrics(), to: Daemon.SDK.Investigation, as: :metrics
+
+  @doc """
+  Score a paper's source quality for investigation evidence classification.
+
+  Returns a float in [0.0, 1.0] indicating source quality based on
+  citations, publisher reputation, and publication type.
+  """
+  defdelegate score_paper_source(paper, strategy \\ nil),
+    to: Daemon.SDK.Investigation,
+    as: :score_source
+
+  @doc """
+  Classify evidence as grounded or belief based on verification and source quality.
+
+  Implements Verification-Aware Classification (VAC) to gate the grounded
+  evidence store.
+  """
+  defdelegate classify_evidence(verification, source_quality, strategy \\ nil),
+    to: Daemon.SDK.Investigation,
+    as: :classify_evidence
 end

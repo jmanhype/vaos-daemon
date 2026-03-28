@@ -89,6 +89,30 @@ defmodule Daemon.Channels.Email do
     end
   end
 
+  @doc """
+  Send investigation results via email.
+
+  Formats investigation results into a readable email and sends them
+  to the specified recipient.
+
+  ## Options
+
+    * `:subject` - Email subject (default: "Investigation Results")
+    * `:include_raw` - Include raw JSON data (default: false)
+    * `:format` - Either `:text` or `:html` (default: :text)
+
+  ## Example
+
+      {:ok, result} = OSA.SDK.investigate("Does MCTS improve LLM reasoning?")
+      {:ok, _} = Daemon.Channels.Email.send_investigation("user@example.com", result)
+  """
+  def send_investigation(to_email, investigation_result, opts \\ []) do
+    case Process.whereis(__MODULE__) do
+      nil -> {:error, :not_started}
+      _pid -> GenServer.call(__MODULE__, {:send_investigation, to_email, investigation_result, opts}, @send_timeout)
+    end
+  end
+
   # ── GenServer Callbacks ──────────────────────────────────────────────
 
   @impl true
@@ -127,6 +151,14 @@ defmodule Daemon.Channels.Email do
   @impl true
   def handle_call({:send, to_email, message, opts}, _from, state) do
     result = do_send_email(state, to_email, message, opts)
+    {:reply, result, state}
+  end
+
+  @impl true
+  def handle_call({:send_investigation, to_email, investigation_result, opts}, _from, state) do
+    formatted = format_investigation_for_email(investigation_result, opts)
+    subject = Keyword.get(opts, :subject, "Investigation Results")
+    result = do_send_email(state, to_email, formatted, subject: subject)
     {:reply, result, state}
   end
 
@@ -352,5 +384,52 @@ defmodule Daemon.Channels.Email do
       {_, value} -> String.to_integer(value)
       nil -> 60
     end
+  end
+
+  # ── Investigation Formatting ─────────────────────────────────────────
+
+  defp format_investigation_for_email(result, opts) do
+    topic = result["topic"] || result[:topic] || "Unknown Topic"
+    verdict = result["verdict"] || result[:verdict] || "No verdict"
+    supporting = result["supporting"] || result[:supporting] || []
+    opposing = result["opposing"] || result[:opposing] || []
+    uncertainty = result["uncertainty"] || result[:uncertainty] || 1.0
+
+    include_raw = Keyword.get(opts, :include_raw, false)
+
+    formatted = """
+    Investigation Report: #{topic}
+
+    Verdict: #{verdict}
+    Uncertainty: #{Float.round(uncertainty * 100, 1)}%
+
+    Supporting Evidence (#{length(supporting)} items):
+    #{format_evidence_list(supporting)}
+
+    Opposing Evidence (#{length(opposing)} items):
+    #{format_evidence_list(opposing)}
+    """
+
+    if include_raw do
+      formatted <> "\n\nRaw Data:\n" <> Jason.encode!(result, pretty: true)
+    else
+      formatted
+    end
+  end
+
+  defp format_evidence_list([]), do: "  None"
+  defp format_evidence_list(evidence_list) do
+    evidence_list
+    |> Enum.take(10)
+    |> Enum.with_index(1)
+    |> Enum.map(fn {ev, idx} ->
+      text = ev["text"] || ev[:text] || "No text"
+      source = ev["source"] || ev[:source] || "Unknown"
+      strength = ev["strength"] || ev[:strength] || "N/A"
+      verified = ev["verification"] || ev[:verification] || "unknown"
+
+      "  #{idx}. [#{verified}] #{String.slice(text, 0, 80)}...\n     Source: #{source} | Strength: #{strength}"
+    end)
+    |> Enum.join("\n")
   end
 end
