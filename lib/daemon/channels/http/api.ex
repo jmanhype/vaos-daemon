@@ -98,6 +98,9 @@ defmodule Daemon.Channels.HTTP.API do
   # ── Multi-agent debate ────────────────────────────────────────────────
   forward "/debate", to: API.DebateRoutes
 
+  # ── Epistemic investigation with streaming ────────────────────────────
+  forward "/investigate", to: API.InvestigateRoutes
+
   # ── Agent SSE stream ─────────────────────────────────────────────────
   forward "/stream", to: API.AgentRoutes
 
