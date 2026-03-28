@@ -341,14 +341,6 @@ defmodule Daemon.Production.FilmPipeline do
   @tile_js ~S|var imgs=document.querySelectorAll('img[alt="Video thumbnail"]');if(imgs[0]){imgs[0].scrollIntoView();imgs[0].parentElement.click();'clicked'}else{'no tiles'}|
 
 
-  @verify_flow_url_js "window.location.href.indexOf('flow')>-1?'on_flow':'not_flow'"
-  @verify_project_url_js "window.location.href.indexOf('/project/')>-1?'on_project':'not_project'"
-  @verify_edit_url_js "window.location.href.indexOf('/edit/')>-1?'on_edit':'not_edit'"
-  @count_tiles_js "document.querySelectorAll('img').length+''"
-  @check_render_done_js "'rendered'"
-  @check_extend_prompt_js "'extend_ready'"
-  @check_ingredient_thumb_js "'check_done'" 
-
   defp focus_and_paste(text) do
     # Get prompt box position and physically click it
     result = execute_js(@focus_js)
