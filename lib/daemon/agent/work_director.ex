@@ -676,6 +676,8 @@ defmodule Daemon.Agent.WorkDirector do
             case finalize_branch(item, branch, repo_path) do
               {:ok, _pr_info} ->
                 Logger.info("[WorkDirector] Stage 3 complete: branch #{branch} committed and pushed")
+                # Switch back to main for next dispatch
+                System.cmd("git", ["checkout", "main"], cd: repo_path, stderr_to_stdout: true)
                 {:ok, synthesis, branch}
 
               {:error, :no_changes} ->
@@ -685,6 +687,7 @@ defmodule Daemon.Agent.WorkDirector do
 
               {:error, reason} ->
                 Logger.warning("[WorkDirector] Stage 3 failed: #{inspect(reason)}")
+                cleanup_branch(branch, repo_path)
                 {:error, {:commit_failed, reason}}
             end
 
