@@ -162,28 +162,41 @@ defmodule Daemon.Agent.WorkDirector do
 
   @impl true
   def handle_info(:bootstrap, state) do
+    Logger.info("[WorkDirector] Bootstrap starting...")
+
     # Start buffers for event-driven sources
     {:ok, inv_buffer} = Source.Investigation.start_buffer()
     {:ok, manual_buffer} = Source.Manual.start_buffer()
+    Logger.debug("[WorkDirector] Buffers started")
 
     # Subscribe to investigation_complete events
     investigation_ref =
       try do
         handler = fn event ->
-          # Extract finding data from event
           data = Map.get(event, :data, Map.get(event, "data", %{}))
           Source.Investigation.push(inv_buffer, data)
         end
 
         Daemon.Events.Bus.register_handler(:investigation_complete, handler)
       rescue
-        _ -> nil
+        e ->
+          Logger.warning("[WorkDirector] Failed to subscribe to events: #{Exception.message(e)}")
+          nil
       catch
-        :exit, _ -> nil
+        :exit, reason ->
+          Logger.warning("[WorkDirector] Failed to subscribe to events: #{inspect(reason)}")
+          nil
       end
 
     # Load persisted backlog
-    persisted = Backlog.load()
+    persisted =
+      try do
+        Backlog.load()
+      rescue
+        e ->
+          Logger.warning("[WorkDirector] Failed to load backlog: #{Exception.message(e)}")
+          %{}
+      end
 
     state = %{state |
       investigation_buffer: inv_buffer,
@@ -193,7 +206,18 @@ defmodule Daemon.Agent.WorkDirector do
     }
 
     # Initial backlog refresh
-    state = refresh_backlog(state)
+    state =
+      try do
+        refresh_backlog(state)
+      rescue
+        e ->
+          Logger.error("[WorkDirector] Backlog refresh failed: #{Exception.message(e)}")
+          state
+      catch
+        :exit, reason ->
+          Logger.error("[WorkDirector] Backlog refresh exit: #{inspect(reason)}")
+          state
+      end
 
     # Schedule recurring timers
     schedule_refresh()
@@ -202,6 +226,7 @@ defmodule Daemon.Agent.WorkDirector do
     # Start the dispatch loop
     send(self(), :try_dispatch)
 
+    Logger.info("[WorkDirector] Bootstrap complete (backlog=#{map_size(state.backlog)} items)")
     {:noreply, state}
   end
 
