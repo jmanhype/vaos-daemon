@@ -34,7 +34,7 @@ defmodule Daemon.Events.Bus do
   # Sample 1-in-N events for failure-mode detection to keep overhead negligible.
   @failure_mode_sample_rate 10
 
-  @event_types ~w(user_message llm_request llm_response tool_call tool_result agent_response system_event channel_connected channel_disconnected channel_error ask_user_question survey_answered algedonic_alert signal_classified investigation_complete architectural_finding)a
+  @event_types ~w(user_message llm_request llm_response tool_call tool_result agent_response system_event channel_connected channel_disconnected channel_error ask_user_question survey_answered algedonic_alert signal_classified investigation_complete architectural_finding work_dispatched)a
 
   def start_link(_opts) do
     GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
