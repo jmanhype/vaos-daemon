@@ -647,6 +647,7 @@ defmodule Daemon.Agent.WorkDirector do
   # Stage 0: Create branch (zero LLM cost)
   # Stage 1: Send code-only prompt to Orchestrator (single agent, high iterations)
   # Stage 2: Verify compilation, retry if needed (zero LLM cost for verify, LLM for fix)
+  # Stage 2.5: Grounded verification — check phantom module references (zero LLM cost, LLM for fix)
   # Stage 3: Git add/commit/push/PR (zero LLM cost)
 
   defp staged_dispatch(item, branch, session_id, repo_path) do
@@ -671,6 +672,18 @@ defmodule Daemon.Agent.WorkDirector do
         case verify_and_fix_compilation(item, branch, session_id, repo_path, 0) do
           :ok ->
             Logger.info("[WorkDirector] Stage 2 complete: compilation verified")
+
+            # Stage 2.5: Grounded verification — check phantom references
+            case verify_and_fix_references(branch, session_id, repo_path, 0) do
+              :ok ->
+                Logger.info("[WorkDirector] Stage 2.5 complete: references verified")
+              {:warnings, warnings} ->
+                Logger.info("[WorkDirector] Stage 2.5 passed with warnings: #{Enum.join(warnings, "; ")}")
+              {:error, _reason} ->
+                Logger.warning("[WorkDirector] Stage 2.5 failed: phantom references unfixable")
+                cleanup_branch(branch, repo_path)
+                throw({:stage2_5_failed, :phantom_references})
+            end
 
             # Stage 3: Commit, push, PR
             case finalize_branch(item, branch, repo_path) do
@@ -709,6 +722,7 @@ defmodule Daemon.Agent.WorkDirector do
     end
   catch
     {:stage0_failed, reason} -> {:error, {:no_branch, reason}}
+    {:stage2_5_failed, reason} -> {:error, {:phantom_references, reason}}
   end
 
   defp create_branch(branch, repo_path) do
@@ -832,6 +846,68 @@ defmodule Daemon.Agent.WorkDirector do
     end
   rescue
     e -> {:error, Exception.message(e)}
+  end
+
+  # -- Stage 2.5: Grounded Reference Verification --
+
+  alias Daemon.Agent.WorkDirector.GroundedVerifier
+
+  @reference_fix_max_attempts 1
+
+  defp verify_and_fix_references(_branch, _session_id, _repo_path, attempt)
+       when attempt > @reference_fix_max_attempts do
+    {:error, :max_reference_fix_attempts}
+  end
+
+  defp verify_and_fix_references(branch, session_id, repo_path, attempt) do
+    case GroundedVerifier.verify(branch, repo_path) do
+      {:ok, []} ->
+        :ok
+
+      {:ok, warnings} ->
+        {:warnings, warnings}
+
+      {:error, violations} ->
+        Logger.warning("[WorkDirector] Stage 2.5: #{length(violations)} phantom reference(s) found (attempt #{attempt + 1})")
+
+        fix_prompt = """
+        Fix the following reference errors in this Elixir/OTP codebase.
+
+        ## Repository
+        The codebase is at: `#{repo_path}`
+        You are on branch `#{branch}`.
+
+        CRITICAL: For ALL shell commands, use the `cwd` parameter set to `#{repo_path}`.
+        For file operations, use ABSOLUTE paths starting with `#{repo_path}/`.
+
+        ## Reference Violations
+        #{GroundedVerifier.fix_prompt(violations)}
+
+        ## Instructions
+        1. For each violation, either CREATE the missing module with real functionality, or CHANGE the code to use an existing module
+        2. Run `mix compile` to verify (use cwd: "#{repo_path}")
+        3. Do NOT create empty stubs — every module must have real working code
+
+        Do NOT modify: application.ex, supervisors/, security/, loop.ex, runtime.exs, mix.exs, or mix.lock.
+        """
+
+        fix_session = "#{session_id}-reffix-#{attempt}"
+
+        case execute_and_poll(fix_prompt, fix_session) do
+          {:completed, _} ->
+            # Re-verify after fix (also re-check compilation since fix agent may have introduced errors)
+            case run_compile(repo_path) do
+              :ok -> verify_and_fix_references(branch, session_id, repo_path, attempt + 1)
+              {:error, _} -> {:error, :fix_broke_compilation}
+            end
+
+          {:failed, reason} ->
+            {:error, {:reference_fix_failed, reason}}
+
+          {:timeout, _} ->
+            {:error, :reference_fix_timeout}
+        end
+    end
   end
 
   defp finalize_branch(item, branch, repo_path) do
@@ -1179,6 +1255,7 @@ defmodule Daemon.Agent.WorkDirector do
   defp classify_failure({:orchestrator_failed, _}), do: :orchestrator_error
   defp classify_failure({:timeout, _}), do: :timeout
   defp classify_failure({:compilation_unfixable, _}), do: :compilation_error
+  defp classify_failure({:phantom_references, _}), do: :phantom_references
   defp classify_failure({:commit_failed, _}), do: :commit_error
   defp classify_failure({:exception, msg}) when is_binary(msg) do
     cond do
@@ -1197,6 +1274,7 @@ defmodule Daemon.Agent.WorkDirector do
   defp failure_class_reward(:orchestrator_error), do: 0.05  # Orchestrator itself failed
   defp failure_class_reward(:timeout), do: 0.10             # Task was too large
   defp failure_class_reward(:compilation_error), do: 0.15   # Code written but won't compile
+  defp failure_class_reward(:phantom_references), do: 0.18  # Compiles but references non-existent modules
   defp failure_class_reward(:commit_error), do: 0.20        # Code compiles but commit failed
   defp failure_class_reward(:test_failure), do: 0.20        # Code compiled but tests failed (close!)
   defp failure_class_reward(:process_crash), do: 0.0        # Total failure
