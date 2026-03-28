@@ -19,6 +19,8 @@ defmodule Daemon.MCP.Server do
   use GenServer
   require Logger
 
+  alias Daemon.Utils.StructuredLogger
+
   @protocol_version "2024-11-05"
   @init_timeout_ms 10_000
   @tool_call_timeout_ms 30_000
@@ -85,7 +87,11 @@ defmodule Daemon.MCP.Server do
     # Interpolate env vars: ${VAR_NAME} -> System.get_env("VAR_NAME")
     env = interpolate_env(raw_env)
 
-    Logger.info("[MCP] Starting server: #{name} (#{command} #{Enum.join(redact_args(args), " ")})")
+    StructuredLogger.info("Starting MCP server", "MCP",
+      server: name,
+      command: command,
+      args: redact_args(args)
+    )
 
     case open_port(command, args, env) do
       {:ok, port} ->
@@ -94,7 +100,10 @@ defmodule Daemon.MCP.Server do
         {:ok, state, {:continue, :initialize}}
 
       {:error, reason} ->
-        Logger.error("[MCP] Failed to spawn #{name}: #{inspect(reason)}")
+        StructuredLogger.error("Failed to spawn MCP server", "MCP",
+          server: name,
+          reason: inspect(reason)
+        )
         {:stop, reason}
     end
   end
@@ -103,11 +112,17 @@ defmodule Daemon.MCP.Server do
   def handle_continue(:initialize, state) do
     case do_initialize(state) do
       {:ok, new_state} ->
-        Logger.info("[MCP] #{state.name} ready — #{length(new_state.tools)} tools")
+        StructuredLogger.info("MCP server ready", "MCP",
+          server: state.name,
+          tool_count: length(new_state.tools)
+        )
         {:noreply, new_state}
 
       {:error, reason} ->
-        Logger.error("[MCP] #{state.name} initialisation failed: #{inspect(reason)}")
+        StructuredLogger.error("MCP server initialization failed", "MCP",
+          server: state.name,
+          reason: inspect(reason)
+        )
         {:stop, reason, state}
     end
   end
@@ -137,7 +152,7 @@ defmodule Daemon.MCP.Server do
       true ->
         # Valid call — proceed
         audit_log(state.name, tool_name, arguments, :calling, nil)
-        
+
         {id, state} = next_id(state)
 
         request = %{
@@ -158,7 +173,11 @@ defmodule Daemon.MCP.Server do
   # Port data — accumulate lines and dispatch complete JSON objects
   @impl true
   def handle_info({port, {:data, {:eol, line}}}, %{port: port} = state) do
-    Logger.debug("[MCP] #{state.name} <<< #{line}")
+    StructuredLogger.debug("MCP server message", "MCP",
+      server: state.name,
+      direction: :receive,
+      data: String.slice(line, 0, 200)  # Truncate for logging
+    )
     state = handle_line(String.trim(line), state)
     {:noreply, state}
   end
@@ -169,7 +188,10 @@ defmodule Daemon.MCP.Server do
   end
 
   def handle_info({port, {:exit_status, code}}, %{port: port} = state) do
-    Logger.warning("[MCP] #{state.name} exited with status #{code}")
+    StructuredLogger.warning("MCP server exited", "MCP",
+      server: state.name,
+      exit_code: code
+    )
     # Fail all pending callers
     state = fail_all_pending(state, "MCP server exited (#{code})")
     {:stop, {:mcp_exit, code}, state}
@@ -346,7 +368,10 @@ defmodule Daemon.MCP.Server do
 
   defp send_request(port, msg) do
     encoded = Jason.encode!(msg)
-    Logger.debug("[MCP] >>> #{encoded}")
+    StructuredLogger.debug("MCP server request", "MCP",
+      direction: :send,
+      data: String.slice(encoded, 0, 200)  # Truncate for logging
+    )
     Port.command(port, encoded <> "\n")
   end
 
@@ -472,16 +497,16 @@ defmodule Daemon.MCP.Server do
   defp audit_log(server_name, tool_name, arguments, status, reason) do
     args_hash = Base.encode16(:crypto.hash(:sha256, :erlang.term_to_binary(arguments)), case: :lower)
 
-    log_entry = %{
-      timestamp: DateTime.utc_now() |> DateTime.to_iso8601(),
+    context = [
       server: server_name,
       tool: sanitize_for_log(tool_name),
       args_hash: args_hash,
       status: status
-    }
+    ]
 
-    log_entry = if reason, do: Map.put(log_entry, :reason, sanitize_for_log(to_string(reason))), else: log_entry
-    Logger.info("[MCP Audit] #{inspect(log_entry)}")
+    context = if reason, do: [{:reason, sanitize_for_log(to_string(reason))} | context], else: context
+
+    StructuredLogger.audit("MCP tool call", "MCP", context)
   end
 
   defp sanitize_for_log(value) when is_binary(value) do

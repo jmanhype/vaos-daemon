@@ -34,6 +34,7 @@ defmodule Daemon.Channels.Feishu do
 
   alias Daemon.Agent.Loop
   alias Daemon.Channels.Session
+  alias Daemon.Utils.StructuredLogger
 
   @api_base "https://open.feishu.cn/open-apis"
   @send_timeout 15_000
@@ -101,11 +102,15 @@ defmodule Daemon.Channels.Feishu do
 
     case app_id do
       nil ->
-        Logger.info("Feishu: No app_id configured, adapter disabled")
+        StructuredLogger.info("Feishu adapter disabled", "Feishu",
+          reason: "no_app_id"
+        )
         :ignore
 
       _ ->
-        Logger.info("Feishu: Adapter started (app_id=#{app_id})")
+        StructuredLogger.info("Feishu adapter started", "Feishu",
+          app_id: app_id
+        )
         send(self(), :refresh_token)
 
         {:ok,
@@ -148,7 +153,9 @@ defmodule Daemon.Channels.Feishu do
         {:reply, result, state}
 
       {:error, reason} ->
-        Logger.warning("Feishu: Decryption failed: #{inspect(reason)}")
+        StructuredLogger.warning("Feishu decryption failed", "Feishu",
+          reason: inspect(reason)
+        )
         {:reply, {:error, :decryption_failed}, state}
     end
   end
@@ -171,7 +178,7 @@ defmodule Daemon.Channels.Feishu do
 
   # URL verification challenge
   defp route_event(%{"type" => "url_verification", "challenge" => challenge}, _state) do
-    Logger.info("Feishu: URL verification challenge")
+    StructuredLogger.info("Feishu URL verification challenge", "Feishu", [])
     {:challenge, challenge}
   end
 
@@ -206,7 +213,11 @@ defmodule Daemon.Channels.Feishu do
       end
 
     if text != "" and chat_id do
-      Logger.debug("Feishu: Message from #{sender_id} in #{chat_id}: #{text}")
+      StructuredLogger.debug("Feishu message received", "Feishu",
+        sender_id: sender_id,
+        chat_id: chat_id,
+        message_length: String.length(text)
+      )
       session_id = "feishu_#{chat_id}_#{sender_id}"
       Session.ensure_loop(session_id, sender_id, :feishu)
 
@@ -217,10 +228,15 @@ defmodule Daemon.Channels.Feishu do
           do_send_message(state, chat_id, response, receive_id_type: "chat_id")
 
         {:filtered, signal} ->
-          Logger.debug("Feishu: Signal filtered (weight=#{signal.weight})")
+          StructuredLogger.debug("Feishu signal filtered", "Feishu",
+            signal_weight: signal.weight
+          )
 
         {:error, reason} ->
-          Logger.warning("Feishu: Agent error for #{chat_id}: #{inspect(reason)}")
+          StructuredLogger.warning("Feishu agent error", "Feishu",
+            chat_id: chat_id,
+            reason: inspect(reason)
+          )
       end
     end
   end
@@ -256,15 +272,21 @@ defmodule Daemon.Channels.Feishu do
 
       {:ok, %{status: 429, headers: headers}} ->
         retry_after = get_retry_after(headers)
-        Logger.warning("Feishu: Rate limited. Retry after #{retry_after}s")
+        StructuredLogger.warning("Feishu rate limited", "Feishu",
+          retry_after: retry_after
+        )
         {:error, {:rate_limited, retry_after}}
 
       {:ok, %{body: body}} ->
-        Logger.warning("Feishu: Send failed: #{inspect(body)}")
+        StructuredLogger.warning("Feishu send failed", "Feishu",
+          response: inspect(body)
+        )
         {:error, body}
 
       {:error, reason} ->
-        Logger.warning("Feishu: HTTP error: #{inspect(reason)}")
+        StructuredLogger.warning("Feishu HTTP error", "Feishu",
+          error: inspect(reason)
+        )
         {:error, reason}
     end
   end
@@ -278,16 +300,22 @@ defmodule Daemon.Channels.Feishu do
          ) do
       {:ok,
        %{status: 200, body: %{"code" => 0, "tenant_access_token" => token, "expire" => expire}}} ->
-        Logger.debug("Feishu: Access token refreshed (expires in #{expire}s)")
+        StructuredLogger.debug("Feishu access token refreshed", "Feishu",
+          expires_in: expire
+        )
         expires_at = System.system_time(:second) + expire
         %{state | tenant_access_token: token, token_expires_at: expires_at}
 
       {:ok, %{body: body}} ->
-        Logger.warning("Feishu: Token refresh failed: #{inspect(body)}")
+        StructuredLogger.warning("Feishu token refresh failed", "Feishu",
+          response: inspect(body)
+        )
         state
 
       {:error, reason} ->
-        Logger.warning("Feishu: Token refresh HTTP error: #{inspect(reason)}")
+        StructuredLogger.warning("Feishu token refresh HTTP error", "Feishu",
+          error: inspect(reason)
+        )
         state
     end
   end

@@ -29,6 +29,7 @@ defmodule Daemon.Channels.QQ do
 
   alias Daemon.Agent.Loop
   alias Daemon.Channels.Session
+  alias Daemon.Utils.StructuredLogger
 
   @api_base "https://api.sgroup.qq.com"
   @send_timeout 15_000
@@ -91,11 +92,15 @@ defmodule Daemon.Channels.QQ do
 
     case app_id do
       nil ->
-        Logger.info("QQ: No app_id configured, adapter disabled")
+        StructuredLogger.info("QQ adapter disabled", "QQ",
+          reason: "no_app_id"
+        )
         :ignore
 
       _ ->
-        Logger.info("QQ: Adapter started (app_id=#{app_id})")
+        StructuredLogger.info("QQ adapter started", "QQ",
+          app_id: app_id
+        )
         # Schedule token refresh
         send(self(), :refresh_token)
 
@@ -128,7 +133,7 @@ defmodule Daemon.Channels.QQ do
       result = route_event(payload, state)
       {:reply, result, state}
     else
-      Logger.warning("QQ: Invalid webhook signature")
+      StructuredLogger.warning("QQ invalid webhook signature", "QQ", [])
       {:reply, {:error, :invalid_signature}, state}
     end
   end
@@ -176,7 +181,11 @@ defmodule Daemon.Channels.QQ do
 
     if text != "" do
       session_id = "qq_#{user_id}_#{channel_id}"
-      Logger.debug("QQ: Message from #{user_id} in #{channel_id}: #{text}")
+      StructuredLogger.debug("QQ message received", "QQ",
+        user_id: user_id,
+        channel_id: channel_id,
+        message_length: String.length(text)
+      )
 
       Session.ensure_loop(session_id, user_id, :qq)
 
@@ -186,10 +195,15 @@ defmodule Daemon.Channels.QQ do
           do_send_message(state, channel_id, response, msg_id: msg["id"])
 
         {:filtered, signal} ->
-          Logger.debug("QQ: Signal filtered (weight=#{signal.weight})")
+          StructuredLogger.debug("QQ signal filtered", "QQ",
+            signal_weight: signal.weight
+          )
 
         {:error, reason} ->
-          Logger.warning("QQ: Agent error for channel #{channel_id}: #{inspect(reason)}")
+          StructuredLogger.warning("QQ agent error", "QQ",
+            channel_id: channel_id,
+            reason: inspect(reason)
+          )
       end
     end
   end
@@ -222,15 +236,21 @@ defmodule Daemon.Channels.QQ do
 
       {:ok, %{status: 429, headers: headers}} ->
         retry_after = get_retry_after(headers)
-        Logger.warning("QQ: Rate limited. Retry after #{retry_after}s")
+        StructuredLogger.warning("QQ rate limited", "QQ",
+          retry_after: retry_after
+        )
         {:error, {:rate_limited, retry_after}}
 
       {:ok, %{body: body}} ->
-        Logger.warning("QQ: Send failed: #{inspect(body)}")
+        StructuredLogger.warning("QQ send failed", "QQ",
+          response: inspect(body)
+        )
         {:error, body}
 
       {:error, reason} ->
-        Logger.warning("QQ: HTTP error: #{inspect(reason)}")
+        StructuredLogger.warning("QQ HTTP error", "QQ",
+          error: inspect(reason)
+        )
         {:error, reason}
     end
   end
@@ -246,15 +266,19 @@ defmodule Daemon.Channels.QQ do
            receive_timeout: 10_000
          ) do
       {:ok, %{status: 200, body: %{"access_token" => token}}} ->
-        Logger.debug("QQ: Access token refreshed")
+        StructuredLogger.debug("QQ access token refreshed", "QQ", [])
         %{state | access_token: token}
 
       {:ok, %{body: body}} ->
-        Logger.warning("QQ: Failed to refresh access token: #{inspect(body)}")
+        StructuredLogger.warning("QQ token refresh failed", "QQ",
+          response: inspect(body)
+        )
         state
 
       {:error, reason} ->
-        Logger.warning("QQ: Token refresh HTTP error: #{inspect(reason)}")
+        StructuredLogger.warning("QQ token refresh HTTP error", "QQ",
+          error: inspect(reason)
+        )
         state
     end
   end
@@ -273,7 +297,9 @@ defmodule Daemon.Channels.QQ do
   # ── Signature Verification ───────────────────────────────────────────
 
   defp verify_signature(_body, _signature, _timestamp, _nonce, nil) do
-    Logger.warning("QQ: No token configured — skipping signature verification")
+    StructuredLogger.warning("QQ no token configured", "QQ",
+      reason: "skipping_signature_verification"
+    )
     true
   end
 
@@ -286,7 +312,7 @@ defmodule Daemon.Channels.QQ do
       :crypto.verify(:eddsa, :none, message, sig_bytes, [key_bytes, :ed25519])
     rescue
       _ ->
-        Logger.warning("QQ: Signature verification error")
+        StructuredLogger.warning("QQ signature verification error", "QQ", [])
         false
     end
   end
