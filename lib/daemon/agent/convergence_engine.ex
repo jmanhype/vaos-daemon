@@ -19,6 +19,7 @@ defmodule Daemon.Agent.ConvergenceEngine do
 
   alias Daemon.Agent.Orchestrator
   alias Daemon.Fitness
+  alias Daemon.Intelligence.DecisionJournal
 
   # ── Configuration ────────────────────────────────────────────
 
@@ -198,6 +199,13 @@ defmodule Daemon.Agent.ConvergenceEngine do
     end
   end
 
+  # Handle PR outcome from Decision Journal (unified polling)
+  def handle_info({:journal_pr_outcome, branch, reward}, state) do
+    Logger.info("[ConvergenceEngine] Journal PR outcome for #{branch}: reward=#{reward}")
+    # ConvergenceEngine doesn't use Thompson yet, but log for observability
+    {:noreply, state}
+  end
+
   @impl true
   def handle_info(_msg, state) do
     {:noreply, state}
@@ -300,11 +308,29 @@ defmodule Daemon.Agent.ConvergenceEngine do
   # ── Repair Dispatch ──────────────────────────────────────────
 
   defp dispatch_repair(fitness_name, score, detail, repo_path, state) do
+    branch_name = "convergence/#{fitness_name}"
+
+    # Check with Decision Journal for cross-module conflicts
+    case DecisionJournal.propose(:convergence_engine, :repair, %{
+      topic: "Fitness violation: #{fitness_name}",
+      branch: branch_name,
+      fitness_name: fitness_name,
+      score: score
+    }) do
+      {:conflict, reason} ->
+        Logger.info("[ConvergenceEngine] Journal conflict for '#{fitness_name}': #{reason}")
+        state
+
+      :approved ->
+        do_dispatch_repair(fitness_name, score, detail, repo_path, branch_name, state)
+    end
+  end
+
+  defp do_dispatch_repair(fitness_name, score, detail, repo_path, branch_name, state) do
     # Find the module for description
     mod = Enum.find(Fitness.all(), fn m -> m.name() == fitness_name end)
     description = if mod, do: mod.description(), else: fitness_name
 
-    branch_name = "convergence/#{fitness_name}"
     session_id = "convergence-#{System.unique_integer([:positive])}"
 
     prompt = build_repair_prompt(fitness_name, description, score, detail, repo_path, branch_name)
@@ -404,6 +430,8 @@ defmodule Daemon.Agent.ConvergenceEngine do
                   "[ConvergenceEngine] Repair PR created: #{branch_name} (#{duration_ms}ms)"
                 )
 
+                DecisionJournal.record_outcome(branch_name, :success, %{fitness_name: fitness_name})
+
                 %{
                   state
                   | pending_repair: nil,
@@ -418,6 +446,7 @@ defmodule Daemon.Agent.ConvergenceEngine do
                 )
 
                 delete_branch(branch_name)
+                DecisionJournal.record_outcome(branch_name, :failure, %{reason: :safety_violation})
                 state = %{state | pending_repair: nil, consecutive_failures: state.consecutive_failures + 1}
                 maybe_trip_circuit_breaker(state)
             end
@@ -426,6 +455,12 @@ defmodule Daemon.Agent.ConvergenceEngine do
             Logger.warning(
               "[ConvergenceEngine] Repair failed for '#{fitness_name}': #{inspect(reason)} (#{duration_ms}ms)"
             )
+
+            branch_name = case state.pending_repair do
+              {_, name, _} -> "convergence/#{name}"
+              _ -> "convergence/unknown"
+            end
+            DecisionJournal.record_outcome(branch_name, :failure, %{reason: inspect(reason)})
 
             state = %{state | pending_repair: nil, consecutive_failures: state.consecutive_failures + 1}
             maybe_trip_circuit_breaker(state)

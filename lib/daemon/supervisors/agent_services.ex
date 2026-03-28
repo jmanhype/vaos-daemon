@@ -48,6 +48,7 @@ defmodule Daemon.Supervisors.AgentServices do
       Daemon.Intelligence.DecisionLedger,
       Daemon.Agent.SkillEvolution,
       Daemon.Agent.ActiveLearner,
+      Daemon.Intelligence.DecisionJournal,
       Daemon.Agent.InsightActuator,
       Daemon.Agent.CodeIntrospector,
       Daemon.Agent.ConvergenceEngine,

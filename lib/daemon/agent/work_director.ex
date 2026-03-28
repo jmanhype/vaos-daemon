@@ -20,6 +20,7 @@ defmodule Daemon.Agent.WorkDirector do
   alias Daemon.Agent.WorkDirector.Backlog.WorkItem
   alias Daemon.Agent.WorkDirector.Source
   alias Daemon.Agent.Orchestrator
+  alias Daemon.Intelligence.DecisionJournal
   @backlog_refresh_ms :timer.minutes(10)
   @pr_poll_ms :timer.hours(1)
   @initial_delay_ms :timer.seconds(60)
@@ -126,13 +127,7 @@ defmodule Daemon.Agent.WorkDirector do
     state = %{
       enabled: enabled,
       backlog: %{},
-      arms: %{
-        vision: %{a: 1.0, b: 1.0},
-        issues: %{a: 1.0, b: 1.0},
-        investigation: %{a: 1.0, b: 1.0},
-        fitness: %{a: 1.0, b: 1.0},
-        manual: %{a: 2.0, b: 1.0}
-      },
+      arms: default_arms(),
       current_dispatch: nil,
       completed_prs: [],
       dispatches_today: 0,
@@ -148,14 +143,27 @@ defmodule Daemon.Agent.WorkDirector do
       blocked_regexes: Enum.map(@protected_path_patterns, &Regex.compile!/1)
     }
 
+    # Load persisted arms (survive restarts)
+    state = load_persisted_arms(state)
+
     if enabled do
-      Logger.info("[WorkDirector] Started (enabled=true)")
+      Logger.info("[WorkDirector] Started (enabled=true, arms=#{inspect(Map.keys(state.arms))})")
       Process.send_after(self(), :bootstrap, @initial_delay_ms)
     else
       Logger.info("[WorkDirector] Started (enabled=false)")
     end
 
     {:ok, state}
+  end
+
+  defp default_arms do
+    %{
+      vision: %{alpha: 1.0, beta: 1.0},
+      issues: %{alpha: 1.0, beta: 1.0},
+      investigation: %{alpha: 1.0, beta: 1.0},
+      fitness: %{alpha: 1.0, beta: 1.0},
+      manual: %{alpha: 2.0, beta: 1.0}
+    }
   end
 
   @impl true
@@ -284,6 +292,7 @@ defmodule Daemon.Agent.WorkDirector do
           case verify_safety(branch) do
             :safe ->
               Logger.info("[WorkDirector] Dispatch completed: #{dispatch.title} (branch=#{branch})")
+              DecisionJournal.record_outcome(branch, :success, %{title: dispatch.title})
 
               state
               |> update_backlog_completed(dispatch.content_hash, {:ok, branch})
@@ -295,6 +304,7 @@ defmodule Daemon.Agent.WorkDirector do
             :unsafe ->
               Logger.warning("[WorkDirector] Safety violation in #{branch}, deleting branch")
               delete_branch(branch)
+              DecisionJournal.record_outcome(branch, :failure, %{reason: :safety_violation})
 
               state
               |> update_backlog_completed(dispatch.content_hash, {:safety_violation, branch})
@@ -304,6 +314,7 @@ defmodule Daemon.Agent.WorkDirector do
 
         {:error, reason} ->
           Logger.warning("[WorkDirector] Dispatch failed: #{inspect(reason)}")
+          DecisionJournal.record_outcome(dispatch.branch, :failure, %{reason: inspect(reason)})
           failures = state.consecutive_failures + 1
 
           state
@@ -346,6 +357,27 @@ defmodule Daemon.Agent.WorkDirector do
     {:noreply, state}
   end
 
+  # Handle PR outcome from Decision Journal (unified polling)
+  def handle_info({:journal_pr_outcome, branch, reward}, state) do
+    match = Enum.find(state.completed_prs, fn cp -> cp.branch == branch end)
+
+    if match do
+      Logger.info("[WorkDirector] Journal PR outcome for #{branch}: reward=#{reward}")
+      state = reward_arm(state, match.source, reward)
+      state = remove_completed_pr(state, branch)
+
+      state = if reward >= 0.5 do
+        Map.update!(state, :total_merged, &(&1 + 1))
+      else
+        Map.update!(state, :total_rejected, &(&1 + 1))
+      end
+
+      {:noreply, state}
+    else
+      {:noreply, state}
+    end
+  end
+
   def handle_info(:refresh_backlog, state) do
     state = refresh_backlog(state)
     schedule_refresh()
@@ -372,7 +404,7 @@ defmodule Daemon.Agent.WorkDirector do
       pending_count: state.backlog |> Map.values() |> Enum.count(&(&1.status == :pending)),
       dispatches_today: state.dispatches_today,
       current_dispatch: if(state.current_dispatch, do: state.current_dispatch.title, else: nil),
-      arms: Enum.map(state.arms, fn {source, %{a: a, b: b}} ->
+      arms: Enum.map(state.arms, fn {source, %{alpha: a, beta: b}} ->
         {source, %{alpha: a, beta: b, mean: Float.round(a / (a + b), 3)}}
       end) |> Map.new(),
       circuit_breaker: circuit_breaker_active?(state),
@@ -511,6 +543,24 @@ defmodule Daemon.Agent.WorkDirector do
 
   defp dispatch_item(state, %WorkItem{} = item) do
     branch = branch_name(item)
+
+    # Check with Decision Journal for conflicts
+    case DecisionJournal.propose(:work_director, :create_pr, %{
+      topic: item.title,
+      branch: branch,
+      source: item.source,
+      priority: item.base_priority
+    }) do
+      {:conflict, reason} ->
+        Logger.info("[WorkDirector] Journal conflict for '#{item.title}': #{reason}")
+        state
+
+      :approved ->
+        do_dispatch_item(state, item, branch)
+    end
+  end
+
+  defp do_dispatch_item(state, %WorkItem{} = item, branch) do
     session_id = "workdir-#{:erlang.unique_integer([:positive])}"
     prompt = build_prompt(item, branch)
 
@@ -723,16 +773,16 @@ defmodule Daemon.Agent.WorkDirector do
   end
 
   defp reward_arm(state, source, reward) do
+    clamped = max(0.0, min(1.0, reward))
+
     arms =
-      Map.update(state.arms, source, %{a: 1.0, b: 1.0}, fn arm ->
-        if reward > 0.5 do
-          %{arm | a: arm.a + reward}
-        else
-          %{arm | b: arm.b + (1.0 - reward)}
-        end
+      Map.update(state.arms, source, %{alpha: 1.0, beta: 1.0}, fn arm ->
+        %{arm | alpha: arm.alpha + clamped, beta: arm.beta + (1.0 - clamped)}
       end)
 
-    %{state | arms: arms}
+    state = %{state | arms: arms}
+    persist_arms(state)
+    state
   end
 
   defp update_backlog_completed(state, content_hash, result) do
@@ -797,5 +847,68 @@ defmodule Daemon.Agent.WorkDirector do
 
   defp schedule_pr_poll do
     Process.send_after(self(), :poll_pr_outcomes, @pr_poll_ms)
+  end
+
+  # -- Arm Persistence --
+
+  @arms_dir Path.expand("~/.daemon/work_director")
+  @arms_file Path.join(@arms_dir, "arms.json")
+
+  defp persist_arms(state) do
+    data = %{
+      "version" => 1,
+      "arms" => Map.new(state.arms, fn {source, arm} ->
+        {to_string(source), %{"alpha" => arm.alpha, "beta" => arm.beta}}
+      end),
+      "stats" => %{
+        "total_dispatches" => state.total_dispatches,
+        "total_merged" => state.total_merged,
+        "total_rejected" => state.total_rejected
+      }
+    }
+
+    File.mkdir_p!(@arms_dir)
+    File.write!(@arms_file, Jason.encode!(data, pretty: true))
+  rescue
+    e ->
+      Logger.warning("[WorkDirector] Failed to persist arms: #{Exception.message(e)}")
+  end
+
+  defp load_persisted_arms(state) do
+    case File.read(@arms_file) do
+      {:ok, json} ->
+        case Jason.decode(json) do
+          {:ok, %{"version" => 1, "arms" => raw_arms} = data} ->
+            arms =
+              Enum.reduce(raw_arms, state.arms, fn {source_str, arm_data}, acc ->
+                source = String.to_existing_atom(source_str)
+                alpha = arm_data["alpha"] || 1.0
+                beta = arm_data["beta"] || 1.0
+
+                if is_number(alpha) and is_number(beta) and alpha > 0 and beta > 0 do
+                  Map.put(acc, source, %{alpha: alpha / 1.0, beta: beta / 1.0})
+                else
+                  acc
+                end
+              end)
+
+            stats = Map.get(data, "stats", %{})
+
+            %{state |
+              arms: arms,
+              total_dispatches: Map.get(stats, "total_dispatches", 0),
+              total_merged: Map.get(stats, "total_merged", 0),
+              total_rejected: Map.get(stats, "total_rejected", 0)
+            }
+
+          _ ->
+            state
+        end
+
+      {:error, _} ->
+        state
+    end
+  rescue
+    _ -> state
   end
 end

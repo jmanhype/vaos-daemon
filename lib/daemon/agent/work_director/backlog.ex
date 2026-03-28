@@ -130,8 +130,8 @@ defmodule Daemon.Agent.WorkDirector.Backlog do
       items ->
         scored =
           Enum.map(items, fn item ->
-            arm = Map.get(arms, item.source, %{a: 1.0, b: 1.0})
-            thompson_score = PromptSelector.sample_beta(arm.a, arm.b)
+            arm = Map.get(arms, item.source, %{alpha: 1.0, beta: 1.0})
+            thompson_score = PromptSelector.sample_beta(arm.alpha, arm.beta)
             score = item.base_priority * thompson_score
             {item, score}
           end)

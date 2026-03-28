@@ -37,6 +37,7 @@ defmodule Daemon.Agent.InsightActuator do
   alias Daemon.Investigation.PromptSelector
   alias Daemon.Agent.Orchestrator
   alias Daemon.Governance.Approvals
+  alias Daemon.Intelligence.DecisionJournal
   alias MiosaProviders.Registry, as: Providers
 
   # ── Constants ────────────────────────────────────────────────────
@@ -200,6 +201,25 @@ defmodule Daemon.Agent.InsightActuator do
     state = poll_pr_outcomes(state)
     Process.send_after(self(), :poll_pr_outcomes, @pr_poll_interval_ms)
     {:noreply, state}
+  end
+
+  # Handle PR outcome from Decision Journal (unified polling)
+  def handle_info({:journal_pr_outcome, branch, reward}, state) do
+    matching_pr = Enum.find(state.completed_prs, fn p -> Map.get(p, :branch) == branch end)
+
+    if matching_pr do
+      arm_key = Map.get(matching_pr, :arm_key)
+      if arm_key do
+        Logger.info("[InsightActuator] Journal PR outcome for #{branch}: reward=#{reward}")
+        state = record_delayed_reward(arm_key, reward, state)
+        persist_state(state)
+        {:noreply, state}
+      else
+        {:noreply, state}
+      end
+    else
+      {:noreply, state}
+    end
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
@@ -693,6 +713,24 @@ defmodule Daemon.Agent.InsightActuator do
     topic = Map.get(data, :topic) || Map.get(data, "topic") || "unknown"
     top_evidence = extract_top_evidence(data, 3)
     branch_name = "insight/#{slugify(topic)}"
+
+    # Check with Decision Journal for cross-module conflicts
+    case DecisionJournal.propose(:insight_actuator, :create_pr, %{
+      topic: topic,
+      branch: branch_name,
+      change_type: change_spec.change_type,
+      quality: quality
+    }) do
+      {:conflict, reason} ->
+        Logger.info("[InsightActuator] Journal conflict: #{reason}")
+        record_rejection(topic, "journal_conflict: #{reason}", quality, state)
+
+      :approved ->
+        do_dispatch_to_orchestrator(data, change_spec, quality, state, topic, top_evidence, branch_name)
+    end
+  end
+
+  defp do_dispatch_to_orchestrator(data, change_spec, quality, state, topic, top_evidence, branch_name) do
     session_id = "insight-#{System.unique_integer([:positive])}"
 
     prompt = build_orchestration_prompt(topic, quality, top_evidence, change_spec, branch_name, data)
@@ -805,6 +843,7 @@ defmodule Daemon.Agent.InsightActuator do
               :safe ->
                 arm_key = actuation_arm_key(topic, change_type)
                 state = record_immediate_reward(arm_key, @immediate_reward, state)
+                DecisionJournal.record_outcome(branch_name, :success, %{topic: topic, change_type: change_type})
 
                 pr_record = %{
                   topic: topic,
@@ -831,6 +870,7 @@ defmodule Daemon.Agent.InsightActuator do
               {:unsafe, violations} ->
                 Logger.warning("[InsightActuator] SAFETY VIOLATION on #{branch_name}: #{inspect(violations)} — deleting branch")
                 delete_branch(branch_name)
+                DecisionJournal.record_outcome(branch_name, :failure, %{reason: :safety_violation})
 
                 # Zero reward with ACTUAL change_type
                 arm_key = actuation_arm_key(topic, change_type)
