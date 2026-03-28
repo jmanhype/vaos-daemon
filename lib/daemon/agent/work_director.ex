@@ -25,10 +25,10 @@ defmodule Daemon.Agent.WorkDirector do
   @backlog_refresh_ms :timer.minutes(10)
   @pr_poll_ms :timer.hours(1)
   @initial_delay_ms :timer.seconds(60)
-  @max_dispatches_per_day 5
+  @max_dispatches_per_day 25
   @max_completed_prs 50
   @circuit_breaker_threshold 5
-  @circuit_breaker_ms :timer.hours(24)
+  @circuit_breaker_ms :timer.minutes(30)
   @daemon_repo "jmanhype/vaos-daemon"
 
   @protected_path_patterns [
