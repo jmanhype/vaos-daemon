@@ -144,6 +144,7 @@ defmodule Daemon.Agent.WorkDirector do
       total_rejected: 0,
       investigation_buffer: nil,
       manual_buffer: nil,
+      investigation_ref: nil,
       blocked_regexes: Enum.map(@protected_path_patterns, &Regex.compile!/1)
     }
 
