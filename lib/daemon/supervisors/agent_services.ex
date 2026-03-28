@@ -47,7 +47,9 @@ defmodule Daemon.Supervisors.AgentServices do
       Daemon.Investigation.SelfDiagnosis,
       Daemon.Intelligence.DecisionLedger,
       Daemon.Agent.SkillEvolution,
-      Daemon.Agent.ActiveLearner
+      Daemon.Agent.ActiveLearner,
+      Daemon.Agent.InsightActuator,
+      Daemon.Agent.CodeIntrospector
     ]
 
     Supervisor.init(children, strategy: :one_for_one)
