@@ -726,11 +726,10 @@ defmodule Daemon.Agent.WorkDirector do
   end
 
   defp create_branch(branch, repo_path) do
-    # Ensure we're on main first
-    case System.cmd("git", ["checkout", "main"], cd: repo_path, stderr_to_stdout: true) do
-      {_, 0} -> :ok
-      _ -> :ok  # might already be on main
-    end
+    # Ensure we're on main with a CLEAN working tree
+    System.cmd("git", ["checkout", "main"], cd: repo_path, stderr_to_stdout: true)
+    System.cmd("git", ["checkout", "--", "."], cd: repo_path, stderr_to_stdout: true)
+    System.cmd("git", ["clean", "-fd"], cd: repo_path, stderr_to_stdout: true)
 
     # Delete stale local branch if it exists (from a previous failed cycle)
     System.cmd("git", ["branch", "-D", branch], cd: repo_path, stderr_to_stdout: true)
@@ -746,8 +745,10 @@ defmodule Daemon.Agent.WorkDirector do
   end
 
   defp cleanup_branch(branch, repo_path) do
-    # Switch back to main and delete the failed branch
+    # Switch back to main, reset ALL working tree changes, and delete the branch
     System.cmd("git", ["checkout", "main"], cd: repo_path, stderr_to_stdout: true)
+    System.cmd("git", ["checkout", "--", "."], cd: repo_path, stderr_to_stdout: true)
+    System.cmd("git", ["clean", "-fd"], cd: repo_path, stderr_to_stdout: true)
     System.cmd("git", ["branch", "-D", branch], cd: repo_path, stderr_to_stdout: true)
   rescue
     _ -> :ok
