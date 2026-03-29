@@ -731,13 +731,24 @@ defmodule Daemon.Agent.WorkDirector do
   end
 
   defp create_branch(branch, repo_path) do
-    # Ensure we're on main with a CLEAN working tree
+    # Nuclear cleanup: abort any in-progress merge/rebase/cherry-pick, then hard reset
+    System.cmd("git", ["merge", "--abort"], cd: repo_path, stderr_to_stdout: true)
+    System.cmd("git", ["rebase", "--abort"], cd: repo_path, stderr_to_stdout: true)
+    System.cmd("git", ["cherry-pick", "--abort"], cd: repo_path, stderr_to_stdout: true)
     System.cmd("git", ["checkout", "main"], cd: repo_path, stderr_to_stdout: true)
-    System.cmd("git", ["checkout", "--", "."], cd: repo_path, stderr_to_stdout: true)
+    System.cmd("git", ["reset", "--hard", "origin/main"], cd: repo_path, stderr_to_stdout: true)
     System.cmd("git", ["clean", "-fd"], cd: repo_path, stderr_to_stdout: true)
 
-    # Delete stale local branch if it exists (from a previous failed cycle)
-    System.cmd("git", ["branch", "-D", branch], cd: repo_path, stderr_to_stdout: true)
+    # Delete ALL stale workdir/ branches (from previous cycles or other systems)
+    {branches_raw, _} = System.cmd("git", ["branch"], cd: repo_path, stderr_to_stdout: true)
+    branches_raw
+    |> String.split("\n", trim: true)
+    |> Enum.map(&String.trim/1)
+    |> Enum.filter(&String.starts_with?(&1, "workdir/"))
+    |> Enum.each(fn b ->
+      System.cmd("git", ["branch", "-D", b], cd: repo_path, stderr_to_stdout: true)
+    end)
+
     # Delete stale remote branch if it exists (prevents push rejection)
     System.cmd("git", ["push", "origin", "--delete", branch], cd: repo_path, stderr_to_stdout: true)
 
@@ -812,9 +823,12 @@ defmodule Daemon.Agent.WorkDirector do
   end
 
   defp cleanup_branch(branch, repo_path) do
-    # Switch back to main, reset ALL working tree changes, and delete the branch
+    # Nuclear cleanup: abort any in-progress operations, hard reset to origin/main
+    System.cmd("git", ["merge", "--abort"], cd: repo_path, stderr_to_stdout: true)
+    System.cmd("git", ["rebase", "--abort"], cd: repo_path, stderr_to_stdout: true)
+    System.cmd("git", ["cherry-pick", "--abort"], cd: repo_path, stderr_to_stdout: true)
     System.cmd("git", ["checkout", "main"], cd: repo_path, stderr_to_stdout: true)
-    System.cmd("git", ["checkout", "--", "."], cd: repo_path, stderr_to_stdout: true)
+    System.cmd("git", ["reset", "--hard", "origin/main"], cd: repo_path, stderr_to_stdout: true)
     System.cmd("git", ["clean", "-fd"], cd: repo_path, stderr_to_stdout: true)
     System.cmd("git", ["branch", "-D", branch], cd: repo_path, stderr_to_stdout: true)
   rescue
