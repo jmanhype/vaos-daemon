@@ -1226,14 +1226,30 @@ defmodule Daemon.Agent.WorkDirector do
         else
           # No rogue commits, just stash + switch
           System.cmd("git", ["stash", "--include-untracked"], cd: repo_path, stderr_to_stdout: true)
-          System.cmd("git", ["checkout", branch], cd: repo_path, stderr_to_stdout: true)
+
+          case System.cmd("git", ["checkout", branch], cd: repo_path, stderr_to_stdout: true) do
+            {_, 0} -> :ok
+            {_, _} ->
+              Logger.warning("[WorkDirector] Branch #{branch} gone from main — recreating")
+              System.cmd("git", ["checkout", "-b", branch], cd: repo_path, stderr_to_stdout: true)
+          end
+
           System.cmd("git", ["stash", "pop"], cd: repo_path, stderr_to_stdout: true)
         end
       else
         # On some other branch entirely — stash + switch
         System.cmd("git", ["stash", "--include-untracked"], cd: repo_path, stderr_to_stdout: true)
-        System.cmd("git", ["checkout", branch], cd: repo_path, stderr_to_stdout: true)
-        System.cmd("git", ["stash", "pop"], cd: repo_path, stderr_to_stdout: true)
+
+        case System.cmd("git", ["checkout", branch], cd: repo_path, stderr_to_stdout: true) do
+          {_, 0} ->
+            System.cmd("git", ["stash", "pop"], cd: repo_path, stderr_to_stdout: true)
+
+          {_err, _} ->
+            # Branch doesn't exist (was deleted) — recreate it from current HEAD
+            Logger.warning("[WorkDirector] Branch #{branch} gone — recreating from current state")
+            System.cmd("git", ["checkout", "-b", branch], cd: repo_path, stderr_to_stdout: true)
+            System.cmd("git", ["stash", "pop"], cd: repo_path, stderr_to_stdout: true)
+        end
       end
     end
   rescue
