@@ -185,6 +185,9 @@ defmodule Daemon.Channels.HTTP.API do
   forward "/platform/auth", to: API.PlatformAuthRoutes
   forward "/platform", to: API.PlatformRoutes
 
+  # ── Batch processing ───────────────────────────────────────────────────
+  forward "/batch", to: API.BatchRoutes
+
   # ── Signal classification (inline — single endpoint) ─────────────────
   post "/classify" do
     with %{"message" => message} when is_binary(message) and message != "" <- conn.body_params do
