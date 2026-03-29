@@ -108,8 +108,49 @@ defmodule Daemon.Agent.Orchestrator do
   end
 
   @doc """
-  Get real-time progress for a running task.
-  Returns agent statuses, tool use counts, token usage.
+  Get real-time progress for a running or completed task.
+
+  Returns detailed status including agent states, tool usage metrics,
+  token consumption, and current phase of the state machine.
+
+  ## Returns
+    - `{:ok, progress_map}` - Task found, progress data returned
+    - `{:error, :not_found}` - Task ID does not exist
+
+  ## Progress Map Structure
+      %{
+        task_id: String.t(),
+        status: :running | :completed | :failed,
+        started_at: DateTime.t(),
+        completed_at: DateTime.t() | nil,
+        agents: [
+          %{
+            id: String.t(),
+            name: String.t(),
+            role: atom(),
+            status: :pending | :running | :completed | :failed,
+            tool_uses: non_neg_integer(),
+            tokens_used: non_neg_integer(),
+            current_action: String.t() | nil,
+            started_at: DateTime.t(),
+            completed_at: DateTime.t() | nil
+          }
+        ],
+        synthesis: String.t() | nil,
+        error: String.t() | nil,
+        machine_phase: atom() | nil
+      }
+
+  ## Examples
+      {:ok, progress} = Orchestrator.progress("task-abc123")
+
+  ## State Machine Phases
+    - `:idle` - Task not started
+    - `:planning` - Decomposing task into sub-tasks
+    - `:executing` - Running sub-agents in waves
+    - `:verifying` - Synthesizing results
+    - `:completed` - Task finished successfully
+    - `:error_recovery` - Handling failure
   """
   @spec progress(String.t()) :: {:ok, map()} | {:error, :not_found}
   def progress(task_id) do
@@ -118,7 +159,52 @@ defmodule Daemon.Agent.Orchestrator do
 
   @doc """
   Dynamically create a new skill for a specific task.
-  Writes a SKILL.md file and registers it with the Tools.Registry.
+
+  Writes a SKILL.md file to the skills directory and registers it
+  with the Tools.Registry, making it immediately available to all agents.
+
+  ## Parameters
+    - `name` - Skill name (kebab-case, e.g., "data-analyzer")
+    - `description` - What this skill does (shown to LLM for tool selection)
+    - `instructions` - Detailed prompt for executing the skill
+    - `tools` - List of tool names the skill needs (default: [])
+
+  ## Returns
+    - `{:ok, skill_name}` - Skill created successfully
+    - `{:error, reason}` - Creation failed (file write error, invalid name, etc.)
+
+  ## Skill File Format
+  Creates `skills/<name>/SKILL.md` with:
+    ```markdown
+    # <name>
+
+    <description>
+
+    ## Instructions
+    <instructions>
+
+    ## Required Tools
+    <tools>
+    ```
+
+  ## Examples
+      Orchestrator.create_skill(
+        "data-analyzer",
+        "Analyze CSV data and generate statistics",
+        "Load the CSV, compute mean/median/mode, and create visualizations...",
+        ["file_read", "shell_execute"]
+      )
+
+  ## Skill Discovery
+  Created skills are automatically discoverable via:
+    - `find_matching_skills/1` - Semantic search
+    - `suggest_or_create_skill/4` - Smart deduplication
+    - Tools.Registry - Runtime lookup
+
+  ## Notes
+    - Skill names must be kebab-case (lowercase with hyphens)
+    - If a skill with the same name exists, it will be overwritten
+    - Skills are cached in-memory for fast repeated access
   """
   @spec create_skill(String.t(), String.t(), String.t(), list()) ::
           {:ok, String.t()} | {:error, term()}
