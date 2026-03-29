@@ -140,9 +140,13 @@ defmodule Daemon.Investigation.SelfDiagnosis do
         _ -> :skip
       end
     rescue
-      _ -> :skip
+      e ->
+        Logger.warning("[SelfDiagnosis] CrashLearner unavailable: #{Exception.message(e)}")
+        :skip
     catch
-      :exit, _ -> :skip
+      kind, reason ->
+        Logger.warning("[SelfDiagnosis] CrashLearner crashed: #{kind}: #{inspect(reason)}")
+        :skip
     end
   end
 
