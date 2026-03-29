@@ -19,6 +19,7 @@ defmodule Daemon.Agent.WorkDirector do
   alias Daemon.Agent.WorkDirector.Backlog
   alias Daemon.Agent.WorkDirector.Backlog.WorkItem
   alias Daemon.Agent.WorkDirector.DispatchIntelligence
+  alias Daemon.Agent.WorkDirector.DispatchJudgment
   alias Daemon.Agent.WorkDirector.GroundedVerifier
   alias Daemon.Agent.WorkDirector.Source
   alias Daemon.Agent.Orchestrator
@@ -71,6 +72,18 @@ defmodule Daemon.Agent.WorkDirector do
   # -- Stage 0.5 context sections --
   @enable_impact_analysis true         # Stage 0.5: trace callers/dependents of affected files
   @enable_production_context true      # Stage 0.5: inject telemetry + provider health into prompt
+
+  # -- Pre-dispatch judgment (Phase 2) --
+  @enable_already_solved_check false    # Gate: skip tasks already solved by existing code or merged PRs
+  @enable_pr_conflict_awareness false   # Gate: detect file conflicts with open PRs, inject awareness
+  @enable_dispatch_confidence false     # Gate: aggregate confidence score, hold back when low
+  @enable_task_decomposition false      # Gate: split broad low-confidence tasks into sub-items
+
+  @confidence_high 0.7                  # >= 0.7: dispatch normally
+  @confidence_low 0.4                   # < 0.4: hold back (decompose or skip)
+  @pr_cache_ttl_ms :timer.minutes(5)    # Cache gh pr list results
+  @decomposition_min_dirs 3             # Only decompose if 3+ distinct directories involved
+  @decomposition_max_items 5            # Cap sub-items per decomposition
 
   @protected_path_patterns [
     "^lib/daemon/application\\.ex$",
@@ -652,22 +665,50 @@ defmodule Daemon.Agent.WorkDirector do
             {:conflict, state}
 
           :proceed ->
-            # Gate 2: Risk assessment (pattern matching + optional DispatchIntelligence)
-            risk = assess_risk(item, repo_path)
+            # Compute enrichment once (cached in process dict for all downstream uses)
+            enrichment = get_or_compute_enrichment(item, repo_path)
 
-            case maybe_gate_on_risk(risk, item) do
-              :proceed ->
-                do_dispatch_item(state, item, branch)
+            # Gate 2: Already-solved check (Phase 2)
+            case maybe_check_already_solved(item, enrichment, repo_path) do
+              {:already_solved, reason} ->
+                Logger.info("[WorkDirector] Already solved: '#{item.title}' — #{reason}")
+                DecisionJournal.record_outcome(branch, :failure, %{reason: "already_solved", detail: reason})
+                backlog = Backlog.mark_completed(state.backlog, item.content_hash, {:already_solved, reason})
+                {:conflict, %{state | backlog: backlog}}
 
-              {:force_review, _risk} ->
-                # Medium risk: proceed normally — review is already enabled
-                # Risk context injected into prompt via Stage 0.5
-                do_dispatch_item(state, item, branch)
+              :not_solved ->
+                # Gate 3: Risk assessment (pattern matching + optional DispatchIntelligence)
+                risk = assess_risk(item, repo_path)
 
-              {:blocked, reason} ->
-                Logger.warning("[WorkDirector] Risk gate blocked '#{item.title}': #{reason}")
-                DecisionJournal.record_outcome(branch, :failure, %{reason: "risk_blocked", detail: reason})
-                {:conflict, state}
+                # Gate 4: PR conflict awareness (Phase 2)
+                pr_conflicts = maybe_check_pr_conflicts(item, enrichment, repo_path)
+
+                # Gate 5: Confidence routing (Phase 2 — subsumes old maybe_gate_on_risk)
+                case maybe_route_by_confidence(item, enrichment, risk, pr_conflicts, state) do
+                  {:proceed, confidence} ->
+                    Logger.info("[WorkDirector] Confidence #{confidence.score} (#{confidence.level}) — dispatching '#{item.title}'")
+                    do_dispatch_item(state, item, branch)
+
+                  {:proceed_with_review, confidence} ->
+                    Logger.info("[WorkDirector] Confidence #{confidence.score} (medium) — dispatching with review for '#{item.title}'")
+                    Process.put(:dispatch_judgment_context, %{
+                      confidence: confidence,
+                      pr_conflicts: pr_conflicts,
+                      force_review: true
+                    })
+                    do_dispatch_item(state, item, branch)
+
+                  {:decompose, confidence} ->
+                    Logger.info("[WorkDirector] Confidence #{confidence.score} (low) — decomposing '#{item.title}'")
+                    maybe_decompose_task(state, item, enrichment, repo_path, branch, confidence)
+
+                  {:skip, confidence} ->
+                    Logger.info("[WorkDirector] Confidence #{confidence.score} (low) — skipping '#{item.title}'")
+                    DecisionJournal.record_outcome(branch, :failure, %{
+                      reason: "low_confidence", score: confidence.score
+                    })
+                    {:conflict, state}
+                end
             end
         end
     end
@@ -943,6 +984,90 @@ defmodule Daemon.Agent.WorkDirector do
   end
   defp maybe_gate_on_risk(_risk, _item), do: :proceed
 
+  # -- Phase 2: Dispatch Judgment Wrappers --
+
+  defp maybe_check_already_solved(item, enrichment, repo_path) do
+    if @enable_already_solved_check do
+      try do
+        DispatchJudgment.check_already_solved(item, enrichment, repo_path)
+      rescue
+        _ -> :not_solved
+      catch
+        :exit, _ -> :not_solved
+      end
+    else
+      :not_solved
+    end
+  end
+
+  defp maybe_check_pr_conflicts(item, enrichment, repo_path) do
+    if @enable_pr_conflict_awareness do
+      try do
+        DispatchJudgment.check_pr_conflicts(item, enrichment, repo_path)
+      rescue
+        _ -> %{open_pr_conflicts: [], hot_zones: [], conflict_score: 0.0}
+      catch
+        :exit, _ -> %{open_pr_conflicts: [], hot_zones: [], conflict_score: 0.0}
+      end
+    else
+      %{open_pr_conflicts: [], hot_zones: [], conflict_score: 0.0}
+    end
+  end
+
+  defp maybe_route_by_confidence(item, enrichment, risk, pr_conflicts, _state) do
+    if @enable_dispatch_confidence do
+      try do
+        confidence = DispatchJudgment.compute_confidence(item, enrichment, risk, pr_conflicts)
+        Logger.debug("[WorkDirector] Confidence breakdown: #{inspect(confidence.breakdown)}")
+        {confidence.recommendation, confidence}
+      rescue
+        _ -> {:proceed, %{score: 0.6, level: :medium}}
+      catch
+        :exit, _ -> {:proceed, %{score: 0.6, level: :medium}}
+      end
+    else
+      # Fall back to existing risk-based routing
+      case maybe_gate_on_risk(risk, item) do
+        :proceed -> {:proceed, %{score: 0.8, level: :high}}
+        {:force_review, _} -> {:proceed_with_review, %{score: 0.5, level: :medium}}
+        {:blocked, reason} -> {:skip, %{score: 0.1, level: :low, reason: reason}}
+      end
+    end
+  end
+
+  defp maybe_decompose_task(state, item, enrichment, repo_path, branch, confidence) do
+    if @enable_task_decomposition do
+      try do
+        case DispatchJudgment.decompose(item, enrichment, repo_path) do
+          {:ok, sub_items} ->
+            Logger.info("[WorkDirector] Decomposed '#{item.title}' into #{length(sub_items)} sub-items")
+
+            if state.manual_buffer do
+              Enum.each(sub_items, fn sub ->
+                Source.Manual.submit(state.manual_buffer, sub.title, sub.description, sub.base_priority)
+              end)
+            end
+
+            backlog = Backlog.mark_completed(state.backlog, item.content_hash, {:decomposed, length(sub_items)})
+            DecisionJournal.record_outcome(branch, :success, %{reason: "decomposed", count: length(sub_items)})
+            {:conflict, %{state | backlog: backlog}}
+
+          :cannot_decompose ->
+            Logger.info("[WorkDirector] Cannot decompose '#{item.title}', skipping")
+            DecisionJournal.record_outcome(branch, :failure, %{reason: "low_confidence_narrow"})
+            {:conflict, state}
+        end
+      rescue
+        _ -> {:conflict, state}
+      catch
+        :exit, _ -> {:conflict, state}
+      end
+    else
+      DecisionJournal.record_outcome(branch, :failure, %{reason: "low_confidence", score: confidence.score})
+      {:conflict, state}
+    end
+  end
+
   defp do_dispatch_item(state, %WorkItem{} = item, branch) do
     session_id = "workdir-#{:erlang.unique_integer([:positive])}"
 
@@ -1132,6 +1257,9 @@ defmodule Daemon.Agent.WorkDirector do
 
     # Investigation: deep research (expensive, only for high-priority/complex tasks)
     sections = sections ++ investigation_section(item, session_id)
+
+    # Dispatch judgment context (Phase 2): confidence, PR conflicts, hot zones
+    sections = sections ++ judgment_context_section()
 
     context = Enum.join(sections, "\n")
 
@@ -1364,6 +1492,59 @@ defmodule Daemon.Agent.WorkDirector do
     end
   end
 
+  # -- Stage 0.5: Dispatch Judgment Context (Phase 2) --
+
+  defp judgment_context_section do
+    case Process.get(:dispatch_judgment_context) do
+      %{confidence: confidence} = ctx ->
+        sections = []
+
+        # Confidence section
+        pct = round((confidence[:score] || confidence.score) * 100)
+        level = confidence[:level] || confidence.level
+
+        confidence_text =
+          if level == :medium do
+            "## Dispatch Confidence: #{pct}%\nThis task has MEDIUM confidence. Pay extra attention to edge cases and test thoroughly."
+          else
+            "## Dispatch Confidence: #{pct}%"
+          end
+
+        sections = sections ++ ["\n#{confidence_text}\n"]
+
+        # PR conflicts section
+        pr_conflicts = ctx[:pr_conflicts] || %{}
+        open_conflicts = pr_conflicts[:open_pr_conflicts] || []
+
+        if open_conflicts != [] do
+          conflict_lines =
+            Enum.map_join(open_conflicts, "\n", fn c ->
+              overlap = if c.overlapping_files != [], do: " (overlapping: #{Enum.join(c.overlapping_files, ", ")})", else: ""
+              "- PR ##{c.number}: #{c.title} (similarity: #{Float.round(c.title_similarity, 2)})#{overlap}"
+            end)
+
+          sections = sections ++ ["\n## Active PR Conflicts\nThese open PRs may conflict with your changes:\n#{conflict_lines}\n"]
+        end
+
+        # Hot zones section
+        hot_zones = pr_conflicts[:hot_zones] || []
+
+        if hot_zones != [] do
+          zone_lines =
+            Enum.map_join(hot_zones, "\n", fn hz ->
+              "- `#{hz.file}` — modified by #{hz.modification_count} recent PRs"
+            end)
+
+          sections = sections ++ ["\n## Hot Zones\nThese files are frequently modified and may cause merge conflicts:\n#{zone_lines}\n"]
+        end
+
+        sections
+
+      _ ->
+        []
+    end
+  end
+
   # -- Stage 0.5: Impact Analysis Section --
 
   defp impact_analysis_section(item, repo_path) do
@@ -1561,7 +1742,11 @@ defmodule Daemon.Agent.WorkDirector do
   # -- Stage 2.9: Code Review --
 
   defp maybe_run_code_review(item, branch, session_id, repo_path) do
-    if @enable_code_review do
+    # Phase 2: force_review from judgment context overrides the flag
+    judgment_ctx = Process.get(:dispatch_judgment_context)
+    force_review = is_map(judgment_ctx) and judgment_ctx[:force_review] == true
+
+    if @enable_code_review or force_review do
       try do
         Logger.info("[WorkDirector] Stage 2.9: Running code review via debate")
         recover_branch(branch, repo_path)
