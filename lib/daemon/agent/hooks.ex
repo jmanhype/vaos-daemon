@@ -294,6 +294,14 @@ defmodule Daemon.Agent.Hooks do
         handler: &telemetry_hook/1
       },
 
+      # Learning observer — tracks tool success/failure patterns (post_tool_use, priority 20)
+      %{
+        name: "learning_observer",
+        event: :post_tool_use,
+        priority: 20,
+        handler: &learning_observe/1
+      },
+
       # Session cleanup — remove :daemon_files_read ETS entries when session ends
       # to prevent unbounded memory growth (session_end, priority 90)
       %{
@@ -563,6 +571,44 @@ defmodule Daemon.Agent.Hooks do
   end
 
   defp mcp_cache_post(payload), do: {:ok, payload}
+
+  # Learning observer — tracks tool success/failure patterns for the learning engine
+  defp learning_observe(%{tool_name: name, result: result, duration_ms: dur, session_id: sid}) when is_binary(result) do
+    success = not (String.starts_with?(result, "Error:") or String.starts_with?(result, "Blocked:"))
+
+    Daemon.Agent.Learning.observe(%{
+      type: if(success, do: :tool_success, else: :tool_error),
+      tool: name,
+      duration_ms: dur,
+      session_id: sid,
+      result_preview: String.slice(result, 0, 200)
+    })
+
+    {:ok, %{}}
+  rescue
+    e ->
+      Logger.warning("[Hooks] Learning observer failed: #{Exception.message(e)}")
+      {:ok, %{}}
+  end
+
+  defp learning_observe(%{tool_name: name, result: result, duration_ms: dur, session_id: sid}) do
+    # Handle non-binary results (e.g., maps, lists, other data structures)
+    success = true  # Assume success if we can't determine it from the result format
+
+    Daemon.Agent.Learning.observe(%{
+      type: :tool_success,
+      tool: name,
+      duration_ms: dur,
+      session_id: sid,
+      result_preview: "[non-binary result: #{inspect(result)}]"
+    })
+
+    {:ok, %{}}
+  rescue
+    e ->
+      Logger.warning("[Hooks] Learning observer failed: #{Exception.message(e)}")
+      {:ok, %{}}
+  end
 
   # ── Helpers ────────────────────────────────────────────────────────
 
