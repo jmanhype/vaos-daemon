@@ -1146,6 +1146,10 @@ defmodule Daemon.Agent.WorkDirector do
   end
 
   defp create_branch(branch, repo_path) do
+    # Remove stale lock file from crashed git processes
+    lock_path = Path.join([repo_path, ".git", "index.lock"])
+    if File.exists?(lock_path), do: File.rm(lock_path)
+
     # Nuclear cleanup: abort any in-progress merge/rebase/cherry-pick, then hard reset
     System.cmd("git", ["merge", "--abort"], cd: repo_path, stderr_to_stdout: true)
     System.cmd("git", ["rebase", "--abort"], cd: repo_path, stderr_to_stdout: true)
