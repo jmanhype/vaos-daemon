@@ -10,6 +10,7 @@ defmodule Daemon.Channels.HTTP.API do
 
     /auth        → AuthRoutes        POST /login|logout|refresh
     /channels    → ChannelRoutes     GET /, POST /*/webhook (10 platforms)
+    /health      → HealthRoutes      GET / (system health + dependencies)
     /sessions    → SessionRoutes     GET|POST /, GET|DELETE /:id, GET /:id/messages, POST /:id/cancel
     /fleet       → FleetRoutes       POST /register|heartbeat|dispatch, GET /agents|/:id
     /orchestrate → OrchestrationRoutes  POST /|/complex, GET /tasks, GET /:id/progress
@@ -81,6 +82,9 @@ defmodule Daemon.Channels.HTTP.API do
 
   # ── Channel webhooks (platform-specific auth, not JWT) ───────────────
   forward "/channels", to: API.ChannelRoutes
+
+  # ── Health check (no auth required) ───────────────────────────────────
+  forward "/health", to: API.HealthRoutes
 
   # ── Sessions ─────────────────────────────────────────────────────────
   forward "/sessions", to: API.SessionRoutes
@@ -288,6 +292,7 @@ defmodule Daemon.Channels.HTTP.API do
 
   defp authenticate(%{request_path: "/api/v1/auth/" <> _} = conn, _opts), do: conn
   defp authenticate(%{request_path: "/api/v1/channels/" <> _} = conn, _opts), do: conn
+  defp authenticate(%{request_path: "/api/v1/health" <> _} = conn, _opts), do: conn
   defp authenticate(%{request_path: "/api/v1/platform/auth/" <> _} = conn, _opts), do: conn
 
   defp authenticate(conn, _opts) do
