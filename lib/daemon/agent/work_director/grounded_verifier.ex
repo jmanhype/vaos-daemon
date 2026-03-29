@@ -84,7 +84,8 @@ defmodule Daemon.Agent.WorkDirector.GroundedVerifier do
 
   # -- Diff Parsing --
 
-  defp get_diff(_branch, repo_path) do
+  @doc "Get diff of all changes (committed + uncommitted + untracked) vs main."
+  def get_diff(_branch, repo_path) do
     # Get ALL changes vs main: committed + uncommitted + untracked
     # Agent may or may not have committed during Stage 1
 
@@ -126,7 +127,8 @@ defmodule Daemon.Agent.WorkDirector.GroundedVerifier do
     e -> {:error, Exception.message(e)}
   end
 
-  defp extract_added_lines(diff) do
+  @doc "Extract added lines (lines starting with +) from a unified diff."
+  def extract_added_lines(diff) do
     diff
     |> String.split("\n")
     |> Enum.filter(&String.starts_with?(&1, "+"))
@@ -299,27 +301,73 @@ defmodule Daemon.Agent.WorkDirector.GroundedVerifier do
     end
   end
 
-  defp check_trivial_changes(diff, _new_files) do
-    # Count meaningful added lines (not blank, not just comments, not just end/do)
-    meaningful_adds =
+  @substance_threshold 25
+
+  @doc """
+  Analyze substance of changes. Returns structured analysis for quality gating.
+
+  Returns a map with:
+  - `meaningful_lines` — count of non-boilerplate added lines
+  - `has_substance` — true if above threshold and no stub patterns
+  - `stub_patterns` — list of detected stub patterns
+  - `warnings` — human-readable warnings
+  """
+  @spec analyze_substance(String.t(), [String.t()]) :: map()
+  def analyze_substance(diff, _new_files \\ []) do
+    added_lines =
       diff
       |> String.split("\n")
       |> Enum.filter(&String.starts_with?(&1, "+"))
       |> Enum.reject(&String.starts_with?(&1, "+++"))
       |> Enum.map(&String.trim(String.slice(&1, 1..-1//1)))
-      |> Enum.reject(fn line ->
-        line == "" or
-        line == "end" or
-        line == "do" or
-        String.starts_with?(line, "#") or
-        String.starts_with?(line, "@moduledoc") or
-        String.starts_with?(line, "@doc")
+
+    meaningful =
+      Enum.reject(added_lines, fn line ->
+        line == "" or line == "end" or line == "do" or
+          String.starts_with?(line, "#") or
+          String.starts_with?(line, "@moduledoc") or
+          String.starts_with?(line, "@doc") or
+          String.starts_with?(line, "defmodule") or
+          (String.starts_with?(line, "@") and not String.starts_with?(line, "@spec")) or
+          String.match?(line, ~r/^\s*(use|require|import|alias)\s/)
       end)
 
-    if length(meaningful_adds) < 10 do
-      ["Change is very small (#{length(meaningful_adds)} meaningful lines). May be trivial/scaffolding only."]
-    else
-      []
-    end
+    stub_patterns =
+      added_lines
+      |> Enum.flat_map(fn line ->
+        cond do
+          Regex.match?(~r/raise\s+"not implemented"/i, line) -> ["raise \"not implemented\""]
+          Regex.match?(~r/raise\s+"TODO"/i, line) -> ["raise TODO"]
+          Regex.match?(~r/:not_implemented/, line) -> [":not_implemented"]
+          Regex.match?(~r/def \w+.*,\s*do:\s*:ok\s*$/, line) -> ["no-op :ok"]
+          Regex.match?(~r/def \w+.*,\s*do:\s*nil\s*$/, line) -> ["no-op nil"]
+          true -> []
+        end
+      end)
+      |> Enum.uniq()
+
+    meaningful_count = length(meaningful)
+
+    warnings =
+      if meaningful_count < @substance_threshold do
+        ["Only #{meaningful_count} meaningful lines (threshold: #{@substance_threshold})."]
+      else
+        []
+      end
+
+    warnings = warnings ++ Enum.map(stub_patterns, &"Stub pattern: #{&1}")
+
+    %{
+      meaningful_lines: meaningful_count,
+      has_substance: meaningful_count >= @substance_threshold and stub_patterns == [],
+      stub_patterns: stub_patterns,
+      warnings: warnings
+    }
+  end
+
+  # Backward compat for verify/2 soft-warning path
+  defp check_trivial_changes(diff, _new_files) do
+    result = analyze_substance(diff)
+    result.warnings
   end
 end

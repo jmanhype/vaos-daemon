@@ -19,9 +19,22 @@ defmodule Daemon.Agent.WorkDirector do
   alias Daemon.Agent.WorkDirector.Backlog
   alias Daemon.Agent.WorkDirector.Backlog.WorkItem
   alias Daemon.Agent.WorkDirector.DispatchIntelligence
+  alias Daemon.Agent.WorkDirector.GroundedVerifier
   alias Daemon.Agent.WorkDirector.Source
   alias Daemon.Agent.Orchestrator
   alias Daemon.Intelligence.DecisionJournal
+
+  # -- Pipeline upgrade aliases --
+  alias Daemon.Vault
+  alias Daemon.Agent.AutoFixer
+  alias Daemon.Agent.Roster
+  alias Daemon.Agent.Orchestrator.SwarmMode
+  alias Daemon.Agent.Debate
+  alias Daemon.Agent.SkillEvolution
+  alias Daemon.Agent.Appraiser
+  alias Daemon.Agent.CodeIntrospector
+  alias Daemon.Agent.ActiveLearner
+
   @backlog_refresh_ms :timer.minutes(10)
   @pr_poll_ms :timer.hours(1)
   @initial_delay_ms :timer.seconds(60)
@@ -30,6 +43,23 @@ defmodule Daemon.Agent.WorkDirector do
   @circuit_breaker_threshold 5
   @circuit_breaker_ms :timer.minutes(30)
   @daemon_repo "jmanhype/vaos-daemon"
+
+  # -- Feature Flags (pipeline upgrades, all default false) --
+  # Enable one at a time. Each is independently safe to enable.
+  @enable_vault_context false        # Stage 0.5: inject prior dispatch memories from Vault
+  @enable_knowledge_context false    # Stage 0.5: query knowledge store for codebase patterns
+  @enable_investigation_pre false    # Stage 0.5: run Investigate.execute before dispatch (high cost)
+  @enable_appraiser false            # Stage 0.5: estimate complexity/cost via Appraiser
+  @enable_specialist_routing false   # Stage 1: Roster agent selection vs force_simple
+  @enable_swarm_dispatch false       # Stage 1: SwarmMode patterns for complex tasks
+  @enable_substance_check false      # Stage 1.9: reject stubs (hard gate)
+  @enable_autofixer false            # Stage 2: AutoFixer instead of simple 2-attempt loop
+  @enable_test_gate false            # Stage 2.75: mix test --max-failures 5 (soft gate)
+  @enable_code_review false          # Stage 2.9: debate/review pattern before shipping
+  @enable_vault_remember false       # Stage 3.5: store dispatch outcome in Vault
+  @enable_knowledge_remember false   # Stage 3.5: store patterns in knowledge graph
+  @enable_skill_evolution false      # Stage 3.5: feed failures to SkillEvolution
+  @enable_introspector_feed false    # Stage 0.5: pull CodeIntrospector/ActiveLearner insights
 
   @protected_path_patterns [
     "^lib/daemon/application\\.ex$",
@@ -349,6 +379,9 @@ defmodule Daemon.Agent.WorkDirector do
           |> maybe_trip_circuit_breaker(failures)
       end
 
+    # Stage 3.5: Post-dispatch — remember outcome, store knowledge, evolve skills
+    post_dispatch_learn(dispatch, result)
+
     # Persist and continue the loop
     Backlog.persist(state.backlog)
     send(self(), :try_dispatch)
@@ -644,11 +677,17 @@ defmodule Daemon.Agent.WorkDirector do
   end
 
   # -- Staged Execution Pipeline --
-  # Stage 0: Create branch (zero LLM cost)
-  # Stage 1: Send code-only prompt to Orchestrator (single agent, high iterations)
-  # Stage 2: Verify compilation, retry if needed (zero LLM cost for verify, LLM for fix)
-  # Stage 2.5: Grounded verification — check phantom module references (zero LLM cost, LLM for fix)
-  # Stage 3: Git add/commit/push/PR (zero LLM cost)
+  # Stage 0:    Create branch (zero LLM cost)
+  # Stage 0.5:  Pre-research context enrichment (vault, knowledge, investigation, appraiser)
+  # Stage 1:    Implementation via Orchestrator (specialist routing / swarm / simple)
+  # Stage 1.5:  Recover branch if agent drifted
+  # Stage 1.9:  Substance check — reject stubs (hard gate)
+  # Stage 2:    Verify compilation (AutoFixer or simple 2-attempt)
+  # Stage 2.5:  Grounded verification — check phantom references
+  # Stage 2.75: Test gate (soft)
+  # Stage 2.9:  Code review (debate/review pattern)
+  # Stage 3:    Git add/commit/push/PR (zero LLM cost)
+  # Stage 3.5:  Post-dispatch — vault remember, knowledge store, skill evolution
 
   defp staged_dispatch(item, branch, session_id, repo_path) do
     # Stage 0: Create the branch ourselves
@@ -660,16 +699,22 @@ defmodule Daemon.Agent.WorkDirector do
         throw({:stage0_failed, reason})
     end
 
+    # Stage 0.5: Pre-research context enrichment
+    pre_research_context = build_pre_research_context(item, repo_path, session_id)
+
     # Stage 1: Implementation — agent only writes code, no git operations
     Logger.info("[WorkDirector] Stage 1: Dispatching implementation to Orchestrator")
-    prompt = build_implementation_prompt(item, repo_path)
+    prompt = build_implementation_prompt(item, repo_path, pre_research_context)
 
-    case execute_and_poll(prompt, session_id) do
+    case execute_and_poll(prompt, session_id, item) do
       {:completed, synthesis} ->
         Logger.info("[WorkDirector] Stage 1 complete: agent finished implementation")
 
         # Stage 1.5: Recover branch if agent switched away
         recover_branch(branch, repo_path)
+
+        # Stage 1.9: Substance check — reject stubs
+        maybe_check_substance(branch, repo_path)
 
         # Stage 2: Verify compilation (with retry loop)
         case verify_and_fix_compilation(item, branch, session_id, repo_path, 0) do
@@ -689,6 +734,12 @@ defmodule Daemon.Agent.WorkDirector do
                 cleanup_branch(branch, repo_path)
                 throw({:stage2_5_failed, :phantom_references})
             end
+
+            # Stage 2.75: Test gate (soft — warn only)
+            maybe_run_test_gate(branch, repo_path)
+
+            # Stage 2.9: Code review (debate/review)
+            maybe_run_code_review(item, branch, session_id, repo_path)
 
             # Stage 3: Commit, push, PR
             case finalize_branch(item, branch, repo_path) do
@@ -727,7 +778,368 @@ defmodule Daemon.Agent.WorkDirector do
     end
   catch
     {:stage0_failed, reason} -> {:error, {:no_branch, reason}}
+    {:stage1_9_failed, reason} -> {:error, {:stub_detected, reason}}
     {:stage2_5_failed, reason} -> {:error, {:phantom_references, reason}}
+  end
+
+  # -- Stage 0.5: Pre-Research Context Enrichment --
+
+  defp build_pre_research_context(item, _repo_path, session_id) do
+    sections = []
+
+    # Vault: prior dispatch memories
+    sections = sections ++ vault_context_section(item)
+
+    # Knowledge Store: codebase patterns
+    sections = sections ++ knowledge_context_section(item)
+
+    # Appraiser: complexity estimate
+    sections = sections ++ appraiser_section(item)
+
+    # Specialist hints: what agents match this task
+    sections = sections ++ specialist_hints_section(item)
+
+    # Autonomous loop insights: CodeIntrospector + ActiveLearner findings
+    sections = sections ++ introspector_section(item)
+
+    # Investigation: deep research (expensive, only for high-priority/complex tasks)
+    sections = sections ++ investigation_section(item, session_id)
+
+    context = Enum.join(sections, "\n")
+
+    if context != "" do
+      Logger.info("[WorkDirector] Stage 0.5: Pre-research enriched prompt (#{String.length(context)} chars)")
+    end
+
+    context
+  end
+
+  defp vault_context_section(item) do
+    if @enable_vault_context do
+      try do
+        recalls = Vault.recall(item.title, limit: 5)
+
+        if recalls != [] do
+          formatted =
+            Enum.map_join(recalls, "\n", fn {cat, path, _score} ->
+              case File.read(path) do
+                {:ok, content} ->
+                  body = content |> String.split("\n") |> Enum.take(8) |> Enum.join("\n")
+                  "- [#{cat}] #{String.slice(body, 0, 300)}"
+
+                _ ->
+                  ""
+              end
+            end)
+
+          Logger.info("[WorkDirector] Stage 0.5: Injecting #{length(recalls)} vault memories")
+          ["\n## Prior Context (learn from previous attempts)\n#{formatted}\n"]
+        else
+          []
+        end
+      rescue
+        _ -> []
+      catch
+        :exit, _ -> []
+      end
+    else
+      []
+    end
+  end
+
+  defp knowledge_context_section(item) do
+    if @enable_knowledge_context do
+      try do
+        # Query knowledge graph for patterns related to the task
+        store = "osa_default"
+        keywords = item.title |> String.split(~r/\s+/) |> Enum.take(5)
+
+        triples =
+          Enum.flat_map(keywords, fn kw ->
+            case Vaos.Knowledge.query(store, subject: kw) do
+              {:ok, results} -> Enum.take(results, 3)
+              _ -> []
+            end
+          end)
+          |> Enum.uniq()
+          |> Enum.take(10)
+
+        if triples != [] do
+          formatted =
+            Enum.map_join(triples, "\n", fn {s, p, o} ->
+              "- #{s} —[#{p}]→ #{o}"
+            end)
+
+          Logger.info("[WorkDirector] Stage 0.5: #{length(triples)} knowledge triples")
+          ["\n## Codebase Knowledge\n#{formatted}\n"]
+        else
+          []
+        end
+      rescue
+        _ -> []
+      catch
+        :exit, _ -> []
+      end
+    else
+      []
+    end
+  end
+
+  defp appraiser_section(item) do
+    if @enable_appraiser do
+      try do
+        # Estimate complexity based on description length and keywords
+        complexity =
+          cond do
+            String.length(item.description || "") > 500 -> 7
+            String.length(item.description || "") > 200 -> 5
+            true -> 3
+          end
+
+        estimate = Appraiser.estimate(complexity, :backend)
+
+        section = """
+
+        ## Task Estimate
+        - Complexity: #{estimate.complexity}/10
+        - Estimated hours: #{estimate.estimated_hours}
+        - Confidence: #{Float.round(estimate.confidence * 100, 0)}%
+        - Scale: #{if estimate.estimated_hours > 8, do: "LARGE — break into smaller pieces", else: "manageable"}
+        """
+
+        Logger.info("[WorkDirector] Stage 0.5: Appraiser estimates #{estimate.estimated_hours}h, confidence #{Float.round(estimate.confidence * 100, 0)}%")
+        [section]
+      rescue
+        _ -> []
+      catch
+        :exit, _ -> []
+      end
+    else
+      []
+    end
+  end
+
+  defp specialist_hints_section(item) do
+    if @enable_specialist_routing do
+      try do
+        scored = Roster.select_for_task_scored(item.title)
+        top = Enum.take(scored, 3)
+
+        if top != [] do
+          formatted =
+            Enum.map_join(top, "\n", fn {name, score} ->
+              "- #{name} (score: #{Float.round(score, 2)})"
+            end)
+
+          Logger.info("[WorkDirector] Stage 0.5: Top specialists: #{inspect(Enum.map(top, &elem(&1, 0)))}")
+          ["\n## Recommended Specialists\n#{formatted}\n"]
+        else
+          []
+        end
+      rescue
+        _ -> []
+      catch
+        :exit, _ -> []
+      end
+    else
+      []
+    end
+  end
+
+  defp introspector_section(_item) do
+    if @enable_introspector_feed do
+      try do
+        sections = []
+
+        # CodeIntrospector recent findings
+        sections =
+          try do
+            %{recent_findings: findings} = CodeIntrospector.stats()
+
+            if findings != [] do
+              formatted =
+                findings
+                |> Enum.take(3)
+                |> Enum.map_join("\n", fn f ->
+                  "- [#{f.anomaly_type}] #{inspect(f.result) |> String.slice(0, 200)}"
+                end)
+
+              sections ++ ["\n## Recent System Anomalies\n#{formatted}\n"]
+            else
+              sections
+            end
+          rescue
+            _ -> sections
+          catch
+            :exit, _ -> sections
+          end
+
+        # ActiveLearner bottleneck
+        sections =
+          try do
+            %{bottleneck: bottleneck} = ActiveLearner.stats()
+
+            if bottleneck do
+              sections ++ ["\n## System Bottleneck: #{bottleneck.bottleneck}\n#{bottleneck.prescription}\n"]
+            else
+              sections
+            end
+          rescue
+            _ -> sections
+          catch
+            :exit, _ -> sections
+          end
+
+        sections
+      rescue
+        _ -> []
+      catch
+        :exit, _ -> []
+      end
+    else
+      []
+    end
+  end
+
+  defp investigation_section(item, session_id) do
+    if @enable_investigation_pre and item.base_priority >= 0.7 do
+      try do
+        Logger.info("[WorkDirector] Stage 0.5: Running pre-dispatch investigation for '#{item.title}'")
+        investigate_tool = Daemon.Tools.Builtins.Investigate
+
+        case investigate_tool.execute(%{
+               "topic" => "How to implement: #{item.title}",
+               "depth" => "standard",
+               "metadata" => %{"source_module" => "WorkDirector", "session_id" => session_id}
+             }) do
+          {:ok, result} ->
+            # Extract key findings (truncate to avoid prompt bloat)
+            summary = result |> String.split("\n") |> Enum.take(30) |> Enum.join("\n")
+            Logger.info("[WorkDirector] Stage 0.5: Investigation complete (#{String.length(result)} chars)")
+            ["\n## Research Findings\n#{String.slice(summary, 0, 2000)}\n"]
+
+          {:error, reason} ->
+            Logger.warning("[WorkDirector] Stage 0.5: Investigation failed: #{reason}")
+            []
+        end
+      rescue
+        e ->
+          Logger.warning("[WorkDirector] Stage 0.5: Investigation error: #{Exception.message(e)}")
+          []
+      catch
+        :exit, r ->
+          Logger.warning("[WorkDirector] Stage 0.5: Investigation exit: #{inspect(r)}")
+          []
+      end
+    else
+      []
+    end
+  end
+
+  # -- Stage 1.9: Substance Check --
+
+  defp maybe_check_substance(branch, repo_path) do
+    if @enable_substance_check do
+      try do
+        case GroundedVerifier.get_diff(branch, repo_path) do
+          {:ok, diff} ->
+            analysis = GroundedVerifier.analyze_substance(diff)
+
+            unless analysis.has_substance do
+              Logger.warning(
+                "[WorkDirector] Stage 1.9: STUB — #{analysis.meaningful_lines} lines, stubs: #{inspect(analysis.stub_patterns)}"
+              )
+
+              cleanup_branch(branch, repo_path)
+              throw({:stage1_9_failed, {:stub_detected, analysis}})
+            end
+
+            if analysis.warnings != [] do
+              Logger.info("[WorkDirector] Stage 1.9: OK with warnings: #{Enum.join(analysis.warnings, "; ")}")
+            else
+              Logger.info("[WorkDirector] Stage 1.9: Substance OK (#{analysis.meaningful_lines} lines)")
+            end
+
+          {:error, reason} ->
+            Logger.warning("[WorkDirector] Stage 1.9: diff failed (non-blocking): #{inspect(reason)}")
+        end
+      rescue
+        e ->
+          Logger.warning("[WorkDirector] Stage 1.9 error (non-blocking): #{Exception.message(e)}")
+      catch
+        :exit, r ->
+          Logger.warning("[WorkDirector] Stage 1.9 exit (non-blocking): #{inspect(r)}")
+      end
+    end
+  end
+
+  # -- Stage 2.75: Test Gate --
+
+  defp maybe_run_test_gate(branch, repo_path) do
+    if @enable_test_gate do
+      try do
+        Logger.info("[WorkDirector] Stage 2.75: Running tests")
+        recover_branch(branch, repo_path)
+
+        case System.cmd("bash", ["-c", "cd #{repo_path} && mix test --max-failures 5 2>&1"],
+               stderr_to_stdout: true,
+               env: [{"MIX_ENV", "test"}]
+             ) do
+          {_output, 0} ->
+            Logger.info("[WorkDirector] Stage 2.75: Tests PASSED")
+
+          {output, _} ->
+            summary =
+              output
+              |> String.split("\n")
+              |> Enum.filter(&(String.contains?(&1, "failure") or String.contains?(&1, "error")))
+              |> Enum.take(3)
+              |> Enum.join("; ")
+
+            Logger.warning(
+              "[WorkDirector] Stage 2.75: Tests FAILED (soft gate): #{String.slice(summary, 0, 500)}"
+            )
+        end
+      rescue
+        e -> Logger.warning("[WorkDirector] Stage 2.75 error: #{Exception.message(e)}")
+      catch
+        :exit, r -> Logger.warning("[WorkDirector] Stage 2.75 exit: #{inspect(r)}")
+      end
+    end
+  end
+
+  # -- Stage 2.9: Code Review --
+
+  defp maybe_run_code_review(item, branch, _session_id, repo_path) do
+    if @enable_code_review do
+      try do
+        Logger.info("[WorkDirector] Stage 2.9: Running code review via debate")
+
+        # Get the diff for reviewers
+        {diff, _} =
+          System.cmd("git", ["diff", "--stat", "main...#{branch}"],
+            cd: repo_path,
+            stderr_to_stdout: true
+          )
+
+        review_prompt =
+          "Review this code change for '#{item.title}'. " <>
+            "Check for: correctness, security issues, code style, missing error handling, phantom references. " <>
+            "Diff summary:\n#{String.slice(diff, 0, 2000)}"
+
+        case Debate.run(review_prompt, providers: ["anthropic"], timeout: 30_000) do
+          {:ok, %{synthesis: synthesis}} ->
+            Logger.info("[WorkDirector] Stage 2.9: Review complete: #{String.slice(synthesis, 0, 200)}")
+
+          {:error, reason} ->
+            Logger.warning("[WorkDirector] Stage 2.9: Review failed (non-blocking): #{inspect(reason)}")
+        end
+      rescue
+        e -> Logger.warning("[WorkDirector] Stage 2.9 error: #{Exception.message(e)}")
+      catch
+        :exit, r -> Logger.warning("[WorkDirector] Stage 2.9 exit: #{inspect(r)}")
+      end
+    end
   end
 
   defp create_branch(branch, repo_path) do
@@ -835,30 +1247,154 @@ defmodule Daemon.Agent.WorkDirector do
     _ -> :ok
   end
 
-  defp execute_and_poll(prompt, session_id) do
-    case Orchestrator.execute(prompt, session_id, [
-      force_simple: true,
-      max_iterations: @agent_max_iterations,
-      tier: :elite
-    ]) do
-      {:ok, task_id} ->
-        await_orchestrator_completion(task_id)
+  defp execute_and_poll(prompt, session_id, item \\ nil) do
+    # Swarm dispatch: use SwarmMode with pattern selection
+    if @enable_swarm_dispatch and item != nil do
+      execute_via_swarm(prompt, session_id, item)
+    else
+      # Specialist routing: let Orchestrator auto-decompose and route
+      opts =
+        if @enable_specialist_routing do
+          Logger.info("[WorkDirector] Stage 1: Using specialist routing (Orchestrator auto-decomposition)")
+          [max_iterations: @agent_max_iterations, tier: :elite]
+        else
+          [force_simple: true, max_iterations: @agent_max_iterations, tier: :elite]
+        end
 
-      {:error, reason} ->
-        {:failed, reason}
+      case Orchestrator.execute(prompt, session_id, opts) do
+        {:ok, task_id} -> await_orchestrator_completion(task_id)
+        {:error, reason} -> {:failed, reason}
+      end
     end
   end
 
-  defp verify_and_fix_compilation(_item, _branch, _session_id, repo_path, attempt)
+  defp execute_via_swarm(prompt, session_id, item) do
+    pattern = select_swarm_pattern(item)
+    Logger.info("[WorkDirector] Stage 1: Using swarm pattern #{inspect(pattern)}")
+
+    case SwarmMode.launch(prompt,
+           pattern: pattern,
+           session_id: session_id,
+           timeout_ms: @orchestrator_timeout_ms
+         ) do
+      {:ok, swarm_id} ->
+        await_swarm_completion(swarm_id)
+
+      {:error, reason} ->
+        Logger.warning("[WorkDirector] Swarm launch failed, falling back to simple dispatch: #{inspect(reason)}")
+        opts = [force_simple: true, max_iterations: @agent_max_iterations, tier: :elite]
+
+        case Orchestrator.execute(prompt, session_id, opts) do
+          {:ok, task_id} -> await_orchestrator_completion(task_id)
+          {:error, r} -> {:failed, r}
+        end
+    end
+  end
+
+  defp select_swarm_pattern(item) do
+    title = String.downcase(item.title || "")
+    desc = String.downcase(item.description || "")
+    text = title <> " " <> desc
+
+    cond do
+      String.contains?(text, "security") or String.contains?(text, "audit") -> :debate
+      String.contains?(text, "test") or String.contains?(text, "spec") -> :review
+      String.contains?(text, "refactor") or String.contains?(text, "review") -> :review
+      String.contains?(text, "debug") or String.contains?(text, "fix") -> :parallel
+      String.contains?(text, "pipeline") or String.contains?(text, "migration") -> :pipeline
+      true -> :review
+    end
+  end
+
+  defp await_swarm_completion(swarm_id) do
+    deadline = System.monotonic_time(:millisecond) + @orchestrator_timeout_ms
+    poll_swarm(swarm_id, deadline)
+  end
+
+  defp poll_swarm(swarm_id, deadline) do
+    if System.monotonic_time(:millisecond) > deadline do
+      {:timeout, :deadline_exceeded}
+    else
+      case SwarmMode.status(swarm_id) do
+        {:ok, %{status: :completed, result: result}} ->
+          {:completed, result || ""}
+
+        {:ok, %{status: :failed, error: error}} ->
+          {:failed, error}
+
+        {:ok, %{status: status}} when status in [:running, :planning] ->
+          Process.sleep(@orchestrator_poll_interval_ms)
+          poll_swarm(swarm_id, deadline)
+
+        {:error, :not_found} ->
+          {:failed, :swarm_not_found}
+
+        _ ->
+          Process.sleep(@orchestrator_poll_interval_ms)
+          poll_swarm(swarm_id, deadline)
+      end
+    end
+  rescue
+    _ -> {:failed, :swarm_poll_error}
+  catch
+    :exit, _ -> {:failed, :swarm_poll_exit}
+  end
+
+  defp verify_and_fix_compilation(item, branch, session_id, repo_path, attempt) do
+    if @enable_autofixer do
+      verify_compilation_autofixer(session_id, repo_path)
+    else
+      verify_compilation_simple(item, branch, session_id, repo_path, attempt)
+    end
+  end
+
+  defp verify_compilation_autofixer(session_id, repo_path) do
+    case run_compile(repo_path) do
+      :ok ->
+        :ok
+
+      {:error, _} ->
+        Logger.info("[WorkDirector] Stage 2 (AutoFixer): delegating compilation fix")
+
+        try do
+          case AutoFixer.run(%{
+                 type: :compile,
+                 session_id: "#{session_id}-autofix",
+                 cwd: repo_path,
+                 max_iterations: 10,
+                 command: "mix compile"
+               }) do
+            {:ok, %{success: true, iterations: n}} ->
+              Logger.info("[WorkDirector] Stage 2 (AutoFixer): fixed in #{n} iterations")
+              :ok
+
+            {:ok, %{success: false, remaining_errors: errors}} ->
+              {:error, {:autofixer_exhausted, Enum.join(errors, "\n")}}
+
+            {:error, reason} ->
+              {:error, {:autofixer_error, reason}}
+          end
+        rescue
+          e ->
+            Logger.warning("[WorkDirector] AutoFixer crashed, falling back: #{Exception.message(e)}")
+            verify_compilation_simple(nil, nil, nil, repo_path, 0)
+        catch
+          :exit, reason ->
+            Logger.warning("[WorkDirector] AutoFixer exit, falling back: #{inspect(reason)}")
+            verify_compilation_simple(nil, nil, nil, repo_path, 0)
+        end
+    end
+  end
+
+  defp verify_compilation_simple(_item, _branch, _session_id, repo_path, attempt)
        when attempt >= @compile_fix_max_attempts do
-    # Last attempt — just check compilation without fixing
     case run_compile(repo_path) do
       :ok -> :ok
       {:error, errors} -> {:error, {:max_fix_attempts, errors}}
     end
   end
 
-  defp verify_and_fix_compilation(item, branch, session_id, repo_path, attempt) do
+  defp verify_compilation_simple(item, branch, session_id, repo_path, attempt) do
     case run_compile(repo_path) do
       :ok ->
         :ok
@@ -895,7 +1431,7 @@ defmodule Daemon.Agent.WorkDirector do
 
         case execute_and_poll(fix_prompt, fix_session) do
           {:completed, _} ->
-            verify_and_fix_compilation(item, branch, session_id, repo_path, attempt + 1)
+            verify_compilation_simple(item, branch, session_id, repo_path, attempt + 1)
 
           {:failed, reason} ->
             {:error, {:fix_agent_failed, reason}}
@@ -936,8 +1472,6 @@ defmodule Daemon.Agent.WorkDirector do
   end
 
   # -- Stage 2.5: Grounded Reference Verification --
-
-  alias Daemon.Agent.WorkDirector.GroundedVerifier
 
   @reference_fix_max_attempts 1
 
@@ -1107,7 +1641,7 @@ defmodule Daemon.Agent.WorkDirector do
     end)
   end
 
-  defp build_implementation_prompt(item, repo_path) do
+  defp build_implementation_prompt(item, repo_path, pre_research_context) do
     source_context =
       case item.source do
         :vision ->
@@ -1150,6 +1684,7 @@ defmodule Daemon.Agent.WorkDirector do
     For file operations, use ABSOLUTE paths starting with `#{repo_path}/`.
 
     #{codebase_context}
+    #{pre_research_context}
 
     ## Task
     **#{item.title}**
@@ -1348,6 +1883,79 @@ defmodule Daemon.Agent.WorkDirector do
     Process.send_after(self(), :poll_pr_outcomes, @pr_poll_ms)
   end
 
+  # -- Stage 3.5: Post-Dispatch Learning --
+
+  defp post_dispatch_learn(dispatch, result) do
+    # Vault: remember dispatch outcome
+    if @enable_vault_remember do
+      try do
+        {category, content} =
+          case result do
+            {:ok, _output, branch} ->
+              {:lesson,
+               "WorkDirector SUCCEEDED: \"#{dispatch.title}\" (#{dispatch.source}), branch: #{branch}"}
+
+            {:error, reason} ->
+              fc = classify_failure(reason)
+
+              {:lesson,
+               "WorkDirector FAILED: \"#{dispatch.title}\" (#{dispatch.source}), class: #{fc}, error: #{inspect(reason) |> String.slice(0, 300)}"}
+          end
+
+        Vault.remember(content, category, %{
+          title: "workdir-#{String.slice(dispatch.title, 0, 40)}",
+          session_id: "workdir-vault"
+        })
+      rescue
+        _ -> :ok
+      catch
+        :exit, _ -> :ok
+      end
+    end
+
+    # Knowledge Store: assert dispatch outcome as triple
+    if @enable_knowledge_remember do
+      try do
+        store = "osa_default"
+        slug = String.slice(dispatch.title, 0, 60) |> String.replace(~r/[^a-zA-Z0-9]/, "_")
+        outcome = if match?({:ok, _, _}, result), do: "success", else: "failure"
+
+        Vaos.Knowledge.assert(store, {"workdir:#{slug}", "osa:dispatch_outcome", outcome})
+        Vaos.Knowledge.assert(store, {"workdir:#{slug}", "osa:source", to_string(dispatch.source)})
+      rescue
+        _ -> :ok
+      catch
+        :exit, _ -> :ok
+      end
+    end
+
+    # SkillEvolution: trigger evolution on failure
+    if @enable_skill_evolution do
+      case result do
+        {:error, reason} ->
+          try do
+            fc = classify_failure(reason)
+
+            SkillEvolution.trigger_evolution("workdir-#{dispatch.title}", %{
+              reason: inspect(fc),
+              title: dispatch.title,
+              source: dispatch.source,
+              failure_class: fc
+            })
+
+            Logger.info("[WorkDirector] Stage 3.5: Triggered skill evolution for #{fc}")
+          rescue
+            _ -> :ok
+          catch
+            :exit, _ -> :ok
+          end
+
+        _ ->
+          :ok
+      end
+    end
+  end
+
   # -- Failure Classification --
 
   defp classify_failure({:empty_branch, _}), do: :empty_branch
@@ -1356,6 +1964,9 @@ defmodule Daemon.Agent.WorkDirector do
   defp classify_failure({:timeout, _}), do: :timeout
   defp classify_failure({:compilation_unfixable, _}), do: :compilation_error
   defp classify_failure({:phantom_references, _}), do: :phantom_references
+  defp classify_failure({:stub_detected, _}), do: :stub_detected
+  defp classify_failure({:autofixer_exhausted, _}), do: :compilation_error
+  defp classify_failure({:autofixer_error, _}), do: :compilation_error
   defp classify_failure({:commit_failed, _}), do: :commit_error
   defp classify_failure({:exception, msg}) when is_binary(msg) do
     cond do
@@ -1375,6 +1986,7 @@ defmodule Daemon.Agent.WorkDirector do
   defp failure_class_reward(:timeout), do: 0.10             # Task was too large
   defp failure_class_reward(:compilation_error), do: 0.15   # Code written but won't compile
   defp failure_class_reward(:phantom_references), do: 0.18  # Compiles but references non-existent modules
+  defp failure_class_reward(:stub_detected), do: 0.05       # Agent produced stubs, not real code
   defp failure_class_reward(:commit_error), do: 0.20        # Code compiles but commit failed
   defp failure_class_reward(:test_failure), do: 0.20        # Code compiled but tests failed (close!)
   defp failure_class_reward(:process_crash), do: 0.0        # Total failure
