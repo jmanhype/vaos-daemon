@@ -564,14 +564,18 @@ defmodule Daemon.Agent.WorkDirector do
     Logger.debug("[WorkDirector] Refreshing backlog from #{length(@source_modules)} static sources...")
 
     # Fetch each source independently with timeout
+    # Fitness source runs TestSuite (mix test) which can take several minutes
     static_items =
       Enum.flat_map(@source_modules, fn mod ->
         source_name = mod |> Module.split() |> List.last()
         Logger.debug("[WorkDirector] Fetching from #{source_name}...")
 
+        # Use longer timeout for Fitness (300s) to accommodate TestSuite, 15s for others
+        timeout = if source_name == "Fitness", do: 300_000, else: 15_000
+
         try do
           task = Task.async(fn -> mod.fetch() end)
-          case Task.yield(task, 15_000) || Task.shutdown(task) do
+          case Task.yield(task, timeout) || Task.shutdown(task) do
             {:ok, {:ok, items}} ->
               Logger.debug("[WorkDirector] #{source_name}: #{length(items)} items")
               items
@@ -581,7 +585,7 @@ defmodule Daemon.Agent.WorkDirector do
               []
 
             nil ->
-              Logger.warning("[WorkDirector] #{source_name} timed out (15s)")
+              Logger.warning("[WorkDirector] #{source_name} timed out (#{div(timeout, 1000)}s)")
               []
           end
         rescue
