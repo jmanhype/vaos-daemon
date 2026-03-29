@@ -1126,25 +1126,30 @@ defmodule Daemon.Agent.WorkDirector do
     if @enable_code_review do
       try do
         Logger.info("[WorkDirector] Stage 2.9: Running code review via debate")
+        recover_branch(branch, repo_path)
 
-        # Get the diff for reviewers
+        # Get actual diff content (not just --stat)
         {diff, _} =
-          System.cmd("git", ["diff", "--stat", "main...#{branch}"],
+          System.cmd("git", ["diff", "main...HEAD", "--", "*.ex", "*.exs"],
             cd: repo_path,
             stderr_to_stdout: true
           )
 
-        review_prompt =
-          "Review this code change for '#{item.title}'. " <>
-            "Check for: correctness, security issues, code style, missing error handling, phantom references. " <>
-            "Diff summary:\n#{String.slice(diff, 0, 2000)}"
+        if byte_size(diff) > 10 do
+          review_prompt =
+            "Review this Elixir code change for '#{item.title}'. " <>
+              "Check for: correctness, security issues, missing error handling, Elixir best practices. " <>
+              "Be concise — 3-5 bullet points max.\n\n```diff\n#{String.slice(diff, 0, 4000)}\n```"
 
-        case Debate.run(review_prompt, providers: ["anthropic"], timeout: 30_000) do
-          {:ok, %{synthesis: synthesis}} ->
-            Logger.info("[WorkDirector] Stage 2.9: Review complete: #{String.slice(synthesis, 0, 200)}")
+          case Debate.run(review_prompt, providers: ["anthropic"], timeout: 30_000) do
+            {:ok, %{synthesis: synthesis}} ->
+              Logger.info("[WorkDirector] Stage 2.9: Review complete: #{String.slice(synthesis, 0, 300)}")
 
-          {:error, reason} ->
-            Logger.warning("[WorkDirector] Stage 2.9: Review failed (non-blocking): #{inspect(reason)}")
+            {:error, reason} ->
+              Logger.warning("[WorkDirector] Stage 2.9: Review failed (non-blocking): #{inspect(reason)}")
+          end
+        else
+          Logger.warning("[WorkDirector] Stage 2.9: No diff to review (#{byte_size(diff)} bytes)")
         end
       rescue
         e -> Logger.warning("[WorkDirector] Stage 2.9 error: #{Exception.message(e)}")
