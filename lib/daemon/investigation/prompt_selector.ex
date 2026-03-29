@@ -37,7 +37,7 @@ defmodule Daemon.Investigation.PromptSelector do
         |> Enum.map(fn {id, v} ->
           alpha = v["alpha"] || 1
           beta = v["beta"] || 1
-          {id, sample_beta(alpha, beta)}
+          {id, Bandit.sample_beta(alpha, beta)}
         end)
         |> Enum.max_by(fn {_id, sample} -> sample end)
 
@@ -136,65 +136,6 @@ defmodule Daemon.Investigation.PromptSelector do
   @doc "Return the registry directory path (for testing)."
   @spec registry_dir() :: String.t()
   def registry_dir, do: @registry_dir
-
-  # --- Beta Distribution Sampling (Marsaglia-Tsang) ---
-
-  @doc false
-  def sample_beta(a, b) when is_number(a) and is_number(b) and a > 0 and b > 0 do
-    x = sample_gamma(a / 1)
-    y = sample_gamma(b / 1)
-
-    if x + y == 0.0 do
-      # Degenerate case — return 0.5
-      0.5
-    else
-      x / (x + y)
-    end
-  end
-
-  # Gamma sampling: Marsaglia-Tsang for a >= 1, Ahrens-Dieter boost for a < 1
-  defp sample_gamma(a) when a < 1.0 do
-    # Ahrens-Dieter: Gamma(a) = Gamma(a+1) * U^(1/a)
-    sample_gamma(a + 1.0) * :math.pow(:rand.uniform(), 1.0 / a)
-  end
-
-  defp sample_gamma(a) do
-    # Marsaglia-Tsang squeeze method for a >= 1
-    d = a - 1.0 / 3.0
-    c = 1.0 / :math.sqrt(9.0 * d)
-
-    do_marsaglia_tsang(d, c)
-  end
-
-  defp do_marsaglia_tsang(d, c) do
-    # Box-Muller for standard normal
-    x = box_muller_normal()
-    v = 1.0 + c * x
-
-    if v <= 0.0 do
-      do_marsaglia_tsang(d, c)
-    else
-      v = v * v * v
-      u = :rand.uniform()
-      x_sq = x * x
-
-      if u < 1.0 - 0.0331 * x_sq * x_sq do
-        d * v
-      else
-        if :math.log(u) < 0.5 * x_sq + d * (1.0 - v + :math.log(v)) do
-          d * v
-        else
-          do_marsaglia_tsang(d, c)
-        end
-      end
-    end
-  end
-
-  defp box_muller_normal do
-    u1 = :rand.uniform()
-    u2 = :rand.uniform()
-    :math.sqrt(-2.0 * :math.log(u1)) * :math.cos(2.0 * :math.pi() * u2)
-  end
 
   # --- Registry Persistence ---
 
