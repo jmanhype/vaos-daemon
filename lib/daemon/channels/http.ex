@@ -31,6 +31,7 @@ defmodule Daemon.Channels.HTTP do
   plug(:security_headers)
   plug(:cors_headers)
   plug(Plug.Logger, log: :debug)
+  plug(Daemon.Channels.HTTP.RateLimiter)
   plug(:match)
   plug(:dispatch)
 

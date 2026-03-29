@@ -42,24 +42,31 @@ defmodule Daemon.Channels.HTTP.RateLimiter do
     ip = format_ip(conn.remote_ip)
     limit = limit_for_path(conn.request_path)
 
-    case check_and_consume(ip, limit) do
-      {:ok, remaining} ->
+    case limit do
+      :no_limit ->
+        # Skip rate limiting for health checks and similar endpoints
         conn
-        |> put_resp_header("x-ratelimit-limit", Integer.to_string(limit))
-        |> put_resp_header("x-ratelimit-remaining", Integer.to_string(remaining))
 
-      {:error, :rate_limited} ->
-        Logger.warning("[RateLimiter] 429 for #{ip} on #{conn.request_path}")
+      _ ->
+        case check_and_consume(ip, limit) do
+          {:ok, remaining} ->
+            conn
+            |> put_resp_header("x-ratelimit-limit", Integer.to_string(limit))
+            |> put_resp_header("x-ratelimit-remaining", Integer.to_string(remaining))
 
-        body = Jason.encode!(%{error: "rate_limited", message: "Too many requests"})
+          {:error, :rate_limited} ->
+            Logger.warning("[RateLimiter] 429 for #{ip} on #{conn.request_path}")
 
-        conn
-        |> put_resp_content_type("application/json")
-        |> put_resp_header("retry-after", Integer.to_string(@window_seconds))
-        |> put_resp_header("x-ratelimit-limit", Integer.to_string(limit))
-        |> put_resp_header("x-ratelimit-remaining", "0")
-        |> send_resp(429, body)
-        |> halt()
+            body = Jason.encode!(%{error: "rate_limited", message: "Too many requests"})
+
+            conn
+            |> put_resp_content_type("application/json")
+            |> put_resp_header("retry-after", Integer.to_string(@window_seconds))
+            |> put_resp_header("x-ratelimit-limit", Integer.to_string(limit))
+            |> put_resp_header("x-ratelimit-remaining", "0")
+            |> send_resp(429, body)
+            |> halt()
+        end
     end
   end
 
@@ -103,6 +110,7 @@ defmodule Daemon.Channels.HTTP.RateLimiter do
 
   # ── Helpers ─────────────────────────────────────────────────────────────
 
+  defp limit_for_path("/health" <> _), do: :no_limit
   defp limit_for_path("/api/v1/auth/" <> _), do: @auth_limit
   defp limit_for_path("/api/v1/platform/auth/" <> _), do: @auth_limit
   defp limit_for_path(_), do: @default_limit
