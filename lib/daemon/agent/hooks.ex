@@ -564,6 +564,58 @@ defmodule Daemon.Agent.Hooks do
 
   defp mcp_cache_post(payload), do: {:ok, payload}
 
+  # Learning observer — record tool outcomes for pattern learning
+  # Uses pattern matching with guards for type safety (Elixir best practice)
+  defp learning_observe(%{tool_name: name, result: result, duration_ms: duration_ms} = payload)
+       when is_binary(name) and is_binary(result) and is_integer(duration_ms) and duration_ms >= 0 do
+    try do
+      # Extract success/failure from result string
+      # Only process if result is not an error response
+      if not (String.starts_with?(result, "Error:") or String.starts_with?(result, "Blocked:")) do
+        Daemon.Agent.Learning.observe(%{
+          type: :tool_success,
+          tool: name,
+          context: String.slice(result, 0, 100),
+          duration_ms: duration_ms
+        })
+      end
+
+      {:ok, payload}
+    rescue
+      e ->
+        # Log unexpected errors but don't crash the hook chain
+        # Specific rescue avoids hiding systemic bugs
+        Logger.error("[Hooks] learning_observe failed for #{name}: #{Exception.message(e)}")
+        {:ok, payload}
+    end
+  end
+
+  defp learning_observe(%{tool_name: name, duration_ms: duration_ms} = payload)
+       when is_binary(name) and is_integer(duration_ms) and duration_ms >= 0 do
+    # Fallback for non-string results (nil, maps, atoms)
+    # Record as tool_success but without result context
+    try do
+      Daemon.Agent.Learning.observe(%{
+        type: :tool_success,
+        tool: name,
+        context: "",
+        duration_ms: duration_ms
+      })
+
+      {:ok, payload}
+    rescue
+      e ->
+        Logger.error("[Hooks] learning_observe failed for #{name}: #{Exception.message(e)}")
+        {:ok, payload}
+    end
+  end
+
+  defp learning_observe(payload) do
+    # Skip observation if required fields are missing or invalid
+    # This prevents crashes from malformed payloads
+    {:ok, payload}
+  end
+
   # ── Helpers ────────────────────────────────────────────────────────
 
   defp update_metrics_ets(event, elapsed_us, result) do
