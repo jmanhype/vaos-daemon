@@ -504,6 +504,7 @@ defmodule Daemon.Agent.WorkDirector do
     Logger.debug("[WorkDirector] Refreshing backlog from #{length(@source_modules)} static sources...")
 
     # Fetch each source independently with timeout
+    # Fitness source needs longer timeout (5 minutes) for compilation + test suite
     static_items =
       Enum.flat_map(@source_modules, fn mod ->
         source_name = mod |> Module.split() |> List.last()
