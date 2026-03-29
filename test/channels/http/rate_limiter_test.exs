@@ -16,6 +16,18 @@ defmodule Daemon.Channels.HTTP.RateLimiterTest do
       _ -> :ets.delete_all_objects(@table)
     end
 
+    # Store original config and reset to defaults
+    original_config = Application.get_env(:daemon, :http_rate_limits)
+
+    on_exit(fn ->
+      # Restore original config after each test
+      if original_config do
+        Application.put_env(:daemon, :http_rate_limits, original_config)
+      else
+        Application.delete_env(:daemon, :http_rate_limits)
+      end
+    end)
+
     :ok
   end
 
@@ -134,6 +146,13 @@ defmodule Daemon.Channels.HTTP.RateLimiterTest do
       assert get_resp_header(conn, "x-ratelimit-limit") == ["10"]
     end
 
+    test "platform auth path also uses auth limit" do
+      ip = {172, 16, 0, 6}
+      conn = conn_for_ip("/api/v1/platform/auth/login", ip) |> call_limiter()
+
+      assert get_resp_header(conn, "x-ratelimit-limit") == ["10"]
+    end
+
     test "auth path exhaustion shares the IP bucket with all paths" do
       ip = {172, 16, 0, 4}
       # The rate limiter is keyed by IP only, not {IP, path}. Exhausting the
@@ -175,7 +194,7 @@ defmodule Daemon.Channels.HTTP.RateLimiterTest do
     end
   end
 
-  # ── ETS table lazily created ──────────────────────────────────────────
+  # ── ETS table lifecycle ───────────────────────────────────────────────
 
   describe "ETS table" do
     test "table is created on first call if missing" do
@@ -189,6 +208,83 @@ defmodule Daemon.Channels.HTTP.RateLimiterTest do
 
       refute conn.halted
       assert :ets.whereis(@table) != :undefined
+    end
+  end
+
+  # ── Token refill ───────────────────────────────────────────────────────
+
+  describe "token refill over time" do
+    test "tokens refill after window expires" do
+      ip = {192, 168, 2, 1}
+      path = "/api/v1/refill/test"
+
+      # Exhaust the limit (60 requests)
+      drain(60, ip, path)
+      conn_limited = conn_for_ip(path, ip) |> call_limiter()
+      assert conn_limited.status == 429
+
+      # Manually advance the last_refill timestamp to simulate time passing
+      [{^ip, _tokens, last_refill}] = :ets.lookup(@table, ip)
+      old_time = System.system_time(:second) - 120  # 2 minutes ago
+      :ets.insert(@table, {ip, 0, old_time})
+
+      # Next request should succeed because tokens have refilled
+      conn_refilled = conn_for_ip(path, ip) |> call_limiter()
+      refute conn_refilled.halted
+      assert conn_refilled.status != 429
+    end
+  end
+
+  # ── Configurable limits ───────────────────────────────────────────────
+
+  describe "configurable limits" do
+    test "respects custom default limit from config" do
+      Application.put_env(:daemon, :http_rate_limits, %{
+        default: 100,
+        auth: 20,
+        window_seconds: 60
+      })
+
+      ip = {10, 0, 0, 1}
+      conn = conn_for_ip("/test", ip) |> call_limiter()
+
+      assert get_resp_header(conn, "x-ratelimit-limit") == ["100"]
+    end
+
+    test "respects custom auth limit from config" do
+      Application.put_env(:daemon, :http_rate_limits, %{
+        default: 100,
+        auth: 25,
+        window_seconds: 60
+      })
+
+      ip = {10, 0, 0, 2}
+      conn = conn_for_ip("/api/v1/auth/login", ip) |> call_limiter()
+
+      assert get_resp_header(conn, "x-ratelimit-limit") == ["25"]
+    end
+
+    test "uses default values when config is missing" do
+      Application.delete_env(:daemon, :http_rate_limits)
+
+      ip = {10, 0, 0, 3}
+      conn_default = conn_for_ip("/test", ip) |> call_limiter()
+      conn_auth = conn_for_ip("/api/v1/auth/login", ip) |> call_limiter()
+
+      assert get_resp_header(conn_default, "x-ratelimit-limit") == ["60"]
+      assert get_resp_header(conn_auth, "x-ratelimit-limit") == ["10"]
+    end
+  end
+
+  # ── IPv6 support ──────────────────────────────────────────────────────
+
+  describe "IPv6 support" do
+    test "handles IPv6 addresses correctly" do
+      ip = {0, 0, 0, 0, 0, 0, 0, 1}
+      conn = conn_for_ip("/ipv6/test", ip) |> call_limiter()
+
+      refute conn.halted
+      assert get_resp_header(conn, "x-ratelimit-limit") == ["60"]
     end
   end
 end
