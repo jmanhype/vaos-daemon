@@ -34,6 +34,7 @@ defmodule Daemon.Channels.HTTP.API do
     /classify    → inline            POST / (signal classification)
     /knowledge   → KnowledgeRoutes   GET /triples|/count|/context/:id, POST /assert|/retract|/sparql|/reason
     /config      → ConfigRoutes      GET /revisions/:type/:id, GET /revisions/:type/:id/:n, POST /revisions/:type/:id/rollback, GET /revisions/:type/:id/diff
+    /debug       → DebugRoutes       GET /state (WorkDirector + Orchestrator diagnostics)
   """
   use Plug.Router
   import Daemon.Channels.HTTP.API.Shared
@@ -115,6 +116,9 @@ defmodule Daemon.Channels.HTTP.API do
 
   # Agent introspection
   forward "/agent", to: API.AgentStateRoutes
+
+  # ── Debug & diagnostics ───────────────────────────────────────────────
+  forward "/debug", to: API.DebugRoutes
 
   # ── Skills marketplace ──────────────────────────────────────────────
   forward "/skills/marketplace", to: API.SkillsMarketplaceRoutes
