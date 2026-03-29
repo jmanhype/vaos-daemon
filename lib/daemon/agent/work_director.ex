@@ -56,6 +56,7 @@ defmodule Daemon.Agent.WorkDirector do
   @enable_autofixer true             # Stage 2: AutoFixer instead of simple 2-attempt loop
   @enable_test_gate true             # Stage 2.75: mix test --max-failures 5 (soft gate)
   @enable_code_review true           # Stage 2.9: debate/review pattern before shipping
+  @enable_review_fix_loop false      # Stage 2.9: dispatch fix agent when review finds issues (Reflexion)
   @enable_vault_remember true        # Stage 3.5: store dispatch outcome in Vault
   @enable_knowledge_remember false   # Stage 3.5: store patterns in knowledge graph
   @enable_skill_evolution false      # Stage 3.5: feed failures to SkillEvolution
@@ -638,6 +639,7 @@ defmodule Daemon.Agent.WorkDirector do
   @orchestrator_poll_interval_ms 10_000
   @orchestrator_timeout_ms :timer.minutes(15)
   @compile_fix_max_attempts 2
+  @review_fix_max_attempts 1         # Max refinement cycles in Stage 2.9 Reflexion loop
   @agent_max_iterations 35
 
   defp do_dispatch_item(state, %WorkItem{} = item, branch) do
@@ -1138,7 +1140,7 @@ defmodule Daemon.Agent.WorkDirector do
 
   # -- Stage 2.9: Code Review --
 
-  defp maybe_run_code_review(item, branch, _session_id, repo_path) do
+  defp maybe_run_code_review(item, branch, session_id, repo_path) do
     if @enable_code_review do
       try do
         Logger.info("[WorkDirector] Stage 2.9: Running code review via debate")
@@ -1152,14 +1154,29 @@ defmodule Daemon.Agent.WorkDirector do
           )
 
         if byte_size(diff) > 10 do
-          review_prompt =
-            "Review this Elixir code change for '#{item.title}'. " <>
-              "Check for: correctness, security issues, missing error handling, Elixir best practices. " <>
-              "Be concise — 3-5 bullet points max.\n\n```diff\n#{String.slice(diff, 0, 4000)}\n```"
+          review_prompt = """
+          Review this Elixir code change for '#{item.title}'.
+          Check for: correctness, security issues, missing error handling, Elixir best practices.
+
+          IMPORTANT: Your first line MUST be exactly one of:
+          VERDICT: PASS
+          VERDICT: FIX
+
+          Then 3-5 bullet points explaining your assessment.
+
+          ```diff
+          #{String.slice(diff, 0, 4000)}
+          ```
+          """
 
           case Debate.run(review_prompt, providers: ["anthropic"], timeout: 30_000) do
             {:ok, %{synthesis: synthesis}} ->
-              Logger.info("[WorkDirector] Stage 2.9: Review complete: #{String.slice(synthesis, 0, 300)}")
+              verdict = parse_review_verdict(synthesis)
+              Logger.info("[WorkDirector] Stage 2.9: Review verdict=#{verdict}: #{String.slice(synthesis, 0, 300)}")
+
+              if @enable_review_fix_loop and verdict == :fix do
+                run_reflexion_fix(item, branch, session_id, repo_path, synthesis)
+              end
 
             {:error, reason} ->
               Logger.warning("[WorkDirector] Stage 2.9: Review failed (non-blocking): #{inspect(reason)}")
@@ -1172,6 +1189,70 @@ defmodule Daemon.Agent.WorkDirector do
       catch
         :exit, r -> Logger.warning("[WorkDirector] Stage 2.9 exit: #{inspect(r)}")
       end
+    end
+  end
+
+  defp parse_review_verdict(synthesis) do
+    first_line = synthesis |> String.trim() |> String.split("\n") |> hd() |> String.upcase()
+
+    cond do
+      String.contains?(first_line, "PASS") -> :pass
+      String.contains?(first_line, "FIX") -> :fix
+      # Heuristic fallback: if review mentions critical issues, treat as fix
+      String.contains?(String.downcase(synthesis), "critical") or
+          String.contains?(String.downcase(synthesis), "security vulnerability") ->
+        :fix
+      true -> :pass
+    end
+  end
+
+  defp run_reflexion_fix(_item, branch, session_id, repo_path, synthesis) do
+    Logger.info("[WorkDirector] Stage 2.9: Reflexion — dispatching refinement agent (max_attempts=#{@review_fix_max_attempts})")
+
+    refinement_prompt = """
+    A code review found issues with your implementation. Fix them.
+
+    ## Repository
+    The codebase is at: `#{repo_path}`
+    You are on branch `#{branch}`.
+
+    CRITICAL: For ALL shell commands, use the `cwd` parameter set to `#{repo_path}`.
+    For file operations, use ABSOLUTE paths starting with `#{repo_path}/`.
+
+    ## MANDATORY GIT RULES — VIOLATION = TASK FAILURE
+    - NEVER run `git checkout`, `git switch`, or `git branch -D` — stay on `#{branch}`
+    - NEVER run `git commit`, `git push`, `git add`, `git stash`, `git merge`, `git rebase`
+    - ANY git command that changes branch state will cause your work to be LOST
+
+    ## Code Review Feedback
+    #{String.slice(synthesis, 0, 3000)}
+
+    ## Instructions
+    1. Read the files mentioned in the review
+    2. Fix ONLY the issues identified in the review
+    3. Run `mix compile` to verify (use cwd: "#{repo_path}")
+    4. Do NOT add features, refactor beyond what's requested, or change unrelated code
+
+    Do NOT modify: application.ex, supervisors/, security/, loop.ex, runtime.exs, mix.exs, or mix.lock.
+    """
+
+    fix_session = "#{session_id}-review-fix"
+
+    case execute_and_poll(refinement_prompt, fix_session) do
+      {:completed, _} ->
+        case run_compile(repo_path) do
+          :ok ->
+            Logger.info("[WorkDirector] Stage 2.9: Refinement complete, compilation OK")
+
+          {:error, _} ->
+            Logger.warning("[WorkDirector] Stage 2.9: Refinement broke compilation (non-blocking)")
+        end
+
+      {:failed, reason} ->
+        Logger.warning("[WorkDirector] Stage 2.9: Refinement failed (non-blocking): #{inspect(reason)}")
+
+      {:timeout, _} ->
+        Logger.warning("[WorkDirector] Stage 2.9: Refinement timed out (non-blocking)")
     end
   end
 
@@ -1966,14 +2047,39 @@ defmodule Daemon.Agent.WorkDirector do
         {category, content} =
           case result do
             {:ok, _output, branch} ->
-              {:lesson,
-               "WorkDirector SUCCEEDED: \"#{dispatch.title}\" (#{dispatch.source}), branch: #{branch}"}
+              repo_path = Application.get_env(:daemon, :repo_path, Path.expand("~/vas-swarm"))
+
+              {diff_stat, _} =
+                System.cmd("git", ["diff", "--stat", "main...#{branch}", "--", "*.ex", "*.exs"],
+                  cd: repo_path, stderr_to_stdout: true)
+
+              {diff_content, _} =
+                System.cmd("git", ["diff", "main...#{branch}", "--", "*.ex", "*.exs"],
+                  cd: repo_path, stderr_to_stdout: true)
+
+              {:lesson, """
+              ## Successful Implementation: #{dispatch.title}
+              Source: #{dispatch.source} | Branch: #{branch}
+
+              ### Files Changed
+              #{String.slice(diff_stat, 0, 500)}
+
+              ### Implementation Diff (exemplar)
+              ```diff
+              #{String.slice(diff_content, 0, 2500)}
+              ```
+              """}
 
             {:error, reason} ->
               fc = classify_failure(reason)
 
-              {:lesson,
-               "WorkDirector FAILED: \"#{dispatch.title}\" (#{dispatch.source}), class: #{fc}, error: #{inspect(reason) |> String.slice(0, 300)}"}
+              {:lesson, """
+              ## Failed Implementation: #{dispatch.title}
+              Source: #{dispatch.source} | Class: #{fc}
+              Error: #{inspect(reason) |> String.slice(0, 500)}
+
+              Lesson: Avoid this approach for similar tasks.
+              """}
           end
 
         Vault.remember(content, category, %{
