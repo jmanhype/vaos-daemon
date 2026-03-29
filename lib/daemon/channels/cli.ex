@@ -215,7 +215,7 @@ defmodule Daemon.Channels.CLI do
           dur_str = format_duration_ms(dur_ms)
           tool_count = tools || 0
           tool_label = if tool_count == 1, do: "tool use", else: "tool uses"
-          parts = ["#{tool_count} #{tool_label}", "#{tokens_str} tokens", dur_str] |> Enum.reject(&(&1 == ""))
+          parts = Enum.reject(["#{tool_count} #{tool_label}", "#{tokens_str} tokens", dur_str], &(&1 == ""))
           IO.puts("#{@dim}  ⏺ #{role_str}#{@reset}")
           IO.puts("#{@dim}    ⎿  Done (#{Enum.join(parts, " · ")})#{@reset}")
 
@@ -329,7 +329,8 @@ defmodule Daemon.Channels.CLI do
         session_id
 
       {:prompt, expanded} ->
-        IO.puts("#{@dim}  /#{String.split(cmd, " ") |> hd()}#{@reset}")
+        cmd_name = cmd |> String.split(" ") |> hd()
+        IO.puts("#{@dim}  /#{cmd_name}#{@reset}")
         send_to_agent(expanded, session_id)
         session_id
 
@@ -338,7 +339,8 @@ defmodule Daemon.Channels.CLI do
         handle_action(action, session_id)
 
       :unknown ->
-        cmd_name = String.split(cmd, ~r/\s+/) |> hd()
+        cmd_parts = String.split(cmd, ~r/\s+/)
+        cmd_name = hd(cmd_parts)
         suggestion = suggest_command(cmd_name)
 
         IO.puts("#{@yellow}  error: unknown command '/#{cmd_name}'#{@reset}")
@@ -853,7 +855,10 @@ defmodule Daemon.Channels.CLI do
     provider = Application.get_env(:daemon, :default_provider, :unknown)
     model = get_model_name(provider)
     tool_count = length(Daemon.Tools.Registry.list_tools_direct())
-    soul_status = if Daemon.Soul.identity(), do: "custom", else: "default"
+    soul_status = case Daemon.Soul.identity() do
+      true -> "custom"
+      false -> "default"
+    end
     version = Application.spec(:daemon, :vsn) |> to_string()
     git_hash = git_short_hash()
     cwd = prompt_dir()
@@ -1030,9 +1035,9 @@ defmodule Daemon.Channels.CLI do
         val = Enum.min([above + 1, left + 1, diag + cost])
         {[val | curr_row], Enum.at(prev_row, j)}
       end)
-      |> elem(0)
-      |> Enum.reverse()
     end)
+    |> elem(0)
+    |> Enum.reverse()
     |> List.last()
   end
 end

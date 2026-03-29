@@ -96,15 +96,13 @@ defmodule Daemon.Channels.NoiseFilter do
   @spec weight_thresholds() :: %{definitely_noise: float(), likely_noise: float(), uncertain: float()}
   def weight_thresholds do
     defaults = %{definitely_noise: 0.10, likely_noise: 0.20, uncertain: 0.60}
+    config = Application.get_env(:daemon, :noise_filter_thresholds, defaults)
 
-    Application.get_env(:daemon, :noise_filter_thresholds, defaults)
-    |> then(fn cfg ->
-      %{
-        definitely_noise: Map.get(cfg, :definitely_noise, defaults.definitely_noise),
-        likely_noise: Map.get(cfg, :likely_noise, defaults.likely_noise),
-        uncertain: Map.get(cfg, :uncertain, defaults.uncertain)
-      }
-    end)
+    %{
+      definitely_noise: Map.get(config, :definitely_noise, defaults.definitely_noise),
+      likely_noise: Map.get(config, :likely_noise, defaults.likely_noise),
+      uncertain: Map.get(config, :uncertain, defaults.uncertain)
+    }
   end
 
   @doc """
