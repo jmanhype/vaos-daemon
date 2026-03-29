@@ -195,19 +195,30 @@ func handleProcessList(id string) Response {
 	}
 }
 
+// Valid method names for the sysmon RPC API.
+const (
+	MethodPing        = "ping"
+	MethodCPUPercent  = "cpu_percent"
+	MethodMemoryInfo  = "memory_info"
+	MethodDiskUsage   = "disk_usage"
+	MethodProcessList = "process_list"
+)
+
 func handleRequest(req Request) Response {
 	switch req.Method {
-	case "ping":
+	case MethodPing:
 		return Response{ID: req.ID, Result: "pong"}
-	case "cpu_percent":
+	case MethodCPUPercent:
 		return handleCPUPercent(req.ID)
-	case "memory_info":
+	case MethodMemoryInfo:
 		return handleMemoryInfo(req.ID)
-	case "disk_usage":
+	case MethodDiskUsage:
 		return handleDiskUsage(req.ID, req.Params)
-	case "process_list":
+	case MethodProcessList:
 		return handleProcessList(req.ID)
 	default:
+		// Log unknown methods for debugging and return error.
+		log.Printf("unknown method: %s", req.Method)
 		return errorResponse(req.ID, -32601, fmt.Sprintf("unknown method: %s", req.Method))
 	}
 }
