@@ -668,10 +668,15 @@ defmodule Daemon.Agent.WorkDirector do
       {:completed, synthesis} ->
         Logger.info("[WorkDirector] Stage 1 complete: agent finished implementation")
 
+        # Stage 1.5: Recover branch if agent switched away
+        recover_branch(branch, repo_path)
+
         # Stage 2: Verify compilation (with retry loop)
         case verify_and_fix_compilation(item, branch, session_id, repo_path, 0) do
           :ok ->
             Logger.info("[WorkDirector] Stage 2 complete: compilation verified")
+            # Recover branch if compile-fix agent switched away
+            recover_branch(branch, repo_path)
 
             # Stage 2.5: Grounded verification — check phantom references
             case verify_and_fix_references(branch, session_id, repo_path, 0) do
@@ -742,6 +747,68 @@ defmodule Daemon.Agent.WorkDirector do
     end
   rescue
     e -> {:error, Exception.message(e)}
+  end
+
+  # Recover if the agent switched away from the workdir branch during Stage 1.
+  # Stashes any uncommitted changes, switches to the correct branch, then unstashes.
+  # If the agent committed to main, cherry-picks those commits to the branch and resets main.
+  defp recover_branch(branch, repo_path) do
+    {current_raw, _} = System.cmd("git", ["branch", "--show-current"], cd: repo_path, stderr_to_stdout: true)
+    current = String.trim(current_raw)
+
+    if current == branch do
+      Logger.debug("[WorkDirector] Branch OK: still on #{branch}")
+    else
+      Logger.warning("[WorkDirector] Branch drift! Expected #{branch}, on #{current}. Recovering...")
+
+      # Check if agent made rogue commits on the wrong branch (e.g., main)
+      if current == "main" do
+        {ahead_raw, _} = System.cmd("git", ["rev-list", "origin/main..main", "--count"], cd: repo_path, stderr_to_stdout: true)
+        ahead = String.trim(ahead_raw) |> String.to_integer()
+
+        if ahead > 0 do
+          Logger.warning("[WorkDirector] Found #{ahead} rogue commit(s) on main — cherry-picking to #{branch}")
+          # Get the rogue commit SHAs
+          {shas_raw, _} = System.cmd("git", ["rev-list", "origin/main..main", "--reverse"], cd: repo_path, stderr_to_stdout: true)
+          rogue_shas = String.split(shas_raw, "\n", trim: true)
+
+          # Stash any uncommitted changes
+          System.cmd("git", ["stash", "--include-untracked"], cd: repo_path, stderr_to_stdout: true)
+
+          # Reset main to origin/main (remove rogue commits from main)
+          System.cmd("git", ["reset", "--hard", "origin/main"], cd: repo_path, stderr_to_stdout: true)
+
+          # Switch to the workdir branch
+          System.cmd("git", ["checkout", branch], cd: repo_path, stderr_to_stdout: true)
+
+          # Cherry-pick the rogue commits onto the branch
+          Enum.each(rogue_shas, fn sha ->
+            case System.cmd("git", ["cherry-pick", sha], cd: repo_path, stderr_to_stdout: true) do
+              {_, 0} -> Logger.info("[WorkDirector] Cherry-picked #{String.slice(sha, 0, 8)} to #{branch}")
+              {err, _} ->
+                Logger.warning("[WorkDirector] Cherry-pick failed for #{String.slice(sha, 0, 8)}: #{String.trim(err)}")
+                System.cmd("git", ["cherry-pick", "--abort"], cd: repo_path, stderr_to_stdout: true)
+            end
+          end)
+
+          # Unstash working tree changes
+          System.cmd("git", ["stash", "pop"], cd: repo_path, stderr_to_stdout: true)
+        else
+          # No rogue commits, just stash + switch
+          System.cmd("git", ["stash", "--include-untracked"], cd: repo_path, stderr_to_stdout: true)
+          System.cmd("git", ["checkout", branch], cd: repo_path, stderr_to_stdout: true)
+          System.cmd("git", ["stash", "pop"], cd: repo_path, stderr_to_stdout: true)
+        end
+      else
+        # On some other branch entirely — stash + switch
+        System.cmd("git", ["stash", "--include-untracked"], cd: repo_path, stderr_to_stdout: true)
+        System.cmd("git", ["checkout", branch], cd: repo_path, stderr_to_stdout: true)
+        System.cmd("git", ["stash", "pop"], cd: repo_path, stderr_to_stdout: true)
+      end
+    end
+  rescue
+    e ->
+      Logger.error("[WorkDirector] Branch recovery failed: #{Exception.message(e)}")
   end
 
   defp cleanup_branch(branch, repo_path) do
@@ -918,6 +985,19 @@ defmodule Daemon.Agent.WorkDirector do
   end
 
   defp finalize_branch(item, branch, repo_path) do
+    # CRITICAL: Refuse to commit if we're not on the correct branch
+    {current_raw, _} = System.cmd("git", ["branch", "--show-current"], cd: repo_path, stderr_to_stdout: true)
+    current = String.trim(current_raw)
+
+    if current != branch do
+      Logger.error("[WorkDirector] Stage 3 ABORT: on #{current}, expected #{branch}. Refusing to commit to wrong branch.")
+      {:error, {:wrong_branch, current, branch}}
+    else
+      finalize_branch_impl(item, branch, repo_path)
+    end
+  end
+
+  defp finalize_branch_impl(item, branch, repo_path) do
     # Check what files changed
     case System.cmd("git", ["diff", "--name-only", "HEAD"], cd: repo_path, stderr_to_stdout: true) do
       {output, 0} when byte_size(output) > 2 ->
