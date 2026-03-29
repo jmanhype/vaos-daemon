@@ -25,6 +25,15 @@ defmodule Daemon.Tools.Registry do
     GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
   end
 
+  @doc """
+  Initialize the lazy tool cache.
+
+  Called during application startup to ensure the ETS table exists.
+  """
+  def init_cache do
+    Daemon.Tools.Builtins.LazyToolRegistry.init_cache()
+  end
+
   @doc "Register a tool module implementing Tools.Behaviour."
   def register(skill_module) do
     GenServer.call(__MODULE__, {:register_module, skill_module})
@@ -47,13 +56,23 @@ defmodule Daemon.Tools.Registry do
 
     builtin =
       builtin_tools
-      |> Enum.filter(fn {_name, mod} -> tool_available?(mod) end)
-      |> Enum.map(fn {_name, mod} ->
-        %{
-          name: mod.name(),
-          description: mod.description(),
-          parameters: mod.parameters()
-        }
+      |> Enum.filter(fn {name, _mod_or_lazy} -> tool_available?(name) end)
+      |> Enum.map(fn {name, _mod_or_lazy} ->
+        case Daemon.Tools.Builtins.LazyToolRegistry.get_tool(name) do
+          {:ok, mod} ->
+            %{
+              name: mod.name(),
+              description: mod.description(),
+              parameters: mod.parameters()
+            }
+
+          {:error, _reason} ->
+            %{
+              name: name,
+              description: "Tool: #{name} (metadata unavailable)",
+              parameters: %{"type" => "object", "properties" => %{}}
+            }
+        end
       end)
 
     # Append MCP tools (lock-free, registered asynchronously after boot)
@@ -96,7 +115,24 @@ defmodule Daemon.Tools.Registry do
             Daemon.MCP.Client.call_tool(original_name, arguments)
         end
 
-      mod ->
+      :lazy ->
+        # Load the tool module on-demand
+        case Daemon.Tools.Builtins.LazyToolRegistry.get_tool(tool_name) do
+          {:ok, mod} ->
+            case validate_arguments(mod, arguments) do
+              :ok ->
+                mod.execute(arguments)
+
+              {:error, _reason} = error ->
+                error
+            end
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+
+      mod when is_atom(mod) ->
+        # Legacy support for direct module references
         case validate_arguments(mod, arguments) do
           :ok ->
             mod.execute(arguments)
@@ -203,7 +239,15 @@ defmodule Daemon.Tools.Registry do
   def list_docs_direct do
     builtin_tools = :persistent_term.get({__MODULE__, :builtin_tools}, %{})
     skills = :persistent_term.get({__MODULE__, :skills}, %{})
-    tool_docs = Enum.map(builtin_tools, fn {name, mod} -> {name, mod.description()} end)
+
+    tool_docs =
+      Enum.map(builtin_tools, fn {name, _mod_or_lazy} ->
+        case Daemon.Tools.Builtins.LazyToolRegistry.get_tool(name) do
+          {:ok, mod} -> {name, mod.description()}
+          {:error, _reason} -> {name, "Tool: #{name} (description unavailable)"}
+        end
+      end)
+
     skill_docs = Enum.map(skills, fn {name, skill} -> {name, skill.description} end)
     tool_docs ++ skill_docs
   end
@@ -447,7 +491,21 @@ defmodule Daemon.Tools.Registry do
             Daemon.MCP.Client.call_tool(original_name, arguments)
         end
 
-      mod ->
+      :lazy ->
+        # Load the tool module on-demand
+        case Daemon.Tools.Builtins.LazyToolRegistry.get_tool(tool_name) do
+          {:ok, mod} ->
+            case validate_arguments(mod, arguments) do
+              :ok -> mod.execute(arguments)
+              {:error, _reason} = error -> error
+            end
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+
+      mod when is_atom(mod) ->
+        # Legacy support for direct module references
         case validate_arguments(mod, arguments) do
           :ok -> mod.execute(arguments)
           {:error, _reason} = error -> error
@@ -758,7 +816,21 @@ defmodule Daemon.Tools.Registry do
               Daemon.MCP.Client.call_tool(original_name, arguments)
           end
 
-        mod ->
+        :lazy ->
+          # Load the tool module on-demand
+          case Daemon.Tools.Builtins.LazyToolRegistry.get_tool(tool_name) do
+            {:ok, mod} ->
+              case validate_arguments(mod, arguments) do
+                :ok -> mod.execute(arguments)
+                {:error, _reason} = error -> error
+              end
+
+            {:error, reason} ->
+              {:error, reason}
+          end
+
+        mod when is_atom(mod) ->
+          # Legacy support for direct module references
           case validate_arguments(mod, arguments) do
             :ok -> mod.execute(arguments)
             {:error, _reason} = error -> error
@@ -776,49 +848,11 @@ defmodule Daemon.Tools.Registry do
   # --- Built-in Tools ---
 
   defp load_builtin_tools do
-    %{
-      "file_read" => Daemon.Tools.Builtins.FileRead,
-      "file_write" => Daemon.Tools.Builtins.FileWrite,
-      "shell_execute" => Daemon.Tools.Builtins.ShellExecute,
-      "web_search" => Daemon.Tools.Builtins.WebSearch,
-      "memory_save" => Daemon.Tools.Builtins.MemorySave,
-      "memory_recall" => Daemon.Tools.Builtins.MemoryRecall,
-      "orchestrate" => Daemon.Tools.Builtins.Orchestrate,
-      "create_skill" => Daemon.Tools.Builtins.CreateSkill,
-      "use_skill" => Daemon.Tools.Builtins.UseSkill,
-      "budget_status" => Daemon.Tools.Builtins.BudgetStatus,
-      "wallet_ops" => Daemon.Tools.Builtins.WalletOps,
-      "file_edit" => Daemon.Tools.Builtins.FileEdit,
-      "file_glob" => Daemon.Tools.Builtins.FileGlob,
-      "file_grep" => Daemon.Tools.Builtins.FileGrep,
-      "dir_list" => Daemon.Tools.Builtins.DirList,
-      "web_fetch" => Daemon.Tools.Builtins.WebFetch,
-      "task_write" => Daemon.Tools.Builtins.TaskWrite,
-      "mcts_index" => Daemon.Tools.Builtins.MCTSIndex,
-      "session_search" => Daemon.Tools.Builtins.SessionSearch,
-      "skill_manager" => Daemon.Tools.Builtins.SkillManager,
-      "ask_user" => Daemon.Tools.Builtins.AskUser,
-      "delegate" => Daemon.Tools.Builtins.Delegate,
-      "git" => Daemon.Tools.Builtins.Git,
-      "code_symbols" => Daemon.Tools.Builtins.CodeSymbols,
-      "github" => Daemon.Tools.Builtins.Github,
-      "multi_file_edit" => Daemon.Tools.Builtins.MultiFileEdit,
-      "semantic_search" => Daemon.Tools.Builtins.SemanticSearch,
-      "codebase_explore" => Daemon.Tools.Builtins.CodebaseExplore,
-      "diff" => Daemon.Tools.Builtins.Diff,
-      "notebook_edit" => Daemon.Tools.Builtins.NotebookEdit,
-      "computer_use" => Daemon.Tools.Builtins.ComputerUse,
-      "browser" => Daemon.Tools.Builtins.Browser,
-      "code_sandbox" => Daemon.Tools.Builtins.CodeSandbox,
-      "vault_remember" => Daemon.Tools.Builtins.VaultRemember,
-      "vault_context" => Daemon.Tools.Builtins.VaultContext,
-      "vault_wake" => Daemon.Tools.Builtins.VaultWake,
-      "vault_sleep" => Daemon.Tools.Builtins.VaultSleep,
-      "vault_checkpoint" => Daemon.Tools.Builtins.VaultCheckpoint,
-      "vault_inject" => Daemon.Tools.Builtins.VaultInject,
-      "compute_vm" => Daemon.Tools.Builtins.ComputeVm,
-      "investigate" => Daemon.Tools.Builtins.Investigate
-    }
+    # Use lazy loading: store tool names as atoms, not loaded modules
+    # The actual modules will be loaded on-demand by LazyToolRegistry
+    Daemon.Tools.Builtins.LazyToolRegistry.list_tool_names()
+    |> Enum.map(fn name -> {name, :lazy} end)
+    |> Map.new()
   end
 
   # --- SKILL.md Loading ---
@@ -909,18 +943,43 @@ defmodule Daemon.Tools.Registry do
 
   defp build_tool_list(builtin_tools, _skills) do
     builtin_tools
-    |> Enum.filter(fn {_name, mod} -> tool_available?(mod) end)
-    |> Enum.map(fn {_name, mod} ->
-      %{
-        name: mod.name(),
-        description: mod.description(),
-        parameters: mod.parameters()
-      }
+    |> Enum.filter(fn {name, _mod_or_lazy} -> tool_available?(name) end)
+    |> Enum.map(fn {name, _mod_or_lazy} ->
+      # Load the tool module lazily to get metadata
+      case Daemon.Tools.Builtins.LazyToolRegistry.get_tool(name) do
+        {:ok, mod} ->
+          %{
+            name: mod.name(),
+            description: mod.description(),
+            parameters: mod.parameters()
+          }
+
+        {:error, _reason} ->
+          # Fallback: return minimal tool info even if module failed to load
+          %{
+            name: name,
+            description: "Tool: #{name} (metadata unavailable)",
+            parameters: %{"type" => "object", "properties" => %{}}
+          }
+      end
     end)
   end
 
   # Check the optional available?/0 callback — defaults to true when not implemented
-  defp tool_available?(mod) do
+  # Handles both loaded modules and lazy tool references
+  defp tool_available?(tool_name) when is_binary(tool_name) do
+    case Daemon.Tools.Builtins.LazyToolRegistry.get_tool(tool_name) do
+      {:ok, mod} ->
+        not function_exported?(mod, :available?, 0) or mod.available?()
+
+      {:error, _reason} ->
+        # If tool fails to load, consider it unavailable
+        false
+    end
+  end
+
+  defp tool_available?(mod) when is_atom(mod) do
+    # Legacy support for direct module references
     not function_exported?(mod, :available?, 0) or mod.available?()
   end
 
