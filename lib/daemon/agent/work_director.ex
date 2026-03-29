@@ -1566,12 +1566,12 @@ defmodule Daemon.Agent.WorkDirector do
         Logger.info("[WorkDirector] Stage 2.9: Running code review via debate")
         recover_branch(branch, repo_path)
 
-        # Get actual diff content (not just --stat)
-        {diff, _} =
-          System.cmd("git", ["diff", "main...HEAD", "--", "*.ex", "*.exs"],
-            cd: repo_path,
-            stderr_to_stdout: true
-          )
+        # Get actual diff content — includes committed + uncommitted + untracked
+        # (agent may not have committed yet at this stage)
+        diff = case Daemon.Agent.WorkDirector.GroundedVerifier.get_diff(branch, repo_path) do
+          {:ok, d} -> d
+          {:error, _} -> ""
+        end
 
         if byte_size(diff) > 10 do
           review_prompt = """
@@ -1776,9 +1776,11 @@ defmodule Daemon.Agent.WorkDirector do
             System.cmd("git", ["stash", "pop"], cd: repo_path, stderr_to_stdout: true)
 
           {_err, _} ->
-            # Branch doesn't exist (was deleted) — recreate it from current HEAD
-            Logger.warning("[WorkDirector] Branch #{branch} gone — recreating from current state")
-            System.cmd("git", ["checkout", "-b", branch], cd: repo_path, stderr_to_stdout: true)
+            # Branch doesn't exist (was deleted) — recreate from main, not current HEAD
+            Logger.warning("[WorkDirector] Branch #{branch} gone — recreating from main")
+            System.cmd("git", ["checkout", "main"], cd: repo_path, stderr_to_stdout: true)
+            System.cmd("git", ["reset", "--hard", "origin/main"], cd: repo_path, stderr_to_stdout: true)
+            System.cmd("git", ["checkout", "-b", branch, "main"], cd: repo_path, stderr_to_stdout: true)
             System.cmd("git", ["stash", "pop"], cd: repo_path, stderr_to_stdout: true)
         end
       end
