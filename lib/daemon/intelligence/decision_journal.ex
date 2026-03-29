@@ -244,7 +244,7 @@ defmodule Daemon.Intelligence.DecisionJournal do
               d.normalized_topic == normalized_topic and
                 d.status in [:completed, :failed] and
                 d.completed_at != nil and
-                DateTime.diff(DateTime.utc_now(), d.completed_at, :hour) < 4
+                DateTime.diff(DateTime.utc_now(), d.completed_at, :minute) < 30
             end)
 
             case recent_match do

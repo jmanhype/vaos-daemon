@@ -741,6 +741,9 @@ defmodule Daemon.Agent.WorkDirector do
             # Stage 2.9: Code review (debate/review)
             maybe_run_code_review(item, branch, session_id, repo_path)
 
+            # Recover branch before finalize — agents may have switched during stages 2.5-2.9
+            recover_branch(branch, repo_path)
+
             # Stage 3: Commit, push, PR
             case finalize_branch(item, branch, repo_path) do
               {:ok, _pr_info} ->
@@ -1533,12 +1536,14 @@ defmodule Daemon.Agent.WorkDirector do
   end
 
   defp finalize_branch(item, branch, repo_path) do
-    # CRITICAL: Refuse to commit if we're not on the correct branch
+    # Last-resort recovery: ensure we're on the correct branch before committing
+    recover_branch(branch, repo_path)
+
     {current_raw, _} = System.cmd("git", ["branch", "--show-current"], cd: repo_path, stderr_to_stdout: true)
     current = String.trim(current_raw)
 
     if current != branch do
-      Logger.error("[WorkDirector] Stage 3 ABORT: on #{current}, expected #{branch}. Refusing to commit to wrong branch.")
+      Logger.error("[WorkDirector] Stage 3 ABORT: on #{current}, expected #{branch}. Recovery failed.")
       {:error, {:wrong_branch, current, branch}}
     else
       finalize_branch_impl(item, branch, repo_path)
@@ -1906,6 +1911,8 @@ defmodule Daemon.Agent.WorkDirector do
           title: "workdir-#{String.slice(dispatch.title, 0, 40)}",
           session_id: "workdir-vault"
         })
+
+        Logger.info("[WorkDirector] Stage 3.5: Vault remembered #{category} for '#{String.slice(dispatch.title, 0, 50)}'")
       rescue
         _ -> :ok
       catch
