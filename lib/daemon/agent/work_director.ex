@@ -50,12 +50,12 @@ defmodule Daemon.Agent.WorkDirector do
   @enable_knowledge_context false    # Stage 0.5: query knowledge store for codebase patterns
   @enable_investigation_pre false    # Stage 0.5: run Investigate.execute before dispatch (high cost)
   @enable_appraiser false            # Stage 0.5: estimate complexity/cost via Appraiser
-  @enable_specialist_routing false   # Stage 1: Roster agent selection vs force_simple
+  @enable_specialist_routing true    # Stage 1: Roster agent selection vs force_simple
   @enable_swarm_dispatch false       # Stage 1: SwarmMode patterns for complex tasks
   @enable_substance_check true       # Stage 1.9: reject stubs (hard gate)
-  @enable_autofixer false            # Stage 2: AutoFixer instead of simple 2-attempt loop
+  @enable_autofixer true             # Stage 2: AutoFixer instead of simple 2-attempt loop
   @enable_test_gate true             # Stage 2.75: mix test --max-failures 5 (soft gate)
-  @enable_code_review false          # Stage 2.9: debate/review pattern before shipping
+  @enable_code_review true           # Stage 2.9: debate/review pattern before shipping
   @enable_vault_remember true        # Stage 3.5: store dispatch outcome in Vault
   @enable_knowledge_remember false   # Stage 3.5: store patterns in knowledge graph
   @enable_skill_evolution false      # Stage 3.5: feed failures to SkillEvolution
@@ -1444,6 +1444,11 @@ defmodule Daemon.Agent.WorkDirector do
         CRITICAL: For ALL shell commands, use the `cwd` parameter set to `#{repo_path}`.
         For file operations, use ABSOLUTE paths starting with `#{repo_path}/`.
 
+        ## MANDATORY GIT RULES — VIOLATION = TASK FAILURE
+        - NEVER run `git checkout`, `git switch`, or `git branch -D` — stay on `#{branch}`
+        - NEVER run `git commit`, `git push`, `git add`, `git stash`, `git merge`, `git rebase`
+        - ANY git command that changes branch state will cause your work to be LOST
+
         ## Compilation Errors
         ```
         #{String.slice(errors, 0, 3000)}
@@ -1533,6 +1538,11 @@ defmodule Daemon.Agent.WorkDirector do
 
         CRITICAL: For ALL shell commands, use the `cwd` parameter set to `#{repo_path}`.
         For file operations, use ABSOLUTE paths starting with `#{repo_path}/`.
+
+        ## MANDATORY GIT RULES — VIOLATION = TASK FAILURE
+        - NEVER run `git checkout`, `git switch`, or `git branch -D` — stay on `#{branch}`
+        - NEVER run `git commit`, `git push`, `git add`, `git stash`, `git merge`, `git rebase`
+        - ANY git command that changes branch state will cause your work to be LOST
 
         ## Reference Violations
         #{GroundedVerifier.fix_prompt(violations)}
@@ -1707,15 +1717,25 @@ defmodule Daemon.Agent.WorkDirector do
           ""
       end
 
+    branch = branch_name(item)
+
     """
     #{source_context}
 
     ## Repository
     The codebase is located at: `#{repo_path}`
+    You are on branch: `#{branch}`
 
     CRITICAL: For ALL shell commands, use the `cwd` parameter set to `#{repo_path}`.
     Example: shell_execute(command: "mix compile", cwd: "#{repo_path}")
     For file operations, use ABSOLUTE paths starting with `#{repo_path}/`.
+
+    ## MANDATORY GIT RULES — VIOLATION = TASK FAILURE
+    - NEVER run `git checkout`, `git switch`, or `git branch` — you are already on the correct branch `#{branch}`
+    - NEVER run `git commit`, `git push`, `git add`, or `git stash` — post-processing handles this
+    - NEVER run `git merge`, `git rebase`, `git cherry-pick`, or `git pull`
+    - If you need to see what branch you're on, use `git branch --show-current` ONLY
+    - ANY git command that changes branch state will cause your work to be LOST
 
     #{codebase_context}
     #{pre_research_context}
@@ -1726,8 +1746,7 @@ defmodule Daemon.Agent.WorkDirector do
     #{item.description}
 
     ## Instructions
-    You are already on branch with the codebase ready. Your ONLY job is to implement the changes.
-    Do NOT create branches, commit, push, or create PRs — that is handled automatically after you finish.
+    Your ONLY job is to implement the code changes described above.
 
     1. Study the reference implementations and file territory above
     2. Implement the changes using file_write / file_edit tools with ABSOLUTE paths
