@@ -63,6 +63,15 @@ config :daemon,
   require_auth: false,
 
   # ---------------------------------------------------------------------------
+  # Rate Limiting — token bucket algorithm with configurable limits
+  # ---------------------------------------------------------------------------
+  http_rate_limits: %{
+    default: 60,           # requests per minute for most paths
+    auth: 10,              # requests per minute for auth paths (/api/v1/auth/*)
+    window_seconds: 60     # time window for token refill
+  },
+
+  # ---------------------------------------------------------------------------
   # Sandbox — Docker container isolation for skill execution
   # ---------------------------------------------------------------------------
   # Master switch. Set DAEMON_SANDBOX_ENABLED=true in your environment to enable.
