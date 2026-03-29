@@ -1078,20 +1078,26 @@ defmodule Daemon.Agent.WorkDirector do
 
   # -- Stage 2.75: Test Gate --
 
+  @test_gate_timeout_ms 120_000
+
   defp maybe_run_test_gate(branch, repo_path) do
     if @enable_test_gate do
       try do
         Logger.info("[WorkDirector] Stage 2.75: Running tests")
         recover_branch(branch, repo_path)
 
-        case System.cmd("bash", ["-c", "cd #{repo_path} && mix test --max-failures 5 2>&1"],
-               stderr_to_stdout: true,
-               env: [{"MIX_ENV", "test"}]
-             ) do
-          {_output, 0} ->
+        task = Task.async(fn ->
+          System.cmd("bash", ["-c", "cd #{repo_path} && mix test --max-failures 5 2>&1"],
+            stderr_to_stdout: true,
+            env: [{"MIX_ENV", "test"}]
+          )
+        end)
+
+        case Task.yield(task, @test_gate_timeout_ms) || Task.shutdown(task, :brutal_kill) do
+          {:ok, {_output, 0}} ->
             Logger.info("[WorkDirector] Stage 2.75: Tests PASSED")
 
-          {output, _} ->
+          {:ok, {output, _}} ->
             summary =
               output
               |> String.split("\n")
@@ -1102,6 +1108,9 @@ defmodule Daemon.Agent.WorkDirector do
             Logger.warning(
               "[WorkDirector] Stage 2.75: Tests FAILED (soft gate): #{String.slice(summary, 0, 500)}"
             )
+
+          nil ->
+            Logger.warning("[WorkDirector] Stage 2.75: Tests TIMED OUT after #{div(@test_gate_timeout_ms, 1000)}s (soft gate)")
         end
       rescue
         e -> Logger.warning("[WorkDirector] Stage 2.75 error: #{Exception.message(e)}")
