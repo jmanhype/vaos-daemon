@@ -709,6 +709,17 @@ defmodule Daemon.Agent.InsightActuator do
 
   # FIX #1 & #2: Pass change_type and quality through pending_tasks
   defp dispatch_to_orchestrator(data, change_spec, quality, state) do
+    # Guard: skip if WorkDirector has an active dispatch on the repo
+    if Daemon.Agent.WorkDirector.dispatching?() do
+      topic = Map.get(data, :topic) || Map.get(data, "topic") || "unknown"
+      Logger.info("[InsightActuator] Skipping dispatch for '#{topic}' — WorkDirector dispatch active")
+      state
+    else
+      dispatch_to_orchestrator_impl(data, change_spec, quality, state)
+    end
+  end
+
+  defp dispatch_to_orchestrator_impl(data, change_spec, quality, state) do
     topic = Map.get(data, :topic) || Map.get(data, "topic") || "unknown"
     top_evidence = extract_top_evidence(data, 3)
     branch_name = "insight/#{slugify(topic)}"

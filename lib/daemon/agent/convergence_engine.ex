@@ -308,6 +308,16 @@ defmodule Daemon.Agent.ConvergenceEngine do
   # ── Repair Dispatch ──────────────────────────────────────────
 
   defp dispatch_repair(fitness_name, score, detail, repo_path, state) do
+    # Guard: skip if WorkDirector has an active dispatch on the repo
+    if Daemon.Agent.WorkDirector.dispatching?() do
+      Logger.info("[ConvergenceEngine] Skipping repair for '#{fitness_name}' — WorkDirector dispatch active")
+      state
+    else
+      dispatch_repair_impl(fitness_name, score, detail, repo_path, state)
+    end
+  end
+
+  defp dispatch_repair_impl(fitness_name, score, detail, repo_path, state) do
     branch_name = "convergence/#{fitness_name}"
 
     # Check with Decision Journal for cross-module conflicts

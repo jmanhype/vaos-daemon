@@ -116,6 +116,18 @@ defmodule Daemon.Agent.WorkDirector do
     end
   end
 
+  @doc "Check if WorkDirector is currently dispatching (has an active agent on the repo)."
+  @spec dispatching?() :: boolean()
+  def dispatching? do
+    try do
+      GenServer.call(__MODULE__, :dispatching?, 2_000)
+    rescue
+      _ -> false
+    catch
+      :exit, _ -> false
+    end
+  end
+
   @doc "Submit a manual work item."
   def submit(title, description, priority \\ 0.5) do
     try do
@@ -475,6 +487,10 @@ defmodule Daemon.Agent.WorkDirector do
     }
 
     {:reply, stats, state}
+  end
+
+  def handle_call(:dispatching?, _from, state) do
+    {:reply, state.current_dispatch != nil, state}
   end
 
   def handle_call(:backlog, _from, state) do
