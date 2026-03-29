@@ -178,9 +178,6 @@ defmodule Daemon.Channels.HTTP.API do
   # ── Signals ──────────────────────────────────────────────────────────
   forward "/signals", to: API.SignalRoutes
 
-  # ── Config revisions ─────────────────────────────────────────────────
-  forward "/config", to: API.ConfigRoutes
-
   # ── Platform (multi-tenant auth + CRUD) ─────────────────────────────
   forward "/platform/auth", to: API.PlatformAuthRoutes
   forward "/platform", to: API.PlatformRoutes
