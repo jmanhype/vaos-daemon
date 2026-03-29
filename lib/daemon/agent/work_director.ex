@@ -2114,6 +2114,17 @@ defmodule Daemon.Agent.WorkDirector do
   end
 
   defp finalize_branch_impl(item, branch, repo_path) do
+    # Resolve any unmerged files by accepting the current version (ours)
+    {unmerged, _} = System.cmd("git", ["diff", "--name-only", "--diff-filter=U"], cd: repo_path, stderr_to_stdout: true)
+    unmerged_files = unmerged |> String.split("\n", trim: true)
+    if unmerged_files != [] do
+      Logger.warning("[WorkDirector] Stage 3: Resolving #{length(unmerged_files)} unmerged file(s): #{inspect(unmerged_files)}")
+      Enum.each(unmerged_files, fn f ->
+        System.cmd("git", ["checkout", "--ours", f], cd: repo_path, stderr_to_stdout: true)
+        System.cmd("git", ["add", f], cd: repo_path, stderr_to_stdout: true)
+      end)
+    end
+
     # Check what files changed
     case System.cmd("git", ["diff", "--name-only", "HEAD"], cd: repo_path, stderr_to_stdout: true) do
       {output, 0} when byte_size(output) > 2 ->
