@@ -749,3 +749,15 @@ export const configRevisions = {
     ),
 };
 
+// ── Investigation ─────────────────────────────────────────────────────────────
+
+export const investigate = {
+  start: (body: InvestigationRequest) =>
+    request<InvestigationStartResponse>("/investigate", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  getResult: (taskId: string) =>
+    request<InvestigationResult>(`/investigate/${taskId}/result`),
+};
+

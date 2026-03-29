@@ -101,6 +101,9 @@ defmodule Daemon.Channels.HTTP.API do
   # ── Agent SSE stream ─────────────────────────────────────────────────
   forward "/stream", to: API.AgentRoutes
 
+  # ── Investigation (streaming epistemic research) ─────────────────────
+  forward "/investigate", to: API.InvestigateRoutes
+
   # ── TUI input / output ───────────────────────────────────────────────
   forward "/tui", to: API.TuiRoutes
 

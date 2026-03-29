@@ -602,3 +602,84 @@ export interface Approval {
   inserted_at: string;
   updated_at: string;
 }
+
+// ── Investigation ─────────────────────────────────────────────────────────────
+
+export type InvestigationDepth = "standard" | "deep";
+
+export interface InvestigationRequest {
+  topic: string;
+  depth?: InvestigationDepth;
+  steering?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface InvestigationStartResponse {
+  status: "accepted";
+  task_id: string;
+  message: string;
+  stream_url: string;
+  result_url: string;
+}
+
+export interface InvestigationResult {
+  task_id: string;
+  status: string;
+  result?: Record<string, unknown>;
+  message?: string;
+}
+
+export type InvestigationEventType =
+  | "investigation_started"
+  | "investigation_progress"
+  | "investigation_complete"
+  | "investigation_error"
+  | "connected";
+
+export interface InvestigationStartedEvent {
+  type: "investigation_started";
+  task_id: string;
+  topic: string;
+  depth: InvestigationDepth;
+}
+
+export interface InvestigationProgressEvent {
+  type: "investigation_progress";
+  task_id: string;
+  stage: string;
+  progress: number;
+  message: string;
+}
+
+export interface InvestigationCompleteEvent {
+  type: "investigation_complete";
+  task_id: string;
+  result: {
+    status: string;
+    verdict?: string;
+    confidence?: string;
+    evidence?: unknown[];
+    reasoning?: string;
+    message?: string;
+  };
+}
+
+export interface InvestigationErrorEvent {
+  type: "investigation_error";
+  task_id: string;
+  error: string;
+  message?: string;
+}
+
+export interface ConnectedEvent {
+  type: "connected";
+  task_id: string;
+  status: string;
+}
+
+export type InvestigationEvent =
+  | InvestigationStartedEvent
+  | InvestigationProgressEvent
+  | InvestigationCompleteEvent
+  | InvestigationErrorEvent
+  | ConnectedEvent;
