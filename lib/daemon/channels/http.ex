@@ -21,6 +21,7 @@ defmodule Daemon.Channels.HTTP do
     POST /api/v1/fleet/*               Fleet management (register, heartbeat, dispatch)
     POST /api/v1/channels/*/webhook    Channel adapter webhooks
     GET  /health                       Health check (no auth)
+    GET  /metrics                      Prometheus metrics (no auth)
 
   Auth: HS256 JWT via Authorization: Bearer <token>
   Transport: HTTP/1.1 + SSE via Plug/Bandit
@@ -335,6 +336,10 @@ defmodule Daemon.Channels.HTTP do
   # ── All /api routes require JWT ─────────────────────────────────────
 
   forward("/api/v1", to: Daemon.Channels.HTTP.API)
+
+  # ── Prometheus metrics (no auth — standard practice) ─────────────────
+
+  forward("/metrics", to: Daemon.Channels.HTTP.Metrics)
 
   # ── Catch-all ───────────────────────────────────────────────────────
 
