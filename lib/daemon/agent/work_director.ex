@@ -44,19 +44,19 @@ defmodule Daemon.Agent.WorkDirector do
   @circuit_breaker_ms :timer.minutes(30)
   @daemon_repo "jmanhype/vaos-daemon"
 
-  # -- Feature Flags (pipeline upgrades, all default false) --
+  # -- Feature Flags (pipeline upgrades) --
   # Enable one at a time. Each is independently safe to enable.
-  @enable_vault_context false        # Stage 0.5: inject prior dispatch memories from Vault
+  @enable_vault_context true         # Stage 0.5: inject prior dispatch memories from Vault
   @enable_knowledge_context false    # Stage 0.5: query knowledge store for codebase patterns
   @enable_investigation_pre false    # Stage 0.5: run Investigate.execute before dispatch (high cost)
   @enable_appraiser false            # Stage 0.5: estimate complexity/cost via Appraiser
   @enable_specialist_routing false   # Stage 1: Roster agent selection vs force_simple
   @enable_swarm_dispatch false       # Stage 1: SwarmMode patterns for complex tasks
-  @enable_substance_check false      # Stage 1.9: reject stubs (hard gate)
+  @enable_substance_check true       # Stage 1.9: reject stubs (hard gate)
   @enable_autofixer false            # Stage 2: AutoFixer instead of simple 2-attempt loop
-  @enable_test_gate false            # Stage 2.75: mix test --max-failures 5 (soft gate)
+  @enable_test_gate true             # Stage 2.75: mix test --max-failures 5 (soft gate)
   @enable_code_review false          # Stage 2.9: debate/review pattern before shipping
-  @enable_vault_remember false       # Stage 3.5: store dispatch outcome in Vault
+  @enable_vault_remember true        # Stage 3.5: store dispatch outcome in Vault
   @enable_knowledge_remember false   # Stage 3.5: store patterns in knowledge graph
   @enable_skill_evolution false      # Stage 3.5: feed failures to SkillEvolution
   @enable_introspector_feed false    # Stage 0.5: pull CodeIntrospector/ActiveLearner insights
