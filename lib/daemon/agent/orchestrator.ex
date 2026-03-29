@@ -145,8 +145,59 @@ defmodule Daemon.Agent.Orchestrator do
 
   @doc """
   Suggest existing skills or create a new one.
-  First checks for matching skills. If matches with relevance > 0.5 exist,
-  returns them for user confirmation. Otherwise creates the new skill.
+
+  Smart skill management that prevents duplicates by searching first.
+  If high-relevance matches (relevance > 0.5) exist, returns them for
+  user confirmation. Otherwise creates the new skill automatically.
+
+  ## Parameters
+    - `name` - Skill name (kebab-case, e.g., "data-analyzer")
+    - `description` - What this skill does (used for matching)
+    - `instructions` - Detailed prompt for executing the skill
+    - `tools` - List of tool names the skill needs (default: [])
+
+  ## Returns
+    - `{:existing_matches, [%{name: String.t(), relevance: float(), description: String.t()}]}`
+      - Found similar skills with relevance > 0.5
+      - User should confirm whether to use existing or create new
+    - `{:created, skill_name}` - No high-relevance matches, skill created
+    - `{:error, reason}` - Creation failed
+
+  ## Decision Flow
+      1. Search for skills matching description
+      2. Filter for relevance > 0.5
+      3. If matches exist → return {:existing_matches, matches}
+      4. Otherwise → create skill and return {:created, name}
+
+  ## Examples
+      {:existing_matches, [skill]} = Orchestrator.suggest_or_create_skill(
+        "csv-parser",
+        "Parse CSV files",
+        "Load and parse CSV...",
+        ["file_read"]
+      )
+
+      {:created, "deploy-bot"} = Orchestrator.suggest_or_create_skill(
+        "deploy-bot",
+        "Deploy application to production",
+        "Build container, push to registry, update k8s...",
+        ["shell_execute", "git"]
+      )
+
+  ## Relevance Threshold
+    - `> 0.7` - Strong match, almost certainly what you need
+    - `0.5 - 0.7` - Moderate match, may be worth considering
+    - `< 0.5` - Weak match, ignored (skill will be created)
+
+  ## Use Cases
+    - Interactive CLI: "Should I use existing skill X or create new?"
+    - Auto-pilot: Automatically deduplicate skills
+    - API responses: Return options for user to choose
+
+  ## Notes
+    - This is the recommended way to create skills in production
+    - Combines `find_matching_skills/1` + `create_skill/4` in one call
+    - Prevents skill sprawl (too many similar skills)
   """
   @spec suggest_or_create_skill(String.t(), String.t(), String.t(), list()) ::
           {:existing_matches, list(map())} | {:created, String.t()} | {:error, term()}
