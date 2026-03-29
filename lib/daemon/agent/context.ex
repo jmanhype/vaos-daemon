@@ -335,8 +335,6 @@ defmodule Daemon.Agent.Context do
           recall_relevant(latest_user_msg)
         rescue
           _ -> full_recall()
-        catch
-          :exit, _ -> full_recall()
         end
       else
         full_recall()
@@ -493,8 +491,6 @@ defmodule Daemon.Agent.Context do
       if content == "", do: nil, else: content
     rescue
       _ -> nil
-    catch
-      :exit, _ -> nil
     end
   end
 
@@ -529,8 +525,6 @@ defmodule Daemon.Agent.Context do
     end
   rescue
     _ -> nil
-  catch
-    :exit, _ -> nil
   end
 
   defp workflow_block(state) do
@@ -543,8 +537,6 @@ defmodule Daemon.Agent.Context do
     end
   rescue
     _ -> nil
-  catch
-    :exit, _ -> nil
   end
 
   defp task_state_block(state) do
@@ -652,8 +644,6 @@ defmodule Daemon.Agent.Context do
     """
   rescue
     _ -> nil
-  catch
-    :exit, _ -> nil
   end
 
   @git_cache_table :daemon_git_info_cache
