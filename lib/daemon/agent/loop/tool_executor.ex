@@ -310,7 +310,9 @@ defmodule Daemon.Agent.Loop.ToolExecutor do
 
   defp check_session_circuit_breaker(annotations, session_id, pattern_key) do
     case Daemon.Intelligence.DecisionLedger.session_failures(session_id, pattern_key) do
-      %{consecutive: n} when n >= 3 ->
+      %{consecutive: n} = stats when n >= 3 ->
+        # Escalate to SelfDiagnosis if failure rate is 2x+ above historical average
+        maybe_escalate_to_self_diagnosis(pattern_key, n, stats)
         [{:session, "[session: #{n} consecutive failures — likely transient issue, try a different approach]"} | annotations]
 
       _ ->
@@ -318,6 +320,45 @@ defmodule Daemon.Agent.Loop.ToolExecutor do
     end
   rescue
     _ -> annotations
+  end
+
+  defp maybe_escalate_to_self_diagnosis(pattern_key, consecutive, session_stats) do
+    # Only escalate at exactly 3 and 6 failures to avoid spamming
+    unless consecutive in [3, 6], do: throw(:skip)
+
+    # Get historical failure rate for comparison
+    case :ets.lookup(:daemon_decision_ledger, pattern_key) do
+      [{_, pattern}] ->
+        total = pattern.success_count + pattern.failure_count
+
+        if total >= 5 do
+          historical_failure_rate = pattern.failure_count / total * 100
+          session_total = session_stats.total_failures + consecutive
+          session_failure_rate = if session_total > 0, do: consecutive / session_total * 100, else: 100.0
+
+          # Escalate if session failure rate is 2x+ historical OR historical is already bad (>50%)
+          if session_failure_rate > historical_failure_rate * 2 or historical_failure_rate > 50 do
+            try do
+              Daemon.Investigation.SelfDiagnosis.trigger_diagnosis(pattern_key, %{
+                session_failures: consecutive,
+                historical_rate: Float.round(historical_failure_rate, 1),
+                session_rate: Float.round(session_failure_rate, 1),
+                recent_errors: pattern.recent_errors
+              })
+            rescue
+              _ -> :ok
+            catch
+              :exit, _ -> :ok
+            end
+          end
+        end
+
+      _ ->
+        :ok
+    end
+  catch
+    :skip -> :ok
+    _ -> :ok
   end
 
   defp check_historical_reliability(annotations, pattern_key, context_type) do

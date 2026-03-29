@@ -38,6 +38,20 @@ defmodule Daemon.Investigation.SelfDiagnosis do
     GenServer.call(__MODULE__, :get_findings)
   end
 
+  @doc """
+  Trigger a diagnosis for a specific tool failure pattern.
+
+  Called by DecisionLedger escalation when session failures exceed thresholds
+  AND the failure rate is significantly above historical average.
+
+  `pattern_key` is e.g. "shell_execute:git", `context` is a map with
+  `:session_failures`, `:historical_rate`, `:session_rate`, `:recent_errors`.
+  """
+  @spec trigger_diagnosis(String.t(), map()) :: :ok | :cooldown
+  def trigger_diagnosis(pattern_key, context \\ %{}) do
+    GenServer.cast(__MODULE__, {:external_diagnosis, pattern_key, context})
+  end
+
   # -- GenServer callbacks -------------------------------------------------
 
   @impl true
@@ -78,6 +92,26 @@ defmodule Daemon.Investigation.SelfDiagnosis do
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
+
+  @impl true
+  def handle_cast({:external_diagnosis, pattern_key, context}, state) do
+    hash = :erlang.phash2({"external", pattern_key})
+    now = DateTime.utc_now()
+
+    cond do
+      state.active_task != nil ->
+        Logger.debug("[SelfDiagnosis] Skipping external trigger for #{pattern_key} — investigation already in progress")
+        {:noreply, state}
+
+      recently_investigated_hash?(state, hash, now) ->
+        Logger.debug("[SelfDiagnosis] Skipping external trigger for #{pattern_key} — cooldown active")
+        {:noreply, state}
+
+      true ->
+        state = run_external_diagnosis(state, pattern_key, context, hash)
+        {:noreply, state}
+    end
+  end
 
   # -- Poll logic ----------------------------------------------------------
 
@@ -132,6 +166,13 @@ defmodule Daemon.Investigation.SelfDiagnosis do
     end
   end
 
+  defp recently_investigated_hash?(state, hash, now) do
+    case Map.get(state.investigated_patterns, hash) do
+      nil -> false
+      last_at -> DateTime.diff(now, last_at, :second) < @cooldown_seconds
+    end
+  end
+
   defp recently_investigated?(state, pitfall, now) do
     hash = pattern_hash(pitfall)
 
@@ -166,6 +207,52 @@ defmodule Daemon.Investigation.SelfDiagnosis do
       rescue
         e ->
           Logger.warning("[SelfDiagnosis] Investigation failed (rescued): #{inspect(e)}")
+          {:error, inspect(e)}
+      end
+
+      send(parent, {:diagnosis_complete, hash, result})
+      result
+    end)
+
+    now = DateTime.utc_now()
+    investigated = Map.put(state.investigated_patterns, hash, now)
+
+    %{state |
+      active_task: task.ref,
+      investigated_patterns: investigated
+    }
+  end
+
+  # -- External diagnosis (triggered by DecisionLedger escalation) ----------
+
+  defp run_external_diagnosis(state, pattern_key, context, hash) do
+    session_failures = Map.get(context, :session_failures, 0)
+    historical_rate = Map.get(context, :historical_rate, "unknown")
+    session_rate = Map.get(context, :session_rate, "unknown")
+    recent_errors = Map.get(context, :recent_errors, [])
+
+    errors_str = recent_errors |> Enum.take(3) |> Enum.join("; ")
+
+    Logger.info("[SelfDiagnosis] External trigger: #{pattern_key} " <>
+      "(#{session_failures} session failures, session_rate=#{session_rate}%, historical=#{historical_rate}%)")
+
+    topic = "#{@self_diagnosis_prefix}: tool '#{pattern_key}' is failing #{session_failures} times " <>
+            "consecutively in the current session (#{session_rate}% failure rate vs #{historical_rate}% historical). " <>
+            "Recent errors: #{errors_str}. " <>
+            "What is the root cause and how can the system automatically prevent or work around it?"
+
+    parent = self()
+
+    task = Task.async(fn ->
+      result = try do
+        case Daemon.Tools.Builtins.Investigate.execute(%{"topic" => topic, "depth" => "standard"}) do
+          {:ok, investigation_result} -> {:ok, investigation_result}
+          {:error, reason} -> {:error, reason}
+          other -> {:ok, other}
+        end
+      rescue
+        e ->
+          Logger.warning("[SelfDiagnosis] External investigation failed (rescued): #{inspect(e)}")
           {:error, inspect(e)}
       end
 

@@ -580,7 +580,8 @@ Known failure patterns to avoid:
       rescue
         _ -> []
       end,
-      emergent_questions: emergent_questions
+      emergent_questions: emergent_questions,
+      variant_id: variant_id
     }
     json_result = Jason.encode!(json_metadata)
 

@@ -16,7 +16,7 @@ defmodule Daemon.Investigation.Retrospector do
   use GenServer
   require Logger
 
-  alias Daemon.Investigation.{Strategy, StrategyStore}
+  alias Daemon.Investigation.{Strategy, StrategyStore, PromptSelector}
 
   @max_outcomes 100
   @min_sample_size 10
@@ -62,6 +62,7 @@ defmodule Daemon.Investigation.Retrospector do
 
     outcome = %{
       strategy_hash: meta[:strategy_hash] || "unknown",
+      variant_id: meta[:variant_id] || meta["variant_id"],
       quality: quality,
       timestamp: DateTime.utc_now()
     }
@@ -191,16 +192,28 @@ defmodule Daemon.Investigation.Retrospector do
     mean_before = Enum.sum(exp.scores_before) / length(exp.scores_before)
     mean_after = Enum.sum(exp.scores_after) / length(exp.scores_after)
 
+    # Collect variant_ids used during this experiment's "after" phase.
+    # Outcomes are prepended (newest first), so take the count matching scores_after.
+    experiment_variant_ids = state.outcomes
+      |> Enum.take(length(exp.scores_after))
+      |> Enum.map(&Map.get(&1, :variant_id))
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+
     cond do
       mean_after > mean_before and p < @significance_threshold ->
         Logger.info("[Retrospector] Experiment KEEP: #{exp.param} = #{exp.proposed_value} " <>
           "(mean #{Float.round(mean_before, 3)} -> #{Float.round(mean_after, 3)}, t=#{Float.round(t, 2)}, p=#{Float.round(p, 3)})")
+        # Reward prompt variants that were active during this successful experiment
+        reward_prompt_variants(experiment_variant_ids, :keep)
         %{state | experiment: nil, experiment_count: 0}
 
       mean_after < mean_before and p < @significance_threshold ->
         Logger.info("[Retrospector] Experiment REVERT: #{exp.param} back to #{exp.original_value} " <>
           "(mean #{Float.round(mean_before, 3)} -> #{Float.round(mean_after, 3)}, t=#{Float.round(t, 2)}, p=#{Float.round(p, 3)})")
         StrategyStore.update_param(exp.topic, exp.param, exp.original_value)
+        # Penalize prompt variants that were active during this failed experiment
+        reward_prompt_variants(experiment_variant_ids, :revert)
         %{state | experiment: nil, experiment_count: 0}
 
       true ->
@@ -300,5 +313,27 @@ defmodule Daemon.Investigation.Retrospector do
 
     Logger.info("[Retrospector] Started experiment: #{param} #{Float.round(original_value * 1.0, 4)} -> #{Float.round(proposed_value * 1.0, 4)}")
     %{state | experiment: experiment, experiment_count: 0}
+  end
+
+  # -- Thompson Sampling feedback ------------------------------------------
+
+  defp reward_prompt_variants([], _outcome), do: :ok
+
+  defp reward_prompt_variants(variant_ids, outcome) do
+    Enum.each(variant_ids, fn variant_id ->
+      try do
+        case outcome do
+          :keep ->
+            PromptSelector.update(variant_id, 1, 0)
+            Logger.info("[Retrospector] Rewarded prompt variant #{variant_id} (experiment KEEP)")
+
+          :revert ->
+            PromptSelector.update(variant_id, 0, 1)
+            Logger.info("[Retrospector] Penalized prompt variant #{variant_id} (experiment REVERT)")
+        end
+      rescue
+        e -> Logger.warning("[Retrospector] Failed to update PromptSelector for #{variant_id}: #{Exception.message(e)}")
+      end
+    end)
   end
 end
