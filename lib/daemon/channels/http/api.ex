@@ -2,13 +2,14 @@ defmodule Daemon.Channels.HTTP.API do
   @moduledoc """
   Authenticated API router — all endpoints under /api/v1.
 
-  Auth plug runs globally. Channel webhook routes bypass JWT because they
+  Auth plug runs globally. Channel webhook routes and health check bypass JWT because they
   are forwarded before the auth result halts the conn — platform-specific
   HMAC/challenge verification happens inside ChannelRoutes.
 
   Sub-router forwarding map:
 
     /auth        → AuthRoutes        POST /login|logout|refresh
+    /health      → HealthRoutes      GET / (system + provider + channel + agent health)
     /channels    → ChannelRoutes     GET /, POST /*/webhook (10 platforms)
     /sessions    → SessionRoutes     GET|POST /, GET|DELETE /:id, GET /:id/messages, POST /:id/cancel
     /fleet       → FleetRoutes       POST /register|heartbeat|dispatch, GET /agents|/:id
