@@ -26,6 +26,7 @@ defmodule Daemon.Channels.HTTP.API do
     /scheduler   → DataRoutes        GET /jobs, POST /reload
     /webhooks    → DataRoutes        POST /:trigger_id
     /machines    → DataRoutes        GET /
+    /metrics     → PrometheusRoutes  GET / (Prometheus text format)
     /events      → ProtocolRoutes    POST /, GET /stream
     /oscp        → ProtocolRoutes    POST /
     /tasks       → ProtocolRoutes    GET /history
@@ -134,6 +135,9 @@ defmodule Daemon.Channels.HTTP.API do
   forward "/scheduler", to: API.DataRoutes
   forward "/webhooks", to: API.DataRoutes
   forward "/machines", to: API.DataRoutes
+
+  # ── Prometheus Metrics ───────────────────────────────────────────────
+  forward "/metrics", to: API.PrometheusRoutes
 
   # ── Dashboard ────────────────────────────────────────────────────────
   forward "/dashboard", to: API.DashboardRoutes

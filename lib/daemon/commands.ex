@@ -248,6 +248,7 @@ defmodule Daemon.Commands do
       {"skills", "List available skills", &Info.cmd_skills/2},
       {"memory", "Memory statistics", &Info.cmd_memory/2},
       {"soul", "Show personality config", &Info.cmd_soul/2},
+      {"metrics", "Prometheus metrics export", &Info.cmd_metrics/2},
       {"model", "Show/switch LLM provider", &Model.cmd_model/2},
       {"models", "List installed Ollama models", &Model.cmd_models_shortcut/2},
       {"provider", "Alias for /model", &Model.cmd_model/2},

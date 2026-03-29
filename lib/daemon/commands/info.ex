@@ -35,6 +35,7 @@ defmodule Daemon.Commands.Info do
         /skills             List available skills
         /memory             Memory statistics
         /soul               Show personality config
+        /metrics            Prometheus metrics export
         /doctor             System diagnostics
 
       Model & Provider:
@@ -293,6 +294,17 @@ defmodule Daemon.Commands.Info do
     ]
 
     {:command, Enum.reverse(parts) |> Enum.join("\n\n")}
+  end
+
+  @doc "Handle the `/metrics` command - display Prometheus metrics."
+  def cmd_metrics(_arg, _session_id) do
+    try do
+      metrics = Daemon.PrometheusExporter.export()
+      {:command, metrics}
+    rescue
+      e ->
+        {:command, "Error exporting metrics: #{Exception.message(e)}"}
+    end
   end
 
   @doc "Handle the `/desktop` and `/gui` command."
