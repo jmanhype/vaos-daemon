@@ -1,4 +1,25 @@
 defmodule Daemon.Channels.HTTP.API.ConfigRoutes do
+  @moduledoc """
+  Configuration revision history and rollback routes.
+
+  Provides audit trail and time-travel for configuration entities (agents, skills, tools).
+  All revisions are immutable and tracked with timestamps and metadata.
+
+  Endpoints:
+    GET  /revisions/:entity_type/:entity_id              — List all revisions for an entity
+    GET  /revisions/:entity_type/:entity_id/:number      — Fetch a specific revision
+    POST /revisions/:entity_type/:entity_id/rollback     — Rollback to a specific revision
+    GET  /revisions/:entity_type/:entity_id/diff         — Compare two revisions (from, to query params)
+
+  Examples:
+    GET  /api/v1/config/revisions/agent/orchestrator          — List orchestrator agent revisions
+    GET  /api/v1/config/revisions/agent/orchestrator/3        — Get revision 3
+    POST /api/v1/config/revisions/agent/orchestrator/rollback — Rollback (requires revision_number in body)
+    GET  /api/v1/config/revisions/agent/orchestrator/diff?from=2&to=5 — Compare revisions
+
+  The revision system enables safe experimentation with configuration changes
+  and quick recovery from problematic deployments.
+  """
   use Plug.Router
   import Plug.Conn
   import Daemon.Channels.HTTP.API.Shared, except: [parse_int: 1]

@@ -1,4 +1,33 @@
 defmodule Daemon.Channels.HTTP.API.CostRoutes do
+  @moduledoc """
+  Cost tracking and budget management routes.
+
+  Tracks API costs across all agents and models. Provides per-agent budget controls
+  with daily and monthly limits. Real-time cost attribution for LLM usage.
+
+  Endpoints:
+    GET  /                          — Summary (default) or budgets list (if forwarded to /budgets)
+    GET  /budgets                   — List all agent budgets
+    GET  /by-agent                  — Cost breakdown by agent
+    GET  /by-model                  — Cost breakdown by model
+    GET  /events                    — Paginated cost event log with optional agent_name filter
+    PUT  /:agent_name               — Update agent budget (budget_daily_cents, budget_monthly_cents)
+    POST /:agent_name/reset         — Reset an agent's cost counters
+
+  Budget limits:
+    - Daily: max $10,000 (1,000,000 cents)
+    - Monthly: max $100,000 (10,000,000 cents)
+
+  Example budget update:
+    PUT /api/v1/costs/orchestrator
+    {
+      "budget_daily_cents": 50000,      // $500/day
+      "budget_monthly_cents": 1000000   // $10,000/month
+    }
+
+  Cost tracking is integrated with Agent.Loop and automatically records
+  all LLM API calls with provider, model, token counts, and calculated costs.
+  """
   use Plug.Router
   import Daemon.Channels.HTTP.API.Shared
   require Logger

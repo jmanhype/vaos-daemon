@@ -1,4 +1,38 @@
 defmodule Daemon.Channels.HTTP.API.SignalRoutes do
+  @moduledoc """
+  Signal persistence, analytics, and live streaming routes.
+
+  Signals are the core abstraction for agent interactions — every tool call,
+  memory access, and channel message generates a signal with metadata, weight,
+  and timing information.
+
+  Endpoints:
+    GET  /              — List signals with filtering (mode, genre, type, channel, tier, weight range, date range)
+    GET  /stats         — Aggregated signal statistics (count by type, avg weight, etc.)
+    GET  /patterns      — Signal patterns over N days (trend analysis, anomaly detection)
+    GET  /live          — SSE live stream of new signals and stats updates
+
+  Query parameters (for GET /):
+    mode, genre, type, channel, tier  — Filter by signal attributes
+    weight_min, weight_max            — Filter by weight range (float)
+    from, to                          — ISO8601 date range filter
+    limit                             — Max results (default: 50)
+    offset                            — Pagination offset (default: 0)
+
+  SSE events (GET /live):
+    - signal:new        — Emitted on each new signal
+    - signal:stats_update — Emitted when stats change
+    - keepalive         — Sent every 30s
+
+  Example queries:
+    GET /api/v1/signals?type=tool_call&limit=10           — Recent tool calls
+    GET /api/v1/signals?weight_min=0.7&genre=intent       — High-weight intent signals
+    GET /api/v1/signals?from=2024-01-01T00:00:00&to=2024-01-31T23:59:59 — Date range
+    GET /api/v1/signals/patterns?days=30                  — 30-day pattern analysis
+
+  Signals are persisted to disk and indexed for fast queries. The live stream
+  uses Phoenix.PubSub for real-time broadcast to all connected clients.
+  """
   use Plug.Router
   import Daemon.Channels.HTTP.API.Shared
 
