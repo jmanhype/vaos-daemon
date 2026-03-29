@@ -405,6 +405,62 @@ defmodule Daemon.Agent.WorkDirector.DispatchIntelligence do
     Enum.join(sections, "\n\n")
   end
 
+  # -- Impact Analysis (Reverse Dependency Tracing) --
+
+  @doc """
+  Compute reverse dependents for a list of file paths.
+
+  For each file, extracts the defmodule name and greps the codebase for
+  `alias|import|use Module.Name` references. Zero LLM cost.
+
+  Returns a map of `%{path => [dependent_path, ...]}`.
+  """
+  @spec compute_impact([String.t()], String.t()) :: map()
+  def compute_impact(file_paths, repo_path) do
+    Enum.map(file_paths, fn path ->
+      module_name = extract_module_name(path)
+      dependents = if module_name, do: find_reverse_dependents(module_name, repo_path, path), else: []
+      {path, dependents}
+    end)
+    |> Map.new()
+  rescue
+    _ -> %{}
+  end
+
+  defp extract_module_name(path) do
+    case File.read(path) do
+      {:ok, content} ->
+        case Regex.run(~r/defmodule\s+([\w.]+)/, content) do
+          [_, module_name] -> module_name
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp find_reverse_dependents(module_name, repo_path, self_path) do
+    # Grep for alias/import/use references to this module
+    pattern = "(alias|import|use)\\s+#{Regex.escape(module_name)}\\b"
+
+    case System.cmd("bash", ["-c",
+      "grep -rl '#{pattern}' #{repo_path}/lib/ --include='*.ex' 2>/dev/null | head -20"],
+      stderr_to_stdout: true) do
+      {output, 0} when byte_size(output) > 0 ->
+        output
+        |> String.split("\n", trim: true)
+        |> Enum.map(&String.trim/1)
+        |> Enum.reject(&(&1 == self_path))
+        |> Enum.take(20)
+
+      _ ->
+        []
+    end
+  rescue
+    _ -> []
+  end
+
   # -- Codebase Convention Detection --
 
   @doc """

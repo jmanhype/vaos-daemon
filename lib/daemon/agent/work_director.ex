@@ -62,6 +62,16 @@ defmodule Daemon.Agent.WorkDirector do
   @enable_skill_evolution false      # Stage 3.5: feed failures to SkillEvolution
   @enable_introspector_feed false    # Stage 0.5: pull CodeIntrospector/ActiveLearner insights
 
+  # -- Pre-dispatch gates --
+  @enable_risk_assessment false        # Pre-dispatch: score risk, force review on medium, block high
+  @enable_risk_approval_gate false     # Pre-dispatch: route high-risk to Governance.Approvals
+  @enable_strategic_rejection false    # Pre-dispatch: refuse tasks that violate architectural invariants
+  @enable_strategic_debate false       # Pre-dispatch: LLM debate for borderline strategic rejections
+
+  # -- Stage 0.5 context sections --
+  @enable_impact_analysis true         # Stage 0.5: trace callers/dependents of affected files
+  @enable_production_context true      # Stage 0.5: inject telemetry + provider health into prompt
+
   @protected_path_patterns [
     "^lib/daemon/application\\.ex$",
     "^lib/daemon/supervisors/",
@@ -632,7 +642,34 @@ defmodule Daemon.Agent.WorkDirector do
         {:conflict, state}
 
       :approved ->
-        do_dispatch_item(state, item, branch)
+        repo_path = Application.get_env(:daemon, :repo_path, Path.expand("~/vas-swarm"))
+
+        # Gate 1: Strategic rejection (rule-based, zero LLM cost)
+        case maybe_reject_strategically(item) do
+          {:rejected, reason} ->
+            Logger.info("[WorkDirector] Strategic rejection: '#{item.title}' — #{reason}")
+            DecisionJournal.record_outcome(branch, :failure, %{reason: "strategic_rejection", detail: reason})
+            {:conflict, state}
+
+          :proceed ->
+            # Gate 2: Risk assessment (pattern matching + optional DispatchIntelligence)
+            risk = assess_risk(item, repo_path)
+
+            case maybe_gate_on_risk(risk, item) do
+              :proceed ->
+                do_dispatch_item(state, item, branch)
+
+              {:force_review, _risk} ->
+                # Medium risk: proceed normally — review is already enabled
+                # Risk context injected into prompt via Stage 0.5
+                do_dispatch_item(state, item, branch)
+
+              {:blocked, reason} ->
+                Logger.warning("[WorkDirector] Risk gate blocked '#{item.title}': #{reason}")
+                DecisionJournal.record_outcome(branch, :failure, %{reason: "risk_blocked", detail: reason})
+                {:conflict, state}
+            end
+        end
     end
   end
 
@@ -641,6 +678,270 @@ defmodule Daemon.Agent.WorkDirector do
   @compile_fix_max_attempts 2
   @review_fix_max_attempts 1         # Max refinement cycles in Stage 2.9 Reflexion loop
   @agent_max_iterations 35
+
+  # -- Risk assessment thresholds --
+  @risk_high_threshold 7
+  @risk_medium_threshold 4
+  @high_risk_keywords ~w(refactor rewrite replace migrate supervisor application security genserver)
+
+  @stop_words ~w(the a an is are was were be been being have has had do does did will would shall should may might must can could)
+
+  # -- Pre-dispatch Gate: Strategic Rejection --
+
+  defp maybe_reject_strategically(item) do
+    if @enable_strategic_rejection do
+      try do
+        text = String.downcase("#{item.title} #{item.description}")
+        issues = []
+
+        # Check 1: Architectural invariant violations
+        invariants = Source.Vision.load_invariants()
+        issues = issues ++ check_invariant_violations(text, invariants)
+
+        # Check 2: Scope too broad
+        issues = issues ++ check_scope_breadth(text)
+
+        # Check 3: Duplicates recently completed work
+        issues = issues ++ check_vault_duplicate(item)
+
+        cond do
+          issues == [] -> :proceed
+          @enable_strategic_debate -> evaluate_with_debate(item, issues, invariants)
+          true -> {:rejected, Enum.join(issues, "; ")}
+        end
+      rescue
+        _ -> :proceed
+      catch
+        :exit, _ -> :proceed
+      end
+    else
+      :proceed
+    end
+  end
+
+  defp check_invariant_violations(text, invariants) do
+    invariants
+    |> Enum.filter(fn inv -> String.contains?(String.downcase(inv), "never") end)
+    |> Enum.flat_map(fn inv ->
+      # Extract meaningful words (>3 chars, excluding stop words) from the invariant
+      forbidden_terms =
+        inv
+        |> String.downcase()
+        |> String.replace(~r/[^a-z0-9\s]/, " ")
+        |> String.split()
+        |> Enum.reject(&(&1 in @stop_words))
+        |> Enum.filter(&(String.length(&1) > 3))
+        |> Enum.reject(&(&1 == "never"))
+
+      matches = Enum.filter(forbidden_terms, &String.contains?(text, &1))
+
+      if length(matches) >= 2 do
+        ["Violates invariant: #{inv} (matched: #{Enum.join(matches, ", ")})"]
+      else
+        []
+      end
+    end)
+  end
+
+  defp check_scope_breadth(text) do
+    broad_keywords = ~w(all every entire whole rewrite)
+    hits = Enum.count(broad_keywords, &String.contains?(text, &1))
+
+    if hits >= 2 do
+      ["Scope too broad — #{hits} broad-scope keywords detected"]
+    else
+      []
+    end
+  end
+
+  defp check_vault_duplicate(item) do
+    try do
+      recalls = Vault.recall(item.title, limit: 3)
+
+      duplicates =
+        Enum.filter(recalls, fn {_cat, path, score} ->
+          score > 0.8 and
+            case File.read(path) do
+              {:ok, content} -> String.contains?(content, "Successful Implementation")
+              _ -> false
+            end
+        end)
+
+      if duplicates != [] do
+        ["Potential duplicate of recently completed work (#{length(duplicates)} similar successes found)"]
+      else
+        []
+      end
+    rescue
+      _ -> []
+    catch
+      :exit, _ -> []
+    end
+  end
+
+  defp evaluate_with_debate(item, issues, invariants) do
+    try do
+      concerns = Enum.join(issues, "\n- ")
+      inv_text = if invariants != [], do: "\n\nArchitectural Invariants:\n" <> Enum.map_join(invariants, "\n", &("- #{&1}")), else: ""
+
+      prompt = """
+      A WorkDirector dispatch is being considered. Evaluate whether it should proceed or be rejected.
+
+      Task: #{item.title}
+      Description: #{item.description}
+
+      Concerns raised by rule-based checks:
+      - #{concerns}
+      #{inv_text}
+
+      Debate this task. End your response with exactly one of:
+      VERDICT: PROCEED
+      VERDICT: REJECT
+      """
+
+      case Debate.run(prompt, perspectives: [:advocate, :critic]) do
+        {:ok, %{synthesis: synthesis}} ->
+          if String.contains?(synthesis, "VERDICT: REJECT") do
+            {:rejected, "Debate rejected: #{String.slice(synthesis, 0, 200)}"}
+          else
+            :proceed
+          end
+
+        _ ->
+          # Debate failed — fall back to rule-based rejection
+          {:rejected, Enum.join(issues, "; ")}
+      end
+    rescue
+      _ -> {:rejected, Enum.join(issues, "; ")}
+    catch
+      :exit, _ -> {:rejected, Enum.join(issues, "; ")}
+    end
+  end
+
+  # -- Pre-dispatch Gate: Risk Assessment --
+
+  defp assess_risk(item, repo_path) do
+    if @enable_risk_assessment do
+      try do
+        # Factor 1: Title keyword hits (0-3)
+        title_lower = String.downcase(item.title)
+        keyword_hits = Enum.count(@high_risk_keywords, &String.contains?(title_lower, &1))
+        keyword_score = min(keyword_hits, 3)
+
+        # Factor 2: Core path proximity (0-3) — uses DispatchIntelligence
+        enrichment = get_or_compute_enrichment(item, repo_path)
+        relevant_paths = enrichment |> Map.get(:relevant_files, []) |> Enum.map(& &1.path)
+
+        core_score =
+          relevant_paths
+          |> Enum.count(fn path ->
+            Enum.any?(@protected_path_patterns, fn pattern ->
+              rel = Path.relative_to(path, repo_path)
+              Regex.match?(Regex.compile!(pattern), rel)
+            end)
+          end)
+          |> min(3)
+
+        # Factor 3: Blast radius (0-2)
+        file_count = length(relevant_paths)
+        integration_count = enrichment |> Map.get(:integration_points, []) |> length()
+        blast_score = cond do
+          file_count + integration_count > 10 -> 2
+          file_count + integration_count > 5 -> 1
+          true -> 0
+        end
+
+        # Factor 4: Historical failures (0-2)
+        failure_score =
+          try do
+            recalls = Vault.recall(item.title, limit: 5)
+            failures = Enum.count(recalls, fn {_cat, path, _score} ->
+              case File.read(path) do
+                {:ok, content} -> String.contains?(content, "Failed") or String.contains?(content, "failure")
+                _ -> false
+              end
+            end)
+            min(failures, 2)
+          rescue
+            _ -> 0
+          catch
+            :exit, _ -> 0
+          end
+
+        score = keyword_score + core_score + blast_score + failure_score
+
+        level = cond do
+          score >= @risk_high_threshold -> :high
+          score >= @risk_medium_threshold -> :medium
+          true -> :low
+        end
+
+        Logger.info("[WorkDirector] Risk assessment for '#{item.title}': #{score}/10 (#{level}) — keywords=#{keyword_score}, core=#{core_score}, blast=#{blast_score}, failures=#{failure_score}")
+
+        %{
+          score: score,
+          level: level,
+          breakdown: %{
+            keywords: keyword_score,
+            core_proximity: core_score,
+            blast_radius: blast_score,
+            historical_failures: failure_score
+          }
+        }
+      rescue
+        _ -> %{score: 0, level: :low, breakdown: %{}}
+      catch
+        :exit, _ -> %{score: 0, level: :low, breakdown: %{}}
+      end
+    else
+      %{score: 0, level: :low, breakdown: %{}}
+    end
+  end
+
+  defp get_or_compute_enrichment(item, repo_path) do
+    case Process.get(:dispatch_intelligence_cache) do
+      nil ->
+        case DispatchIntelligence.enrich(item.title, item.description || "", repo_path) do
+          {:ok, result} ->
+            Process.put(:dispatch_intelligence_cache, result)
+            result
+
+          _ ->
+            %{}
+        end
+
+      cached ->
+        cached
+    end
+  end
+
+  defp maybe_gate_on_risk(%{level: :low}, _item), do: :proceed
+  defp maybe_gate_on_risk(%{level: :medium} = risk, _item), do: {:force_review, risk}
+  defp maybe_gate_on_risk(%{level: :high} = risk, item) do
+    if @enable_risk_approval_gate do
+      try do
+        alias Daemon.Governance.Approvals
+
+        case Approvals.create(%{
+          type: "code_change",
+          title: "High-risk: #{item.title}",
+          description: "Risk #{risk.score}/10: #{inspect(risk.breakdown)}",
+          requested_by: "work_director",
+          context: risk.breakdown
+        }) do
+          {:ok, _} -> {:blocked, "Governance approval required (risk=#{risk.score}/10)"}
+          _ -> {:force_review, risk}
+        end
+      rescue
+        _ -> {:force_review, risk}
+      catch
+        :exit, _ -> {:force_review, risk}
+      end
+    else
+      {:force_review, risk}
+    end
+  end
+  defp maybe_gate_on_risk(_risk, _item), do: :proceed
 
   defp do_dispatch_item(state, %WorkItem{} = item, branch) do
     session_id = "workdir-#{:erlang.unique_integer([:positive])}"
@@ -805,7 +1106,7 @@ defmodule Daemon.Agent.WorkDirector do
 
   # -- Stage 0.5: Pre-Research Context Enrichment --
 
-  defp build_pre_research_context(item, _repo_path, session_id) do
+  defp build_pre_research_context(item, repo_path, session_id) do
     sections = []
 
     # Vault: prior dispatch memories
@@ -822,6 +1123,12 @@ defmodule Daemon.Agent.WorkDirector do
 
     # Autonomous loop insights: CodeIntrospector + ActiveLearner findings
     sections = sections ++ introspector_section(item)
+
+    # Impact analysis: reverse dependency tracing
+    sections = sections ++ impact_analysis_section(item, repo_path)
+
+    # Production context: telemetry + provider health
+    sections = sections ++ production_context_section()
 
     # Investigation: deep research (expensive, only for high-priority/complex tasks)
     sections = sections ++ investigation_section(item, session_id)
@@ -1051,6 +1358,119 @@ defmodule Daemon.Agent.WorkDirector do
         :exit, r ->
           Logger.warning("[WorkDirector] Stage 0.5: Investigation exit: #{inspect(r)}")
           []
+      end
+    else
+      []
+    end
+  end
+
+  # -- Stage 0.5: Impact Analysis Section --
+
+  defp impact_analysis_section(item, repo_path) do
+    if @enable_impact_analysis do
+      try do
+        # Use cached DispatchIntelligence result or compute fresh
+        enrichment = get_or_compute_enrichment(item, repo_path)
+        file_paths = enrichment |> Map.get(:relevant_files, []) |> Enum.map(& &1.path) |> Enum.take(5)
+
+        if file_paths == [] do
+          []
+        else
+          impact = DispatchIntelligence.compute_impact(file_paths, repo_path)
+
+          formatted =
+            impact
+            |> Enum.filter(fn {_path, deps} -> deps != [] end)
+            |> Enum.map(fn {path, deps} ->
+              rel_path = Path.relative_to(path, repo_path)
+              dep_list = deps |> Enum.take(5) |> Enum.map(&Path.relative_to(&1, repo_path)) |> Enum.join(", ")
+              "- `#{rel_path}` — #{length(deps)} dependents: #{dep_list}"
+            end)
+            |> Enum.join("\n")
+
+          if formatted != "" do
+            total_deps = impact |> Map.values() |> List.flatten() |> Enum.uniq() |> length()
+            Logger.info("[WorkDirector] Stage 0.5: Impact analysis — #{total_deps} total dependents across #{length(file_paths)} files")
+            ["\n## Impact Analysis (blast radius)\n#{formatted}\nTotal unique dependents: #{total_deps}\n"]
+          else
+            []
+          end
+        end
+      rescue
+        e ->
+          Logger.warning("[WorkDirector] Stage 0.5: Impact analysis error: #{Exception.message(e)}")
+          []
+      catch
+        :exit, _ -> []
+      end
+    else
+      []
+    end
+  end
+
+  # -- Stage 0.5: Production Context Section --
+
+  defp production_context_section do
+    if @enable_production_context do
+      try do
+        sections = []
+
+        # Telemetry metrics: provider error rates, latency, token usage
+        sections =
+          try do
+            summary = Daemon.Telemetry.Metrics.get_summary()
+
+            provider_stats =
+              (summary[:provider_calls] || %{})
+              |> Enum.map(fn {provider, count} ->
+                latency = get_in(summary, [:provider_latency, provider])
+                avg = if latency, do: "avg=#{latency[:avg] || "?"}ms", else: ""
+                p99 = if latency, do: "p99=#{latency[:p99] || "?"}ms", else: ""
+                "- #{provider}: #{count} calls #{avg} #{p99}"
+              end)
+              |> Enum.join("\n")
+
+            if provider_stats != "" do
+              token_info = "Tokens used: #{summary[:token_stats][:total] || "unknown"}"
+              sections ++ ["\n## Production Context\n#{provider_stats}\n#{token_info}\n"]
+            else
+              sections
+            end
+          rescue
+            _ -> sections
+          catch
+            :exit, _ -> sections
+          end
+
+        # Provider health: circuit breaker states
+        sections =
+          try do
+            health_state = Daemon.Providers.HealthChecker.state()
+
+            degraded =
+              health_state
+              |> Enum.filter(fn {_provider, state} -> state.circuit != :closed end)
+              |> Enum.map(fn {provider, state} ->
+                "- #{provider}: circuit=#{state.circuit}" <>
+                  if(state[:rate_limited], do: " (rate limited)", else: "")
+              end)
+
+            if degraded != [] do
+              sections ++ ["\n## Provider Health (degraded)\n#{Enum.join(degraded, "\n")}\n"]
+            else
+              sections
+            end
+          rescue
+            _ -> sections
+          catch
+            :exit, _ -> sections
+          end
+
+        sections
+      rescue
+        _ -> []
+      catch
+        :exit, _ -> []
       end
     else
       []
@@ -1808,15 +2228,23 @@ defmodule Daemon.Agent.WorkDirector do
       end
 
     # Pre-compute codebase context via DispatchIntelligence (zero LLM cost)
+    # Use cached result from risk assessment if available
     codebase_context =
-      case DispatchIntelligence.enrich(item.title, item.description || "", repo_path) do
-        {:ok, %{execution_trace: trace}} ->
-          Logger.debug("[WorkDirector] DispatchIntelligence enriched prompt for '#{item.title}'")
+      case Process.get(:dispatch_intelligence_cache) do
+        %{execution_trace: trace} ->
+          Logger.debug("[WorkDirector] DispatchIntelligence enriched prompt for '#{item.title}' (cached)")
           trace
 
-        {:error, reason} ->
-          Logger.warning("[WorkDirector] DispatchIntelligence failed: #{inspect(reason)}")
-          ""
+        _ ->
+          case DispatchIntelligence.enrich(item.title, item.description || "", repo_path) do
+            {:ok, %{execution_trace: trace}} ->
+              Logger.debug("[WorkDirector] DispatchIntelligence enriched prompt for '#{item.title}'")
+              trace
+
+            {:error, reason} ->
+              Logger.warning("[WorkDirector] DispatchIntelligence failed: #{inspect(reason)}")
+              ""
+          end
       end
 
     branch = branch_name(item)

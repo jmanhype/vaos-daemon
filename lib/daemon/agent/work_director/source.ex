@@ -124,6 +124,32 @@ defmodule Daemon.Agent.WorkDirector.Source.Vision do
       if String.contains?(section, key), do: priority
     end)
   end
+
+  @doc "Parse architectural invariants from VISION.md."
+  def load_invariants do
+    case File.read(@vision_path) do
+      {:ok, content} -> parse_invariants(content)
+      _ -> []
+    end
+  end
+
+  defp parse_invariants(content) do
+    lines = String.split(content, "\n")
+
+    {items, _in_section} =
+      Enum.reduce(lines, {[], false}, fn line, {acc, in_inv} ->
+        cond do
+          Regex.match?(~r/^\#{1,3}\s+.*[Ii]nvariants/i, line) -> {acc, true}
+          in_inv and Regex.match?(~r/^\#{1,3}\s+/, line) -> {acc, false}
+          in_inv and Regex.match?(~r/^\s*-\s+/, line) ->
+            inv = String.replace(line, ~r/^\s*-\s+/, "") |> String.trim()
+            if inv != "", do: {[inv | acc], true}, else: {acc, true}
+          true -> {acc, in_inv}
+        end
+      end)
+
+    Enum.reverse(items)
+  end
 end
 
 defmodule Daemon.Agent.WorkDirector.Source.Issues do
