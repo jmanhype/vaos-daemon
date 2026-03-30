@@ -31,8 +31,9 @@ defmodule Daemon.Receipt.Emitter do
 
     :ok
   rescue
-    _ ->
-      # If GenServer call fails, emit without verification
+    e ->
+      # If GenServer call fails, emit without verification but warn
+      Logger.warning("[Receipt.Emitter] Pubkey unavailable, emitting unverified: #{inspect(e)}")
       Task.Supervisor.start_child(Daemon.TaskSupervisor, fn ->
         do_emit(bundle, nil)
       end)
@@ -107,17 +108,26 @@ defmodule Daemon.Receipt.Emitter do
 
         attestation = resp["attestation"]
 
-        if sig && pubkey && attestation do
-          if Daemon.Receipt.Verifier.verify(attestation, sig, pubkey) do
-            Logger.debug("[Receipt.Emitter] Signature verified for #{bundle.action_name}")
+        verified =
+          if sig && pubkey && attestation do
+            if Daemon.Receipt.Verifier.verify(attestation, sig, pubkey) do
+              Logger.debug("[Receipt.Emitter] Signature verified for #{bundle.action_name}")
+              :verified
+            else
+              Logger.warning("[Receipt.Emitter] SIGNATURE MISMATCH for #{bundle.action_name} — rejecting receipt")
+              :mismatch
+            end
           else
-            Logger.warning("[Receipt.Emitter] SIGNATURE MISMATCH for #{bundle.action_name}")
+            Logger.warning("[Receipt.Emitter] Receipt confirmed but UNSIGNED for #{bundle.action_name}")
+            :unsigned
           end
-        else
-          Logger.debug("[Receipt.Emitter] Receipt confirmed (unsigned or no attestation) for #{bundle.action_name}")
-        end
 
-        store_signed_receipt(audit_map, resp)
+        # Only store verified or unsigned receipts — never store on signature mismatch
+        if verified != :mismatch do
+          store_signed_receipt(audit_map, Map.put(resp, "verification_status", Atom.to_string(verified)))
+        else
+          queue_to_pending(audit_map)
+        end
         :ok
 
       {:ok, %{status: status}} ->

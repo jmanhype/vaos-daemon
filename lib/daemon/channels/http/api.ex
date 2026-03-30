@@ -243,7 +243,7 @@ defmodule Daemon.Channels.HTTP.API do
 
   # ── CORS Plug ───────────────────────────────────────────────────────
   defp cors(%{method: "OPTIONS"} = conn, _opts) do
-    origin = Application.get_env(:daemon, :cors_origin, "*")
+    origin = Application.get_env(:daemon, :cors_origin, "http://localhost:3000")
 
     conn
     |> Plug.Conn.put_resp_header("access-control-allow-origin", origin)
@@ -255,7 +255,7 @@ defmodule Daemon.Channels.HTTP.API do
   end
 
   defp cors(conn, _opts) do
-    origin = Application.get_env(:daemon, :cors_origin, "*")
+    origin = Application.get_env(:daemon, :cors_origin, "http://localhost:3000")
 
     conn
     |> Plug.Conn.put_resp_header("access-control-allow-origin", origin)
@@ -301,7 +301,7 @@ defmodule Daemon.Channels.HTTP.API do
             |> assign(:claims, claims)
 
           {:error, reason} ->
-            if Application.get_env(:daemon, :require_auth, false) do
+            if Application.get_env(:daemon, :require_auth, true) do
               conn
               |> put_resp_content_type("application/json")
               |> send_resp(401, Jason.encode!(%{error: "unauthorized", code: "INVALID_TOKEN"}))
@@ -317,7 +317,7 @@ defmodule Daemon.Channels.HTTP.API do
         end
 
       _ ->
-        if Application.get_env(:daemon, :require_auth, false) do
+        if Application.get_env(:daemon, :require_auth, true) do
           conn
           |> put_resp_content_type("application/json")
           |> send_resp(401, Jason.encode!(%{error: "unauthorized", code: "MISSING_TOKEN"}))

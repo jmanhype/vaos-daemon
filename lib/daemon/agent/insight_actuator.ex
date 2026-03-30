@@ -615,19 +615,13 @@ defmodule Daemon.Agent.InsightActuator do
   end
 
   defp parse_change_type(type) when is_binary(type) do
-    atom = String.to_atom(type)
-    if atom in @change_types, do: atom, else: nil
-  rescue
-    _ -> nil
+    Enum.find(@change_types, fn ct -> Atom.to_string(ct) == type end)
   end
 
   defp parse_change_type(_), do: nil
 
   defp parse_risk_level(level) when is_binary(level) do
-    atom = String.to_atom(level)
-    if atom in @risk_levels, do: atom, else: nil
-  rescue
-    _ -> nil
+    Enum.find(@risk_levels, fn rl -> Atom.to_string(rl) == level end)
   end
 
   defp parse_risk_level(_), do: nil
@@ -1168,7 +1162,9 @@ defmodule Daemon.Agent.InsightActuator do
   defp parse_arms(raw) when is_map(raw) do
     Map.new(raw, fn {key_str, arm_data} ->
       key = case String.split(key_str, ":", parts: 2) do
-        [cluster, change_type] -> {cluster, String.to_atom(change_type)}
+        [cluster, change_type] ->
+          ct_atom = Enum.find(@change_types, fn ct -> Atom.to_string(ct) == change_type end)
+          if ct_atom, do: {cluster, ct_atom}, else: key_str
         _ -> key_str
       end
 
@@ -1207,13 +1203,15 @@ defmodule Daemon.Agent.InsightActuator do
   defp parse_pr_list(list) when is_list(list) do
     Enum.map(list, fn pr ->
       arm_key = case String.split(Map.get(pr, "arm_key", ""), ":", parts: 2) do
-        [cluster, change_type] -> {cluster, String.to_atom(change_type)}
+        [cluster, change_type] ->
+          ct_atom = Enum.find(@change_types, fn ct -> Atom.to_string(ct) == change_type end)
+          if ct_atom, do: {cluster, ct_atom}, else: nil
         _ -> nil
       end
 
       change_type = case Map.get(pr, "change_type", "") do
         "" -> nil
-        ct -> String.to_atom(ct)
+        ct -> Enum.find(@change_types, fn t -> Atom.to_string(t) == ct end)
       end
 
       %{

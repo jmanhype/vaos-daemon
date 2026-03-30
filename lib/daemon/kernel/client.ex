@@ -421,13 +421,9 @@ defmodule Daemon.Kernel.Client do
 
   defp call_grpc(_stub, _method, _request) do
     # TODO: Implement proper gRPC calls with gun + protobuf encoding
-    # Requires:
-    # 1. Protobuf encoding of request messages
-    # 2. gRPC framing (compressed-flag + message-length + message)
-    # 3. HTTP/2 POST to /Package.Service/Method endpoint
-    # For now, return mock responses
-    Logger.debug("[GrpcClient] gRPC call not yet implemented - using mock")
-    {:ok, %{error: "gRPC client not fully implemented"}}
+    # Returns error so callers fall through to HTTP fallback paths
+    Logger.debug("[GrpcClient] gRPC call not yet implemented — falling back to HTTP")
+    {:error, :grpc_not_implemented}
   end
 
   defp build_token_request(agent_id, intent_hash, action_type, metadata) do
