@@ -359,7 +359,11 @@ defmodule Daemon.Agent.WorkDirector.GroundedVerifier do
 
     %{
       meaningful_lines: meaningful_count,
-      has_substance: meaningful_count >= @substance_threshold and stub_patterns == [],
+      # Stub patterns only block when they dominate the diff.
+      # A single no-op :ok in a 1500-line diff is normal (init callbacks, hooks).
+      # Block when: <25 meaningful lines OR stubs are >50% of meaningful lines.
+      has_substance: meaningful_count >= @substance_threshold and
+        (stub_patterns == [] or length(stub_patterns) < meaningful_count * 0.5),
       stub_patterns: stub_patterns,
       warnings: warnings
     }
