@@ -115,6 +115,11 @@ defmodule Daemon.Sandbox.Executor do
   # This replicates the original ShellExecute behaviour so disabling the sandbox
   # is a true no-op.
   @spec beam_execute(String.t(), keyword()) :: exec_result()
+  # Cap subprocess BEAM VMs to 4 schedulers to prevent CPU/memory exhaustion.
+  # Commands like `mix test` or `mix compile` spawn a new BEAM VM that defaults
+  # to using all CPU cores — on a 10-core Mac Mini this causes load avg 30+.
+  @subprocess_schedulers 4
+
   defp beam_execute(command, opts) do
     timeout = Keyword.get(opts, :timeout, 30_000)
     cwd = Keyword.get(opts, :cwd, nil)
@@ -123,7 +128,7 @@ defmodule Daemon.Sandbox.Executor do
       Task.async(fn ->
         try do
           cmd_opts =
-            [stderr_to_stdout: true]
+            [stderr_to_stdout: true, env: subprocess_env()]
             |> then(fn o -> if cwd, do: Keyword.put(o, :cd, cwd), else: o end)
 
           {shell, shell_args} = resolve_shell()
@@ -199,5 +204,14 @@ defmodule Daemon.Sandbox.Executor do
 
     # Strip :image from call_opts so the verified value above is used
     Keyword.merge(config_defaults, Keyword.delete(call_opts, :image))
+  end
+
+  # Environment variables injected into all subprocesses.
+  # Limits BEAM VM schedulers + disables crash dumps for child processes.
+  defp subprocess_env do
+    [
+      {"ERL_AFLAGS", "+S #{@subprocess_schedulers}:#{@subprocess_schedulers}"},
+      {"ERL_CRASH_DUMP_BYTES", "0"}
+    ]
   end
 end
