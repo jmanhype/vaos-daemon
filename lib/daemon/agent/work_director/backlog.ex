@@ -11,6 +11,8 @@ defmodule Daemon.Agent.WorkDirector.Backlog do
 
   @persistence_dir Path.expand("~/.daemon/work_director")
   @persistence_file Path.join(@persistence_dir, "backlog.json")
+  @blacklist_file Path.join(@persistence_dir, "blacklist.json")
+  @max_blacklist_entries 500
   @cooldown_ms :timer.minutes(15)
   @max_attempts 3
   @stale_ms :timer.hours(24)
@@ -36,7 +38,9 @@ defmodule Daemon.Agent.WorkDirector.Backlog do
             attempt_count: non_neg_integer(),
             status: status(),
             pr_branch: String.t() | nil,
-            result: term()
+            result: term(),
+            last_failure_class: atom() | nil,
+            last_failure_reason: String.t() | nil
           }
 
     defstruct [
@@ -52,7 +56,9 @@ defmodule Daemon.Agent.WorkDirector.Backlog do
       attempt_count: 0,
       status: :pending,
       pr_branch: nil,
-      result: nil
+      result: nil,
+      last_failure_class: nil,
+      last_failure_reason: nil
     ]
 
     @doc "Create a WorkItem with auto-generated id and content_hash."
@@ -91,7 +97,11 @@ defmodule Daemon.Agent.WorkDirector.Backlog do
     Enum.reduce(items, backlog, fn item, acc ->
       case Map.get(acc, item.content_hash) do
         nil ->
-          Map.put(acc, item.content_hash, item)
+          if blacklisted?(item.content_hash) do
+            acc
+          else
+            Map.put(acc, item.content_hash, item)
+          end
 
         %WorkItem{status: status} when status in [:dispatched] ->
           # Don't overwrite in-flight items
@@ -193,13 +203,32 @@ defmodule Daemon.Agent.WorkDirector.Backlog do
     end)
   end
 
-  @doc "Mark an item as failed."
+  @doc "Mark an item as failed (no context)."
   @spec mark_failed(map(), String.t()) :: map()
   def mark_failed(backlog, content_hash) do
+    mark_failed(backlog, content_hash, %{})
+  end
+
+  @doc "Mark an item as failed with failure context. Auto-blacklists at max attempts."
+  @spec mark_failed(map(), String.t(), map()) :: map()
+  def mark_failed(backlog, content_hash, failure_context) do
     update_item(backlog, content_hash, fn item ->
-      %{item | status: :failed}
+      updated = %{item |
+        status: :failed,
+        last_failure_class: failure_context[:class],
+        last_failure_reason: truncate(inspect(failure_context[:reason]), 500)
+      }
+      if updated.attempt_count >= @max_attempts do
+        reason = "#{failure_context[:class]}: #{truncate(inspect(failure_context[:reason]), 200)}"
+        blacklist(content_hash, reason)
+      end
+      updated
     end)
   end
+
+  defp truncate(nil, _max), do: nil
+  defp truncate(str, max) when is_binary(str), do: String.slice(str, 0, max)
+  defp truncate(other, max), do: other |> inspect() |> String.slice(0, max)
 
   defp update_item(backlog, content_hash, fun) do
     case Map.get(backlog, content_hash) do
@@ -276,7 +305,9 @@ defmodule Daemon.Agent.WorkDirector.Backlog do
       "last_attempted_at" => item.last_attempted_at && DateTime.to_iso8601(item.last_attempted_at),
       "attempt_count" => item.attempt_count,
       "status" => to_string(item.status),
-      "pr_branch" => item.pr_branch
+      "pr_branch" => item.pr_branch,
+      "last_failure_class" => item.last_failure_class && to_string(item.last_failure_class),
+      "last_failure_reason" => item.last_failure_reason
     }
   end
 
@@ -294,7 +325,9 @@ defmodule Daemon.Agent.WorkDirector.Backlog do
         last_attempted_at: parse_datetime(data["last_attempted_at"]),
         attempt_count: data["attempt_count"] || 0,
         status: String.to_existing_atom(data["status"] || "pending"),
-        pr_branch: data["pr_branch"]
+        pr_branch: data["pr_branch"],
+        last_failure_class: safe_to_atom(data["last_failure_class"]),
+        last_failure_reason: data["last_failure_reason"]
       }
     rescue
       _ -> nil
@@ -310,5 +343,66 @@ defmodule Daemon.Agent.WorkDirector.Backlog do
       {:ok, dt, _offset} -> dt
       _ -> nil
     end
+  end
+
+  defp safe_to_atom(nil), do: nil
+  defp safe_to_atom(str) when is_binary(str) do
+    try do
+      String.to_existing_atom(str)
+    rescue
+      ArgumentError -> String.to_atom(str)
+    end
+  end
+
+  # -- Blacklist --
+
+  @doc "Add a content hash to the persistent blacklist."
+  @spec blacklist(String.t(), String.t()) :: :ok
+  def blacklist(content_hash, reason) do
+    bl = load_blacklist()
+    entry = %{"hash" => content_hash, "reason" => reason, "at" => DateTime.to_iso8601(DateTime.utc_now())}
+    updated = Map.put(bl, content_hash, entry)
+
+    trimmed =
+      if map_size(updated) > @max_blacklist_entries do
+        updated
+        |> Enum.sort_by(fn {_, v} -> v["at"] end)
+        |> Enum.take(-@max_blacklist_entries)
+        |> Map.new()
+      else
+        updated
+      end
+
+    persist_blacklist(trimmed)
+  end
+
+  @doc "Check if a content hash is blacklisted."
+  @spec blacklisted?(String.t()) :: boolean()
+  def blacklisted?(content_hash), do: Map.has_key?(load_blacklist(), content_hash)
+
+  @doc "Clear the blacklist (for testing)."
+  @spec clear_blacklist() :: :ok
+  def clear_blacklist, do: persist_blacklist(%{})
+
+  defp load_blacklist do
+    case File.read(@blacklist_file) do
+      {:ok, content} ->
+        case Jason.decode(content) do
+          {:ok, data} when is_map(data) -> data
+          _ -> %{}
+        end
+
+      {:error, _} ->
+        %{}
+    end
+  end
+
+  defp persist_blacklist(data) do
+    File.mkdir_p!(@persistence_dir)
+    case Jason.encode(data, pretty: true) do
+      {:ok, json} -> File.write!(@blacklist_file, json)
+      _ -> :ok
+    end
+    :ok
   end
 end
