@@ -292,7 +292,19 @@ defmodule Daemon.Agent.WorkDirector.Source.Investigation do
 end
 
 defmodule Daemon.Agent.WorkDirector.Source.Fitness do
-  @moduledoc "Maps fitness function violations to work items."
+  @moduledoc """
+  Maps fitness function violations to work items.
+
+  Uses asynchronous Fitness.Evaluator to avoid blocking WorkDirector's
+  refresh cycle. Returns cached results immediately (< 1 second) or
+  :pending if evaluation is in progress.
+
+  ## Timeout Strategy
+
+  - Old: Direct call to Daemon.Fitness.evaluate_all() - took 60-300s
+  - New: Fetch from Evaluator cache - takes < 1s
+  - Background: Evaluator runs fitness modules every 10 minutes
+  """
   @behaviour Daemon.Agent.WorkDirector.Source
 
   alias Daemon.Agent.WorkDirector.Backlog.WorkItem
@@ -302,46 +314,72 @@ defmodule Daemon.Agent.WorkDirector.Source.Fitness do
 
   @impl true
   def fetch do
-    repo_path = Application.get_env(:daemon, :repo_path, Path.expand("~/vas-swarm"))
+    # Get results from async evaluator (immediate return)
+    # Note: get_results/0 already has a 5-second timeout
+    case Daemon.Fitness.Evaluator.get_results() do
+      {:ok, results} when is_map(results) ->
+        # Safe conversion: validate results is a map before pattern matching
+        try do
+          # Apply frozen filter per-result (ratchet: only surface NEW violations)
+          # and convert to work items in a single pass
+          items =
+            results
+            |> Enum.map(fn {name, result} ->
+              try do
+                case Daemon.Fitness.apply_frozen_filter(name, result) do
+                  {:not_kept, _score, detail} ->
+                    WorkItem.new(%{
+                      source: :fitness,
+                      title: "Fitness violation: #{name}",
+                      description: detail,
+                      base_priority: 0.8,
+                      metadata: %{"fitness_name" => name}
+                    })
 
-    results =
-      try do
-        Daemon.Fitness.evaluate_all(repo_path)
-      rescue
-        _ -> []
-      catch
-        :exit, _ -> []
-      end
+                  _ ->
+                    nil
+                end
+              rescue
+                e ->
+                  # Log filter failure but continue with other fitness checks
+                  Logger.warning("[FitnessSource] Frozen filter failed for #{name}: #{Exception.message(e)}")
+                  nil
+              catch
+                :exit, reason ->
+                  Logger.warning("[FitnessSource] Frozen filter exited for #{name}: #{inspect(reason)}")
+                  nil
+              end
+            end)
+            |> Enum.filter(&(&1 != nil))
 
-    # Apply frozen filter per-result (ratchet: only surface NEW violations)
-    filtered =
-      Enum.map(results, fn {name, result} ->
-        filtered_result =
-          try do
-            Daemon.Fitness.apply_frozen_filter(name, result)
-          rescue
-            _ -> result
-          catch
-            :exit, _ -> result
-          end
+          {:ok, items}
 
-        {name, filtered_result}
-      end)
+        rescue
+          e ->
+            # Log error before falling back to empty list
+            Logger.error("[FitnessSource] Failed to process fitness results: #{Exception.message(e)}")
+            {:ok, []}
+        catch
+          :exit, reason ->
+            Logger.error("[FitnessSource] Exited while processing fitness results: #{inspect(reason)}")
+            {:ok, []}
+        end
 
-    items =
-      filtered
-      |> Enum.filter(fn {_name, {status, _score, _detail}} -> status == :not_kept end)
-      |> Enum.map(fn {name, {_status, _score, detail}} ->
-        WorkItem.new(%{
-          source: :fitness,
-          title: "Fitness violation: #{name}",
-          description: detail,
-          base_priority: 0.8,
-          metadata: %{"fitness_name" => name}
-        })
-      end)
+      :pending ->
+        # Evaluation in progress - log that we're waiting
+        Logger.info("[FitnessSource] Evaluation in progress, returning empty for this cycle")
+        {:ok, []}
 
-    {:ok, items}
+      {:error, reason} ->
+        # Evaluator error - log before falling back
+        Logger.error("[FitnessSource] Evaluator returned error: #{inspect(reason)}")
+        {:ok, []}
+
+      unexpected ->
+        # Unexpected response type - log for visibility
+        Logger.error("[FitnessSource] Unexpected response from Evaluator: #{inspect(unexpected)}")
+        {:ok, []}
+    end
   end
 end
 
