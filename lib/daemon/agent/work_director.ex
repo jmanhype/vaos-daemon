@@ -46,28 +46,28 @@ defmodule Daemon.Agent.WorkDirector do
   @daemon_repo "jmanhype/vaos-daemon"
 
   # -- Feature Flags (pipeline upgrades) --
-  # Enable one at a time. Each is independently safe to enable.
+  # ALL FLAGS ENABLED — full autonomous engineering team mode
   @enable_vault_context true         # Stage 0.5: inject prior dispatch memories from Vault
-  @enable_knowledge_context false    # Stage 0.5: query knowledge store for codebase patterns
-  @enable_investigation_pre false    # Stage 0.5: run Investigate.execute before dispatch (high cost)
-  @enable_appraiser false            # Stage 0.5: estimate complexity/cost via Appraiser
+  @enable_knowledge_context true     # Stage 0.5: query knowledge store for codebase patterns
+  @enable_investigation_pre true     # Stage 0.5: run Investigate.execute before dispatch (high cost)
+  @enable_appraiser true             # Stage 0.5: estimate complexity/cost via Appraiser
   @enable_specialist_routing true    # Stage 1: Roster agent selection vs force_simple
-  @enable_swarm_dispatch false       # Stage 1: SwarmMode patterns for complex tasks
+  @enable_swarm_dispatch true        # Stage 1: SwarmMode patterns for complex tasks
   @enable_substance_check true       # Stage 1.9: reject stubs (hard gate)
   @enable_autofixer true             # Stage 2: AutoFixer instead of simple 2-attempt loop
   @enable_test_gate true             # Stage 2.75: mix test --max-failures 5 (soft gate)
   @enable_code_review true           # Stage 2.9: debate/review pattern before shipping
   @enable_review_fix_loop true       # Stage 2.9: dispatch fix agent when review finds issues (Reflexion)
   @enable_vault_remember true        # Stage 3.5: store dispatch outcome in Vault
-  @enable_knowledge_remember false   # Stage 3.5: store patterns in knowledge graph
-  @enable_skill_evolution false      # Stage 3.5: feed failures to SkillEvolution
-  @enable_introspector_feed false    # Stage 0.5: pull CodeIntrospector/ActiveLearner insights
+  @enable_knowledge_remember true    # Stage 3.5: store patterns in knowledge graph
+  @enable_skill_evolution true       # Stage 3.5: feed failures to SkillEvolution
+  @enable_introspector_feed true     # Stage 0.5: pull CodeIntrospector/ActiveLearner insights
 
   # -- Pre-dispatch gates --
   @enable_risk_assessment true         # Pre-dispatch: score risk, force review on medium, block high
-  @enable_risk_approval_gate false     # Pre-dispatch: route high-risk to Governance.Approvals
+  @enable_risk_approval_gate true      # Pre-dispatch: route high-risk to Governance.Approvals
   @enable_strategic_rejection true     # Pre-dispatch: refuse tasks that violate architectural invariants
-  @enable_strategic_debate false       # Pre-dispatch: LLM debate for borderline strategic rejections
+  @enable_strategic_debate true        # Pre-dispatch: LLM debate for borderline strategic rejections
 
   # -- Stage 0.5 context sections --
   @enable_impact_analysis true         # Stage 0.5: trace callers/dependents of affected files
