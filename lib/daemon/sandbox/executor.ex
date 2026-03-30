@@ -131,26 +131,43 @@ defmodule Daemon.Sandbox.Executor do
 
     case checkout_slot() do
       :ok ->
+        parent = self()
+        os_pid_ref = make_ref()
+
         try do
           task =
             Task.async(fn ->
               try do
-                cmd_opts =
-                  [stderr_to_stdout: true, env: subprocess_env()]
-                  |> then(fn o -> if cwd, do: Keyword.put(o, :cd, cwd), else: o end)
-
                 {shell, shell_args} = resolve_shell()
-                System.cmd(shell, shell_args ++ [command], cmd_opts)
+                env = subprocess_env()
+                  |> Enum.map(fn {k, v} -> {String.to_charlist(k), String.to_charlist(v)} end)
+
+                port_opts = [:binary, :exit_status, :stderr_to_stdout, args: shell_args ++ [command], env: env]
+                port_opts = if cwd, do: [{:cd, String.to_charlist(cwd)} | port_opts], else: port_opts
+
+                port = Port.open({:spawn_executable, to_charlist(shell)}, port_opts)
+                {:os_pid, os_pid} = Port.info(port, :os_pid)
+                send(parent, {os_pid_ref, os_pid})
+
+                collect_port_output(port, [])
               rescue
                 e -> {Exception.message(e), 1}
               end
             end)
+
+          # Receive OS PID from the task (arrives almost immediately)
+          os_pid = receive do
+            {^os_pid_ref, pid} -> pid
+          after
+            5_000 -> nil
+          end
 
           case Task.yield(task, timeout) || Task.shutdown(task) do
             {:ok, {output, exit_code}} ->
               {:ok, output, exit_code}
 
             nil ->
+              if os_pid, do: kill_process_tree(os_pid)
               Logger.warning("[Sandbox.Executor] BEAM task timed out after #{timeout}ms")
               {:error, "Command timed out after #{timeout}ms"}
           end
@@ -162,6 +179,28 @@ defmodule Daemon.Sandbox.Executor do
         Logger.warning("[Sandbox.Executor] All #{@max_concurrent_subprocesses} subprocess slots full, rejecting command")
         {:error, "Subprocess concurrency limit reached (#{@max_concurrent_subprocesses} slots full)"}
     end
+  end
+
+  # Collect all output from a Port until it exits.
+  # Returns {output_binary, exit_code} matching System.cmd's return format.
+  defp collect_port_output(port, acc) do
+    receive do
+      {^port, {:data, data}} ->
+        collect_port_output(port, [data | acc])
+      {^port, {:exit_status, status}} ->
+        {acc |> Enum.reverse() |> IO.iodata_to_binary(), status}
+    end
+  end
+
+  # Kill an OS process and all its children (the entire process tree).
+  # This prevents orphaned beam.smp processes when mix test/compile times out.
+  defp kill_process_tree(os_pid) do
+    Logger.warning("[Sandbox.Executor] Killing process tree (OS PID #{os_pid})")
+    # Kill children first, then parent. pkill -P sends to children of the given PID.
+    System.cmd("sh", ["-c", "pkill -9 -P #{os_pid} 2>/dev/null; kill -9 #{os_pid} 2>/dev/null"],
+      stderr_to_stdout: true)
+  rescue
+    _ -> :ok
   end
 
   # -- Global subprocess concurrency limiter (ETS counter) --
