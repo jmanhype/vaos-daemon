@@ -63,6 +63,20 @@ config :daemon,
   require_auth: false,
 
   # ---------------------------------------------------------------------------
+  # Metrics endpoint — Prometheus format on dedicated port
+  # ---------------------------------------------------------------------------
+  # Master switch for metrics server
+  metrics_enabled: System.get_env("DAEMON_METRICS_ENABLED", "true") == "true",
+
+  # Port for metrics endpoint (default 9568)
+  # Use DAEMON_METRICS_PORT environment variable to override
+  metrics_port: String.to_integer(System.get_env("DAEMON_METRICS_PORT", "9568")),
+
+  # Bind address for metrics server (default 127.0.0.1 for security)
+  # Set to 0.0.0.0 only if behind firewall and you need external monitoring
+  metrics_ip: System.get_env("DAEMON_METRICS_IP", "127.0.0.1"),
+
+  # ---------------------------------------------------------------------------
   # Sandbox — Docker container isolation for skill execution
   # ---------------------------------------------------------------------------
   # Master switch. Set DAEMON_SANDBOX_ENABLED=true in your environment to enable.
