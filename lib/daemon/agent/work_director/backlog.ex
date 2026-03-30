@@ -8,6 +8,7 @@ defmodule Daemon.Agent.WorkDirector.Backlog do
   """
 
   alias Daemon.Investigation.PromptSelector
+  alias Daemon.Agent.WorkDirector.Backlog.WorkItem
 
   @persistence_dir Path.expand("~/.daemon/work_director")
   @persistence_file Path.join(@persistence_dir, "backlog.json")
@@ -17,77 +18,6 @@ defmodule Daemon.Agent.WorkDirector.Backlog do
   @max_attempts 3
   @stale_ms :timer.hours(24)
   @recycle_ms :timer.hours(8)
-
-  defmodule WorkItem do
-    @moduledoc "A unit of work in the WorkDirector backlog."
-
-    @type source :: :vision | :issues | :investigation | :fitness | :manual
-
-    @type status :: :pending | :dispatched | :completed | :failed
-
-    @type t :: %__MODULE__{
-            id: String.t() | nil,
-            content_hash: String.t(),
-            source: source(),
-            title: String.t(),
-            description: String.t(),
-            base_priority: float(),
-            metadata: map(),
-            created_at: DateTime.t() | nil,
-            last_attempted_at: DateTime.t() | nil,
-            attempt_count: non_neg_integer(),
-            status: status(),
-            pr_branch: String.t() | nil,
-            result: term(),
-            last_failure_class: atom() | nil,
-            last_failure_reason: String.t() | nil
-          }
-
-    defstruct [
-      :id,
-      :content_hash,
-      :source,
-      :title,
-      :description,
-      base_priority: 0.5,
-      metadata: %{},
-      created_at: nil,
-      last_attempted_at: nil,
-      attempt_count: 0,
-      status: :pending,
-      pr_branch: nil,
-      result: nil,
-      last_failure_class: nil,
-      last_failure_reason: nil
-    ]
-
-    @doc "Create a WorkItem with auto-generated id and content_hash."
-    @spec new(map()) :: t()
-    def new(attrs) when is_map(attrs) do
-      title = Map.get(attrs, :title, "")
-      description = Map.get(attrs, :description, "")
-      hash = content_hash(title, description)
-
-      %__MODULE__{
-        id: hash,
-        content_hash: hash,
-        source: Map.get(attrs, :source, :manual),
-        title: title,
-        description: description,
-        base_priority: Map.get(attrs, :base_priority, 0.5),
-        metadata: Map.get(attrs, :metadata, %{}),
-        created_at: DateTime.utc_now()
-      }
-    end
-
-    @doc "Compute SHA256 content hash for dedup."
-    @spec content_hash(String.t(), String.t()) :: String.t()
-    def content_hash(title, description) do
-      :crypto.hash(:sha256, title <> "\n" <> description)
-      |> Base.encode16(case: :lower)
-      |> binary_part(0, 16)
-    end
-  end
 
   # -- Backlog operations --
 
