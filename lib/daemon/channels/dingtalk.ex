@@ -111,7 +111,9 @@ defmodule Daemon.Channels.DingTalk do
 
   @impl true
   def handle_cast({:event, body}, state) do
-    spawn(fn -> process_event(body, state) end)
+    Task.Supervisor.start_child(Daemon.Events.TaskSupervisor, fn ->
+      process_event(body, state)
+    end)
     {:noreply, state}
   end
 

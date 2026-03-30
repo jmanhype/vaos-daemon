@@ -131,7 +131,9 @@ defmodule Daemon.Channels.Slack do
 
   # Regular event callback wrapper
   defp route_event(%{"event" => event}, state) do
-    spawn(fn -> dispatch_event(event, state) end)
+    Task.Supervisor.start_child(Daemon.Events.TaskSupervisor, fn ->
+      dispatch_event(event, state)
+    end)
     :ok
   end
 

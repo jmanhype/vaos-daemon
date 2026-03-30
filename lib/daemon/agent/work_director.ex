@@ -931,9 +931,13 @@ defmodule Daemon.Agent.WorkDirector do
           }
         }
       rescue
-        _ -> %{score: 0, level: :low, breakdown: %{}}
+        e ->
+          Logger.warning("[WorkDirector] Risk assessment crashed, defaulting to HIGH: #{Exception.message(e)}")
+          %{score: 7, level: :high, breakdown: %{error: "assessment_crashed"}}
       catch
-        :exit, _ -> %{score: 0, level: :low, breakdown: %{}}
+        :exit, reason ->
+          Logger.warning("[WorkDirector] Risk assessment exit, defaulting to HIGH: #{inspect(reason)}")
+          %{score: 7, level: :high, breakdown: %{error: "assessment_exit"}}
       end
     else
       %{score: 0, level: :low, breakdown: %{}}
@@ -1713,13 +1717,29 @@ defmodule Daemon.Agent.WorkDirector do
         Logger.info("[WorkDirector] Stage 2.75: Running tests")
         recover_branch(branch, repo_path)
 
+        # Use Port.open directly so we can explicitly close it on timeout,
+        # guaranteeing SIGHUP delivery to the OS process.
+        mix_exe = System.find_executable("mix") || "mix"
+        parent = self()
+        port_ref = make_ref()
+
         task = Task.async(fn ->
-          System.cmd("mix", ["test", "--max-failures", "5"],
-            cd: repo_path,
-            stderr_to_stdout: true,
-            env: [{"MIX_ENV", "test"}]
-          )
+          port = Port.open({:spawn_executable, mix_exe}, [
+            :binary, :exit_status, :stderr_to_stdout,
+            args: ["test", "--max-failures", "5"],
+            cd: String.to_charlist(repo_path),
+            env: [{~c"MIX_ENV", ~c"test"}]
+          ])
+          send(parent, {port_ref, port})
+          test_gate_collect_output(port, [])
         end)
+
+        # Receive port ref for explicit cleanup on timeout
+        test_port = receive do
+          {^port_ref, port} -> port
+        after
+          5_000 -> nil
+        end
 
         case Task.yield(task, @test_gate_timeout_ms) || Task.shutdown(task, :brutal_kill) do
           {:ok, {_output, 0}} ->
@@ -1738,6 +1758,10 @@ defmodule Daemon.Agent.WorkDirector do
             )
 
           nil ->
+            # Explicitly close port to send SIGHUP to the OS process
+            if test_port do
+              try do Port.close(test_port) catch _, _ -> :ok end
+            end
             Logger.warning("[WorkDirector] Stage 2.75: Tests TIMED OUT after #{div(@test_gate_timeout_ms, 1000)}s (soft gate)")
         end
       rescue
@@ -1745,6 +1769,15 @@ defmodule Daemon.Agent.WorkDirector do
       catch
         :exit, r -> Logger.warning("[WorkDirector] Stage 2.75 exit: #{inspect(r)}")
       end
+    end
+  end
+
+  defp test_gate_collect_output(port, acc) do
+    receive do
+      {^port, {:data, data}} ->
+        test_gate_collect_output(port, [data | acc])
+      {^port, {:exit_status, code}} ->
+        {acc |> Enum.reverse() |> IO.iodata_to_binary(), code}
     end
   end
 

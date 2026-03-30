@@ -130,7 +130,9 @@ defmodule Daemon.Channels.Telegram do
 
   @impl true
   def handle_cast({:update, update}, state) do
-    spawn(fn -> process_update(update) end)
+    Task.Supervisor.start_child(Daemon.Events.TaskSupervisor, fn ->
+      process_update(update)
+    end)
     {:noreply, state}
   end
 

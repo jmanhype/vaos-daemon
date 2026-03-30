@@ -26,6 +26,8 @@ defmodule Daemon.Security.ShellPolicy do
     systemctl
     passwd useradd userdel
     nc ncat
+    crontab at batch
+    nohup screen tmux
   )
                     )
 
@@ -106,7 +108,33 @@ defmodule Daemon.Security.ShellPolicy do
     {~S"\bgit\s+clean\s+-[a-zA-Z]*f", ""},
     {~S"\bgit\s+checkout\s+--\s*\.", ""},
     {~S"\bgit\s+branch\s+-D\b", ""},
-    {~S"\bgit\s+.*--no-verify\b", ""}
+    {~S"\bgit\s+.*--no-verify\b", ""},
+
+    # ── Interpreter-based bypass prevention ──────────────────────────
+    # Block `python -c "import os; os.system('rm -rf /')"` and similar
+    {~S"\b(python3?|ruby|perl|node|php|lua)\s+-(c|e)\s", ""},
+    # Block piping into interpreters
+    {~S"\|\s*(python3?|ruby|perl|node|php|lua)\b", ""},
+    # Block eval/exec in interpreter one-liners
+    {~S"\bpython3?\s.*\b(exec|eval|__import__|os\.system|subprocess)\b", ""},
+
+    # ── Encoding-based bypass prevention ─────────────────────────────
+    # Block base64 decode piped to shell
+    {~S"\bbase64\s+(-d|--decode)", ""},
+    # Block xxd reverse (hex to binary)
+    {~S"\bxxd\s+-r\b", ""},
+    # Block echo with escape sequences piped to shell
+    {~S"echo\s+-[a-zA-Z]*e.*\|", ""},
+
+    # ── Additional dangerous commands ────────────────────────────────
+    # Block crontab modification
+    {~S"\bcrontab\b", ""},
+    # Block at/batch scheduling
+    {~S"\b(at|batch)\s", ""},
+    # Block environment manipulation for privilege escalation
+    {~S"\benv\s.*=.*\b(sudo|rm|dd|mkfs)\b", ""},
+    # Block xargs with dangerous commands
+    {~S"\bxargs\s.*\b(rm|sudo|dd|mkfs|kill)\b", ""}
   ]
 
   @max_output_bytes 100_000

@@ -66,7 +66,7 @@ defmodule Daemon.Agent.Orchestrator.SwarmMode do
   Returns `{:ok, swarm_id}` or `{:error, reason}`.
   """
   def launch(task, opts \\ []) do
-    GenServer.call(__MODULE__, {:launch, task, opts}, :infinity)
+    GenServer.call(__MODULE__, {:launch, task, opts}, :timer.minutes(5))
   end
 
   @doc "Get status and metadata of a running or completed swarm."
