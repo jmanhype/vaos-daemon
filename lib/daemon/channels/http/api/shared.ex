@@ -7,16 +7,23 @@ defmodule Daemon.Channels.HTTP.API.Shared do
   @doc """
   Send a JSON error response with status code.
 
+  DEPRECATED: Use Daemon.Channels.HTTP.ErrorResponse.send_error/5 instead.
+
   SECURITY: `details` must be a caller-supplied static string.
   Never pass `inspect(reason)` or any internal error term as `details`
   — doing so may leak stack traces, configuration values, or prompt content
   to the client.
   """
   def json_error(conn, status, error, details) do
+    # Use new structured error format
     body =
-      case Jason.encode(%{error: error, details: details}) do
+      case Jason.encode(%{
+        error: error,
+        message: details,
+        details: nil
+      }) do
         {:ok, json} -> json
-        {:error, _} -> Jason.encode!(%{error: error})
+        {:error, _} -> Jason.encode!(%{error: error, message: details})
       end
 
     conn
