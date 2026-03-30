@@ -487,6 +487,11 @@ defmodule Daemon.Agent.WorkDirector do
     {:noreply, state}
   end
 
+  def handle_info(msg, state) do
+    Logger.debug("[WorkDirector] Unexpected message: #{inspect(msg, limit: 200)}")
+    {:noreply, state}
+  end
+
   @impl true
   def handle_call(:stats, _from, state) do
     stats = %{
@@ -687,12 +692,12 @@ defmodule Daemon.Agent.WorkDirector do
 
                   {:proceed_with_review, confidence} ->
                     Logger.info("[WorkDirector] Confidence #{confidence.score} (medium) — dispatching with review for '#{item.title}'")
-                    Process.put(:dispatch_judgment_context, %{
+                    judgment_ctx = %{
                       confidence: confidence,
                       pr_conflicts: pr_conflicts,
                       force_review: true
-                    })
-                    do_dispatch_item(state, item, branch)
+                    }
+                    do_dispatch_item(state, item, branch, judgment_ctx)
 
                   {:decompose, confidence} ->
                     Logger.info("[WorkDirector] Confidence #{confidence.score} (low) — decomposing '#{item.title}'")
@@ -1064,7 +1069,9 @@ defmodule Daemon.Agent.WorkDirector do
     end
   end
 
-  defp do_dispatch_item(state, %WorkItem{} = item, branch) do
+  defp do_dispatch_item(state, item, branch, judgment_ctx \\ nil)
+
+  defp do_dispatch_item(state, %WorkItem{} = item, branch, judgment_ctx) do
     session_id = "workdir-#{:erlang.unique_integer([:positive])}"
 
     Logger.info("[WorkDirector] Dispatching: #{item.title} (source=#{item.source}, priority=#{item.base_priority})")
@@ -1075,6 +1082,9 @@ defmodule Daemon.Agent.WorkDirector do
 
     {_pid, _monitor_ref} =
       spawn_monitor(fn ->
+        # Propagate judgment context into spawned process so staged_dispatch can read it
+        if judgment_ctx, do: Process.put(:dispatch_judgment_context, judgment_ctx)
+
         result =
           try do
             staged_dispatch(item, branch, session_id, repo_path)
@@ -1704,7 +1714,8 @@ defmodule Daemon.Agent.WorkDirector do
         recover_branch(branch, repo_path)
 
         task = Task.async(fn ->
-          System.cmd("bash", ["-c", "cd #{repo_path} && mix test --max-failures 5 2>&1"],
+          System.cmd("mix", ["test", "--max-failures", "5"],
+            cd: repo_path,
             stderr_to_stdout: true,
             env: [{"MIX_ENV", "test"}]
           )
@@ -2190,8 +2201,8 @@ defmodule Daemon.Agent.WorkDirector do
     # Use plain `mix compile` — NOT --warnings-as-errors, because this codebase
     # has 60+ pre-existing warnings (Bcrypt, film_pipeline, etc.) that would
     # cause false failures on every agent attempt.
-    case System.cmd("bash", ["-c", "cd #{repo_path} && mix compile 2>&1"],
-           stderr_to_stdout: true, env: [{"MIX_ENV", "dev"}]) do
+    case System.cmd("mix", ["compile"],
+           cd: repo_path, stderr_to_stdout: true, env: [{"MIX_ENV", "dev"}]) do
       {_output, 0} -> :ok
       {output, _} ->
         # Filter out warnings — only report actual errors
@@ -2638,9 +2649,13 @@ defmodule Daemon.Agent.WorkDirector do
         _ -> false
       end
     rescue
-      _ -> true
+      e ->
+        Logger.warning("[WorkDirector] Budget check failed, allowing: #{Exception.message(e)}")
+        true
     catch
-      :exit, _ -> true
+      :exit, reason ->
+        Logger.warning("[WorkDirector] Budget check exit, allowing: #{inspect(reason)}")
+        true
     end
   end
 
@@ -2867,14 +2882,20 @@ defmodule Daemon.Agent.WorkDirector do
           {:ok, %{"version" => 1, "arms" => raw_arms} = data} ->
             arms =
               Enum.reduce(raw_arms, state.arms, fn {source_str, arm_data}, acc ->
-                source = String.to_existing_atom(source_str)
-                alpha = arm_data["alpha"] || 1.0
-                beta = arm_data["beta"] || 1.0
+                try do
+                  source = String.to_existing_atom(source_str)
+                  alpha = arm_data["alpha"] || 1.0
+                  beta = arm_data["beta"] || 1.0
 
-                if is_number(alpha) and is_number(beta) and alpha > 0 and beta > 0 do
-                  Map.put(acc, source, %{alpha: alpha / 1.0, beta: beta / 1.0})
-                else
-                  acc
+                  if is_number(alpha) and is_number(beta) and alpha > 0 and beta > 0 do
+                    Map.put(acc, source, %{alpha: alpha / 1.0, beta: beta / 1.0})
+                  else
+                    acc
+                  end
+                rescue
+                  ArgumentError ->
+                    Logger.warning("[WorkDirector] Skipping unknown arm source: #{source_str}")
+                    acc
                 end
               end)
 
