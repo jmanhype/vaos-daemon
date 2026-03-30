@@ -74,10 +74,10 @@ defmodule Daemon.Agent.WorkDirector do
   @enable_production_context true      # Stage 0.5: inject telemetry + provider health into prompt
 
   # -- Pre-dispatch judgment (Phase 2) --
-  @enable_already_solved_check false    # Gate: skip tasks already solved by existing code or merged PRs
-  @enable_pr_conflict_awareness false   # Gate: detect file conflicts with open PRs, inject awareness
-  @enable_dispatch_confidence false     # Gate: aggregate confidence score, hold back when low
-  @enable_task_decomposition false      # Gate: split broad low-confidence tasks into sub-items
+  @enable_already_solved_check true     # Gate: skip tasks already solved by existing code or merged PRs
+  @enable_pr_conflict_awareness true    # Gate: detect file conflicts with open PRs, inject awareness
+  @enable_dispatch_confidence true      # Gate: aggregate confidence score, hold back when low
+  @enable_task_decomposition true       # Gate: split broad low-confidence tasks into sub-items
 
   @confidence_high 0.7                  # >= 0.7: dispatch normally
   @confidence_low 0.4                   # < 0.4: hold back (decompose or skip)
