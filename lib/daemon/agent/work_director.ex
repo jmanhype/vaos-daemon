@@ -56,7 +56,7 @@ defmodule Daemon.Agent.WorkDirector do
   @enable_investigation_pre true     # Stage 0.5: run Investigate.execute before dispatch (high cost)
   @enable_appraiser true             # Stage 0.5: estimate complexity/cost via Appraiser
   @enable_specialist_routing true    # Stage 1: Roster agent selection vs force_simple
-  @enable_swarm_dispatch true        # Stage 1: SwarmMode patterns for complex tasks
+  @enable_swarm_dispatch false       # Stage 1: Disabled — SwarmWorker has no tool access (text-only)
   @enable_substance_check true       # Stage 1.9: reject stubs (hard gate)
   @enable_autofixer true             # Stage 2: AutoFixer instead of simple 2-attempt loop
   @enable_test_gate true             # Stage 2.75: mix test --max-failures 5 (hard gate — blocks PR)
