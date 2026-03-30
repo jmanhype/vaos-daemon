@@ -71,6 +71,7 @@ defmodule Mix.Tasks.Osa.Experiment do
   end
 
   defp cmd_flags do
+    ensure_started()
     Mix.shell().info("\nWorkDirector Feature Flags:\n")
     flags = WorkDirector.feature_flags()
 
