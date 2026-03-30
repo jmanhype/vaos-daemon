@@ -177,13 +177,17 @@ defmodule Daemon.Channels.Feishu do
 
   # v1 event callback
   defp route_event(%{"header" => %{"event_type" => event_type}, "event" => event}, state) do
-    spawn(fn -> dispatch_event(event_type, event, state) end)
+    Task.Supervisor.start_child(Daemon.Events.TaskSupervisor, fn ->
+      dispatch_event(event_type, event, state)
+    end)
     :ok
   end
 
   # v1 legacy event
   defp route_event(%{"event" => event, "type" => event_type}, state) do
-    spawn(fn -> dispatch_event(event_type, event, state) end)
+    Task.Supervisor.start_child(Daemon.Events.TaskSupervisor, fn ->
+      dispatch_event(event_type, event, state)
+    end)
     :ok
   end
 

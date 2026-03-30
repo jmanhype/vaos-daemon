@@ -57,9 +57,12 @@ defmodule Daemon.Events.Bus do
     * `:signal_sn` - signal-to-noise ratio (0.0-1.0)
   """
   def emit(event_type, payload \\ %{}, opts \\ []) when event_type in @event_types do
-    # Run entire emit body in a spawned process to never block the caller.
+    # Run entire emit body in a supervised task to never block the caller.
     # The old goldrush + auto_classify pipeline can deadlock or timeout.
-    spawn(fn -> do_emit(event_type, payload, opts) end)
+    # Using TaskSupervisor so crashes are logged instead of silently lost.
+    Task.Supervisor.start_child(Daemon.Events.TaskSupervisor, fn ->
+      do_emit(event_type, payload, opts)
+    end)
     {:ok, nil}
   end
 

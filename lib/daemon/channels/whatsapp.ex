@@ -151,7 +151,9 @@ defmodule Daemon.Channels.WhatsApp do
 
   @impl true
   def handle_cast({:webhook, body}, state) do
-    spawn(fn -> process_webhook(body, state) end)
+    Task.Supervisor.start_child(Daemon.Events.TaskSupervisor, fn ->
+      process_webhook(body, state)
+    end)
     {:noreply, state}
   end
 

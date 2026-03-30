@@ -141,7 +141,9 @@ defmodule Daemon.Channels.Discord do
     input = build_slash_input(data)
 
     Logger.debug("Discord: Slash command from #{username} in #{channel_id}: #{input}")
-    spawn(fn -> handle_command(channel_id, user_id, input, state) end)
+    Task.Supervisor.start_child(Daemon.Events.TaskSupervisor, fn ->
+      handle_command(channel_id, user_id, input, state)
+    end)
 
     # Deferred response while we process
     {:ok, %{type: 5}}
@@ -157,7 +159,9 @@ defmodule Daemon.Channels.Discord do
     custom_id = data["custom_id"] || ""
 
     Logger.debug("Discord: Component interaction custom_id=#{custom_id}")
-    spawn(fn -> handle_command(channel_id, user_id, custom_id, state) end)
+    Task.Supervisor.start_child(Daemon.Events.TaskSupervisor, fn ->
+      handle_command(channel_id, user_id, custom_id, state)
+    end)
     {:ok, %{type: 6}}
   end
 

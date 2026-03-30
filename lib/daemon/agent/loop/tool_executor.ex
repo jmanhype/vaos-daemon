@@ -29,7 +29,10 @@ defmodule Daemon.Agent.Loop.ToolExecutor do
   def permission_tier_allows?(:full, _tool), do: true
   def permission_tier_allows?(:read_only, tool), do: tool in @read_only_tools
   def permission_tier_allows?(:workspace, tool), do: tool in (@read_only_tools ++ @workspace_tools)
-  def permission_tier_allows?(_, _), do: true
+  def permission_tier_allows?(tier, tool) do
+    Logger.warning("[loop] Unknown permission tier #{inspect(tier)} denied #{tool} — defaulting to deny")
+    false
+  end
 
   @doc """
   Execute a single tool call — used by parallel Task.async_stream.

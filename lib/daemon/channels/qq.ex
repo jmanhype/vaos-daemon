@@ -151,12 +151,16 @@ defmodule Daemon.Channels.QQ do
 
   # Dispatch message
   defp route_event(%{"t" => "AT_MESSAGE_CREATE", "d" => data}, state) do
-    spawn(fn -> handle_message(data, state) end)
+    Task.Supervisor.start_child(Daemon.Events.TaskSupervisor, fn ->
+      handle_message(data, state)
+    end)
     :ok
   end
 
   defp route_event(%{"t" => "MESSAGE_CREATE", "d" => data}, state) do
-    spawn(fn -> handle_message(data, state) end)
+    Task.Supervisor.start_child(Daemon.Events.TaskSupervisor, fn ->
+      handle_message(data, state)
+    end)
     :ok
   end
 

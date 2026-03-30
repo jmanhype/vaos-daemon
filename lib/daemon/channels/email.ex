@@ -132,7 +132,9 @@ defmodule Daemon.Channels.Email do
 
   @impl true
   def handle_cast({:inbound, params}, state) do
-    spawn(fn -> process_inbound(params, state) end)
+    Task.Supervisor.start_child(Daemon.Events.TaskSupervisor, fn ->
+      process_inbound(params, state)
+    end)
     {:noreply, state}
   end
 
