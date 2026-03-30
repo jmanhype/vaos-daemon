@@ -61,24 +61,10 @@ defmodule Daemon.Production.SoraPipeline do
   var btns=document.querySelectorAll('button');for(var i=0;i<btns.length;i++){var t=btns[i].textContent.trim();if(t==='Create video'||t==='Create'){var r=btns[i].getBoundingClientRect();Math.round(r.x+r.width/2)+','+Math.round(r.y+r.height/2);break;}}
   """
 
-  # Fill the main prompt textarea (placeholder: "Describe your video...")
-  @fill_main_prompt_js_template ~S"""
-  var tas=document.querySelectorAll('textarea');for(var i=0;i<tas.length;i++){if(tas[i].placeholder==='Describe your video...'){var nativeSetter=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;nativeSetter.call(tas[i],'PROMPT_TEXT');tas[i].dispatchEvent(new Event('input',{bubbles:true}));tas[i].dispatchEvent(new Event('change',{bubbles:true}));'main_prompt_set';break;}}
-  """
-
-  # Fill Scene 1 textarea (placeholder: "Describe this scene…")
-  @fill_scene1_js_template ~S"""
-  var tas=document.querySelectorAll('textarea');for(var i=0;i<tas.length;i++){if(tas[i].placeholder.indexOf('Describe this scene')>-1){var nativeSetter=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;nativeSetter.call(tas[i],'PROMPT_TEXT');tas[i].dispatchEvent(new Event('input',{bubbles:true}));tas[i].dispatchEvent(new Event('change',{bubbles:true}));'scene1_set';break;}}
-  """
-
   # Fill Scene 2 textarea — it's the second textarea with the scene placeholder
   # After Scene 1 is filled, click on Scene 2 header to reveal its textarea
   @click_scene2_js ~S"""
   var divs=document.querySelectorAll('div,button');for(var i=0;i<divs.length;i++){var t=divs[i].textContent.trim();if(t==='Scene 2'||t.indexOf('Scene 2')===0){divs[i].click();'scene2_clicked';break;}}
-  """
-
-  @fill_scene2_js_template ~S"""
-  var tas=document.querySelectorAll('textarea');var sceneTextareas=[];for(var i=0;i<tas.length;i++){if(tas[i].placeholder.indexOf('Describe this scene')>-1){sceneTextareas.push(tas[i]);}}if(sceneTextareas.length>=2){var ta=sceneTextareas[1];var nativeSetter=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;nativeSetter.call(ta,'PROMPT_TEXT');ta.dispatchEvent(new Event('input',{bubbles:true}));ta.dispatchEvent(new Event('change',{bubbles:true}));'scene2_set';}else if(sceneTextareas.length===1){var ta=sceneTextareas[0];var nativeSetter=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;nativeSetter.call(ta,'PROMPT_TEXT');ta.dispatchEvent(new Event('input',{bubbles:true}));ta.dispatchEvent(new Event('change',{bubbles:true}));'scene2_set_reused';}else{'no_scene2_textarea'}
   """
 
   # Count "Your draft is ready" items on the Activity page
