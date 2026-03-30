@@ -296,7 +296,9 @@ defmodule Daemon.Providers.Registry do
   # --- Private ---
 
   defp call_with_fallback(provider, module, messages, opts) do
-    case with_retry(fn -> apply_provider(module, messages, opts) end) do
+    case Daemon.Providers.ConcurrencyLimiter.with_limit(fn ->
+      with_retry(fn -> apply_provider(module, messages, opts) end)
+    end) do
       {:ok, _} = result ->
         HealthChecker.record_success(provider)
         result

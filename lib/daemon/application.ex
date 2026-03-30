@@ -24,6 +24,9 @@ defmodule Daemon.Application do
   def start(_type, _args) do
     Application.put_env(:daemon, :start_time, System.system_time(:second))
 
+    # LLM concurrency limiter — caps total in-flight API calls across all subsystems
+    Daemon.Providers.ConcurrencyLimiter.init()
+
     # ETS table for Loop cancel flags — must exist before any agent session starts.
     # public + set so Loop.cancel/1 and run_loop can read/write concurrently.
     :ets.new(:daemon_cancel_flags, [:named_table, :public, :set])

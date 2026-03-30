@@ -44,6 +44,7 @@ defmodule Daemon.Agent.WorkDirector do
   @max_completed_prs 50
   @circuit_breaker_threshold 5
   @circuit_breaker_ms :timer.minutes(30)
+  @subprocess_schedulers 4
   @daemon_repo "jmanhype/vaos-daemon"
 
   # -- Feature Flags (pipeline upgrades) --
@@ -720,7 +721,7 @@ defmodule Daemon.Agent.WorkDirector do
   @orchestrator_timeout_ms :timer.minutes(15)
   @compile_fix_max_attempts 2
   @review_fix_max_attempts 1         # Max refinement cycles in Stage 2.9 Reflexion loop
-  @agent_max_iterations 35
+  @agent_max_iterations 20
 
   # -- Risk assessment thresholds --
   @risk_high_threshold 7
@@ -1745,7 +1746,10 @@ defmodule Daemon.Agent.WorkDirector do
             :binary, :exit_status, :stderr_to_stdout,
             args: ["test", "--max-failures", "5"],
             cd: String.to_charlist(repo_path),
-            env: [{~c"MIX_ENV", ~c"test"}]
+            env: [
+              {~c"MIX_ENV", ~c"test"},
+              {~c"ERL_AFLAGS", ~c"+S #{@subprocess_schedulers}:#{@subprocess_schedulers}"}
+            ]
           ])
           send(parent, {port_ref, port})
           test_gate_collect_output(port, [])
@@ -2256,7 +2260,8 @@ defmodule Daemon.Agent.WorkDirector do
     # has 60+ pre-existing warnings (Bcrypt, film_pipeline, etc.) that would
     # cause false failures on every agent attempt.
     case System.cmd("mix", ["compile"],
-           cd: repo_path, stderr_to_stdout: true, env: [{"MIX_ENV", "dev"}]) do
+           cd: repo_path, stderr_to_stdout: true,
+           env: [{"MIX_ENV", "dev"}, {"ERL_AFLAGS", "+S #{@subprocess_schedulers}:#{@subprocess_schedulers}"}]) do
       {_output, 0} -> :ok
       {output, _} ->
         # Filter out warnings — only report actual errors
