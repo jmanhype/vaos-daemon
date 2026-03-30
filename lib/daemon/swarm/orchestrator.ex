@@ -36,6 +36,9 @@ defmodule Daemon.Swarm.Orchestrator do
   # 5 minutes
   @default_timeout_ms 300_000
   @valid_patterns [:parallel, :pipeline, :debate, :review]
+  # Prune completed/failed swarms older than 5 minutes
+  @prune_interval_ms :timer.minutes(2)
+  @prune_age_ms :timer.minutes(5)
 
   defstruct swarms: %{},
             active_count: 0
@@ -80,6 +83,7 @@ defmodule Daemon.Swarm.Orchestrator do
   @impl true
   def init(state) do
     Logger.info("Swarm orchestrator started (max_swarms=#{@max_swarms})")
+    schedule_prune()
     {:ok, state}
   end
 
@@ -269,6 +273,26 @@ defmodule Daemon.Swarm.Orchestrator do
       _ ->
         {:noreply, state}
     end
+  end
+
+  @impl true
+  def handle_info(:prune_completed, state) do
+    now = DateTime.utc_now()
+    cutoff = DateTime.add(now, -div(@prune_age_ms, 1000), :second)
+
+    {pruned, kept} =
+      Enum.split_with(state.swarms, fn {_id, swarm} ->
+        swarm.status in [:completed, :failed, :cancelled, :timeout] and
+          swarm[:completed_at] != nil and
+          DateTime.compare(swarm.completed_at, cutoff) == :lt
+      end)
+
+    if length(pruned) > 0 do
+      Logger.info("[Swarm.Orchestrator] Pruned #{length(pruned)} completed swarms from memory")
+    end
+
+    schedule_prune()
+    {:noreply, %{state | swarms: Map.new(kept)}}
   end
 
   # ── Launch Logic ─────────────────────────────────────────────────────
@@ -495,4 +519,6 @@ defmodule Daemon.Swarm.Orchestrator do
 
   defp generate_id,
     do: Daemon.Utils.ID.generate("swarm")
+
+  defp schedule_prune, do: Process.send_after(self(), :prune_completed, @prune_interval_ms)
 end

@@ -27,6 +27,10 @@ defmodule Daemon.Agent.Orchestrator do
   alias Daemon.Tools.Registry, as: Tools
   alias MiosaProviders.Registry, as: Providers
 
+  # Prune completed tasks older than 5 minutes
+  @prune_interval_ms :timer.minutes(2)
+  @prune_age_ms :timer.minutes(5)
+
   defstruct tasks: %{},
             agent_pool: %{},
             skill_cache: %{},
@@ -162,6 +166,7 @@ defmodule Daemon.Agent.Orchestrator do
       "[Orchestrator] Task orchestration engine started (max_agents=#{Roster.max_agents()})"
     )
 
+    schedule_prune()
     {:ok, state}
   end
 
@@ -850,6 +855,31 @@ defmodule Daemon.Agent.Orchestrator do
     end
   end
 
+  # ── Handle Info — Periodic state pruning ────────────────────────────
+
+  @impl true
+  def handle_info(:prune_completed, state) do
+    now = DateTime.utc_now()
+    cutoff = DateTime.add(now, -div(@prune_age_ms, 1000), :second)
+
+    {pruned_tasks, kept_tasks} =
+      Enum.split_with(state.tasks, fn {_id, task} ->
+        task.status in [:completed, :failed] and
+          task.completed_at != nil and
+          DateTime.compare(task.completed_at, cutoff) == :lt
+      end)
+
+    pruned_ids = Enum.map(pruned_tasks, fn {id, _} -> id end)
+    kept_machines = Map.drop(state.machines, pruned_ids)
+
+    if length(pruned_tasks) > 0 do
+      Logger.info("[Orchestrator] Pruned #{length(pruned_tasks)} completed tasks from memory")
+    end
+
+    schedule_prune()
+    {:noreply, %{state | tasks: Map.new(kept_tasks), machines: kept_machines}}
+  end
+
   # ── Handle Info — Task.async completion / crash messages ────────────
 
   @impl true
@@ -969,4 +999,6 @@ defmodule Daemon.Agent.Orchestrator do
       machine -> %{state | machines: Map.put(state.machines, task_id, fun.(machine))}
     end
   end
+
+  defp schedule_prune, do: Process.send_after(self(), :prune_completed, @prune_interval_ms)
 end

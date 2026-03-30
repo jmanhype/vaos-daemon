@@ -41,6 +41,8 @@ defmodule Daemon.Agent.WorkDirector do
   @initial_delay_ms :timer.seconds(60)
   @dispatch_cooldown_ms :timer.minutes(5)
   @max_dispatches_per_day 24
+  # Skip dispatch when system memory usage exceeds this percentage
+  @memory_pressure_threshold 0.70
   @max_completed_prs 50
   @circuit_breaker_threshold 5
   @circuit_breaker_ms :timer.minutes(30)
@@ -332,6 +334,11 @@ defmodule Daemon.Agent.WorkDirector do
 
       not budget_ok?() ->
         Logger.warning("[WorkDirector] Budget exceeded, pausing dispatches")
+        {:noreply, state}
+
+      not memory_ok?() ->
+        Logger.warning("[WorkDirector] Memory pressure too high, skipping dispatch")
+        Process.send_after(self(), :try_dispatch, @dispatch_cooldown_ms)
         {:noreply, state}
 
       true ->
@@ -2715,6 +2722,49 @@ defmodule Daemon.Agent.WorkDirector do
       :exit, reason ->
         Logger.warning("[WorkDirector] Budget check exit, allowing: #{inspect(reason)}")
         true
+    end
+  end
+
+  defp memory_ok? do
+    try do
+      # Use :memsup if available, otherwise fall back to macOS vm_stat
+      case :os.type() do
+        {:unix, :darwin} ->
+          {output, 0} = System.cmd("vm_stat", [])
+          # Parse "Pages free" and "Pages active" etc. from vm_stat
+          pages = fn label ->
+            case Regex.run(~r/#{label}:\s+(\d+)/, output) do
+              [_, n] -> String.to_integer(n)
+              _ -> 0
+            end
+          end
+
+          page_size = 16_384  # ARM64 macOS
+          free = pages.("Pages free") * page_size
+          inactive = pages.("Pages inactive") * page_size
+          active = pages.("Pages active") * page_size
+          wired = pages.("Pages wired down") * page_size
+          compressed = pages.("Pages occupied by compressor") * page_size
+
+          total = free + inactive + active + wired + compressed
+          used = active + wired + compressed
+          usage = if total > 0, do: used / total, else: 0.0
+
+          if usage > @memory_pressure_threshold do
+            Logger.warning("[WorkDirector] Memory usage #{Float.round(usage * 100, 1)}% > #{@memory_pressure_threshold * 100}% threshold")
+            false
+          else
+            true
+          end
+
+        _ ->
+          # Non-macOS — skip memory check
+          true
+      end
+    rescue
+      _ -> true
+    catch
+      _, _ -> true
     end
   end
 

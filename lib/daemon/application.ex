@@ -24,6 +24,11 @@ defmodule Daemon.Application do
   def start(_type, _args) do
     Application.put_env(:daemon, :start_time, System.system_time(:second))
 
+    # Disable BEAM crash dumps — on memory exhaustion, the crash dump writer
+    # generates 2+ GB of disk I/O which triggers macOS kernel panics.
+    # Better to crash quickly without a dump than to take down the machine.
+    System.put_env("ERL_CRASH_DUMP_BYTES", "0")
+
     # LLM concurrency limiter — caps total in-flight API calls across all subsystems
     Daemon.Providers.ConcurrencyLimiter.init()
 
