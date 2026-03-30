@@ -79,11 +79,7 @@ defmodule Daemon.Agent.WorkDirector do
   @enable_dispatch_confidence true      # Gate: aggregate confidence score, hold back when low
   @enable_task_decomposition true       # Gate: split broad low-confidence tasks into sub-items
 
-  @confidence_high 0.7                  # >= 0.7: dispatch normally
-  @confidence_low 0.4                   # < 0.4: hold back (decompose or skip)
-  @pr_cache_ttl_ms :timer.minutes(5)    # Cache gh pr list results
-  @decomposition_min_dirs 3             # Only decompose if 3+ distinct directories involved
-  @decomposition_max_items 5            # Cap sub-items per decomposition
+  # Confidence/decomposition constants live in DispatchJudgment module
 
   @protected_path_patterns [
     "^lib/daemon/application\\.ex$",
@@ -1497,8 +1493,6 @@ defmodule Daemon.Agent.WorkDirector do
   defp judgment_context_section do
     case Process.get(:dispatch_judgment_context) do
       %{confidence: confidence} = ctx ->
-        sections = []
-
         # Confidence section
         pct = round((confidence[:score] || confidence.score) * 100)
         level = confidence[:level] || confidence.level
@@ -1510,35 +1504,39 @@ defmodule Daemon.Agent.WorkDirector do
             "## Dispatch Confidence: #{pct}%"
           end
 
-        sections = sections ++ ["\n#{confidence_text}\n"]
-
         # PR conflicts section
         pr_conflicts = ctx[:pr_conflicts] || %{}
         open_conflicts = pr_conflicts[:open_pr_conflicts] || []
 
-        if open_conflicts != [] do
-          conflict_lines =
-            Enum.map_join(open_conflicts, "\n", fn c ->
-              overlap = if c.overlapping_files != [], do: " (overlapping: #{Enum.join(c.overlapping_files, ", ")})", else: ""
-              "- PR ##{c.number}: #{c.title} (similarity: #{Float.round(c.title_similarity, 2)})#{overlap}"
-            end)
+        conflict_section =
+          if open_conflicts != [] do
+            conflict_lines =
+              Enum.map_join(open_conflicts, "\n", fn c ->
+                overlap = if c.overlapping_files != [], do: " (overlapping: #{Enum.join(c.overlapping_files, ", ")})", else: ""
+                "- PR ##{c.number}: #{c.title} (similarity: #{Float.round(c.title_similarity, 2)})#{overlap}"
+              end)
 
-          sections = sections ++ ["\n## Active PR Conflicts\nThese open PRs may conflict with your changes:\n#{conflict_lines}\n"]
-        end
+            ["\n## Active PR Conflicts\nThese open PRs may conflict with your changes:\n#{conflict_lines}\n"]
+          else
+            []
+          end
 
         # Hot zones section
         hot_zones = pr_conflicts[:hot_zones] || []
 
-        if hot_zones != [] do
-          zone_lines =
-            Enum.map_join(hot_zones, "\n", fn hz ->
-              "- `#{hz.file}` — modified by #{hz.modification_count} recent PRs"
-            end)
+        hot_zone_section =
+          if hot_zones != [] do
+            zone_lines =
+              Enum.map_join(hot_zones, "\n", fn hz ->
+                "- `#{hz.file}` — modified by #{hz.modification_count} recent PRs"
+              end)
 
-          sections = sections ++ ["\n## Hot Zones\nThese files are frequently modified and may cause merge conflicts:\n#{zone_lines}\n"]
-        end
+            ["\n## Hot Zones\nThese files are frequently modified and may cause merge conflicts:\n#{zone_lines}\n"]
+          else
+            []
+          end
 
-        sections
+        ["\n#{confidence_text}\n"] ++ conflict_section ++ hot_zone_section
 
       _ ->
         []
