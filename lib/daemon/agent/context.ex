@@ -400,15 +400,8 @@ defmodule Daemon.Agent.Context do
 
       try do
         # Build files list from working dir (top-level only, for context)
-        files =
-          try do
-            working_dir
-            |> File.ls!()
-            |> Enum.take(20)
-            |> Enum.map(&Path.join(working_dir, &1))
-          rescue
-            _ -> []
-          end
+        # Use ETS cache to avoid repeatedly reading filesystem on every context build
+        files = cached_directory_list(working_dir)
 
         context = %{
           files: files,
@@ -708,6 +701,45 @@ defmodule Daemon.Agent.Context do
     Enum.reverse(parts) |> Enum.join("\n")
   rescue
     _ -> ""
+  end
+
+  # Directory listing cache to avoid repeated File.ls! calls on every context build
+  @dir_cache_table :daemon_dir_list_cache
+  @dir_cache_ttl 60_000  # Cache directory lists for 60 seconds
+
+  defp cached_directory_list(working_dir) do
+    ensure_dir_cache_table()
+    now = System.monotonic_time(:millisecond)
+
+    case :ets.lookup(@dir_cache_table, working_dir) do
+      [{^working_dir, files, ts}] when now - ts < @dir_cache_ttl ->
+        Logger.debug("[Context] directory list cache hit for #{Path.basename(working_dir)}")
+        files
+
+      _ ->
+        Logger.debug("[Context] directory list cache miss — listing #{Path.basename(working_dir)}")
+        files = gather_directory_list(working_dir)
+        :ets.insert(@dir_cache_table, {working_dir, files, now})
+        files
+    end
+  end
+
+  defp ensure_dir_cache_table do
+    case :ets.whereis(@dir_cache_table) do
+      :undefined -> :ets.new(@dir_cache_table, [:named_table, :public, :set])
+      _ -> @dir_cache_table
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp gather_directory_list(working_dir) do
+    working_dir
+    |> File.ls!()
+    |> Enum.take(20)
+    |> Enum.map(&Path.join(working_dir, &1))
+  rescue
+    _ -> []
   end
 
   defp get_active_model(:anthropic), do: Application.get_env(:daemon, :anthropic_model, "claude-sonnet-4-6")
