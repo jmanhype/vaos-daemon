@@ -29,6 +29,10 @@ defmodule Daemon.Application do
     # Better to crash quickly without a dump than to take down the machine.
     System.put_env("ERL_CRASH_DUMP_BYTES", "0")
 
+    # Initialize global subprocess concurrency limiter — caps simultaneous
+    # mix test / mix compile to prevent memory exhaustion from unbounded forks.
+    Daemon.Sandbox.Executor.init_concurrency_table()
+
     # LLM concurrency limiter — caps total in-flight API calls across all subsystems
     Daemon.Providers.ConcurrencyLimiter.init()
 

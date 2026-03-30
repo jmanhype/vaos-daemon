@@ -119,33 +119,82 @@ defmodule Daemon.Sandbox.Executor do
   # Commands like `mix test` or `mix compile` spawn a new BEAM VM that defaults
   # to using all CPU cores — on a 10-core Mac Mini this causes load avg 30+.
   @subprocess_schedulers 4
+  # Global concurrency limit — prevents memory exhaustion from dozens of
+  # simultaneous mix test / mix compile subprocesses. Each mix test can spawn
+  # child BEAM VMs, so 3 concurrent slots × N children = still plenty of load.
+  @max_concurrent_subprocesses 3
+  @concurrency_table :daemon_executor_slots
 
   defp beam_execute(command, opts) do
     timeout = Keyword.get(opts, :timeout, 30_000)
     cwd = Keyword.get(opts, :cwd, nil)
 
-    task =
-      Task.async(fn ->
+    case checkout_slot() do
+      :ok ->
         try do
-          cmd_opts =
-            [stderr_to_stdout: true, env: subprocess_env()]
-            |> then(fn o -> if cwd, do: Keyword.put(o, :cd, cwd), else: o end)
+          task =
+            Task.async(fn ->
+              try do
+                cmd_opts =
+                  [stderr_to_stdout: true, env: subprocess_env()]
+                  |> then(fn o -> if cwd, do: Keyword.put(o, :cd, cwd), else: o end)
 
-          {shell, shell_args} = resolve_shell()
-          System.cmd(shell, shell_args ++ [command], cmd_opts)
-        rescue
-          e -> {Exception.message(e), 1}
+                {shell, shell_args} = resolve_shell()
+                System.cmd(shell, shell_args ++ [command], cmd_opts)
+              rescue
+                e -> {Exception.message(e), 1}
+              end
+            end)
+
+          case Task.yield(task, timeout) || Task.shutdown(task) do
+            {:ok, {output, exit_code}} ->
+              {:ok, output, exit_code}
+
+            nil ->
+              Logger.warning("[Sandbox.Executor] BEAM task timed out after #{timeout}ms")
+              {:error, "Command timed out after #{timeout}ms"}
+          end
+        after
+          checkin_slot()
         end
-      end)
 
-    case Task.yield(task, timeout) || Task.shutdown(task) do
-      {:ok, {output, exit_code}} ->
-        {:ok, output, exit_code}
-
-      nil ->
-        Logger.warning("[Sandbox.Executor] BEAM task timed out after #{timeout}ms")
-        {:error, "Command timed out after #{timeout}ms"}
+      :full ->
+        Logger.warning("[Sandbox.Executor] All #{@max_concurrent_subprocesses} subprocess slots full, rejecting command")
+        {:error, "Subprocess concurrency limit reached (#{@max_concurrent_subprocesses} slots full)"}
     end
+  end
+
+  # -- Global subprocess concurrency limiter (ETS counter) --
+
+  @doc false
+  def init_concurrency_table do
+    if :ets.whereis(@concurrency_table) == :undefined do
+      :ets.new(@concurrency_table, [:named_table, :public, :set])
+      :ets.insert(@concurrency_table, {:slots_used, 0})
+    end
+    :ok
+  end
+
+  defp checkout_slot do
+    init_concurrency_table()
+    # Atomic increment — returns new value
+    count = :ets.update_counter(@concurrency_table, :slots_used, {2, 1})
+    if count > @max_concurrent_subprocesses do
+      # Over limit — decrement back and reject
+      :ets.update_counter(@concurrency_table, :slots_used, {2, -1})
+      :full
+    else
+      :ok
+    end
+  end
+
+  defp checkin_slot do
+    try do
+      :ets.update_counter(@concurrency_table, :slots_used, {2, -1, 0, 0})
+    rescue
+      ArgumentError -> :ok
+    end
+    :ok
   end
 
   # Resolve the shell to use for command execution.
