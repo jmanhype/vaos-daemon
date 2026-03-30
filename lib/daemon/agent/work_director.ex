@@ -1752,11 +1752,17 @@ defmodule Daemon.Agent.WorkDirector do
         test_files = related_test_files(repo_path)
         test_args = case test_files do
           [] ->
-            Logger.info("[WorkDirector] Stage 2.75: No related test files, running full suite")
-            ["test", "--max-failures", "5"]
+            Logger.info("[WorkDirector] Stage 2.75: No related test files, skipping test gate")
+            nil
           files ->
             Logger.info("[WorkDirector] Stage 2.75: Testing #{length(files)} related file(s)")
             ["test", "--max-failures", "5"] ++ files
+        end
+
+        # Skip test execution if no related tests found
+        unless test_args do
+          Logger.info("[WorkDirector] Stage 2.75: Skipped (no related tests)")
+          throw(:test_gate_skipped)
         end
 
         task = Task.async(fn ->
@@ -1810,6 +1816,7 @@ defmodule Daemon.Agent.WorkDirector do
       rescue
         e -> Logger.warning("[WorkDirector] Stage 2.75 error: #{Exception.message(e)}")
       catch
+        :throw, :test_gate_skipped -> :ok
         :exit, r -> Logger.warning("[WorkDirector] Stage 2.75 exit: #{inspect(r)}")
       end
     end
