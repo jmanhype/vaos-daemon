@@ -335,3 +335,16 @@ config :daemon,
   production_enabled: System.get_env("DAEMON_PRODUCTION_ENABLED") == "true"
 
 config :daemon, receipt_chain_enabled: System.get_env("RECEIPT_CHAIN_ENABLED") == "true"
+
+# ── VAOS Kernel gRPC ─────────────────────────────────────────────────
+# URL for the Go vaos-kernel gRPC service (JWT tokens, telemetry, audit, routing).
+# Format: grpc://host:port — defaults to localhost:50051 if set to "true" or empty.
+vas_kernel_url =
+  case System.get_env("VAOS_KERNEL_URL") do
+    nil -> nil
+    "true" -> "grpc://localhost:50051"
+    "" -> nil
+    url -> url
+  end
+
+config :daemon, vas_kernel_url: vas_kernel_url

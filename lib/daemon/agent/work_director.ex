@@ -39,7 +39,8 @@ defmodule Daemon.Agent.WorkDirector do
   @backlog_refresh_ms :timer.minutes(10)
   @pr_poll_ms :timer.hours(1)
   @initial_delay_ms :timer.seconds(60)
-  @max_dispatches_per_day 999
+  @dispatch_cooldown_ms :timer.minutes(5)
+  @max_dispatches_per_day 24
   @max_completed_prs 50
   @circuit_breaker_threshold 5
   @circuit_breaker_ms :timer.minutes(30)
@@ -55,7 +56,7 @@ defmodule Daemon.Agent.WorkDirector do
   @enable_swarm_dispatch true        # Stage 1: SwarmMode patterns for complex tasks
   @enable_substance_check true       # Stage 1.9: reject stubs (hard gate)
   @enable_autofixer true             # Stage 2: AutoFixer instead of simple 2-attempt loop
-  @enable_test_gate true             # Stage 2.75: mix test --max-failures 5 (soft gate)
+  @enable_test_gate true             # Stage 2.75: mix test --max-failures 5 (hard gate — blocks PR)
   @enable_code_review true           # Stage 2.9: debate/review pattern before shipping
   @enable_review_fix_loop true       # Stage 2.9: dispatch fix agent when review finds issues (Reflexion)
   @enable_vault_remember true        # Stage 3.5: store dispatch outcome in Vault
@@ -376,7 +377,7 @@ defmodule Daemon.Agent.WorkDirector do
 
               state
               |> update_backlog_completed(dispatch.content_hash, {:ok, branch})
-              |> reward_arm(dispatch.source, 0.3)
+              |> reward_arm(dispatch.source, 0.8)
               |> add_completed_pr(branch, dispatch.source, dispatch.content_hash)
               |> Map.put(:consecutive_failures, 0)
               |> Map.update!(:total_dispatches, &(&1 + 1))
@@ -400,12 +401,12 @@ defmodule Daemon.Agent.WorkDirector do
             failure_class: failure_class
           })
 
-          # Reward based on failure class — partial signals
+          # Reward based on failure class — widened spread for clear Thompson signal
           reward = failure_class_reward(failure_class)
           failures = state.consecutive_failures + 1
 
           state
-          |> update_backlog_failed(dispatch.content_hash)
+          |> update_backlog_failed(dispatch.content_hash, %{class: failure_class, reason: reason})
           |> reward_arm(dispatch.source, reward)
           |> Map.put(:consecutive_failures, failures)
           |> maybe_trip_circuit_breaker(failures)
@@ -414,9 +415,9 @@ defmodule Daemon.Agent.WorkDirector do
     # Stage 3.5: Post-dispatch — remember outcome, store knowledge, evolve skills
     post_dispatch_learn(dispatch, result)
 
-    # Persist and continue the loop
+    # Persist and continue the loop (throttled)
     Backlog.persist(state.backlog)
-    send(self(), :try_dispatch)
+    Process.send_after(self(), :try_dispatch, @dispatch_cooldown_ms)
 
     {:noreply, state}
   end
@@ -434,12 +435,12 @@ defmodule Daemon.Agent.WorkDirector do
     state =
       state
       |> Map.put(:current_dispatch, nil)
-      |> update_backlog_failed(dispatch.content_hash)
+      |> update_backlog_failed(dispatch.content_hash, %{class: :process_crash, reason: reason})
       |> Map.put(:consecutive_failures, failures)
       |> maybe_trip_circuit_breaker(failures)
 
     Backlog.persist(state.backlog)
-    send(self(), :try_dispatch)
+    Process.send_after(self(), :try_dispatch, @dispatch_cooldown_ms)
 
     {:noreply, state}
   end
@@ -1189,7 +1190,7 @@ defmodule Daemon.Agent.WorkDirector do
                 throw({:stage2_5_failed, :phantom_references})
             end
 
-            # Stage 2.75: Test gate (soft — warn only)
+            # Stage 2.75: Test gate (hard — blocks PR on failure)
             maybe_run_test_gate(branch, repo_path)
 
             # Stage 2.9: Code review (debate/review)
@@ -1237,12 +1238,16 @@ defmodule Daemon.Agent.WorkDirector do
     {:stage0_failed, reason} -> {:error, {:no_branch, reason}}
     {:stage1_9_failed, reason} -> {:error, {:stub_detected, reason}}
     {:stage2_5_failed, reason} -> {:error, {:phantom_references, reason}}
+    {:stage2_75_failed, reason} -> {:error, {:test_failure, reason}}
   end
 
   # -- Stage 0.5: Pre-Research Context Enrichment --
 
   defp build_pre_research_context(item, repo_path, session_id) do
     sections = []
+
+    # Failure context from prior attempts (Reflexion)
+    sections = sections ++ failure_context_section(item)
 
     # Vault: prior dispatch memories
     sections = sections ++ vault_context_section(item)
@@ -1278,6 +1283,18 @@ defmodule Daemon.Agent.WorkDirector do
     end
 
     context
+  end
+
+  defp failure_context_section(%WorkItem{attempt_count: 0}), do: []
+  defp failure_context_section(%WorkItem{last_failure_class: nil}), do: []
+  defp failure_context_section(%WorkItem{attempt_count: n, last_failure_class: class, last_failure_reason: reason}) do
+    ["""
+    ## WARNING: Previous Attempt Failed (attempt #{n} of 3)
+    Failure type: #{class}
+    Reason: #{String.slice(inspect(reason), 0, 500)}
+
+    DO NOT repeat the same approach. Address the specific failure above.
+    """]
   end
 
   defp vault_context_section(item) do
@@ -1754,15 +1771,19 @@ defmodule Daemon.Agent.WorkDirector do
               |> Enum.join("; ")
 
             Logger.warning(
-              "[WorkDirector] Stage 2.75: Tests FAILED (soft gate): #{String.slice(summary, 0, 500)}"
+              "[WorkDirector] Stage 2.75: Tests FAILED (hard gate): #{String.slice(summary, 0, 500)}"
             )
+            cleanup_branch(branch, repo_path)
+            throw({:stage2_75_failed, {:test_failure, String.slice(summary, 0, 500)}})
 
           nil ->
             # Explicitly close port to send SIGHUP to the OS process
             if test_port do
               try do Port.close(test_port) catch _, _ -> :ok end
             end
-            Logger.warning("[WorkDirector] Stage 2.75: Tests TIMED OUT after #{div(@test_gate_timeout_ms, 1000)}s (soft gate)")
+            Logger.warning("[WorkDirector] Stage 2.75: Tests TIMED OUT (hard gate) after #{div(@test_gate_timeout_ms, 1000)}s")
+            cleanup_branch(branch, repo_path)
+            throw({:stage2_75_failed, {:test_timeout, "#{div(@test_gate_timeout_ms, 1000)}s"}})
         end
       rescue
         e -> Logger.warning("[WorkDirector] Stage 2.75 error: #{Exception.message(e)}")
@@ -2616,7 +2637,7 @@ defmodule Daemon.Agent.WorkDirector do
             Logger.info("[WorkDirector] PR REJECTED: #{branch}")
 
             acc
-            |> reward_arm(match.source, 0.2)
+            |> reward_arm(match.source, 0.05)
             |> Map.update!(:total_rejected, &(&1 + 1))
             |> remove_completed_pr(branch)
 
@@ -2646,8 +2667,8 @@ defmodule Daemon.Agent.WorkDirector do
     %{state | backlog: Backlog.mark_completed(state.backlog, content_hash, result)}
   end
 
-  defp update_backlog_failed(state, content_hash) do
-    %{state | backlog: Backlog.mark_failed(state.backlog, content_hash)}
+  defp update_backlog_failed(state, content_hash, failure_context) do
+    %{state | backlog: Backlog.mark_failed(state.backlog, content_hash, failure_context)}
   end
 
   defp add_completed_pr(state, branch, source, content_hash) do
@@ -2834,17 +2855,19 @@ defmodule Daemon.Agent.WorkDirector do
 
   # Reward based on how far the dispatch got
   # These partial signals help Thompson learn which sources produce completable tasks
-  defp failure_class_reward(:empty_branch), do: 0.10       # Agent wrote no code
-  defp failure_class_reward(:no_branch_created), do: 0.05  # Branch creation failed
-  defp failure_class_reward(:orchestrator_error), do: 0.05  # Orchestrator itself failed
-  defp failure_class_reward(:timeout), do: 0.10             # Task was too large
-  defp failure_class_reward(:compilation_error), do: 0.15   # Code written but won't compile
-  defp failure_class_reward(:phantom_references), do: 0.18  # Compiles but references non-existent modules
-  defp failure_class_reward(:stub_detected), do: 0.05       # Agent produced stubs, not real code
-  defp failure_class_reward(:commit_error), do: 0.20        # Code compiles but commit failed
-  defp failure_class_reward(:test_failure), do: 0.20        # Code compiled but tests failed (close!)
+  # Reward spread: success=0.8, merge=1.0, rejection=0.05, failures=0.0-0.1
+  # Wide gap gives Thompson Sampling a clear signal to learn from.
+  defp failure_class_reward(:empty_branch), do: 0.0         # Agent wrote no code
+  defp failure_class_reward(:no_branch_created), do: 0.0    # Branch creation failed
+  defp failure_class_reward(:orchestrator_error), do: 0.0   # Orchestrator itself failed
+  defp failure_class_reward(:timeout), do: 0.0              # Task was too large
+  defp failure_class_reward(:compilation_error), do: 0.0    # Code written but won't compile
+  defp failure_class_reward(:phantom_references), do: 0.0   # Compiles but references non-existent modules
+  defp failure_class_reward(:stub_detected), do: 0.0        # Agent produced stubs, not real code
+  defp failure_class_reward(:commit_error), do: 0.05        # Code compiles but commit failed (close)
+  defp failure_class_reward(:test_failure), do: 0.1         # Code compiled but tests failed (closest to success)
   defp failure_class_reward(:process_crash), do: 0.0        # Total failure
-  defp failure_class_reward(_), do: 0.05
+  defp failure_class_reward(_), do: 0.0
 
   # -- Orchestrator Completion Polling --
 

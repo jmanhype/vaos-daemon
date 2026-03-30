@@ -61,7 +61,10 @@ defmodule Daemon.Supervisors.Infrastructure do
 
       # MCP integration — Registry for server name lookup + DynamicSupervisor for per-server GenServers
       {Registry, keys: :unique, name: Daemon.MCP.Registry},
-      {DynamicSupervisor, name: Daemon.MCP.Supervisor, strategy: :one_for_one}
+      {DynamicSupervisor, name: Daemon.MCP.Supervisor, strategy: :one_for_one},
+
+      # gRPC client to Go vaos-kernel (JWT tokens, telemetry, audit, routing)
+      Daemon.Kernel.Client
     ]
 
     Supervisor.init(children, strategy: :rest_for_one)
