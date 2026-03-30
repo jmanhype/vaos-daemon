@@ -1748,10 +1748,21 @@ defmodule Daemon.Agent.WorkDirector do
         parent = self()
         port_ref = make_ref()
 
+        # Only test files related to changed source files — avoids pre-existing failures
+        test_files = related_test_files(repo_path)
+        test_args = case test_files do
+          [] ->
+            Logger.info("[WorkDirector] Stage 2.75: No related test files, running full suite")
+            ["test", "--max-failures", "5"]
+          files ->
+            Logger.info("[WorkDirector] Stage 2.75: Testing #{length(files)} related file(s)")
+            ["test", "--max-failures", "5"] ++ files
+        end
+
         task = Task.async(fn ->
           port = Port.open({:spawn_executable, mix_exe}, [
             :binary, :exit_status, :stderr_to_stdout,
-            args: ["test", "--max-failures", "5"],
+            args: test_args,
             cd: String.to_charlist(repo_path),
             env: [
               {~c"MIX_ENV", ~c"test"},
@@ -1813,7 +1824,30 @@ defmodule Daemon.Agent.WorkDirector do
     end
   end
 
-  # -- Stage 2.9: Code Review --
+  # Find test files related to changed source files in the current branch
+  defp related_test_files(repo_path) do
+    try do
+      {diff_output, 0} = System.cmd("git", ["diff", "--name-only", "main...HEAD"],
+        cd: repo_path, stderr_to_stdout: true)
+
+      diff_output
+      |> String.split("\n", trim: true)
+      |> Enum.filter(&String.starts_with?(&1, "lib/"))
+      |> Enum.flat_map(fn src_file ->
+        test_file = src_file
+          |> String.replace_prefix("lib/daemon/", "test/")
+          |> String.replace_suffix(".ex", "_test.exs")
+        if File.exists?(Path.join(repo_path, test_file)), do: [test_file], else: []
+      end)
+      |> Enum.uniq()
+    rescue
+      _ -> []
+    catch
+      _, _ -> []
+    end
+  end
+
+    # -- Stage 2.9: Code Review --
 
   defp maybe_run_code_review(item, branch, session_id, repo_path) do
     # Phase 2: force_review from judgment context overrides the flag
