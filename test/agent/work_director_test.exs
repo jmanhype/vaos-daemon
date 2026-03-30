@@ -86,4 +86,78 @@ defmodule Daemon.Agent.WorkDirectorTest do
       assert result2 == %{}
     end
   end
+
+  describe "runtime feature flags" do
+    alias Daemon.Agent.WorkDirector
+
+    setup do
+      # Save original values and restore after test
+      original = Enum.map(WorkDirector.all_flag_keys(), fn key ->
+        {key, Application.get_env(:daemon, key)}
+      end)
+
+      on_exit(fn ->
+        for {key, val} <- original do
+          if val == nil do
+            Application.delete_env(:daemon, key)
+          else
+            Application.put_env(:daemon, key, val)
+          end
+        end
+      end)
+
+      :ok
+    end
+
+    test "all_flag_keys/0 returns 25 atom keys" do
+      keys = WorkDirector.all_flag_keys()
+      assert is_list(keys)
+      assert length(keys) == 25
+      assert Enum.all?(keys, &is_atom/1)
+      assert :wd_enable_vault_context in keys
+      assert :wd_enable_task_decomposition in keys
+    end
+
+    test "feature_flags/0 returns map with all 25 flags" do
+      flags = WorkDirector.feature_flags()
+      assert is_map(flags)
+      assert map_size(flags) == 25
+      assert Map.has_key?(flags, :vault_context)
+      assert Map.has_key?(flags, :task_decomposition)
+    end
+
+    test "flags default to false when unconfigured" do
+      # Clear all flags
+      for key <- WorkDirector.all_flag_keys() do
+        Application.delete_env(:daemon, key)
+      end
+
+      flags = WorkDirector.feature_flags()
+      assert Enum.all?(flags, fn {_k, v} -> v == false end),
+        "Expected all flags to default to false, got: #{inspect(flags)}"
+    end
+
+    test "flags toggle via Application.put_env at runtime" do
+      # Start with all off
+      for key <- WorkDirector.all_flag_keys() do
+        Application.put_env(:daemon, key, false)
+      end
+
+      flags_before = WorkDirector.feature_flags()
+      assert flags_before.vault_context == false
+      assert flags_before.test_gate == false
+
+      # Toggle on
+      Application.put_env(:daemon, :wd_enable_vault_context, true)
+      Application.put_env(:daemon, :wd_enable_test_gate, true)
+
+      flags_after = WorkDirector.feature_flags()
+      assert flags_after.vault_context == true
+      assert flags_after.test_gate == true
+
+      # Other flags still off
+      assert flags_after.swarm_dispatch == false
+      assert flags_after.autofixer == false
+    end
+  end
 end

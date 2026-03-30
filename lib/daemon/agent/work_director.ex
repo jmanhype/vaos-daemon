@@ -23,6 +23,7 @@ defmodule Daemon.Agent.WorkDirector do
   alias Daemon.Agent.WorkDirector.GroundedVerifier
   alias Daemon.Agent.WorkDirector.Source
   alias Daemon.Agent.Orchestrator
+  alias Daemon.Events.Bus
   alias Daemon.Intelligence.DecisionJournal
 
   # -- Pipeline upgrade aliases --
@@ -49,39 +50,82 @@ defmodule Daemon.Agent.WorkDirector do
   @subprocess_schedulers 4
   @daemon_repo "jmanhype/vaos-daemon"
 
-  # -- Feature Flags (pipeline upgrades) --
-  # ALL FLAGS ENABLED — full autonomous engineering team mode
-  @enable_vault_context true         # Stage 0.5: inject prior dispatch memories from Vault
-  @enable_knowledge_context true     # Stage 0.5: query knowledge store for codebase patterns
-  @enable_investigation_pre true     # Stage 0.5: run Investigate.execute before dispatch (high cost)
-  @enable_appraiser true             # Stage 0.5: estimate complexity/cost via Appraiser
-  @enable_specialist_routing true    # Stage 1: Roster agent selection vs force_simple
-  @enable_swarm_dispatch false       # Stage 1: Disabled — SwarmWorker has no tool access (text-only)
-  @enable_substance_check true       # Stage 1.9: reject stubs (hard gate)
-  @enable_autofixer true             # Stage 2: AutoFixer instead of simple 2-attempt loop
-  @enable_test_gate true             # Stage 2.75: mix test --max-failures 5 (hard gate — blocks PR)
-  @enable_code_review true           # Stage 2.9: debate/review pattern before shipping
-  @enable_review_fix_loop true       # Stage 2.9: dispatch fix agent when review finds issues (Reflexion)
-  @enable_vault_remember true        # Stage 3.5: store dispatch outcome in Vault
-  @enable_knowledge_remember true    # Stage 3.5: store patterns in knowledge graph
-  @enable_skill_evolution true       # Stage 3.5: feed failures to SkillEvolution
-  @enable_introspector_feed true     # Stage 0.5: pull CodeIntrospector/ActiveLearner insights
+  # -- Feature Flags (runtime-configurable for experiments) --
+  # Default false. Set via DAEMON_WD_* env vars, DAEMON_WD_PROFILE, or Application.put_env.
 
-  # -- Pre-dispatch gates --
-  @enable_risk_assessment true         # Pre-dispatch: score risk, force review on medium, block high
-  @enable_risk_approval_gate true      # Pre-dispatch: route high-risk to Governance.Approvals
-  @enable_strategic_rejection true     # Pre-dispatch: refuse tasks that violate architectural invariants
-  @enable_strategic_debate true        # Pre-dispatch: LLM debate for borderline strategic rejections
+  @all_flag_keys [
+    :wd_enable_vault_context, :wd_enable_knowledge_context, :wd_enable_investigation_pre,
+    :wd_enable_appraiser, :wd_enable_specialist_routing, :wd_enable_swarm_dispatch,
+    :wd_enable_substance_check, :wd_enable_autofixer, :wd_enable_test_gate,
+    :wd_enable_code_review, :wd_enable_review_fix_loop, :wd_enable_vault_remember,
+    :wd_enable_knowledge_remember, :wd_enable_skill_evolution, :wd_enable_introspector_feed,
+    :wd_enable_risk_assessment, :wd_enable_risk_approval_gate, :wd_enable_strategic_rejection,
+    :wd_enable_strategic_debate, :wd_enable_impact_analysis, :wd_enable_production_context,
+    :wd_enable_already_solved_check, :wd_enable_pr_conflict_awareness,
+    :wd_enable_dispatch_confidence, :wd_enable_task_decomposition
+  ]
 
-  # -- Stage 0.5 context sections --
-  @enable_impact_analysis true         # Stage 0.5: trace callers/dependents of affected files
-  @enable_production_context true      # Stage 0.5: inject telemetry + provider health into prompt
+  def all_flag_keys, do: @all_flag_keys
 
-  # -- Pre-dispatch judgment (Phase 2) --
-  @enable_already_solved_check true     # Gate: skip tasks already solved by existing code or merged PRs
-  @enable_pr_conflict_awareness true    # Gate: detect file conflicts with open PRs, inject awareness
-  @enable_dispatch_confidence true      # Gate: aggregate confidence score, hold back when low
-  @enable_task_decomposition true       # Gate: split broad low-confidence tasks into sub-items
+  def feature_flags do
+    %{
+      vault_context: enable_vault_context?(),
+      knowledge_context: enable_knowledge_context?(),
+      investigation_pre: enable_investigation_pre?(),
+      appraiser: enable_appraiser?(),
+      specialist_routing: enable_specialist_routing?(),
+      swarm_dispatch: enable_swarm_dispatch?(),
+      substance_check: enable_substance_check?(),
+      autofixer: enable_autofixer?(),
+      test_gate: enable_test_gate?(),
+      code_review: enable_code_review?(),
+      review_fix_loop: enable_review_fix_loop?(),
+      vault_remember: enable_vault_remember?(),
+      knowledge_remember: enable_knowledge_remember?(),
+      skill_evolution: enable_skill_evolution?(),
+      introspector_feed: enable_introspector_feed?(),
+      risk_assessment: enable_risk_assessment?(),
+      risk_approval_gate: enable_risk_approval_gate?(),
+      strategic_rejection: enable_strategic_rejection?(),
+      strategic_debate: enable_strategic_debate?(),
+      impact_analysis: enable_impact_analysis?(),
+      production_context: enable_production_context?(),
+      already_solved_check: enable_already_solved_check?(),
+      pr_conflict_awareness: enable_pr_conflict_awareness?(),
+      dispatch_confidence: enable_dispatch_confidence?(),
+      task_decomposition: enable_task_decomposition?()
+    }
+  end
+
+  # Pipeline stages
+  defp enable_vault_context?, do: Application.get_env(:daemon, :wd_enable_vault_context, false)
+  defp enable_knowledge_context?, do: Application.get_env(:daemon, :wd_enable_knowledge_context, false)
+  defp enable_investigation_pre?, do: Application.get_env(:daemon, :wd_enable_investigation_pre, false)
+  defp enable_appraiser?, do: Application.get_env(:daemon, :wd_enable_appraiser, false)
+  defp enable_specialist_routing?, do: Application.get_env(:daemon, :wd_enable_specialist_routing, false)
+  defp enable_swarm_dispatch?, do: Application.get_env(:daemon, :wd_enable_swarm_dispatch, false)
+  defp enable_substance_check?, do: Application.get_env(:daemon, :wd_enable_substance_check, false)
+  defp enable_autofixer?, do: Application.get_env(:daemon, :wd_enable_autofixer, false)
+  defp enable_test_gate?, do: Application.get_env(:daemon, :wd_enable_test_gate, false)
+  defp enable_code_review?, do: Application.get_env(:daemon, :wd_enable_code_review, false)
+  defp enable_review_fix_loop?, do: Application.get_env(:daemon, :wd_enable_review_fix_loop, false)
+  defp enable_vault_remember?, do: Application.get_env(:daemon, :wd_enable_vault_remember, false)
+  defp enable_knowledge_remember?, do: Application.get_env(:daemon, :wd_enable_knowledge_remember, false)
+  defp enable_skill_evolution?, do: Application.get_env(:daemon, :wd_enable_skill_evolution, false)
+  defp enable_introspector_feed?, do: Application.get_env(:daemon, :wd_enable_introspector_feed, false)
+  # Pre-dispatch gates
+  defp enable_risk_assessment?, do: Application.get_env(:daemon, :wd_enable_risk_assessment, false)
+  defp enable_risk_approval_gate?, do: Application.get_env(:daemon, :wd_enable_risk_approval_gate, false)
+  defp enable_strategic_rejection?, do: Application.get_env(:daemon, :wd_enable_strategic_rejection, false)
+  defp enable_strategic_debate?, do: Application.get_env(:daemon, :wd_enable_strategic_debate, false)
+  # Stage 0.5 context
+  defp enable_impact_analysis?, do: Application.get_env(:daemon, :wd_enable_impact_analysis, false)
+  defp enable_production_context?, do: Application.get_env(:daemon, :wd_enable_production_context, false)
+  # Judgment Phase 2
+  defp enable_already_solved_check?, do: Application.get_env(:daemon, :wd_enable_already_solved_check, false)
+  defp enable_pr_conflict_awareness?, do: Application.get_env(:daemon, :wd_enable_pr_conflict_awareness, false)
+  defp enable_dispatch_confidence?, do: Application.get_env(:daemon, :wd_enable_dispatch_confidence, false)
+  defp enable_task_decomposition?, do: Application.get_env(:daemon, :wd_enable_task_decomposition, false)
 
   # Confidence/decomposition constants live in DispatchJudgment module
 
@@ -420,6 +464,18 @@ defmodule Daemon.Agent.WorkDirector do
           |> maybe_trip_circuit_breaker(failures)
       end
 
+    # Emit completion event for experiment tracking
+    duration_ms = DateTime.diff(DateTime.utc_now(), dispatch.started_at, :millisecond)
+    outcome = case result do
+      {:ok, _, _} -> :success
+      {:error, reason} -> {:failure, classify_failure(reason)}
+    end
+    Bus.emit(:work_dispatch_complete, %{
+      title: dispatch.title, source: dispatch.source,
+      outcome: outcome, duration_ms: duration_ms,
+      flags_snapshot: feature_flags()
+    })
+
     # Stage 3.5: Post-dispatch — remember outcome, store knowledge, evolve skills
     post_dispatch_learn(dispatch, result)
 
@@ -740,7 +796,7 @@ defmodule Daemon.Agent.WorkDirector do
   # -- Pre-dispatch Gate: Strategic Rejection --
 
   defp maybe_reject_strategically(item) do
-    if @enable_strategic_rejection do
+    if enable_strategic_rejection?() do
       try do
         text = String.downcase("#{item.title} #{item.description}")
         issues = []
@@ -757,7 +813,7 @@ defmodule Daemon.Agent.WorkDirector do
 
         cond do
           issues == [] -> :proceed
-          @enable_strategic_debate -> evaluate_with_debate(item, issues, invariants)
+          enable_strategic_debate?() -> evaluate_with_debate(item, issues, invariants)
           true -> {:rejected, Enum.join(issues, "; ")}
         end
       rescue
@@ -872,7 +928,7 @@ defmodule Daemon.Agent.WorkDirector do
   # -- Pre-dispatch Gate: Risk Assessment --
 
   defp assess_risk(item, repo_path) do
-    if @enable_risk_assessment do
+    if enable_risk_assessment?() do
       try do
         # Factor 1: Title keyword hits (0-3)
         title_lower = String.downcase(item.title)
@@ -973,7 +1029,7 @@ defmodule Daemon.Agent.WorkDirector do
   defp maybe_gate_on_risk(%{level: :low}, _item), do: :proceed
   defp maybe_gate_on_risk(%{level: :medium} = risk, _item), do: {:force_review, risk}
   defp maybe_gate_on_risk(%{level: :high} = risk, item) do
-    if @enable_risk_approval_gate do
+    if enable_risk_approval_gate?() do
       try do
         alias Daemon.Governance.Approvals
 
@@ -1001,7 +1057,7 @@ defmodule Daemon.Agent.WorkDirector do
   # -- Phase 2: Dispatch Judgment Wrappers --
 
   defp maybe_check_already_solved(item, enrichment, repo_path) do
-    if @enable_already_solved_check do
+    if enable_already_solved_check?() do
       try do
         DispatchJudgment.check_already_solved(item, enrichment, repo_path)
       rescue
@@ -1015,7 +1071,7 @@ defmodule Daemon.Agent.WorkDirector do
   end
 
   defp maybe_check_pr_conflicts(item, enrichment, repo_path) do
-    if @enable_pr_conflict_awareness do
+    if enable_pr_conflict_awareness?() do
       try do
         DispatchJudgment.check_pr_conflicts(item, enrichment, repo_path)
       rescue
@@ -1029,7 +1085,7 @@ defmodule Daemon.Agent.WorkDirector do
   end
 
   defp maybe_route_by_confidence(item, enrichment, risk, pr_conflicts, _state) do
-    if @enable_dispatch_confidence do
+    if enable_dispatch_confidence?() do
       try do
         confidence = DispatchJudgment.compute_confidence(item, enrichment, risk, pr_conflicts)
         Logger.debug("[WorkDirector] Confidence breakdown: #{inspect(confidence.breakdown)}")
@@ -1050,7 +1106,7 @@ defmodule Daemon.Agent.WorkDirector do
   end
 
   defp maybe_decompose_task(state, item, enrichment, repo_path, branch, confidence) do
-    if @enable_task_decomposition do
+    if enable_task_decomposition?() do
       try do
         case DispatchJudgment.decompose(item, enrichment, repo_path) do
           {:ok, sub_items} ->
@@ -1306,7 +1362,7 @@ defmodule Daemon.Agent.WorkDirector do
   end
 
   defp vault_context_section(item) do
-    if @enable_vault_context do
+    if enable_vault_context?() do
       try do
         recalls = Vault.recall(item.title, limit: 5)
 
@@ -1339,7 +1395,7 @@ defmodule Daemon.Agent.WorkDirector do
   end
 
   defp knowledge_context_section(item) do
-    if @enable_knowledge_context do
+    if enable_knowledge_context?() do
       try do
         # Query knowledge graph for patterns related to the task
         store = "osa_default"
@@ -1377,7 +1433,7 @@ defmodule Daemon.Agent.WorkDirector do
   end
 
   defp appraiser_section(item) do
-    if @enable_appraiser do
+    if enable_appraiser?() do
       try do
         # Estimate complexity based on description length and keywords
         complexity =
@@ -1411,7 +1467,7 @@ defmodule Daemon.Agent.WorkDirector do
   end
 
   defp specialist_hints_section(item) do
-    if @enable_specialist_routing do
+    if enable_specialist_routing?() do
       try do
         scored = Roster.select_for_task_scored(item.title)
         top = Enum.take(scored, 3)
@@ -1438,7 +1494,7 @@ defmodule Daemon.Agent.WorkDirector do
   end
 
   defp introspector_section(_item) do
-    if @enable_introspector_feed do
+    if enable_introspector_feed?() do
       try do
         sections = []
 
@@ -1493,7 +1549,7 @@ defmodule Daemon.Agent.WorkDirector do
   end
 
   defp investigation_section(item, session_id) do
-    if @enable_investigation_pre and item.base_priority >= 0.7 do
+    if enable_investigation_pre?() and item.base_priority >= 0.7 do
       try do
         Logger.info("[WorkDirector] Stage 0.5: Running pre-dispatch investigation for '#{item.title}'")
         investigate_tool = Daemon.Tools.Builtins.Investigate
@@ -1585,7 +1641,7 @@ defmodule Daemon.Agent.WorkDirector do
   # -- Stage 0.5: Impact Analysis Section --
 
   defp impact_analysis_section(item, repo_path) do
-    if @enable_impact_analysis do
+    if enable_impact_analysis?() do
       try do
         # Use cached DispatchIntelligence result or compute fresh
         enrichment = get_or_compute_enrichment(item, repo_path)
@@ -1629,7 +1685,7 @@ defmodule Daemon.Agent.WorkDirector do
   # -- Stage 0.5: Production Context Section --
 
   defp production_context_section do
-    if @enable_production_context do
+    if enable_production_context?() do
       try do
         sections = []
 
@@ -1698,7 +1754,7 @@ defmodule Daemon.Agent.WorkDirector do
   # -- Stage 1.9: Substance Check --
 
   defp maybe_check_substance(branch, repo_path) do
-    if @enable_substance_check do
+    if enable_substance_check?() do
       try do
         case GroundedVerifier.get_diff(branch, repo_path) do
           {:ok, diff} ->
@@ -1737,7 +1793,7 @@ defmodule Daemon.Agent.WorkDirector do
   @test_gate_timeout_ms 120_000
 
   defp maybe_run_test_gate(branch, repo_path) do
-    if @enable_test_gate do
+    if enable_test_gate?() do
       try do
         Logger.info("[WorkDirector] Stage 2.75: Running tests")
         recover_branch(branch, repo_path)
@@ -1820,7 +1876,7 @@ defmodule Daemon.Agent.WorkDirector do
     judgment_ctx = Process.get(:dispatch_judgment_context)
     force_review = is_map(judgment_ctx) and judgment_ctx[:force_review] == true
 
-    if @enable_code_review or force_review do
+    if enable_code_review?() or force_review do
       try do
         Logger.info("[WorkDirector] Stage 2.9: Running code review via debate")
         recover_branch(branch, repo_path)
@@ -1853,7 +1909,7 @@ defmodule Daemon.Agent.WorkDirector do
               verdict = parse_review_verdict(synthesis)
               Logger.info("[WorkDirector] Stage 2.9: Review verdict=#{verdict}: #{String.slice(synthesis, 0, 300)}")
 
-              if @enable_review_fix_loop and verdict == :fix do
+              if enable_review_fix_loop?() and verdict == :fix do
                 run_reflexion_fix(item, branch, session_id, repo_path, synthesis)
               end
 
@@ -2064,12 +2120,12 @@ defmodule Daemon.Agent.WorkDirector do
 
   defp execute_and_poll(prompt, session_id, item \\ nil) do
     # Swarm dispatch: use SwarmMode with pattern selection
-    if @enable_swarm_dispatch and item != nil do
+    if enable_swarm_dispatch?() and item != nil do
       execute_via_swarm(prompt, session_id, item)
     else
       # Specialist routing: let Orchestrator auto-decompose and route
       opts =
-        if @enable_specialist_routing do
+        if enable_specialist_routing?() do
           Logger.info("[WorkDirector] Stage 1: Using specialist routing (Orchestrator auto-decomposition)")
           [max_iterations: @agent_max_iterations, tier: :elite]
         else
@@ -2156,7 +2212,7 @@ defmodule Daemon.Agent.WorkDirector do
   end
 
   defp verify_and_fix_compilation(item, branch, session_id, repo_path, attempt) do
-    if @enable_autofixer do
+    if enable_autofixer?() do
       verify_compilation_autofixer(session_id, repo_path)
     else
       verify_compilation_simple(item, branch, session_id, repo_path, attempt)
@@ -2790,7 +2846,7 @@ defmodule Daemon.Agent.WorkDirector do
 
   defp post_dispatch_learn(dispatch, result) do
     # Vault: remember dispatch outcome
-    if @enable_vault_remember do
+    if enable_vault_remember?() do
       try do
         {category, content} =
           case result do
@@ -2844,7 +2900,7 @@ defmodule Daemon.Agent.WorkDirector do
     end
 
     # Knowledge Store: assert dispatch outcome as triple
-    if @enable_knowledge_remember do
+    if enable_knowledge_remember?() do
       try do
         store = "osa_default"
         slug = String.slice(dispatch.title, 0, 60) |> String.replace(~r/[^a-zA-Z0-9]/, "_")
@@ -2860,7 +2916,7 @@ defmodule Daemon.Agent.WorkDirector do
     end
 
     # SkillEvolution: trigger evolution on failure
-    if @enable_skill_evolution do
+    if enable_skill_evolution?() do
       case result do
         {:error, reason} ->
           try do

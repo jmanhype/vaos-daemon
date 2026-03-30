@@ -306,6 +306,45 @@ config :daemon,
     path -> Path.expand(path)
   end)
 
+# ── WorkDirector Feature Flags ────────────────────────────────────────
+# Set DAEMON_WD_PROFILE=full to enable all flags, =minimal to disable all.
+# Individual flags: DAEMON_WD_VAULT_CONTEXT=true, DAEMON_WD_TEST_GATE=true, etc.
+wd_profile = System.get_env("DAEMON_WD_PROFILE")
+wd_flag = fn env_var ->
+  case wd_profile do
+    "full" -> true
+    "minimal" -> false
+    _ -> System.get_env(env_var) == "true"
+  end
+end
+
+config :daemon,
+  wd_enable_vault_context: wd_flag.("DAEMON_WD_VAULT_CONTEXT"),
+  wd_enable_knowledge_context: wd_flag.("DAEMON_WD_KNOWLEDGE_CONTEXT"),
+  wd_enable_investigation_pre: wd_flag.("DAEMON_WD_INVESTIGATION_PRE"),
+  wd_enable_appraiser: wd_flag.("DAEMON_WD_APPRAISER"),
+  wd_enable_specialist_routing: wd_flag.("DAEMON_WD_SPECIALIST_ROUTING"),
+  wd_enable_swarm_dispatch: wd_flag.("DAEMON_WD_SWARM_DISPATCH"),
+  wd_enable_substance_check: wd_flag.("DAEMON_WD_SUBSTANCE_CHECK"),
+  wd_enable_autofixer: wd_flag.("DAEMON_WD_AUTOFIXER"),
+  wd_enable_test_gate: wd_flag.("DAEMON_WD_TEST_GATE"),
+  wd_enable_code_review: wd_flag.("DAEMON_WD_CODE_REVIEW"),
+  wd_enable_review_fix_loop: wd_flag.("DAEMON_WD_REVIEW_FIX_LOOP"),
+  wd_enable_vault_remember: wd_flag.("DAEMON_WD_VAULT_REMEMBER"),
+  wd_enable_knowledge_remember: wd_flag.("DAEMON_WD_KNOWLEDGE_REMEMBER"),
+  wd_enable_skill_evolution: wd_flag.("DAEMON_WD_SKILL_EVOLUTION"),
+  wd_enable_introspector_feed: wd_flag.("DAEMON_WD_INTROSPECTOR_FEED"),
+  wd_enable_risk_assessment: wd_flag.("DAEMON_WD_RISK_ASSESSMENT"),
+  wd_enable_risk_approval_gate: wd_flag.("DAEMON_WD_RISK_APPROVAL_GATE"),
+  wd_enable_strategic_rejection: wd_flag.("DAEMON_WD_STRATEGIC_REJECTION"),
+  wd_enable_strategic_debate: wd_flag.("DAEMON_WD_STRATEGIC_DEBATE"),
+  wd_enable_impact_analysis: wd_flag.("DAEMON_WD_IMPACT_ANALYSIS"),
+  wd_enable_production_context: wd_flag.("DAEMON_WD_PRODUCTION_CONTEXT"),
+  wd_enable_already_solved_check: wd_flag.("DAEMON_WD_ALREADY_SOLVED_CHECK"),
+  wd_enable_pr_conflict_awareness: wd_flag.("DAEMON_WD_PR_CONFLICT_AWARENESS"),
+  wd_enable_dispatch_confidence: wd_flag.("DAEMON_WD_DISPATCH_CONFIDENCE"),
+  wd_enable_task_decomposition: wd_flag.("DAEMON_WD_TASK_DECOMPOSITION")
+
 # ── Platform (multi-tenant PostgreSQL + AMQP) ────────────────────────
 # These are optional — OSA works standalone without them.
 # Set DATABASE_URL to enable Platform.Repo (PostgreSQL for users, tenants, OS instances).
