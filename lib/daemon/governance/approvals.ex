@@ -4,7 +4,7 @@ defmodule Daemon.Governance.Approvals do
   import Ecto.Query
   alias Daemon.Store.Repo
 
-  @valid_types ~w(agent_create budget_change task_reassign strategy_change agent_terminate)
+  @valid_types ~w(agent_create budget_change task_reassign strategy_change agent_terminate code_change)
   @valid_statuses ~w(pending approved rejected revision_requested)
   @resolve_decisions ~w(approved rejected revision_requested)
 
