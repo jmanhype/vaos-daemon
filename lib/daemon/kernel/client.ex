@@ -19,20 +19,18 @@ defmodule Daemon.Kernel.Client do
   use GenServer
   require Logger
 
-
-  # Use generated gRPC stubs if available, otherwise use gun-based implementation
-  try do
-    Code.ensure_loaded?(Vaos.Kernel.Grpc)
-    @use_generated_stubs true
-  rescue
-    _ -> @use_generated_stubs false
-  end
-
   @reconnect_interval_min 1000
   @reconnect_interval_max 30000
   @request_timeout 5000
   @circuit_threshold 5
   @circuit_timeout 30000
+
+  @grpc_methods %{
+    request_token: "/vaos.kernel.KernelService/RequestToken",
+    submit_telemetry: "/vaos.kernel.KernelService/SubmitTelemetry",
+    submit_routing_log: "/vaos.kernel.KernelService/SubmitRoutingLog",
+    confirm_audit: "/vaos.kernel.KernelService/ConfirmAudit"
+  }
 
   @typedoc """
   Connection state.
@@ -266,7 +264,7 @@ defmodule Daemon.Kernel.Client do
 
     case call_grpc(stub, :request_token, request) do
       {:ok, response} ->
-        {:reply, {:ok, response.token}, state}
+        {:reply, {:ok, response["token"]}, state}
 
       {:error, reason} ->
         Logger.error("[GrpcClient] Token request failed: #{inspect(reason)}")
@@ -331,7 +329,7 @@ defmodule Daemon.Kernel.Client do
 
     case call_grpc(stub, :submit_routing_log, request) do
       {:ok, response} ->
-        {:reply, {:ok, %{correlation_id: response.correlation_id}}, state}
+        {:reply, {:ok, %{correlation_id: response["correlation_id"]}}, state}
 
       {:error, reason} ->
         Logger.error("[GrpcClient] Routing log submission failed: #{inspect(reason)}")
@@ -373,7 +371,7 @@ defmodule Daemon.Kernel.Client do
 
     case call_grpc(stub, :confirm_audit, request) do
       {:ok, response} ->
-        {:reply, {:ok, %{audit_id: response.audit_id, confirmed: response.confirmed}}, state}
+        {:reply, {:ok, %{audit_id: response["audit_id"], confirmed: response["confirmed"]}}, state}
 
       {:error, reason} ->
         Logger.error("[GrpcClient] Audit confirmation failed: #{inspect(reason)}")
@@ -397,20 +395,20 @@ defmodule Daemon.Kernel.Client do
   end
 
   defp connect_with_backoff(url, backoff) do
-    if backoff > 0 do
-      Process.sleep(backoff)
-    end
+    if backoff > 0, do: Process.sleep(backoff)
 
     # Parse gRPC URL (format: grpc://host:port)
-    [_protocol, host_port] = String.split(url, "://", parts: 2)
+    uri = URI.parse(url)
+    host = String.to_charlist(uri.host || "localhost")
+    port = uri.port || 50051
 
-    case :gun.open(String.to_charlist(host_port), :http2) do
+    case :gun.open(host, port, %{protocols: [:http2], transport: :tcp}) do
       {:ok, conn} ->
-        {:ok, :up} = :gun.await_up(conn, @request_timeout)
-
-        # For now, just use the gun connection directly
-        # TODO: Proper gRPC stub integration would require generated Elixir code
-        {:ok, conn, nil, conn}
+        case :gun.await_up(conn, @request_timeout) do
+          {:ok, :http2} -> {:ok, conn, nil, conn}
+          {:ok, _} -> {:ok, conn, nil, conn}
+          {:error, reason} -> :gun.close(conn); {:error, reason}
+        end
 
       {:error, reason} ->
         {:error, reason}
@@ -419,11 +417,94 @@ defmodule Daemon.Kernel.Client do
     e -> {:error, e}
   end
 
-  defp call_grpc(_stub, _method, _request) do
-    # TODO: Implement proper gRPC calls with gun + protobuf encoding
-    # Returns error so callers fall through to HTTP fallback paths
-    Logger.debug("[GrpcClient] gRPC call not yet implemented — falling back to HTTP")
-    {:error, :grpc_not_implemented}
+  defp call_grpc(conn, method, request) do
+    path = Map.fetch!(@grpc_methods, method)
+    json_body = Jason.encode!(request)
+
+    # gRPC frame: 1 byte compressed flag (0x00) + 4 byte big-endian length + payload
+    frame = <<0::8, byte_size(json_body)::32-big>> <> json_body
+
+    headers = [
+      {":method", "POST"},
+      {":path", path},
+      {"content-type", "application/grpc+json"},
+      {"te", "trailers"},
+      {"grpc-encoding", "identity"}
+    ]
+
+    stream_ref = :gun.request(conn, "POST", path, headers, frame)
+
+    case collect_grpc_response(conn, stream_ref, @request_timeout) do
+      {:ok, _resp_headers, body, trailers} ->
+        grpc_status = get_trailer(trailers, "grpc-status")
+
+        if grpc_status in [nil, "0"] do
+          case body do
+            <<_compressed::8, _length::32-big, json_payload::binary>> ->
+              case Jason.decode(json_payload) do
+                {:ok, decoded} -> {:ok, decoded}
+                {:error, _} -> {:error, :invalid_json_response}
+              end
+
+            _ when byte_size(body) == 0 ->
+              {:ok, %{}}
+
+            _ ->
+              {:error, :malformed_grpc_frame}
+          end
+        else
+          grpc_message = get_trailer(trailers, "grpc-message") || "unknown"
+          {:error, {:grpc_error, grpc_status, grpc_message}}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  rescue
+    e -> {:error, {:grpc_exception, Exception.message(e)}}
+  end
+
+  defp collect_grpc_response(conn, stream_ref, timeout) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    collect_grpc_loop(conn, stream_ref, deadline, nil, [], nil)
+  end
+
+  defp collect_grpc_loop(conn, stream_ref, deadline, resp_headers, data_acc, _trailers) do
+    remaining = deadline - System.monotonic_time(:millisecond)
+
+    if remaining <= 0 do
+      {:error, :timeout}
+    else
+      receive do
+        {:gun_response, ^conn, ^stream_ref, :nofin, status, headers} ->
+          collect_grpc_loop(conn, stream_ref, deadline, {status, headers}, data_acc, nil)
+
+        {:gun_response, ^conn, ^stream_ref, :fin, status, headers} ->
+          {:ok, {status, headers}, IO.iodata_to_binary(data_acc), headers}
+
+        {:gun_data, ^conn, ^stream_ref, :nofin, data} ->
+          collect_grpc_loop(conn, stream_ref, deadline, resp_headers, [data_acc, data], nil)
+
+        {:gun_data, ^conn, ^stream_ref, :fin, data} ->
+          collect_grpc_loop(conn, stream_ref, deadline, resp_headers, [data_acc, data], nil)
+
+        {:gun_trailers, ^conn, ^stream_ref, trailer_headers} ->
+          body = IO.iodata_to_binary(data_acc)
+          {:ok, resp_headers, body, trailer_headers}
+
+        {:gun_error, ^conn, ^stream_ref, reason} ->
+          {:error, reason}
+      after
+        remaining -> {:error, :timeout}
+      end
+    end
+  end
+
+  defp get_trailer(trailers, key) do
+    case List.keyfind(trailers, key, 0) do
+      {_, value} -> value
+      nil -> nil
+    end
   end
 
   defp build_token_request(agent_id, intent_hash, action_type, metadata) do
