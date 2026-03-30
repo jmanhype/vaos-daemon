@@ -69,7 +69,7 @@ defmodule Daemon.Agent.Loop.Checkpoint do
                     key = try do
                       String.to_existing_atom(k)
                     rescue
-                      ArgumentError -> String.to_atom(k)
+                      ArgumentError -> k
                     end
                     {key, v}
                   end

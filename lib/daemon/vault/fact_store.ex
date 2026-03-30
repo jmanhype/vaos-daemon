@@ -138,7 +138,7 @@ defmodule Daemon.Vault.FactStore do
         atom_key = try do
           String.to_existing_atom(k)
         rescue
-          ArgumentError -> String.to_atom(k)
+          ArgumentError -> k
         end
         {atom_key, v}
       end
