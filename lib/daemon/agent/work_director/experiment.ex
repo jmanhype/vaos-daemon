@@ -340,12 +340,17 @@ defmodule Daemon.Agent.WorkDirector.Experiment do
   end
 
   defp sanitize_result(event) when is_map(event) do
+    outcome = Map.get(event, :outcome) || Map.get(event, "outcome")
     %{
       title: Map.get(event, :title) || Map.get(event, "title"),
-      outcome: Map.get(event, :outcome) || Map.get(event, "outcome"),
+      outcome: stringify_outcome(outcome),
       duration_ms: Map.get(event, :duration_ms) || Map.get(event, "duration_ms")
     }
   end
+
+  defp stringify_outcome(:success), do: "success"
+  defp stringify_outcome({:failure, reason}), do: "failure:#{reason}"
+  defp stringify_outcome(other), do: inspect(other)
 
   defp persist_results(name, data) do
     File.mkdir_p!(@results_dir)
