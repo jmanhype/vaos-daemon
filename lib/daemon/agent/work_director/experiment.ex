@@ -11,11 +11,8 @@ defmodule Daemon.Agent.WorkDirector.Experiment do
 
   alias Daemon.Agent.WorkDirector
   alias Daemon.Agent.WorkDirector.Backlog
-  alias Daemon.Events.Bus
 
   @results_dir Path.expand("~/.daemon/work_director/experiments")
-  @completion_poll_ms 5_000
-  @completion_timeout_ms :timer.minutes(30)
 
   # -- Experiment Definitions --
 
@@ -177,22 +174,23 @@ defmodule Daemon.Agent.WorkDirector.Experiment do
           dry_run: true
         }
       else
-        # 4. Reset WorkDirector backlog
-        reset!()
+        # 4. Run each task directly through staged execution pipeline
+        results = Enum.map(tasks, fn task ->
+          Logger.info("[Experiment] Running task: #{task.title}")
+          priority = Map.get(task, :priority, 0.5)
 
-        # 5. Subscribe to completion events
-        completion_events = collect_completions(tasks)
+          {_result, meta} = WorkDirector.run_experiment_task(
+            task.title, task.description, priority: priority
+          )
 
-        # 6. Submit tasks
-        submit_tasks(tasks)
+          Logger.info("[Experiment] Task result: #{inspect(meta.outcome)} (#{meta.duration_ms}ms)")
+          meta
+        end)
 
-        # 7. Wait for all completions
-        results = wait_for_completions(completion_events, length(tasks))
-
-        # 8. Compute summary
+        # 5. Compute summary
         summary = summarize(experiment_name, experiment, task_set_name, tasks, results, flags_snapshot)
 
-        # 9. Persist results
+        # 6. Persist results
         persist_results(experiment_name, summary)
 
         Logger.info("[Experiment] #{experiment_name} complete: #{summary.success_count}/#{summary.task_count} succeeded")
@@ -307,55 +305,6 @@ defmodule Daemon.Agent.WorkDirector.Experiment do
     |> Enum.filter(fn {_k, v} -> v end)
     |> Enum.map(fn {k, _v} -> k end)
     |> Enum.sort()
-  end
-
-  defp submit_tasks(tasks) do
-    for task <- tasks do
-      priority = Map.get(task, :priority, 0.5)
-      WorkDirector.submit(task.title, task.description, priority)
-    end
-  end
-
-  defp collect_completions(_tasks) do
-    # Register a temporary event handler for completion events.
-    ref = make_ref()
-    parent = self()
-
-    Bus.register_handler(:work_dispatch_complete, fn event ->
-      send(parent, {:experiment_completion, ref, event})
-    end)
-
-    ref
-  end
-
-  defp wait_for_completions(ref, expected_count) do
-    deadline = System.monotonic_time(:millisecond) + @completion_timeout_ms
-    do_wait(ref, expected_count, [], deadline)
-  end
-
-  defp do_wait(_ref, 0, acc, _deadline), do: Enum.reverse(acc)
-  defp do_wait(ref, remaining, acc, deadline) do
-    now = System.monotonic_time(:millisecond)
-    timeout = max(deadline - now, 0)
-
-    if timeout <= 0 do
-      Logger.warning("[Experiment] Timeout waiting for #{remaining} more completions")
-      Enum.reverse(acc)
-    else
-      receive do
-        {:experiment_completion, ^ref, event} ->
-          do_wait(ref, remaining - 1, [event | acc], deadline)
-      after
-        min(timeout, @completion_poll_ms) ->
-          # Check if WorkDirector is still dispatching
-          if WorkDirector.dispatching?() do
-            do_wait(ref, remaining, acc, deadline)
-          else
-            Logger.info("[Experiment] WorkDirector idle, #{remaining} tasks may not have been dispatched")
-            Enum.reverse(acc)
-          end
-      end
-    end
   end
 
   defp summarize(name, experiment, task_set_name, tasks, results, flags_snapshot) do

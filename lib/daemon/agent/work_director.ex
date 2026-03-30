@@ -207,6 +207,52 @@ defmodule Daemon.Agent.WorkDirector do
     end
   end
 
+  @doc """
+  Run a single task through the staged execution pipeline synchronously.
+
+  Bypasses the backlog queue and throttling — intended for experiment harness use.
+  Returns `{:ok, output, branch}` or `{:error, reason}`.
+  """
+  def run_experiment_task(title, description, opts \\ []) do
+    priority = Keyword.get(opts, :priority, 0.5)
+    item = WorkItem.new(%{source: :manual, title: title, description: description, base_priority: priority})
+    branch = "experiment/#{branch_name(item) |> String.replace("workdir/", "")}"
+    session_id = "experiment-#{:erlang.unique_integer([:positive])}"
+    repo_path = Application.get_env(:daemon, :repo_path, Path.expand("~/vas-swarm"))
+
+    started_at = DateTime.utc_now()
+
+    result =
+      try do
+        staged_dispatch(item, branch, session_id, repo_path)
+      rescue
+        e -> {:error, {:exception, Exception.message(e)}}
+      catch
+        :exit, reason -> {:error, {:exit, reason}}
+      end
+
+    duration_ms = DateTime.diff(DateTime.utc_now(), started_at, :millisecond)
+
+    outcome = case result do
+      {:ok, _, _} -> :success
+      {:error, reason} -> {:failure, classify_failure(reason)}
+    end
+
+    try do
+      Bus.emit(:work_dispatch_complete, %{
+        title: title, source: :experiment,
+        outcome: outcome, duration_ms: duration_ms,
+        flags_snapshot: feature_flags()
+      })
+    rescue
+      _ -> :ok
+    catch
+      :exit, _ -> :ok
+    end
+
+    {result, %{duration_ms: duration_ms, outcome: outcome, title: title}}
+  end
+
   @doc "Force immediate backlog refresh and dispatch attempt."
   def force_cycle do
     try do
