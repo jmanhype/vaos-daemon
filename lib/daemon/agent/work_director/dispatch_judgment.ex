@@ -31,7 +31,7 @@ defmodule Daemon.Agent.WorkDirector.DispatchJudgment do
   @confidence_high 0.7
   @confidence_low 0.4
 
-  @doc_indicators ~w(document readme changelog guide migration\ notes wiki spec specification)
+  @doc_indicators ["document", "readme", "changelog", "guide", "migration notes", "wiki", "spec", "specification"]
   @code_indicators ~w(implement add create fix refactor module function endpoint handler)
 
   # -- Confidence signal weights --
@@ -284,7 +284,8 @@ defmodule Daemon.Agent.WorkDirector.DispatchJudgment do
         merged_at =
           case DateTime.from_iso8601(pr["mergedAt"] || "") do
             {:ok, dt, _} -> dt
-            _ -> DateTime.utc_now()
+            # If mergedAt is unparseable, treat as ancient — don't match as recent
+            _ -> ~U[2000-01-01 00:00:00Z]
           end
 
         similarity >= @jaccard_merged_threshold and DateTime.compare(merged_at, cutoff) != :lt
@@ -545,16 +546,28 @@ defmodule Daemon.Agent.WorkDirector.DispatchJudgment do
 
   defp fetch_prs(:open, repo_path) do
     json_fields = "number,title,headRefName"
-    {output, 0} = System.cmd("gh", ["pr", "list", "--state", "open", "--json", json_fields, "--limit", "30"], cd: repo_path, stderr_to_stdout: true)
-    Jason.decode!(output)
+    case System.cmd("gh", ["pr", "list", "--state", "open", "--json", json_fields, "--limit", "30"], cd: repo_path) do
+      {output, 0} ->
+        case Jason.decode(output) do
+          {:ok, result} -> result
+          {:error, _} -> []
+        end
+      {_, _} -> []
+    end
   rescue
     _ -> []
   end
 
   defp fetch_prs(:merged, repo_path) do
     json_fields = "number,title,headRefName,mergedAt"
-    {output, 0} = System.cmd("gh", ["pr", "list", "--state", "merged", "--json", json_fields, "--limit", "30"], cd: repo_path, stderr_to_stdout: true)
-    Jason.decode!(output)
+    case System.cmd("gh", ["pr", "list", "--state", "merged", "--json", json_fields, "--limit", "30"], cd: repo_path) do
+      {output, 0} ->
+        case Jason.decode(output) do
+          {:ok, result} -> result
+          {:error, _} -> []
+        end
+      {_, _} -> []
+    end
   rescue
     _ -> []
   end
@@ -579,15 +592,14 @@ defmodule Daemon.Agent.WorkDirector.DispatchJudgment do
   end
 
   defp fetch_pr_files(pr_number, repo_path) do
-    {output, 0} =
-      System.cmd("gh", ["pr", "view", to_string(pr_number), "--json", "files"], cd: repo_path, stderr_to_stdout: true)
-
-    case Jason.decode!(output) do
-      %{"files" => files} when is_list(files) ->
-        Enum.map(files, fn f -> f["path"] end) |> Enum.reject(&is_nil/1)
-
-      _ ->
-        []
+    case System.cmd("gh", ["pr", "view", to_string(pr_number), "--json", "files"], cd: repo_path) do
+      {output, 0} ->
+        case Jason.decode(output) do
+          {:ok, %{"files" => files}} when is_list(files) ->
+            Enum.map(files, fn f -> f["path"] end) |> Enum.reject(&is_nil/1)
+          _ -> []
+        end
+      {_, _} -> []
     end
   rescue
     _ -> []
