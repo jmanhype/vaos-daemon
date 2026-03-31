@@ -18,30 +18,8 @@ defmodule Daemon.Agent.LoopInjectionTest do
 
   use ExUnit.Case, async: true
 
+  # Mirror of normalize_for_injection_check/1, and prompt_injection?/1
   # ---------------------------------------------------------------------------
-  # Mirror of @injection_patterns, @structural_injection_patterns,
-  # normalize_for_injection_check/1, and prompt_injection?/1
-  # ---------------------------------------------------------------------------
-
-  @injection_patterns [
-    ~r/what\s+(is|are|was)\s+(your\s+)?(system\s+prompt|instructions?|rules?|configuration|directives?)/i,
-    ~r/what\s+(is|are|was)\s+the\s+(system\s+prompt|instructions?|configuration|directives?)/i,
-    ~r/(show(\s+me)?|print|display|reveal|repeat|output|tell me|give me)\s+(your\s+)?(system\s+prompt|instructions?|full\s+prompt|prompt|initial\s+prompt)/i,
-    ~r/ignore\s+(all\s+)?(previous|prior|above)\s+(instructions?|prompt|context|rules?)/i,
-    ~r/repeat\s+everything\s+(above|before|prior)/i,
-    ~r/what\s+(were\s+)?(you\s+)?(told|instructed|programmed|trained|configured)\s+to/i,
-    ~r/(jailbreak|DAN|do anything now|developer\s+mode|prompt\s+injection)/i,
-    ~r/disregard\s+(your\s+)?(previous\s+)?(instructions?|guidelines?|rules?)/i,
-    ~r/forget\s+(everything|all)\s+(you\s+)?(were\s+)?(told|instructed|programmed)/i
-  ]
-
-  @structural_injection_patterns [
-    ~r/(?:^|\n)\s*(?:system|assistant|user)\s*:/i,
-    ~r/(?:^|\n)\s*\#{1,6}\s*(?:new\s+instructions?|override|ignore\s+above|reset|updated?\s+rules?)/i,
-    ~r/<\/?\s*(?:system|instructions?|prompt|context|rules?)\s*>/i,
-    ~r/(?:\[|<<)\s*(?:SYSTEM|INST|SYS|ASSISTANT|USER)\s*(?:\]|>>)/,
-    ~r/(?:^|\n)-{3,}\s*\n\s*(?:new\s+)?instructions?/i
-  ]
 
   defp normalize(input) when is_binary(input) do
     input
@@ -74,22 +52,48 @@ defmodule Daemon.Agent.LoopInjectionTest do
 
   defp injection?(message) when is_binary(message) do
     trimmed = String.trim(message)
+    patterns = injection_patterns()
+    structural_patterns = structural_injection_patterns()
 
-    if Enum.any?(@injection_patterns, &Regex.match?(&1, trimmed)) do
+    if Enum.any?(patterns, &Regex.match?(&1, trimmed)) do
       true
     else
       normalized = normalize(trimmed)
 
       tier2 =
         trimmed != normalized and
-          Enum.any?(@injection_patterns, &Regex.match?(&1, normalized))
+          Enum.any?(patterns, &Regex.match?(&1, normalized))
 
       if tier2 do
         true
       else
-        Enum.any?(@structural_injection_patterns, &Regex.match?(&1, trimmed))
+        Enum.any?(structural_patterns, &Regex.match?(&1, trimmed))
       end
     end
+  end
+
+  defp injection_patterns do
+    [
+      ~r/what\s+(is|are|was)\s+(your\s+)?(system\s+prompt|instructions?|rules?|configuration|directives?)/i,
+      ~r/what\s+(is|are|was)\s+the\s+(system\s+prompt|instructions?|configuration|directives?)/i,
+      ~r/(show(\s+me)?|print|display|reveal|repeat|output|tell me|give me)\s+(your\s+)?(system\s+prompt|instructions?|full\s+prompt|prompt|initial\s+prompt)/i,
+      ~r/ignore\s+(all\s+)?(previous|prior|above)\s+(instructions?|prompt|context|rules?)/i,
+      ~r/repeat\s+everything\s+(above|before|prior)/i,
+      ~r/what\s+(were\s+)?(you\s+)?(told|instructed|programmed|trained|configured)\s+to/i,
+      ~r/(jailbreak|DAN|do anything now|developer\s+mode|prompt\s+injection)/i,
+      ~r/disregard\s+(your\s+)?(previous\s+)?(instructions?|guidelines?|rules?)/i,
+      ~r/forget\s+(everything|all)\s+(you\s+)?(were\s+)?(told|instructed|programmed)/i
+    ]
+  end
+
+  defp structural_injection_patterns do
+    [
+      ~r/(?:^|\n)\s*(?:system|assistant|user)\s*:/i,
+      ~r/(?:^|\n)\s*\#{1,6}\s*(?:new\s+instructions?|override|ignore\s+above|reset|updated?\s+rules?)/i,
+      ~r/<\/?\s*(?:system|instructions?|prompt|context|rules?)\s*>/i,
+      ~r/(?:\[|<<)\s*(?:SYSTEM|INST|SYS|ASSISTANT|USER)\s*(?:\]|>>)/,
+      ~r/(?:^|\n)-{3,}\s*\n\s*(?:new\s+)?instructions?/i
+    ]
   end
 
   defp injection?(_), do: false

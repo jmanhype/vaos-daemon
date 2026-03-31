@@ -75,7 +75,7 @@ defmodule Daemon.Providers.OpenAICompat do
     try do
       case Req.post(url, json: body, headers: headers, receive_timeout: timeout) do
         {:ok, %{status: 200, body: %{"choices" => [%{"message" => msg} | _]} = resp}} ->
-          raw_content = msg["content"] || ""
+          raw_content = msg["content"] || msg["reasoning_content"] || ""
           tool_calls = parse_tool_calls(msg, model)
           # Strip XML tool-call markup from content when calls were parsed from text (not tool_calls field)
           content =
@@ -136,6 +136,7 @@ defmodule Daemon.Providers.OpenAICompat do
     Process.put(stream_key, %{
       buffer: "",
       content: "",
+      reasoning_content: "",
       tool_calls: %{},   # index → %{id, name, arguments_json}
       usage: %{}
     })
@@ -236,12 +237,13 @@ defmodule Daemon.Providers.OpenAICompat do
           acc
       end
 
-    # Reasoning/thinking content (DeepSeek and some providers)
+    # Reasoning/thinking content (DeepSeek, GLM-5.1 and some providers)
+    # Accumulate into reasoning_content — GLM-5.1 sends ALL content here.
     acc =
       case delta do
         %{"reasoning_content" => text} when is_binary(text) and text != "" ->
           callback.({:thinking_delta, text})
-          acc
+          %{acc | reasoning_content: acc.reasoning_content <> text}
 
         _ ->
           acc
@@ -282,7 +284,16 @@ defmodule Daemon.Providers.OpenAICompat do
   defp maybe_append_args(tc, _), do: tc
 
   defp finalize_sse_stream(acc, callback, model) do
-    content = Text.strip_thinking_tokens(acc.content)
+    # GLM-5.1 sends everything as reasoning_content with no content field.
+    # Fall back to reasoning_content when content is empty.
+    raw_content =
+      if acc.content == "" and acc.reasoning_content != "" do
+        acc.reasoning_content
+      else
+        acc.content
+      end
+
+    content = Text.strip_thinking_tokens(raw_content)
 
     # Build tool_calls from accumulated deltas
     streamed_tool_calls =
@@ -308,13 +319,13 @@ defmodule Daemon.Providers.OpenAICompat do
         {streamed_tool_calls, content}
       else
         parsed =
-          case ToolCallParsers.parse(acc.content, model) do
-            [] -> parse_tool_calls_from_content(acc.content)
+          case ToolCallParsers.parse(raw_content, model) do
+            [] -> parse_tool_calls_from_content(raw_content)
             calls -> calls
           end
 
         if parsed != [] do
-          clean = acc.content |> strip_tool_call_markup() |> Text.strip_thinking_tokens()
+          clean = raw_content |> strip_tool_call_markup() |> Text.strip_thinking_tokens()
           {parsed, clean}
         else
           {[], content}

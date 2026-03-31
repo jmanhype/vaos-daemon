@@ -52,6 +52,7 @@ defmodule Daemon.Supervisors.AgentServices do
       Daemon.Agent.InsightActuator,
       Daemon.Agent.CodeIntrospector,
       Daemon.Agent.ConvergenceEngine,
+      Daemon.Fitness.Evaluator,
       Daemon.Agent.WorkDirector
     ]
 

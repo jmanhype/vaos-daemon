@@ -434,43 +434,178 @@ defmodule MiosaMemory.Injector do
 
   @doc "Filter taxonomy entries relevant to the given context."
   def inject_relevant(entries, context) when is_list(entries) do
+    max_entries = Map.get(context, :max_entries, 5)
+    max_tokens = Map.get(context, :max_tokens, nil)
     task = Map.get(context, :task, "")
-    if task == "" do
-      Enum.take(entries, 5)
-    else
-      task_words =
-        task
-        |> String.downcase()
-        |> String.split(~r/\s+/, trim: true)
-        |> MapSet.new()
+    task_type = Map.get(context, :task_type, nil)
+    error = Map.get(context, :error, nil)
+    files = Map.get(context, :files, [])
+    session_id = Map.get(context, :session_id, nil)
 
-      entries
-      |> Enum.filter(fn entry ->
-        content = Map.get(entry, :content, "") |> String.downcase()
-        content_words = String.split(content, ~r/\s+/, trim: true) |> MapSet.new()
-        overlap = MapSet.intersection(task_words, content_words) |> MapSet.size()
-        overlap >= 1
-      end)
-      |> Enum.take(10)
+    # Score each entry based on context
+    scored = Enum.map(entries, fn entry ->
+      score = calculate_relevance(entry, %{
+        task: task,
+        task_type: task_type,
+        error: error,
+        files: files,
+        session_id: session_id
+      })
+      {score, entry}
+    end)
+
+    # Sort by score (descending), take top N
+    sorted = scored |> Enum.sort_by(fn {score, _} -> -score end) |> Enum.take(max_entries)
+
+    # Apply max_tokens budget if specified
+    result = if max_tokens do
+      take_within_token_budget(sorted, max_tokens)
+    else
+      Enum.map(sorted, fn {_, entry} -> entry end)
     end
+
+    # Add relevance_score to each entry
+    Enum.map(result, fn entry ->
+      relevance = calculate_relevance(entry, %{
+        task: task,
+        task_type: task_type,
+        error: error,
+        files: files,
+        session_id: session_id
+      })
+      Map.put(entry, :relevance_score, relevance)
+    end)
   end
 
   def inject_relevant(_, _), do: []
 
   @doc "Format injected entries for inclusion in a prompt."
-  def format_for_prompt([]), do: nil
+  def format_for_prompt([]), do: ""
 
   def format_for_prompt(entries) when is_list(entries) do
     entries
     |> Enum.map(fn entry ->
       content = Map.get(entry, :content, inspect(entry))
       category = Map.get(entry, :category, :general)
-      "- [#{category}] #{content}"
+      scope = Map.get(entry, :scope, :workspace)
+      "- [#{category}] [#{scope}] #{content}"
     end)
     |> Enum.join("\n")
   end
 
-  def format_for_prompt(_), do: nil
+  def format_for_prompt(_), do: ""
+
+  # ── Private helpers ─────────────────────────────────────────────────────────
+
+  defp calculate_relevance(entry, context) do
+    base_score = 0.0
+
+    # Always-inject rules
+    base_score = base_score + if Map.get(entry, :category) == :project_info and Map.get(entry, :scope) == :workspace, do: 1.0, else: 0.0
+    base_score = base_score + if Map.get(entry, :category) == :user_preference and Map.get(entry, :scope) == :global, do: 1.0, else: 0.0
+
+    # Task matching
+    base_score = base_score + task_relevance(entry, context)
+
+    # File pattern matching
+    base_score = base_score + file_relevance(entry, context)
+
+    # Error matching
+    base_score = base_score + error_relevance(entry, context)
+
+    # Session scoping
+    base_score = base_score + session_relevance(entry, context)
+
+    base_score
+  end
+
+  defp task_relevance(entry, %{task_type: task_type}) when not is_nil(task_type) do
+    # Match task type against content
+    content = Map.get(entry, :content, "") |> String.downcase()
+    task_keywords = task_type_to_keywords(task_type)
+    matches = Enum.count(task_keywords, fn kw -> String.contains?(content, kw) end)
+    if matches > 0, do: 0.3, else: 0.0
+  end
+  defp task_relevance(entry, %{task: task}) when is_binary(task) and task != "" do
+    content = Map.get(entry, :content, "") |> String.downcase()
+    task_words = String.downcase(task) |> String.split(~r/\s+/, trim: true)
+    matches = Enum.count(task_words, fn word -> String.contains?(content, word) and String.length(word) >= 3 end)
+    if matches > 0, do: 0.4, else: 0.0
+  end
+  defp task_relevance(_, _), do: 0.0
+
+  defp file_relevance(entry, %{files: files}) when is_list(files) and length(files) > 0 do
+    content = Map.get(entry, :content, "") |> String.downcase()
+    matches = Enum.count(files, fn file ->
+      file_lower = String.downcase(file)
+      filename = Path.basename(file_lower) |> String.replace(~r/\.(ex|exs|go|py|js|ts)$/, "")
+      # Check for filename matches in content
+      content_contains_file = String.contains?(content, filename)
+      # Check for file extension matches
+      extension_matches = cond do
+        String.ends_with?(file_lower, ".ex") or String.ends_with?(file_lower, ".exs") ->
+          String.contains?(content, "elixir") or String.contains?(content, "phoenix")
+        String.ends_with?(file_lower, ".go") ->
+          String.contains?(content, "golang") or String.contains?(content, "go ")
+        true ->
+          false
+      end
+      content_contains_file or extension_matches
+    end)
+    if matches > 0, do: 0.4, else: 0.0
+  end
+  defp file_relevance(_, _), do: 0.0
+
+  defp error_relevance(entry, %{error: error}) when is_binary(error) and error != "" do
+    content = Map.get(entry, :content, "") |> String.downcase()
+    error_lower = String.downcase(error)
+    error_words = error_lower |> String.split(~r/\s+/, trim: true) |> Enum.take(10)
+    matches = Enum.count(error_words, fn word -> String.length(word) >= 4 and String.contains?(content, word) end)
+    if matches > 0, do: 0.4, else: 0.0
+  end
+  defp error_relevance(_, _), do: 0.0
+
+  defp session_relevance(entry, %{session_id: session_id}) when is_binary(session_id) do
+    entry_session = Map.get(entry, :session_id)
+    entry_metadata = Map.get(entry, :metadata, %{})
+    entry_session_from_metadata = Map.get(entry_metadata, :session_id)
+    entry_scope = Map.get(entry, :scope)
+
+    cond do
+      entry_scope == :global -> 0.2
+      entry_scope == :workspace -> 0.1
+      entry_session == session_id or entry_session_from_metadata == session_id -> 0.3
+      true -> -0.1  # Penalty for mismatched session
+    end
+  end
+  defp session_relevance(entry, _context) do
+    entry_scope = Map.get(entry, :scope)
+    # When no session_id in context, penalize session-scoped entries
+    if entry_scope == :session, do: -0.2, else: 0.0
+  end
+
+  defp task_type_to_keywords("debug"), do: ["debug", "session", "log", "inspect"]
+  defp task_type_to_keywords(_), do: []
+
+  defp take_within_token_budget(scored_entries, max_tokens) do
+    # Rough estimation: 1 token ≈ 4 characters
+    chars_per_token = 4
+    max_chars = max_tokens * chars_per_token
+
+    {result, _total_chars} =
+      Enum.reduce_while(scored_entries, {[], 0}, fn {score, entry}, {acc, current_chars} ->
+        entry_str = inspect(entry)
+        entry_chars = String.length(entry_str)
+
+        if current_chars + entry_chars <= max_chars do
+          {:cont, {[entry | acc], current_chars + entry_chars}}
+        else
+          {:halt, {acc, current_chars}}
+        end
+      end)
+
+    Enum.reverse(result)
+  end
 end
 
 defmodule MiosaMemory.Taxonomy do

@@ -399,6 +399,26 @@ defmodule Daemon.Agent.InsightActuator do
   # ── Rate Limiting ──────────────────────────────────────────────
 
   defp rate_limit_check(state) do
+    # Purge stale pending tasks older than 12 minutes (orphaned from GenServer restarts
+    # or processes that silently died without sending DOWN). This prevents the pending
+    # queue from filling up with ghost entries that block all new dispatches.
+    now = System.monotonic_time(:millisecond)
+    stale_cutoff = now - :timer.minutes(12)
+
+    {stale, active} = Enum.split_with(state.pending_tasks, fn {_, _, _, started_at, _} ->
+      started_at < stale_cutoff
+    end)
+
+    state =
+      if stale != [] do
+        Enum.each(stale, fn {_, topic, _, _, _} ->
+          Logger.warning("[InsightActuator] Purging stale pending task for '#{topic}'")
+        end)
+        %{state | pending_tasks: active}
+      else
+        state
+      end
+
     cond do
       length(state.pending_tasks) >= @max_pending ->
         {:skip, "max concurrent orchestrations (#{@max_pending})"}
@@ -407,8 +427,8 @@ defmodule Daemon.Agent.InsightActuator do
         {:skip, "daily PR cap reached (#{@daily_pr_cap})"}
 
       state.last_pr_at != nil and
-          (System.monotonic_time(:millisecond) - state.last_pr_at) < @rate_limit_ms ->
-        remaining_ms = @rate_limit_ms - (System.monotonic_time(:millisecond) - state.last_pr_at)
+          (now - state.last_pr_at) < @rate_limit_ms ->
+        remaining_ms = @rate_limit_ms - (now - state.last_pr_at)
         remaining_min = div(remaining_ms, 60_000)
         {:skip, "rate limited: cooldown #{remaining_min}m remaining"}
 
@@ -584,7 +604,15 @@ defmodule Daemon.Agent.InsightActuator do
       |> String.replace(~r/^```\s*/m, "")
       |> String.trim()
 
-    case Jason.decode(cleaned) do
+    # Try direct parse first, then extract JSON object from mixed text
+    # (reasoning models like GLM-5.1 often wrap JSON in explanation text)
+    parsed =
+      case Jason.decode(cleaned) do
+        {:ok, _} = ok -> ok
+        {:error, _} -> extract_json_object(cleaned)
+      end
+
+    case parsed do
       {:ok, %{"actionable" => true} = spec} ->
         change_type = parse_change_type(Map.get(spec, "change_type", ""))
         risk_level = parse_risk_level(Map.get(spec, "risk_level", ""))
@@ -612,6 +640,103 @@ defmodule Daemon.Agent.InsightActuator do
       {:error, _} ->
         {:skip, "Tier 2: failed to parse JSON response"}
     end
+  end
+
+  # Extract first JSON object from mixed text (e.g. reasoning + JSON)
+  defp extract_json_object(text) do
+    text
+    |> extract_json_candidates()
+    |> Enum.find_value(fn candidate ->
+      case Jason.decode(candidate) do
+        {:ok, _} = ok -> ok
+        {:error, _} -> nil
+      end
+    end)
+    |> case do
+      nil -> {:error, :no_json_found}
+      ok -> ok
+    end
+  end
+
+  defp extract_json_candidates(text) do
+    code_block =
+      Regex.scan(~r/```(?:json)?\s*([\s\S]*?)```/i, text, capture: :all_but_first)
+      |> Enum.map(fn [json_text] -> String.trim(json_text) end)
+      |> Enum.filter(&String.starts_with?(&1, "{"))
+      |> Enum.filter(&String.ends_with?(&1, "}"))
+
+    brace_candidates =
+      collect_json_candidates(text, text, 0, 0, nil, false, false, [])
+      |> Enum.reject(&(&1 in ["", nil]))
+      |> Enum.map(&String.trim/1)
+      |> Enum.filter(&String.starts_with?(&1, "{"))
+      |> Enum.filter(&String.ends_with?(&1, "}"))
+
+    code_block ++ brace_candidates
+  end
+
+  defp collect_json_candidates(_original, <<>>, _offset, _depth, _start, _in_string, _escaped, acc),
+    do: Enum.reverse(acc)
+
+  defp collect_json_candidates(
+         original,
+         <<char::utf8, rest::binary>>,
+         offset,
+         depth,
+         start,
+         in_string,
+         escaped,
+         acc
+       ) do
+    char_len = byte_size(<<char::utf8>>)
+
+    {new_depth, new_start, new_in_string, new_escaped, completed} =
+      cond do
+        escaped ->
+          {depth, start, in_string, false, nil}
+
+        in_string and char == ?\\
+          ->
+          {depth, start, true, true, nil}
+
+        in_string and char == ?" ->
+          {depth, start, false, false, nil}
+
+        in_string ->
+          {depth, start, true, false, nil}
+
+        char == ?" ->
+          {depth, start, true, false, nil}
+
+        char == ?{ ->
+          new_depth = if depth == 0, do: 1, else: depth + 1
+          new_start = if depth == 0, do: offset, else: start
+          {new_depth, new_start, false, false, nil}
+
+        char == ?} and depth > 0 ->
+          new_depth = depth - 1
+
+          completed =
+            if new_depth == 0 and start != nil do
+              binary_part(original, start, offset - start + char_len)
+            end
+
+          {new_depth, nil, false, false, completed}
+
+        true ->
+          {depth, start, false, false, nil}
+      end
+
+    collect_json_candidates(
+      original,
+      rest,
+      offset + char_len,
+      new_depth,
+      new_start,
+      new_in_string,
+      new_escaped,
+      (if completed, do: [completed | acc], else: acc)
+    )
   end
 
   defp parse_change_type(type) when is_binary(type) do
@@ -743,16 +868,28 @@ defmodule Daemon.Agent.InsightActuator do
     parent = self()
     ref = make_ref()
 
+    # Absolute wall-clock timeout — prevents orphan processes from blocking
+    # the pending_tasks queue indefinitely if ExecutionAwaiter's poll loop stalls.
+    max_wall_ms = :timer.minutes(12)
+    spawned_at = System.monotonic_time(:millisecond)
+
     {_pid, _monitor_ref} = spawn_monitor(fn ->
       result =
         try do
-          case Daemon.Agent.ExecutionAwaiter.execute_and_await(
+          task_result = Daemon.Agent.ExecutionAwaiter.execute_and_await(
             prompt, session_id, branch_name, repo_path,
             strategy: [strategy: "pact"]
-          ) do
-            {:ok, synthesis, branch} -> {:ok, synthesis, branch}
-            {:partial, synthesis} -> {:error, {:no_branch, synthesis}}
-            {:error, reason} -> {:error, reason}
+          )
+
+          elapsed = System.monotonic_time(:millisecond) - spawned_at
+          if elapsed > max_wall_ms do
+            {:error, {:wall_timeout, elapsed}}
+          else
+            case task_result do
+              {:ok, synthesis, branch} -> {:ok, synthesis, branch}
+              {:partial, synthesis} -> {:error, {:no_branch, synthesis}}
+              {:error, reason} -> {:error, reason}
+            end
           end
         rescue
           e -> {:error, {:exception, Exception.message(e)}}
@@ -763,8 +900,7 @@ defmodule Daemon.Agent.InsightActuator do
       send(parent, {:orchestration_complete, ref, result})
     end)
 
-    # Store change_type and quality in pending_tasks for result handling
-    pending = [{ref, topic, change_spec.change_type, System.monotonic_time(:millisecond), quality} | state.pending_tasks]
+    pending = [{ref, topic, change_spec.change_type, spawned_at, quality} | state.pending_tasks]
     %{state | pending_tasks: pending}
   end
 

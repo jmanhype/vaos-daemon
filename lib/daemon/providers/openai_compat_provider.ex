@@ -60,8 +60,8 @@ defmodule Daemon.Providers.OpenAICompatProvider do
       default_model: "moonshot-v1-128k"
     },
     zhipu: %{
-      default_url: "https://open.bigmodel.cn/api/coding/paas/v4",
-      default_model: "glm-4.7"
+      default_url: "https://api.z.ai/api/coding/paas/v4",
+      default_model: "glm-5.1"
     },
     volcengine: %{
       default_url: "https://ark.cn-beijing.volces.com/api/v3",
@@ -89,7 +89,9 @@ defmodule Daemon.Providers.OpenAICompatProvider do
   def chat(provider, messages, opts \\ []) do
     config = get_config!(provider)
 
-    api_key = Application.get_env(:daemon, :"#{provider}_api_key")
+    api_key =
+      Application.get_env(:daemon, :"#{provider}_api_key")
+      |> maybe_generate_zhipu_jwt(provider)
 
     model =
       Keyword.get(opts, :model) ||
@@ -117,7 +119,9 @@ defmodule Daemon.Providers.OpenAICompatProvider do
   def chat_stream(provider, messages, callback, opts \\ []) do
     config = get_config!(provider)
 
-    api_key = Application.get_env(:daemon, :"#{provider}_api_key")
+    api_key =
+      Application.get_env(:daemon, :"#{provider}_api_key")
+      |> maybe_generate_zhipu_jwt(provider)
 
     model =
       Keyword.get(opts, :model) ||
@@ -158,5 +162,35 @@ defmodule Daemon.Providers.OpenAICompatProvider do
       nil -> raise ArgumentError, "Unknown compat provider: #{provider}"
       config -> config
     end
+  end
+
+  # Zhipu API keys in {id}.{secret} format need JWT generation (HS256).
+  # Keys without a dot (e.g. sk-xxx) are passed through as-is.
+  defp maybe_generate_zhipu_jwt(nil, _provider), do: nil
+  defp maybe_generate_zhipu_jwt(api_key, :zhipu) do
+    case String.split(api_key, ".", parts: 2) do
+      [id, secret] when byte_size(secret) > 0 ->
+        generate_zhipu_jwt(id, secret)
+      _ ->
+        api_key
+    end
+  end
+  defp maybe_generate_zhipu_jwt(api_key, _provider), do: api_key
+
+  defp generate_zhipu_jwt(api_key_id, secret) do
+    now_ms = System.system_time(:millisecond)
+    exp_ms = now_ms + 3_600_000  # 1 hour
+
+    header = %{"alg" => "HS256", "typ" => "JWT", "sign_type" => "SIGN"}
+    payload = %{"api_key" => api_key_id, "exp" => exp_ms, "timestamp" => now_ms}
+
+    header_b64 = Base.url_encode64(Jason.encode!(header), padding: false)
+    payload_b64 = Base.url_encode64(Jason.encode!(payload), padding: false)
+
+    signing_input = "#{header_b64}.#{payload_b64}"
+    signature = :crypto.mac(:hmac, :sha256, secret, signing_input)
+    signature_b64 = Base.url_encode64(signature, padding: false)
+
+    "#{header_b64}.#{payload_b64}.#{signature_b64}"
   end
 end
