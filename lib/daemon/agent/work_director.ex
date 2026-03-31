@@ -294,7 +294,9 @@ defmodule Daemon.Agent.WorkDirector do
 
   @impl true
   def init(opts) do
-    enabled = Keyword.get(opts, :enabled, true)
+    enabled = Keyword.get(opts, :enabled,
+      Application.get_env(:daemon, :wd_autonomous_enabled, true)
+    )
 
     state = %{
       enabled: enabled,

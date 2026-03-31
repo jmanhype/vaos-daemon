@@ -306,7 +306,12 @@ config :daemon,
     path -> Path.expand(path)
   end)
 
-# ── WorkDirector Feature Flags ────────────────────────────────────────
+# ── WorkDirector Configuration ────────────────────────────────────────
+# Set DAEMON_WD_ENABLED=false to disable WorkDirector's autonomous dispatch loop.
+# Useful for experiments where you only want run_experiment_task/3 direct invocation.
+wd_autonomous = System.get_env("DAEMON_WD_ENABLED") != "false"
+config :daemon, wd_autonomous_enabled: wd_autonomous
+
 # Set DAEMON_WD_PROFILE=full to enable all flags, =minimal to disable all.
 # Individual flags: DAEMON_WD_VAULT_CONTEXT=true, DAEMON_WD_TEST_GATE=true, etc.
 wd_profile = System.get_env("DAEMON_WD_PROFILE")
