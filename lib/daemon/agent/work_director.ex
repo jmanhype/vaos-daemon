@@ -250,6 +250,21 @@ defmodule Daemon.Agent.WorkDirector do
       :exit, _ -> :ok
     end
 
+    # Clean up: return to base branch and delete experiment branch
+    try do
+      {current, 0} = System.cmd("git", ["rev-parse", "--abbrev-ref", "HEAD"], cd: repo_path)
+      current_branch = String.trim(current)
+      if current_branch == branch do
+        base = Application.get_env(:daemon, :work_director_base_branch, "fix/work-director-hamster-wheel")
+        System.cmd("git", ["checkout", base], cd: repo_path, stderr_to_stdout: true)
+      end
+      System.cmd("git", ["branch", "-D", branch], cd: repo_path, stderr_to_stdout: true)
+    rescue
+      _ -> :ok
+    catch
+      :exit, _ -> :ok
+    end
+
     {result, %{duration_ms: duration_ms, outcome: outcome, title: title}}
   end
 
