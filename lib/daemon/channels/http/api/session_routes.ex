@@ -372,9 +372,12 @@ defmodule Daemon.Channels.HTTP.API.SessionRoutes do
             # Client polls GET /sessions/:id/messages for results.
             # Uses Task.Supervisor to ensure the task survives long LLM calls
             # (Task.start would create an unsupervised process that may be reaped).
+            opts = []
+            working_dir = body["working_dir"]
+            opts = if is_binary(working_dir) and working_dir != "", do: Keyword.put(opts, :working_dir, working_dir), else: opts
             Task.Supervisor.start_child(
               Daemon.TaskSupervisor,
-              fn -> Loop.process_message(session_id, message) end,
+              fn -> Loop.process_message(session_id, message, opts) end,
               restart: :temporary
             )
 
