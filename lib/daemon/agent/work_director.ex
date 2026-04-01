@@ -28,32 +28,11 @@ defmodule Daemon.Agent.WorkDirector do
   alias Daemon.Vault
   alias Daemon.Agent.SkillEvolution
 
-  @pr_poll_ms :timer.hours(1)
-  @max_dispatches_per_day 24
   @max_completed_prs 50
   @daemon_repo "jmanhype/vaos-daemon"
 
-  # -- Feature Flags (runtime config via Application.get_env(:daemon, :work_director_flags, %{})) --
-
-  # Stage 3.5: Post-Dispatch Learning
-  @enable_vault_remember true
-  @enable_knowledge_remember true
-  @enable_skill_evolution true
-
-  # -- Pre-dispatch gates --
-  @enable_risk_assessment true         # Pre-dispatch: score risk, force review on medium, block high
-  @enable_risk_approval_gate true      # Pre-dispatch: route high-risk to Governance.Approvals
-  @enable_strategic_rejection true     # Pre-dispatch: refuse tasks that violate architectural invariants
-  @enable_strategic_debate true        # Pre-dispatch: LLM debate for borderline strategic rejections
-
-
-  # -- Pre-dispatch judgment (Phase 2) --
-  @enable_already_solved_check true     # Gate: skip tasks already solved by existing code or merged PRs
-  @enable_pr_conflict_awareness true    # Gate: detect file conflicts with open PRs, inject awareness
-  @enable_dispatch_confidence true      # Gate: aggregate confidence score, hold back when low
-  @enable_task_decomposition true       # Gate: split broad low-confidence tasks into sub-items
-
-  # Confidence/decomposition constants live in DispatchJudgment module
+  # Feature flags are now in Application config :daemon, :work_director_flags
+  # See config/config.exs for defaults
 
   @protected_path_patterns [
     "^lib/daemon/application\\.ex$",
@@ -167,6 +146,17 @@ defmodule Daemon.Agent.WorkDirector do
     end
   end
 
+  @doc "Poll PR outcomes (called by Scheduler cron job)."
+  def poll_pr_outcomes do
+    try do
+      GenServer.call(__MODULE__, :poll_pr_outcomes, 60_000)
+    rescue
+      _ -> {:error, :not_running}
+    catch
+      :exit, _ -> {:error, :not_running}
+    end
+  end
+
   # -- GenServer callbacks --
 
   @impl true
@@ -179,9 +169,6 @@ defmodule Daemon.Agent.WorkDirector do
       arms: default_arms(),
       current_dispatch: nil,
       completed_prs: [],
-      dispatches_today: 0,
-      last_day_reset: Date.utc_today(),
-      consecutive_failures: 0,
       total_dispatches: 0,
       total_merged: 0,
       total_rejected: 0,
@@ -215,8 +202,8 @@ defmodule Daemon.Agent.WorkDirector do
         investigation_ref: investigation_ref
       }
 
-      # Start PR outcome polling timer (separate from scheduler cron)
-      schedule_pr_poll()
+      # Register cron jobs with Scheduler
+      register_scheduler_jobs()
 
       Logger.info("[WorkDirector] Started (enabled=true, arms=#{inspect(Map.keys(state.arms))}, backlog=#{map_size(state.backlog)})")
       {:ok, state}
@@ -263,7 +250,6 @@ defmodule Daemon.Agent.WorkDirector do
               |> update_backlog_completed(dispatch.content_hash, {:ok, branch})
               |> reward_arm(dispatch.source, 0.8)
               |> add_completed_pr(branch, dispatch.source, dispatch.content_hash)
-              |> Map.put(:consecutive_failures, 0)
               |> Map.update!(:total_dispatches, &(&1 + 1))
 
             :unsafe ->
@@ -274,7 +260,6 @@ defmodule Daemon.Agent.WorkDirector do
               state
               |> update_backlog_completed(dispatch.content_hash, {:safety_violation, branch})
               |> reward_arm(dispatch.source, 0.0)
-              |> Map.put(:consecutive_failures, 0)
           end
 
         {:error, reason} ->
@@ -287,12 +272,10 @@ defmodule Daemon.Agent.WorkDirector do
 
           # Reward based on failure class — widened spread for clear Thompson signal
           reward = failure_class_reward(failure_class)
-          failures = state.consecutive_failures + 1
 
           state
           |> update_backlog_failed(dispatch.content_hash, %{class: failure_class, reason: reason})
           |> reward_arm(dispatch.source, reward)
-          |> Map.put(:consecutive_failures, failures)
       end
 
     # Stage 3.5: Post-dispatch — remember outcome, store knowledge, evolve skills
@@ -312,13 +295,11 @@ defmodule Daemon.Agent.WorkDirector do
   def handle_info({:DOWN, _monitor_ref, :process, _pid, reason}, state) when state.current_dispatch != nil do
     Logger.error("[WorkDirector] Dispatch process crashed: #{inspect(reason)}")
     dispatch = state.current_dispatch
-    failures = state.consecutive_failures + 1
 
     state =
       state
       |> Map.put(:current_dispatch, nil)
       |> update_backlog_failed(dispatch.content_hash, %{class: :process_crash, reason: reason})
-      |> Map.put(:consecutive_failures, failures)
 
     Backlog.persist(state.backlog)
 
@@ -353,7 +334,6 @@ defmodule Daemon.Agent.WorkDirector do
   @impl true
   def handle_info(:poll_pr_outcomes, state) do
     state = poll_pr_outcomes(state)
-    schedule_pr_poll()
     {:noreply, state}
   end
 
@@ -368,12 +348,11 @@ defmodule Daemon.Agent.WorkDirector do
       status: if(state.enabled, do: :running, else: :disabled),
       backlog_size: map_size(state.backlog),
       pending_count: state.backlog |> Map.values() |> Enum.count(&(&1.status == :pending)),
-      dispatches_today: state.dispatches_today,
       current_dispatch: if(state.current_dispatch, do: state.current_dispatch.title, else: nil),
       arms: Enum.map(state.arms, fn {source, %{alpha: a, beta: b}} ->
         {source, %{alpha: a, beta: b, mean: Float.round(a / (a + b), 3)}}
       end) |> Map.new(),
-      consecutive_failures: state.consecutive_failures,
+      system_healthy: system_healthy?(),
       total_dispatches: state.total_dispatches,
       total_merged: state.total_merged,
       total_rejected: state.total_rejected,
@@ -409,9 +388,6 @@ defmodule Daemon.Agent.WorkDirector do
   def handle_call(:refresh_and_select, _from, state) do
     Logger.debug("[WorkDirector] refresh_and_select cycle starting")
 
-    # Reset daily counter if needed
-    state = maybe_reset_daily_counter(state)
-
     # Refresh backlog from all sources
     state = refresh_backlog(state)
 
@@ -430,6 +406,11 @@ defmodule Daemon.Agent.WorkDirector do
       backlog_size: map_size(state.backlog),
       dispatched: state.current_dispatch != nil
     }}, state}
+  end
+
+  def handle_call(:poll_pr_outcomes, _from, state) do
+    state = poll_pr_outcomes(state)
+    {:reply, {:ok, :polled}, state}
   end
 
   @impl true
@@ -504,17 +485,15 @@ defmodule Daemon.Agent.WorkDirector do
   end
 
   defp try_dispatch_one(state) do
-    # Check dispatch eligibility
     cond do
       not state.enabled ->
         state
 
-      state.dispatches_today >= @max_dispatches_per_day ->
-        Logger.debug("[WorkDirector] Daily dispatch cap reached (#{state.dispatches_today}/#{@max_dispatches_per_day})")
+      not system_healthy?() ->
+        Logger.debug("[WorkDirector] System unhealthy — skipping dispatch")
         state
 
       true ->
-        # Try to pick and dispatch one item (gates + queue)
         case Backlog.pick_next(state.backlog, state.arms) do
           :empty ->
             state
@@ -676,7 +655,7 @@ defmodule Daemon.Agent.WorkDirector do
   # -- Pre-dispatch Gate: Strategic Rejection --
 
   defp maybe_reject_strategically(item) do
-    if @enable_strategic_rejection do
+    if get_flag(:strategic_rejection, true) do
       try do
         text = String.downcase("#{item.title} #{item.description}")
         issues = []
@@ -693,7 +672,7 @@ defmodule Daemon.Agent.WorkDirector do
 
         cond do
           issues == [] -> :proceed
-          get_flag(:enable_strategic_debate, @enable_strategic_debate) ->
+          get_flag(:strategic_debate, true) ->
             evaluate_with_debate(item, issues, invariants)
           true -> {:rejected, Enum.join(issues, "; ")}
         end
@@ -809,7 +788,7 @@ defmodule Daemon.Agent.WorkDirector do
   # -- Pre-dispatch Gate: Risk Assessment --
 
   defp assess_risk(item, repo_path) do
-    if @enable_risk_assessment do
+    if get_flag(:risk_assessment, true) do
       try do
         # Factor 1: Title keyword hits (0-3)
         title_lower = String.downcase(item.title)
@@ -910,7 +889,7 @@ defmodule Daemon.Agent.WorkDirector do
   defp maybe_gate_on_risk(%{level: :low}, _item), do: :proceed
   defp maybe_gate_on_risk(%{level: :medium} = risk, _item), do: {:force_review, risk}
   defp maybe_gate_on_risk(%{level: :high} = risk, item) do
-    if @enable_risk_approval_gate do
+    if get_flag(:risk_approval_gate, true) do
       try do
         alias Daemon.Governance.Approvals
 
@@ -938,7 +917,7 @@ defmodule Daemon.Agent.WorkDirector do
   # -- Phase 2: Dispatch Judgment Wrappers --
 
   defp maybe_check_already_solved(item, enrichment, repo_path) do
-    if @enable_already_solved_check do
+    if get_flag(:already_solved_check, true) do
       try do
         DispatchJudgment.check_already_solved(item, enrichment, repo_path)
       rescue
@@ -952,7 +931,7 @@ defmodule Daemon.Agent.WorkDirector do
   end
 
   defp maybe_check_pr_conflicts(item, enrichment, repo_path) do
-    if @enable_pr_conflict_awareness do
+    if get_flag(:pr_conflict_awareness, true) do
       try do
         DispatchJudgment.check_pr_conflicts(item, enrichment, repo_path)
       rescue
@@ -966,7 +945,7 @@ defmodule Daemon.Agent.WorkDirector do
   end
 
   defp maybe_route_by_confidence(item, enrichment, risk, pr_conflicts, _state) do
-    if @enable_dispatch_confidence do
+    if get_flag(:dispatch_confidence, true) do
       try do
         confidence = DispatchJudgment.compute_confidence(item, enrichment, risk, pr_conflicts)
         Logger.debug("[WorkDirector] Confidence breakdown: #{inspect(confidence.breakdown)}")
@@ -987,7 +966,7 @@ defmodule Daemon.Agent.WorkDirector do
   end
 
   defp maybe_decompose_task(state, item, enrichment, repo_path, branch, confidence) do
-    if @enable_task_decomposition do
+    if get_flag(:task_decomposition, true) do
       try do
         case DispatchJudgment.decompose(item, enrichment, repo_path) do
           {:ok, sub_items} ->
@@ -1100,8 +1079,7 @@ defmodule Daemon.Agent.WorkDirector do
         title: item.title,
         branch: branch,
         started_at: DateTime.utc_now()
-      },
-      dispatches_today: state.dispatches_today + 1
+      }
     }
   end
 
@@ -1109,7 +1087,7 @@ defmodule Daemon.Agent.WorkDirector do
 
   defp post_dispatch_learn(dispatch, result) do
     # Vault: remember dispatch outcome
-    if get_flag(:enable_vault_remember, @enable_vault_remember) do
+    if get_flag(:vault_remember, true) do
       try do
         {category, content} =
           case result do
@@ -1163,7 +1141,7 @@ defmodule Daemon.Agent.WorkDirector do
     end
 
     # Knowledge Store: assert dispatch outcome as triple
-    if get_flag(:enable_knowledge_remember, @enable_knowledge_remember) do
+    if get_flag(:knowledge_remember, true) do
       try do
         store = "osa_default"
         slug = String.slice(dispatch.title, 0, 60) |> String.replace(~r/[^a-zA-Z0-9]/, "_")
@@ -1179,7 +1157,7 @@ defmodule Daemon.Agent.WorkDirector do
     end
 
     # SkillEvolution: trigger evolution on failure
-    if get_flag(:enable_skill_evolution, @enable_skill_evolution) do
+    if get_flag(:skill_evolution, true) do
       case result do
         {:error, reason} ->
           try do
@@ -1386,18 +1364,39 @@ defmodule Daemon.Agent.WorkDirector do
     end
   end
 
-  defp schedule_pr_poll do
-    Process.send_after(self(), :poll_pr_outcomes, @pr_poll_ms)
-  end
-
   # -- Helper Functions --
 
-  defp maybe_reset_daily_counter(state) do
-    today = Date.utc_today()
-    if state.last_day_reset != today do
-      %{state | dispatches_today: 0, last_day_reset: today}
-    else
-      state
+  defp register_scheduler_jobs do
+    try do
+      Daemon.Agent.Scheduler.add_job(%{
+        "id" => "work_director_cycle",
+        "type" => "work_director",
+        "schedule" => "*/10 * * * *",
+        "enabled" => true
+      })
+
+      Daemon.Agent.Scheduler.add_job(%{
+        "id" => "work_director_pr_poll",
+        "type" => "work_director",
+        "job" => "WorkDirector.poll_pr_outcomes",
+        "schedule" => "0 * * * *",
+        "enabled" => true
+      })
+    rescue
+      _ -> :ok
+    catch
+      :exit, _ -> :ok
+    end
+  end
+
+  defp system_healthy? do
+    try do
+      health = Daemon.Providers.HealthChecker.state()
+      not Enum.any?(health, fn {_p, s} -> s.circuit == :open end)
+    rescue
+      _ -> true
+    catch
+      :exit, _ -> true
     end
   end
 

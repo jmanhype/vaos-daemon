@@ -21,6 +21,21 @@ defmodule Daemon.Agent.Scheduler.JobExecutor do
     execute_task(task, "cron_#{job["id"]}")
   end
 
+  def execute_cron_job(%{"type" => "work_director", "job" => "WorkDirector.poll_pr_outcomes"} = job) do
+    Logger.debug("Cron '#{job["id"]}': running WorkDirector PR poll")
+    alias Daemon.Agent.WorkDirector
+
+    case WorkDirector.poll_pr_outcomes() do
+      {:ok, result} ->
+        Logger.info("Cron '#{job["id"]}': WorkDirector PR poll completed: #{inspect(result)}")
+        {:ok, "pr_poll: #{inspect(result)}"}
+
+      {:error, reason} ->
+        Logger.warning("Cron '#{job["id"]}': WorkDirector PR poll failed: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
   def execute_cron_job(%{"type" => "work_director"} = job) do
     Logger.debug("Cron '#{job["id"]}': running WorkDirector cycle")
     alias Daemon.Agent.WorkDirector
@@ -28,7 +43,7 @@ defmodule Daemon.Agent.Scheduler.JobExecutor do
     case WorkDirector.refresh_and_select() do
       {:ok, result} ->
         Logger.info("Cron '#{job["id"]}': WorkDirector cycle completed: #{inspect(result)}")
-        {:ok, "work_director cycle: #{result}"}
+        {:ok, "work_director cycle: #{inspect(result)}"}
 
       {:error, reason} ->
         Logger.warning("Cron '#{job["id"]}': WorkDirector cycle failed: #{inspect(reason)}")

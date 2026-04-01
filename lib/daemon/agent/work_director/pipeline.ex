@@ -40,20 +40,8 @@ defmodule Daemon.Agent.WorkDirector.Pipeline do
   
   @subprocess_schedulers 4
 
-  # -- Feature Flags (runtime config via Application.get_env(:daemon, :work_director_flags, %{})) --
-  # NOTE: Context enrichment flags are in ContextEnrichment module
-  # Stage 1: Swarm dispatch
-  @enable_swarm_dispatch false
-  # Stage 1.9: Substance check
-  @enable_substance_check true
-  # Stage 2: AutoFixer
-  @enable_autofixer true
-  # Stage 2.75: Test gate
-  @enable_test_gate true
-  # Stage 2.9: Code review
-  @enable_code_review true
-  @enable_review_fix_loop true
-  # Stage 3.5: Post-dispatch learning
+  # Feature flags are now in Application config :daemon, :work_director_flags
+  # See config/config.exs for defaults
   @protected_path_patterns [
     "^lib/daemon/application\\.ex$",
     "^lib/daemon/supervisors/",
@@ -192,7 +180,7 @@ defmodule Daemon.Agent.WorkDirector.Pipeline do
   # -- Stage 1.9: Substance Check --
 
   defp maybe_check_substance(branch, repo_path) do
-    if get_flag(:enable_substance_check, @enable_substance_check) do
+    if get_flag(:substance_check, true) do
       try do
         case GroundedVerifier.get_diff(branch, repo_path) do
           {:ok, diff} ->
@@ -229,7 +217,7 @@ defmodule Daemon.Agent.WorkDirector.Pipeline do
   # -- Stage 2.75: Test Gate --
 
   defp maybe_run_test_gate(branch, repo_path) do
-    if get_flag(:enable_test_gate, @enable_test_gate) do
+    if get_flag(:test_gate, true) do
       try do
         Logger.info("[Pipeline] Stage 2.75: Running tests")
         recover_branch(branch, repo_path)
@@ -353,7 +341,7 @@ defmodule Daemon.Agent.WorkDirector.Pipeline do
     judgment_ctx = Process.get(:dispatch_judgment_context)
     force_review = is_map(judgment_ctx) and judgment_ctx[:force_review] == true
 
-    if get_flag(:enable_code_review, @enable_code_review) or force_review do
+    if get_flag(:code_review, true) or force_review do
       try do
         Logger.info("[Pipeline] Stage 2.9: Running code review via debate")
         recover_branch(branch, repo_path)
@@ -386,7 +374,7 @@ defmodule Daemon.Agent.WorkDirector.Pipeline do
               verdict = parse_review_verdict(synthesis)
               Logger.info("[Pipeline] Stage 2.9: Review verdict=#{verdict}: #{String.slice(synthesis, 0, 300)}")
 
-              if get_flag(:enable_review_fix_loop, @enable_review_fix_loop) and verdict == :fix do
+              if get_flag(:review_fix_loop, true) and verdict == :fix do
                 run_reflexion_fix(item, branch, session_id, repo_path, synthesis)
               end
 
@@ -597,11 +585,11 @@ defmodule Daemon.Agent.WorkDirector.Pipeline do
 
   defp execute_and_poll(prompt, session_id, item \\ nil) do
     # Swarm dispatch: use SwarmMode with pattern selection
-    if get_flag(:enable_swarm_dispatch, @enable_swarm_dispatch) and item != nil do
+    if get_flag(:swarm_dispatch, false) and item != nil do
       execute_via_swarm(prompt, session_id, item)
     else
       # Specialist routing: let Orchestrator auto-decompose and route
-      enable_specialist_routing = get_flag(:enable_specialist_routing, true)
+      enable_specialist_routing = get_flag(:specialist_routing, true)
       opts =
         if enable_specialist_routing do
           Logger.info("[Pipeline] Stage 1: Using specialist routing (Orchestrator auto-decomposition)")
@@ -690,7 +678,7 @@ defmodule Daemon.Agent.WorkDirector.Pipeline do
   end
 
   defp verify_and_fix_compilation(item, branch, session_id, repo_path, attempt) do
-    if get_flag(:enable_autofixer, @enable_autofixer) do
+    if get_flag(:autofixer, true) do
       verify_compilation_autofixer(session_id, repo_path)
     else
       verify_compilation_simple(item, branch, session_id, repo_path, attempt)

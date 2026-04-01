@@ -16,15 +16,8 @@ defmodule Daemon.Agent.WorkDirector.ContextEnrichment do
   alias Daemon.Agent.CodeIntrospector
   alias Daemon.Agent.ActiveLearner
 
-  # -- Feature Flags (runtime config via Application.get_env(:daemon, :work_director_flags, %{})) --
-  @enable_vault_context true
-  @enable_knowledge_context true
-  @enable_investigation_pre true
-  @enable_appraiser true
-  @enable_specialist_routing true
-  @enable_introspector_feed true
-  @enable_impact_analysis true
-  @enable_production_context true
+  # Feature flags are now in Application config :daemon, :work_director_flags
+  # See config/config.exs for defaults
 
   # Helper to get flags from runtime config
   defp get_flag(flag_name, default) do
@@ -92,7 +85,7 @@ defmodule Daemon.Agent.WorkDirector.ContextEnrichment do
   end
 
   defp vault_context_section(item) do
-    if get_flag(:enable_vault_context, @enable_vault_context) do
+    if get_flag(:vault_context, true) do
       try do
         recalls = Vault.recall(item.title, limit: 5)
 
@@ -125,7 +118,7 @@ defmodule Daemon.Agent.WorkDirector.ContextEnrichment do
   end
 
   defp knowledge_context_section(item) do
-    if get_flag(:enable_knowledge_context, @enable_knowledge_context) do
+    if get_flag(:knowledge_context, true) do
       try do
         store = "osa_default"
         keywords = item.title |> String.split(~r/\s+/) |> Enum.take(5)
@@ -162,7 +155,7 @@ defmodule Daemon.Agent.WorkDirector.ContextEnrichment do
   end
 
   defp appraiser_section(item) do
-    if get_flag(:enable_appraiser, @enable_appraiser) do
+    if get_flag(:appraiser, true) do
       try do
         complexity =
           cond do
@@ -195,7 +188,7 @@ defmodule Daemon.Agent.WorkDirector.ContextEnrichment do
   end
 
   defp specialist_hints_section(item) do
-    if get_flag(:enable_specialist_routing, @enable_specialist_routing) do
+    if get_flag(:specialist_routing, true) do
       try do
         scored = Roster.select_for_task_scored(item.title)
         top = Enum.take(scored, 3)
@@ -222,7 +215,7 @@ defmodule Daemon.Agent.WorkDirector.ContextEnrichment do
   end
 
   defp introspector_section(_item) do
-    if get_flag(:enable_introspector_feed, @enable_introspector_feed) do
+    if get_flag(:introspector_feed, true) do
       try do
         sections = []
 
@@ -275,7 +268,7 @@ defmodule Daemon.Agent.WorkDirector.ContextEnrichment do
   end
 
   defp investigation_section(item, session_id) do
-    if get_flag(:enable_investigation_pre, @enable_investigation_pre) and item.base_priority >= 0.7 do
+    if get_flag(:investigation_pre, true) and item.base_priority >= 0.7 do
       try do
         Logger.info("[ContextEnrichment] Running pre-dispatch investigation for '#{item.title}'")
         investigate_tool = Daemon.Tools.Builtins.Investigate
@@ -359,7 +352,7 @@ defmodule Daemon.Agent.WorkDirector.ContextEnrichment do
   end
 
   defp impact_analysis_section(item, repo_path) do
-    if get_flag(:enable_impact_analysis, @enable_impact_analysis) do
+    if get_flag(:impact_analysis, true) do
       try do
         enrichment = get_or_compute_enrichment(item, repo_path)
         file_paths = enrichment |> Map.get(:relevant_files, []) |> Enum.map(& &1.path) |> Enum.take(5)
@@ -400,7 +393,7 @@ defmodule Daemon.Agent.WorkDirector.ContextEnrichment do
   end
 
   defp production_context_section do
-    if get_flag(:enable_production_context, @enable_production_context) do
+    if get_flag(:production_context, true) do
       try do
         sections = []
 
