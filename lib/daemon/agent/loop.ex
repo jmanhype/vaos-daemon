@@ -895,8 +895,13 @@ defmodule Daemon.Agent.Loop do
         tool_messages = Enum.map(results, fn {_tc, {tool_msg, _result_str}} -> tool_msg end)
         state = %{state | messages: state.messages ++ tool_messages}
 
-        # Post-tool quality hooks — async, non-blocking
-        maybe_run_quality_gates(state, tool_calls, results)
+        # Post-tool quality hooks — fast checks synchronous, slow checks async
+        quality_nudges = collect_quality_nudges(state, tool_calls, results)
+        state = if quality_nudges != [] do
+          %{state | messages: state.messages ++ quality_nudges}
+        else
+          state
+        end
 
         # Checkpoint after tool results — crash recovery can resume from here
         Checkpoint.checkpoint_state(state)
@@ -1419,58 +1424,75 @@ defmodule Daemon.Agent.Loop do
 
   # --- Post-tool quality gates (Phase 2b) ---
 
-  defp maybe_run_quality_gates(state, tool_calls, results) do
+  defp collect_quality_nudges(state, tool_calls, results) do
     unless Application.get_env(:daemon, :session_quality_hooks, true) do
-      :ok
+      []
     else
       has_write_tools = Enum.any?(tool_calls, fn tc -> tc.name in ~w(file_write file_edit) end)
 
-      if has_write_tools do
+      direct_nudges = if has_write_tools do
         session_id = state.session_id
         working_dir = state.working_dir || "."
 
-        # 1. Substance check + grounded verification
-        Task.start(fn ->
+        # Fast checks — synchronous with 5s timeout, return nudge messages
+        fast_task = Task.async(fn ->
+          nudges = []
           try do
             {diff, 0} = System.cmd("git", ["diff", "--unified=0", "HEAD"], cd: working_dir, stderr_to_stdout: true)
             if byte_size(diff) > 0 do
               # Substance analysis
               analysis = Daemon.Agent.CodeVerifier.analyze_substance(diff)
-              unless analysis.has_substance do
-                Logger.info("[quality] Substance check warning for session #{session_id}: #{inspect(analysis.warnings)}")
-                Bus.emit(:system_event, %{
-                  event: :quality_hook_substance,
-                  session_id: session_id,
-                  warnings: analysis.warnings
-                })
+              nudges = if not analysis.has_substance do
+                warnings = Enum.join(analysis.warnings, "; ")
+                Logger.info("[quality] Substance warning: #{warnings}")
+                [%{role: "system", content:
+                  "[Quality gate — substance check failed] #{warnings}. " <>
+                  "Your changes look like stubs or boilerplate. Add real implementation before proceeding."}]
+              else
+                []
               end
 
-              # Grounded verification — check phantom module references
-              case Daemon.Agent.CodeVerifier.verify("HEAD", working_dir) do
+              # Grounded verification — phantom module references
+              nudges = case Daemon.Agent.CodeVerifier.verify("HEAD", working_dir) do
                 {:error, violations} ->
-                  Logger.info("[quality] Grounded verification failures for session #{session_id}: #{length(violations)} violations")
-                  Bus.emit(:system_event, %{
-                    event: :quality_hook_verification,
-                    session_id: session_id,
-                    violations: violations
-                  })
+                  violation_text = Enum.map_join(violations, "\n", &("• #{&1}"))
+                  Logger.info("[quality] #{length(violations)} phantom references")
+                  nudges ++ [%{role: "system", content:
+                    "[Quality gate — phantom references detected]\n#{violation_text}\n" <>
+                    "Fix these before continuing — they compile but will fail at runtime."}]
 
-                {:ok, warnings} when warnings != [] ->
-                  Logger.debug("[quality] Grounded verification warnings: #{inspect(warnings)}")
-
-                _ -> :ok
+                _ -> nudges
               end
+
+              nudges
+            else
+              []
             end
           rescue
-            e -> Logger.debug("[quality] Substance/verification check failed: #{inspect(e)}")
+            e ->
+              Logger.debug("[quality] Fast checks failed: #{inspect(e)}")
+              []
           end
         end)
 
-        # 2. Test gate — run mix test on related test files
+        fast_nudges = case Task.yield(fast_task, 5_000) || Task.shutdown(fast_task) do
+          {:ok, nudges} when is_list(nudges) -> nudges
+          _ -> []
+        end
+
+        # Code review nudge — synchronous, cheap
+        changed_files = extract_changed_paths(results)
+        review_nudges = if length(changed_files) >= 3 do
+          [%{role: "system", content:
+            "[Quality gate — large change] #{length(changed_files)} files changed. " <>
+            "Review your changes for consistency before committing."}]
+        else
+          []
+        end
+
+        # Slow checks — async, store in ETS for pickup on next iteration
         Task.start(fn ->
           try do
-            changed_files = extract_changed_paths(results)
-
             test_files =
               changed_files
               |> Enum.filter(&String.ends_with?(&1, ".ex"))
@@ -1482,17 +1504,15 @@ defmodule Daemon.Agent.Loop do
               |> Enum.filter(&File.exists?/1)
 
             if test_files != [] do
-              case System.cmd("mix", ["test" | test_files], cd: working_dir, stderr_to_stdout: true) do
+              case System.cmd("mix", ["test" | test_files], cd: working_dir, stderr_to_stdout: true, env: [{"MIX_ENV", "test"}]) do
                 {_output, 0} ->
                   Logger.debug("[quality] Tests passed for session #{session_id}")
 
                 {output, _code} ->
                   Logger.info("[quality] Test failures for session #{session_id}")
-                  Bus.emit(:system_event, %{
-                    event: :quality_hook_test_failure,
-                    session_id: session_id,
-                    output: String.slice(output, 0, 2000)
-                  })
+                  push_deferred_nudge(session_id, %{role: "system", content:
+                    "[Quality gate — test failures]\n#{String.slice(output, 0, 1500)}\n" <>
+                    "Fix the failing tests before continuing."})
               end
             end
           rescue
@@ -1500,49 +1520,60 @@ defmodule Daemon.Agent.Loop do
           end
         end)
 
-        # 3. Code review nudge — flag patterns that warrant review
         Task.start(fn ->
           try do
-            changed_files = extract_changed_paths(results)
-            large_change = length(changed_files) >= 3
-
-            if large_change do
-              Bus.emit(:system_event, %{
-                event: :quality_hook_review_nudge,
-                session_id: session_id,
-                files_changed: length(changed_files),
-                message: "#{length(changed_files)} files changed — consider reviewing before committing"
-              })
-            end
-          rescue
-            _ -> :ok
-          end
-        end)
-
-        # 4. Fitness evaluation — run architectural fitness functions
-        Task.start(fn ->
-          try do
-            results = Daemon.Fitness.evaluate_all(working_dir)
-            violations = Enum.filter(results, fn {_name, {status, _score, _detail}} -> status == :not_kept end)
+            fit_results = Daemon.Fitness.evaluate_all(working_dir)
+            violations = Enum.filter(fit_results, fn {_name, {status, _score, _detail}} -> status == :not_kept end)
 
             if violations != [] do
-              Logger.info("[quality] Fitness violations for session #{session_id}: #{length(violations)}")
-              Bus.emit(:system_event, %{
-                event: :quality_hook_fitness,
-                session_id: session_id,
-                violations: Enum.map(violations, fn {name, {_, score, detail}} ->
-                  %{name: name, score: score, detail: detail}
-                end)
-              })
+              detail = Enum.map_join(violations, "\n", fn {name, {_, score, d}} ->
+                "• #{name} (#{score}): #{d}"
+              end)
+              Logger.info("[quality] #{length(violations)} fitness violations")
+              push_deferred_nudge(session_id, %{role: "system", content:
+                "[Quality gate — fitness violations]\n#{detail}\n" <>
+                "Address these architectural concerns."})
             end
           rescue
             e -> Logger.debug("[quality] Fitness evaluation failed: #{inspect(e)}")
           end
         end)
+
+        fast_nudges ++ review_nudges
+      else
+        []
       end
+
+      # Always collect deferred nudges from previous iteration's slow checks
+      deferred = drain_deferred_nudges(state.session_id)
+      direct_nudges ++ deferred
     end
   rescue
-    _ -> :ok
+    _ -> []
+  end
+
+  @deferred_nudge_table :daemon_deferred_nudges
+
+  defp ensure_deferred_table do
+    if :ets.whereis(@deferred_nudge_table) == :undefined do
+      :ets.new(@deferred_nudge_table, [:named_table, :public, :bag])
+    end
+  rescue
+    ArgumentError -> :ok  # already exists
+  end
+
+  defp push_deferred_nudge(session_id, nudge) do
+    ensure_deferred_table()
+    :ets.insert(@deferred_nudge_table, {session_id, nudge})
+  end
+
+  defp drain_deferred_nudges(session_id) do
+    ensure_deferred_table()
+    nudges = :ets.lookup(@deferred_nudge_table, session_id)
+    :ets.delete(@deferred_nudge_table, session_id)
+    Enum.map(nudges, fn {_sid, nudge} -> nudge end)
+  rescue
+    _ -> []
   end
 
   defp extract_changed_paths(results) do
