@@ -20,52 +20,25 @@ defmodule Daemon.Agent.WorkDirector do
   alias Daemon.Agent.WorkDirector.Backlog.WorkItem
   alias Daemon.Agent.WorkDirector.DispatchIntelligence
   alias Daemon.Agent.WorkDirector.DispatchJudgment
-  alias Daemon.Agent.WorkDirector.GroundedVerifier
+  alias Daemon.Agent.WorkDirector.Pipeline
   alias Daemon.Agent.WorkDirector.Source
-  alias Daemon.Agent.Orchestrator
-  alias Daemon.Intelligence.DecisionJournal
-
-  # -- Pipeline upgrade aliases --
-  alias Daemon.Vault
-  alias Daemon.Agent.AutoFixer
-  alias Daemon.Agent.Roster
-  alias Daemon.Agent.Orchestrator.SwarmMode
+  alias Daemon.Agent.Tasks
   alias Daemon.Agent.Debate
+  alias Daemon.Intelligence.DecisionJournal
+  alias Daemon.Vault
   alias Daemon.Agent.SkillEvolution
-  alias Daemon.Agent.Appraiser
-  alias Daemon.Agent.CodeIntrospector
-  alias Daemon.Agent.ActiveLearner
 
-  @backlog_refresh_ms :timer.minutes(10)
   @pr_poll_ms :timer.hours(1)
-  @initial_delay_ms :timer.seconds(60)
-  @dispatch_cooldown_ms :timer.minutes(5)
   @max_dispatches_per_day 24
-  # Skip dispatch when system memory usage exceeds this percentage
-  @memory_pressure_threshold 0.70
   @max_completed_prs 50
-  @circuit_breaker_threshold 5
-  @circuit_breaker_ms :timer.minutes(30)
-  @subprocess_schedulers 4
   @daemon_repo "jmanhype/vaos-daemon"
 
-  # -- Feature Flags (pipeline upgrades) --
-  # ALL FLAGS ENABLED — full autonomous engineering team mode
-  @enable_vault_context true         # Stage 0.5: inject prior dispatch memories from Vault
-  @enable_knowledge_context true     # Stage 0.5: query knowledge store for codebase patterns
-  @enable_investigation_pre true     # Stage 0.5: run Investigate.execute before dispatch (high cost)
-  @enable_appraiser true             # Stage 0.5: estimate complexity/cost via Appraiser
-  @enable_specialist_routing true    # Stage 1: Roster agent selection vs force_simple
-  @enable_swarm_dispatch false       # Stage 1: Disabled — SwarmWorker has no tool access (text-only)
-  @enable_substance_check true       # Stage 1.9: reject stubs (hard gate)
-  @enable_autofixer true             # Stage 2: AutoFixer instead of simple 2-attempt loop
-  @enable_test_gate true             # Stage 2.75: mix test --max-failures 5 (hard gate — blocks PR)
-  @enable_code_review true           # Stage 2.9: debate/review pattern before shipping
-  @enable_review_fix_loop true       # Stage 2.9: dispatch fix agent when review finds issues (Reflexion)
-  @enable_vault_remember true        # Stage 3.5: store dispatch outcome in Vault
-  @enable_knowledge_remember true    # Stage 3.5: store patterns in knowledge graph
-  @enable_skill_evolution true       # Stage 3.5: feed failures to SkillEvolution
-  @enable_introspector_feed true     # Stage 0.5: pull CodeIntrospector/ActiveLearner insights
+  # -- Feature Flags (runtime config via Application.get_env(:daemon, :work_director_flags, %{})) --
+
+  # Stage 3.5: Post-Dispatch Learning
+  @enable_vault_remember true
+  @enable_knowledge_remember true
+  @enable_skill_evolution true
 
   # -- Pre-dispatch gates --
   @enable_risk_assessment true         # Pre-dispatch: score risk, force review on medium, block high
@@ -73,9 +46,6 @@ defmodule Daemon.Agent.WorkDirector do
   @enable_strategic_rejection true     # Pre-dispatch: refuse tasks that violate architectural invariants
   @enable_strategic_debate true        # Pre-dispatch: LLM debate for borderline strategic rejections
 
-  # -- Stage 0.5 context sections --
-  @enable_impact_analysis true         # Stage 0.5: trace callers/dependents of affected files
-  @enable_production_context true      # Stage 0.5: inject telemetry + provider health into prompt
 
   # -- Pre-dispatch judgment (Phase 2) --
   @enable_already_solved_check true     # Gate: skip tasks already solved by existing code or merged PRs
@@ -185,6 +155,18 @@ defmodule Daemon.Agent.WorkDirector do
     end
   end
 
+
+  @doc "Run one refresh-and-select cycle (called by Scheduler cron job)."
+  def refresh_and_select do
+    try do
+      GenServer.call(__MODULE__, :refresh_and_select, 60_000)
+    rescue
+      e -> {:error, {:exception, Exception.message(e)}}
+    catch
+      :exit, reason -> {:error, {:exit, reason}}
+    end
+  end
+
   # -- GenServer callbacks --
 
   @impl true
@@ -200,7 +182,6 @@ defmodule Daemon.Agent.WorkDirector do
       dispatches_today: 0,
       last_day_reset: Date.utc_today(),
       consecutive_failures: 0,
-      circuit_breaker_until: nil,
       total_dispatches: 0,
       total_merged: 0,
       total_rejected: 0,
@@ -213,14 +194,36 @@ defmodule Daemon.Agent.WorkDirector do
     # Load persisted arms (survive restarts)
     state = load_persisted_arms(state)
 
+    # Load persisted backlog
+    persisted =
+      try do
+        Backlog.load()
+      rescue
+        e ->
+          Logger.warning("[WorkDirector] Failed to load backlog: #{Exception.message(e)}")
+          %{}
+      end
+
+    state = %{state | backlog: persisted}
+
+    # Initialize buffers and event subscriptions (one-time setup)
     if enabled do
-      Logger.info("[WorkDirector] Started (enabled=true, arms=#{inspect(Map.keys(state.arms))})")
-      Process.send_after(self(), :bootstrap, @initial_delay_ms)
+      {inv_buffer, manual_buffer, investigation_ref} = initialize_buffers_and_events()
+      state = %{state |
+        investigation_buffer: inv_buffer,
+        manual_buffer: manual_buffer,
+        investigation_ref: investigation_ref
+      }
+
+      # Start PR outcome polling timer (separate from scheduler cron)
+      schedule_pr_poll()
+
+      Logger.info("[WorkDirector] Started (enabled=true, arms=#{inspect(Map.keys(state.arms))}, backlog=#{map_size(state.backlog)})")
+      {:ok, state}
     else
       Logger.info("[WorkDirector] Started (enabled=false)")
+      {:ok, state}
     end
-
-    {:ok, state}
   end
 
   defp default_arms do
@@ -233,147 +236,20 @@ defmodule Daemon.Agent.WorkDirector do
     }
   end
 
+
   @impl true
-  def handle_info(:bootstrap, state) do
-    Logger.info("[WorkDirector] Bootstrap starting...")
-
-    # Start buffers for event-driven sources
-    {:ok, inv_buffer} = Source.Investigation.start_buffer()
-    {:ok, manual_buffer} = Source.Manual.start_buffer()
-    Logger.debug("[WorkDirector] Buffers started")
-
-    # Subscribe to investigation_complete events (async — don't block bootstrap)
-    investigation_ref =
-      try do
-        handler = fn event ->
-          data = Map.get(event, :data, Map.get(event, "data", %{}))
-          Source.Investigation.push(inv_buffer, data)
-        end
-
-        # Use a timeout to avoid blocking if Bus is busy
-        task = Task.async(fn -> Daemon.Events.Bus.register_handler(:investigation_complete, handler) end)
-        case Task.yield(task, 5_000) || Task.shutdown(task) do
-          {:ok, ref} -> ref
-          _ ->
-            Logger.warning("[WorkDirector] Bus subscription timed out — skipping")
-            nil
-        end
-      rescue
-        e ->
-          Logger.warning("[WorkDirector] Failed to subscribe to events: #{Exception.message(e)}")
-          nil
-      catch
-        :exit, reason ->
-          Logger.warning("[WorkDirector] Failed to subscribe to events: #{inspect(reason)}")
-          nil
-      end
-
-    Logger.debug("[WorkDirector] Event subscription done (ref=#{inspect(investigation_ref)})")
-
-    # Load persisted backlog
-    persisted =
-      try do
-        Backlog.load()
-      rescue
-        e ->
-          Logger.warning("[WorkDirector] Failed to load backlog: #{Exception.message(e)}")
-          %{}
-      end
-
-    Logger.debug("[WorkDirector] Backlog loaded (#{map_size(persisted)} items)")
-
-    state = %{state |
-      investigation_buffer: inv_buffer,
-      manual_buffer: manual_buffer,
-      investigation_ref: investigation_ref,
-      backlog: persisted
-    }
-
-    # Initial backlog refresh
-    state =
-      try do
-        refresh_backlog(state)
-      rescue
-        e ->
-          Logger.error("[WorkDirector] Backlog refresh failed: #{Exception.message(e)}")
-          state
-      catch
-        :exit, reason ->
-          Logger.error("[WorkDirector] Backlog refresh exit: #{inspect(reason)}")
-          state
-      end
-
-    # Schedule recurring timers
-    schedule_refresh()
-    schedule_pr_poll()
-
-    # Start the dispatch loop
-    send(self(), :try_dispatch)
-
-    Logger.info("[WorkDirector] Bootstrap complete (backlog=#{map_size(state.backlog)} items)")
-    {:noreply, state}
-  end
-
-  def handle_info(:try_dispatch, state) do
-    state = maybe_reset_daily_counter(state)
-
-    cond do
-      not state.enabled ->
-        {:noreply, state}
-
-      state.current_dispatch != nil ->
-        {:noreply, state}
-
-      circuit_breaker_active?(state) ->
-        Logger.debug("[WorkDirector] Circuit breaker active until #{state.circuit_breaker_until}")
-        {:noreply, state}
-
-      state.dispatches_today >= @max_dispatches_per_day ->
-        Logger.debug("[WorkDirector] Daily dispatch cap reached (#{state.dispatches_today}/#{@max_dispatches_per_day})")
-        {:noreply, state}
-
-      not budget_ok?() ->
-        Logger.warning("[WorkDirector] Budget exceeded, pausing dispatches")
-        {:noreply, state}
-
-      not memory_ok?() ->
-        Logger.warning("[WorkDirector] Memory pressure too high, skipping dispatch")
-        Process.send_after(self(), :try_dispatch, @dispatch_cooldown_ms)
-        {:noreply, state}
-
-      true ->
-        state = try_dispatch_loop(state, MapSet.new(), 5)
-        {:noreply, state}
-    end
-  end
-
-  # Try to dispatch, skipping conflicted items up to max_attempts
-  defp try_dispatch_loop(state, _skip_set, 0), do: state
-
-  defp try_dispatch_loop(state, skip_set, attempts_left) do
-    eligible_backlog =
-      Map.reject(state.backlog, fn {hash, _} -> MapSet.member?(skip_set, hash) end)
-
-    case Backlog.pick_next(eligible_backlog, state.arms) do
-      :empty ->
-        state
-
-      {:ok, item} ->
-        case dispatch_item(state, item) do
-          {:conflict, updated_state} ->
-            # Item conflicted — skip it and try next
-            try_dispatch_loop(updated_state, MapSet.put(skip_set, item.content_hash), attempts_left - 1)
-
-          updated_state ->
-            updated_state
-        end
-    end
-  end
-
-  def handle_info({:dispatch_complete, ref, result}, %{current_dispatch: %{ref: dispatch_ref}} = state)
+  def handle_info({:dispatch_complete, ref, task_id, result}, %{current_dispatch: %{ref: dispatch_ref}} = state)
       when ref == dispatch_ref do
     dispatch = state.current_dispatch
     state = %{state | current_dispatch: nil}
+
+    # Mark task as completed or failed in the queue
+    case result do
+      {:ok, _output, branch} ->
+        Tasks.complete_queued(task_id, %{branch: branch, status: :success})
+      {:error, _reason} ->
+        Tasks.fail_queued(task_id, result)
+    end
 
     state =
       case result do
@@ -417,7 +293,6 @@ defmodule Daemon.Agent.WorkDirector do
           |> update_backlog_failed(dispatch.content_hash, %{class: failure_class, reason: reason})
           |> reward_arm(dispatch.source, reward)
           |> Map.put(:consecutive_failures, failures)
-          |> maybe_trip_circuit_breaker(failures)
       end
 
     # Stage 3.5: Post-dispatch — remember outcome, store knowledge, evolve skills
@@ -425,7 +300,6 @@ defmodule Daemon.Agent.WorkDirector do
 
     # Persist and continue the loop (throttled)
     Backlog.persist(state.backlog)
-    Process.send_after(self(), :try_dispatch, @dispatch_cooldown_ms)
 
     {:noreply, state}
   end
@@ -445,10 +319,8 @@ defmodule Daemon.Agent.WorkDirector do
       |> Map.put(:current_dispatch, nil)
       |> update_backlog_failed(dispatch.content_hash, %{class: :process_crash, reason: reason})
       |> Map.put(:consecutive_failures, failures)
-      |> maybe_trip_circuit_breaker(failures)
 
     Backlog.persist(state.backlog)
-    Process.send_after(self(), :try_dispatch, @dispatch_cooldown_ms)
 
     {:noreply, state}
   end
@@ -478,18 +350,7 @@ defmodule Daemon.Agent.WorkDirector do
     end
   end
 
-  def handle_info(:refresh_backlog, state) do
-    state = refresh_backlog(state)
-    schedule_refresh()
-
-    # If idle, try a dispatch
-    if state.current_dispatch == nil do
-      send(self(), :try_dispatch)
-    end
-
-    {:noreply, state}
-  end
-
+  @impl true
   def handle_info(:poll_pr_outcomes, state) do
     state = poll_pr_outcomes(state)
     schedule_pr_poll()
@@ -512,7 +373,6 @@ defmodule Daemon.Agent.WorkDirector do
       arms: Enum.map(state.arms, fn {source, %{alpha: a, beta: b}} ->
         {source, %{alpha: a, beta: b, mean: Float.round(a / (a + b), 3)}}
       end) |> Map.new(),
-      circuit_breaker: circuit_breaker_active?(state),
       consecutive_failures: state.consecutive_failures,
       total_dispatches: state.total_dispatches,
       total_merged: state.total_merged,
@@ -546,17 +406,36 @@ defmodule Daemon.Agent.WorkDirector do
     {:reply, items, state}
   end
 
+  def handle_call(:refresh_and_select, _from, state) do
+    Logger.debug("[WorkDirector] refresh_and_select cycle starting")
+
+    # Reset daily counter if needed
+    state = maybe_reset_daily_counter(state)
+
+    # Refresh backlog from all sources
+    state = refresh_backlog(state)
+
+    # Try to dispatch if eligible
+    state =
+      if state.current_dispatch == nil and state.enabled do
+        try_dispatch_one(state)
+      else
+        state
+      end
+
+    # Persist backlog state
+    Backlog.persist(state.backlog)
+
+    {:reply, {:ok, %{
+      backlog_size: map_size(state.backlog),
+      dispatched: state.current_dispatch != nil
+    }}, state}
+  end
+
   @impl true
   def handle_cast(:enable, state) do
     Logger.info("[WorkDirector] Enabled")
     state = %{state | enabled: true}
-
-    if state.investigation_buffer == nil do
-      Process.send_after(self(), :bootstrap, 1_000)
-    else
-      send(self(), :try_dispatch)
-    end
-
     {:noreply, state}
   end
 
@@ -577,11 +456,74 @@ defmodule Daemon.Agent.WorkDirector do
   def handle_cast(:force_cycle, state) do
     Logger.info("[WorkDirector] Force cycle triggered")
     state = refresh_backlog(state)
-    send(self(), :try_dispatch)
     {:noreply, state}
   end
 
   # -- Internal --
+
+  defp get_flag(flag_name, default) do
+    Application.get_env(:daemon, :work_director_flags, %{})
+    |> Map.get(flag_name, default)
+  end
+
+  defp initialize_buffers_and_events do
+    # Start buffers for event-driven sources
+    {:ok, inv_buffer} = Source.Investigation.start_buffer()
+    {:ok, manual_buffer} = Source.Manual.start_buffer()
+    Logger.debug("[WorkDirector] Buffers started")
+
+    # Subscribe to investigation_complete events (async — don't block init)
+    investigation_ref =
+      try do
+        handler = fn event ->
+          data = Map.get(event, :data, Map.get(event, "data", %{}))
+          Source.Investigation.push(inv_buffer, data)
+        end
+
+        # Use a timeout to avoid blocking if Bus is busy
+        task = Task.async(fn -> Daemon.Events.Bus.register_handler(:investigation_complete, handler) end)
+        case Task.yield(task, 5_000) || Task.shutdown(task) do
+          {:ok, ref} -> ref
+          _ ->
+            Logger.warning("[WorkDirector] Bus subscription timed out — skipping")
+            nil
+        end
+      rescue
+        e ->
+          Logger.warning("[WorkDirector] Failed to subscribe to events: #{Exception.message(e)}")
+          nil
+      catch
+        :exit, reason ->
+          Logger.warning("[WorkDirector] Failed to subscribe to events: #{inspect(reason)}")
+          nil
+      end
+
+    Logger.debug("[WorkDirector] Event subscription done (ref=#{inspect(investigation_ref)})")
+
+    {inv_buffer, manual_buffer, investigation_ref}
+  end
+
+  defp try_dispatch_one(state) do
+    # Check dispatch eligibility
+    cond do
+      not state.enabled ->
+        state
+
+      state.dispatches_today >= @max_dispatches_per_day ->
+        Logger.debug("[WorkDirector] Daily dispatch cap reached (#{state.dispatches_today}/#{@max_dispatches_per_day})")
+        state
+
+      true ->
+        # Try to pick and dispatch one item (gates + queue)
+        case Backlog.pick_next(state.backlog, state.arms) do
+          :empty ->
+            state
+
+          {:ok, item} ->
+            dispatch_item(state, item)
+        end
+    end
+  end
 
   defp refresh_backlog(state) do
     Logger.debug("[WorkDirector] Refreshing backlog from #{length(@source_modules)} static sources...")
@@ -724,12 +666,6 @@ defmodule Daemon.Agent.WorkDirector do
     end
   end
 
-  @orchestrator_poll_interval_ms 10_000
-  @orchestrator_timeout_ms :timer.minutes(15)
-  @compile_fix_max_attempts 2
-  @review_fix_max_attempts 1         # Max refinement cycles in Stage 2.9 Reflexion loop
-  @agent_max_iterations 20
-
   # -- Risk assessment thresholds --
   @risk_high_threshold 7
   @risk_medium_threshold 4
@@ -757,7 +693,8 @@ defmodule Daemon.Agent.WorkDirector do
 
         cond do
           issues == [] -> :proceed
-          @enable_strategic_debate -> evaluate_with_debate(item, issues, invariants)
+          get_flag(:enable_strategic_debate, @enable_strategic_debate) ->
+            evaluate_with_debate(item, issues, invariants)
           true -> {:rejected, Enum.join(issues, "; ")}
         end
       rescue
@@ -1089,25 +1026,53 @@ defmodule Daemon.Agent.WorkDirector do
 
     Logger.info("[WorkDirector] Dispatching: #{item.title} (source=#{item.source}, priority=#{item.base_priority})")
 
+    # Enqueue task to queue
+    task_id = "workdir-#{item.content_hash}"
+    payload = %{
+      item: item,
+      branch: branch,
+      session_id: session_id,
+      repo_path: Application.get_env(:daemon, :repo_path, Path.expand("~/vas-swarm"))
+    }
+
+    case Tasks.enqueue_sync(task_id, "work_director", payload) do
+      {:ok, _task} ->
+        # Immediately lease it (we're the only dispatcher)
+        case Tasks.lease("work_director", 60_000) do
+          {:ok, leased_task} ->
+            execute_queued_task_from_do_dispatch(state, item, branch, session_id, judgment_ctx, leased_task)
+
+          :empty ->
+            Logger.warning("[WorkDirector] Failed to lease immediately enqueued task")
+            state
+        end
+
+      {:error, reason} ->
+        Logger.error("[WorkDirector] Failed to enqueue task: #{inspect(reason)}")
+        state
+    end
+  end
+
+  defp execute_queued_task_from_do_dispatch(state, item, branch, session_id, judgment_ctx, task) do
     parent = self()
     ref = make_ref()
     repo_path = Application.get_env(:daemon, :repo_path, Path.expand("~/vas-swarm"))
 
     {_pid, _monitor_ref} =
       spawn_monitor(fn ->
-        # Propagate judgment context into spawned process so staged_dispatch can read it
+        # Propagate judgment context into spawned process so Pipeline.run can read it
         if judgment_ctx, do: Process.put(:dispatch_judgment_context, judgment_ctx)
 
         result =
           try do
-            staged_dispatch(item, branch, session_id, repo_path)
+            Pipeline.run(item, branch, session_id, repo_path)
           rescue
             e -> {:error, {:exception, Exception.message(e)}}
           catch
             :exit, reason -> {:error, {:exit, reason}}
           end
 
-        send(parent, {:dispatch_complete, ref, result})
+        send(parent, {:dispatch_complete, ref, task.task_id, result})
       end)
 
     backlog = Backlog.mark_dispatched(state.backlog, item.content_hash, branch)
@@ -1129,6 +1094,7 @@ defmodule Daemon.Agent.WorkDirector do
       backlog: backlog,
       current_dispatch: %{
         ref: ref,
+        task_id: task.task_id,
         content_hash: item.content_hash,
         source: item.source,
         title: item.title,
@@ -1139,1699 +1105,11 @@ defmodule Daemon.Agent.WorkDirector do
     }
   end
 
-  # -- Staged Execution Pipeline --
-  # Stage 0:    Create branch (zero LLM cost)
-  # Stage 0.5:  Pre-research context enrichment (vault, knowledge, investigation, appraiser)
-  # Stage 1:    Implementation via Orchestrator (specialist routing / swarm / simple)
-  # Stage 1.5:  Recover branch if agent drifted
-  # Stage 1.9:  Substance check — reject stubs (hard gate)
-  # Stage 2:    Verify compilation (AutoFixer or simple 2-attempt)
-  # Stage 2.5:  Grounded verification — check phantom references
-  # Stage 2.75: Test gate (soft)
-  # Stage 2.9:  Code review (debate/review pattern)
-  # Stage 3:    Git add/commit/push/PR (zero LLM cost)
-  # Stage 3.5:  Post-dispatch — vault remember, knowledge store, skill evolution
-
-  defp staged_dispatch(item, branch, session_id, repo_path) do
-    # Stage 0: Create the branch ourselves
-    Logger.info("[WorkDirector] Stage 0: Creating branch #{branch}")
-    case create_branch(branch, repo_path) do
-      :ok -> :ok
-      {:error, reason} ->
-        Logger.warning("[WorkDirector] Stage 0 failed: #{inspect(reason)}")
-        throw({:stage0_failed, reason})
-    end
-
-    # Stage 0.5: Pre-research context enrichment
-    pre_research_context = build_pre_research_context(item, repo_path, session_id)
-
-    # Stage 1: Implementation — agent only writes code, no git operations
-    Logger.info("[WorkDirector] Stage 1: Dispatching implementation to Orchestrator")
-    prompt = build_implementation_prompt(item, repo_path, pre_research_context)
-
-    case execute_and_poll(prompt, session_id, item) do
-      {:completed, synthesis} ->
-        Logger.info("[WorkDirector] Stage 1 complete: agent finished implementation")
-
-        # Stage 1.5: Recover branch if agent switched away
-        recover_branch(branch, repo_path)
-
-        # Stage 1.9: Substance check — reject stubs
-        maybe_check_substance(branch, repo_path)
-
-        # Stage 2: Verify compilation (with retry loop)
-        case verify_and_fix_compilation(item, branch, session_id, repo_path, 0) do
-          :ok ->
-            Logger.info("[WorkDirector] Stage 2 complete: compilation verified")
-            # Recover branch if compile-fix agent switched away
-            recover_branch(branch, repo_path)
-
-            # Stage 2.5: Grounded verification — check phantom references
-            case verify_and_fix_references(branch, session_id, repo_path, 0) do
-              :ok ->
-                Logger.info("[WorkDirector] Stage 2.5 complete: references verified")
-              {:warnings, warnings} ->
-                Logger.info("[WorkDirector] Stage 2.5 passed with warnings: #{Enum.join(warnings, "; ")}")
-              {:error, _reason} ->
-                Logger.warning("[WorkDirector] Stage 2.5 failed: phantom references unfixable")
-                cleanup_branch(branch, repo_path)
-                throw({:stage2_5_failed, :phantom_references})
-            end
-
-            # Stage 2.75: Test gate (hard — blocks PR on failure)
-            maybe_run_test_gate(branch, repo_path)
-
-            # Stage 2.9: Code review (debate/review)
-            maybe_run_code_review(item, branch, session_id, repo_path)
-
-            # Recover branch before finalize — agents may have switched during stages 2.5-2.9
-            recover_branch(branch, repo_path)
-
-            # Stage 3: Commit, push, PR
-            case finalize_branch(item, branch, repo_path) do
-              {:ok, _pr_info} ->
-                Logger.info("[WorkDirector] Stage 3 complete: branch #{branch} committed and pushed")
-                # Switch back to main for next dispatch
-                System.cmd("git", ["checkout", "main"], cd: repo_path, stderr_to_stdout: true)
-                {:ok, synthesis, branch}
-
-              {:error, :no_changes} ->
-                Logger.warning("[WorkDirector] Stage 3 failed: no file changes detected")
-                cleanup_branch(branch, repo_path)
-                {:error, {:empty_branch, synthesis}}
-
-              {:error, reason} ->
-                Logger.warning("[WorkDirector] Stage 3 failed: #{inspect(reason)}")
-                cleanup_branch(branch, repo_path)
-                {:error, {:commit_failed, reason}}
-            end
-
-          {:error, reason} ->
-            Logger.warning("[WorkDirector] Stage 2 failed: compilation cannot be fixed")
-            cleanup_branch(branch, repo_path)
-            {:error, {:compilation_unfixable, reason}}
-        end
-
-      {:failed, error} ->
-        Logger.warning("[WorkDirector] Stage 1 failed: #{inspect(error)}")
-        cleanup_branch(branch, repo_path)
-        {:error, {:orchestrator_failed, error}}
-
-      {:timeout, last_status} ->
-        Logger.warning("[WorkDirector] Stage 1 timed out")
-        cleanup_branch(branch, repo_path)
-        {:error, {:timeout, last_status}}
-    end
-  catch
-    {:stage0_failed, reason} -> {:error, {:no_branch, reason}}
-    {:stage1_9_failed, reason} -> {:error, {:stub_detected, reason}}
-    {:stage2_5_failed, reason} -> {:error, {:phantom_references, reason}}
-    {:stage2_75_failed, reason} -> {:error, {:test_failure, reason}}
-  end
-
-  # -- Stage 0.5: Pre-Research Context Enrichment --
-
-  defp build_pre_research_context(item, repo_path, session_id) do
-    sections = []
-
-    # Failure context from prior attempts (Reflexion)
-    sections = sections ++ failure_context_section(item)
-
-    # Vault: prior dispatch memories
-    sections = sections ++ vault_context_section(item)
-
-    # Knowledge Store: codebase patterns
-    sections = sections ++ knowledge_context_section(item)
-
-    # Appraiser: complexity estimate
-    sections = sections ++ appraiser_section(item)
-
-    # Specialist hints: what agents match this task
-    sections = sections ++ specialist_hints_section(item)
-
-    # Autonomous loop insights: CodeIntrospector + ActiveLearner findings
-    sections = sections ++ introspector_section(item)
-
-    # Impact analysis: reverse dependency tracing
-    sections = sections ++ impact_analysis_section(item, repo_path)
-
-    # Production context: telemetry + provider health
-    sections = sections ++ production_context_section()
-
-    # Investigation: deep research (expensive, only for high-priority/complex tasks)
-    sections = sections ++ investigation_section(item, session_id)
-
-    # Dispatch judgment context (Phase 2): confidence, PR conflicts, hot zones
-    sections = sections ++ judgment_context_section()
-
-    context = Enum.join(sections, "\n")
-
-    if context != "" do
-      Logger.info("[WorkDirector] Stage 0.5: Pre-research enriched prompt (#{String.length(context)} chars)")
-    end
-
-    context
-  end
-
-  defp failure_context_section(%WorkItem{attempt_count: 0}), do: []
-  defp failure_context_section(%WorkItem{last_failure_class: nil}), do: []
-  defp failure_context_section(%WorkItem{attempt_count: n, last_failure_class: class, last_failure_reason: reason}) do
-    ["""
-    ## WARNING: Previous Attempt Failed (attempt #{n} of 3)
-    Failure type: #{class}
-    Reason: #{String.slice(inspect(reason), 0, 500)}
-
-    DO NOT repeat the same approach. Address the specific failure above.
-    """]
-  end
-
-  defp vault_context_section(item) do
-    if @enable_vault_context do
-      try do
-        recalls = Vault.recall(item.title, limit: 5)
-
-        if recalls != [] do
-          formatted =
-            Enum.map_join(recalls, "\n", fn {cat, path, _score} ->
-              case File.read(path) do
-                {:ok, content} ->
-                  body = content |> String.split("\n") |> Enum.take(8) |> Enum.join("\n")
-                  "- [#{cat}] #{String.slice(body, 0, 300)}"
-
-                _ ->
-                  ""
-              end
-            end)
-
-          Logger.info("[WorkDirector] Stage 0.5: Injecting #{length(recalls)} vault memories")
-          ["\n## Prior Context (learn from previous attempts)\n#{formatted}\n"]
-        else
-          []
-        end
-      rescue
-        _ -> []
-      catch
-        :exit, _ -> []
-      end
-    else
-      []
-    end
-  end
-
-  defp knowledge_context_section(item) do
-    if @enable_knowledge_context do
-      try do
-        # Query knowledge graph for patterns related to the task
-        store = "osa_default"
-        keywords = item.title |> String.split(~r/\s+/) |> Enum.take(5)
-
-        triples =
-          Enum.flat_map(keywords, fn kw ->
-            case Vaos.Knowledge.query(store, subject: kw) do
-              {:ok, results} -> Enum.take(results, 3)
-              _ -> []
-            end
-          end)
-          |> Enum.uniq()
-          |> Enum.take(10)
-
-        if triples != [] do
-          formatted =
-            Enum.map_join(triples, "\n", fn {s, p, o} ->
-              "- #{s} —[#{p}]→ #{o}"
-            end)
-
-          Logger.info("[WorkDirector] Stage 0.5: #{length(triples)} knowledge triples")
-          ["\n## Codebase Knowledge\n#{formatted}\n"]
-        else
-          []
-        end
-      rescue
-        _ -> []
-      catch
-        :exit, _ -> []
-      end
-    else
-      []
-    end
-  end
-
-  defp appraiser_section(item) do
-    if @enable_appraiser do
-      try do
-        # Estimate complexity based on description length and keywords
-        complexity =
-          cond do
-            String.length(item.description || "") > 500 -> 7
-            String.length(item.description || "") > 200 -> 5
-            true -> 3
-          end
-
-        estimate = Appraiser.estimate(complexity, :backend)
-
-        section = """
-
-        ## Task Estimate
-        - Complexity: #{estimate.complexity}/10
-        - Estimated hours: #{estimate.estimated_hours}
-        - Confidence: #{Float.round(estimate.confidence * 100, 0)}%
-        - Scale: #{if estimate.estimated_hours > 8, do: "LARGE — break into smaller pieces", else: "manageable"}
-        """
-
-        Logger.info("[WorkDirector] Stage 0.5: Appraiser estimates #{estimate.estimated_hours}h, confidence #{Float.round(estimate.confidence * 100, 0)}%")
-        [section]
-      rescue
-        _ -> []
-      catch
-        :exit, _ -> []
-      end
-    else
-      []
-    end
-  end
-
-  defp specialist_hints_section(item) do
-    if @enable_specialist_routing do
-      try do
-        scored = Roster.select_for_task_scored(item.title)
-        top = Enum.take(scored, 3)
-
-        if top != [] do
-          formatted =
-            Enum.map_join(top, "\n", fn {name, score} ->
-              "- #{name} (score: #{Float.round(score, 2)})"
-            end)
-
-          Logger.info("[WorkDirector] Stage 0.5: Top specialists: #{inspect(Enum.map(top, &elem(&1, 0)))}")
-          ["\n## Recommended Specialists\n#{formatted}\n"]
-        else
-          []
-        end
-      rescue
-        _ -> []
-      catch
-        :exit, _ -> []
-      end
-    else
-      []
-    end
-  end
-
-  defp introspector_section(_item) do
-    if @enable_introspector_feed do
-      try do
-        sections = []
-
-        # CodeIntrospector recent findings
-        sections =
-          try do
-            %{recent_findings: findings} = CodeIntrospector.stats()
-
-            if findings != [] do
-              formatted =
-                findings
-                |> Enum.take(3)
-                |> Enum.map_join("\n", fn f ->
-                  "- [#{f.anomaly_type}] #{inspect(f.result) |> String.slice(0, 200)}"
-                end)
-
-              sections ++ ["\n## Recent System Anomalies\n#{formatted}\n"]
-            else
-              sections
-            end
-          rescue
-            _ -> sections
-          catch
-            :exit, _ -> sections
-          end
-
-        # ActiveLearner bottleneck
-        sections =
-          try do
-            %{bottleneck: bottleneck} = ActiveLearner.stats()
-
-            if bottleneck do
-              sections ++ ["\n## System Bottleneck: #{bottleneck.bottleneck}\n#{bottleneck.prescription}\n"]
-            else
-              sections
-            end
-          rescue
-            _ -> sections
-          catch
-            :exit, _ -> sections
-          end
-
-        sections
-      rescue
-        _ -> []
-      catch
-        :exit, _ -> []
-      end
-    else
-      []
-    end
-  end
-
-  defp investigation_section(item, session_id) do
-    if @enable_investigation_pre and item.base_priority >= 0.7 do
-      try do
-        Logger.info("[WorkDirector] Stage 0.5: Running pre-dispatch investigation for '#{item.title}'")
-        investigate_tool = Daemon.Tools.Builtins.Investigate
-
-        case investigate_tool.execute(%{
-               "topic" => "How to implement: #{item.title}",
-               "depth" => "standard",
-               "metadata" => %{"source_module" => "WorkDirector", "session_id" => session_id}
-             }) do
-          {:ok, result} ->
-            # Extract key findings (truncate to avoid prompt bloat)
-            summary = result |> String.split("\n") |> Enum.take(30) |> Enum.join("\n")
-            Logger.info("[WorkDirector] Stage 0.5: Investigation complete (#{String.length(result)} chars)")
-            ["\n## Research Findings\n#{String.slice(summary, 0, 2000)}\n"]
-
-          {:error, reason} ->
-            Logger.warning("[WorkDirector] Stage 0.5: Investigation failed: #{reason}")
-            []
-        end
-      rescue
-        e ->
-          Logger.warning("[WorkDirector] Stage 0.5: Investigation error: #{Exception.message(e)}")
-          []
-      catch
-        :exit, r ->
-          Logger.warning("[WorkDirector] Stage 0.5: Investigation exit: #{inspect(r)}")
-          []
-      end
-    else
-      []
-    end
-  end
-
-  # -- Stage 0.5: Dispatch Judgment Context (Phase 2) --
-
-  defp judgment_context_section do
-    case Process.get(:dispatch_judgment_context) do
-      %{confidence: confidence} = ctx ->
-        # Confidence section
-        pct = round((confidence[:score] || confidence.score) * 100)
-        level = confidence[:level] || confidence.level
-
-        confidence_text =
-          if level == :medium do
-            "## Dispatch Confidence: #{pct}%\nThis task has MEDIUM confidence. Pay extra attention to edge cases and test thoroughly."
-          else
-            "## Dispatch Confidence: #{pct}%"
-          end
-
-        # PR conflicts section
-        pr_conflicts = ctx[:pr_conflicts] || %{}
-        open_conflicts = pr_conflicts[:open_pr_conflicts] || []
-
-        conflict_section =
-          if open_conflicts != [] do
-            conflict_lines =
-              Enum.map_join(open_conflicts, "\n", fn c ->
-                overlap = if c.overlapping_files != [], do: " (overlapping: #{Enum.join(c.overlapping_files, ", ")})", else: ""
-                "- PR ##{c.number}: #{c.title} (similarity: #{Float.round(c.title_similarity, 2)})#{overlap}"
-              end)
-
-            ["\n## Active PR Conflicts\nThese open PRs may conflict with your changes:\n#{conflict_lines}\n"]
-          else
-            []
-          end
-
-        # Hot zones section
-        hot_zones = pr_conflicts[:hot_zones] || []
-
-        hot_zone_section =
-          if hot_zones != [] do
-            zone_lines =
-              Enum.map_join(hot_zones, "\n", fn hz ->
-                "- `#{hz.file}` — modified by #{hz.modification_count} recent PRs"
-              end)
-
-            ["\n## Hot Zones\nThese files are frequently modified and may cause merge conflicts:\n#{zone_lines}\n"]
-          else
-            []
-          end
-
-        ["\n#{confidence_text}\n"] ++ conflict_section ++ hot_zone_section
-
-      _ ->
-        []
-    end
-  end
-
-  # -- Stage 0.5: Impact Analysis Section --
-
-  defp impact_analysis_section(item, repo_path) do
-    if @enable_impact_analysis do
-      try do
-        # Use cached DispatchIntelligence result or compute fresh
-        enrichment = get_or_compute_enrichment(item, repo_path)
-        file_paths = enrichment |> Map.get(:relevant_files, []) |> Enum.map(& &1.path) |> Enum.take(5)
-
-        if file_paths == [] do
-          []
-        else
-          impact = DispatchIntelligence.compute_impact(file_paths, repo_path)
-
-          formatted =
-            impact
-            |> Enum.filter(fn {_path, deps} -> deps != [] end)
-            |> Enum.map(fn {path, deps} ->
-              rel_path = Path.relative_to(path, repo_path)
-              dep_list = deps |> Enum.take(5) |> Enum.map(&Path.relative_to(&1, repo_path)) |> Enum.join(", ")
-              "- `#{rel_path}` — #{length(deps)} dependents: #{dep_list}"
-            end)
-            |> Enum.join("\n")
-
-          if formatted != "" do
-            total_deps = impact |> Map.values() |> List.flatten() |> Enum.uniq() |> length()
-            Logger.info("[WorkDirector] Stage 0.5: Impact analysis — #{total_deps} total dependents across #{length(file_paths)} files")
-            ["\n## Impact Analysis (blast radius)\n#{formatted}\nTotal unique dependents: #{total_deps}\n"]
-          else
-            []
-          end
-        end
-      rescue
-        e ->
-          Logger.warning("[WorkDirector] Stage 0.5: Impact analysis error: #{Exception.message(e)}")
-          []
-      catch
-        :exit, _ -> []
-      end
-    else
-      []
-    end
-  end
-
-  # -- Stage 0.5: Production Context Section --
-
-  defp production_context_section do
-    if @enable_production_context do
-      try do
-        sections = []
-
-        # Telemetry metrics: provider error rates, latency, token usage
-        sections =
-          try do
-            summary = Daemon.Telemetry.Metrics.get_summary()
-
-            provider_stats =
-              (summary[:provider_calls] || %{})
-              |> Enum.map(fn {provider, count} ->
-                latency = get_in(summary, [:provider_latency, provider])
-                avg = if latency, do: "avg=#{latency[:avg] || "?"}ms", else: ""
-                p99 = if latency, do: "p99=#{latency[:p99] || "?"}ms", else: ""
-                "- #{provider}: #{count} calls #{avg} #{p99}"
-              end)
-              |> Enum.join("\n")
-
-            if provider_stats != "" do
-              token_info = "Tokens used: #{summary[:token_stats][:total] || "unknown"}"
-              sections ++ ["\n## Production Context\n#{provider_stats}\n#{token_info}\n"]
-            else
-              sections
-            end
-          rescue
-            _ -> sections
-          catch
-            :exit, _ -> sections
-          end
-
-        # Provider health: circuit breaker states
-        sections =
-          try do
-            health_state = Daemon.Providers.HealthChecker.state()
-
-            degraded =
-              health_state
-              |> Enum.filter(fn {_provider, state} -> state.circuit != :closed end)
-              |> Enum.map(fn {provider, state} ->
-                "- #{provider}: circuit=#{state.circuit}" <>
-                  if(state[:rate_limited], do: " (rate limited)", else: "")
-              end)
-
-            if degraded != [] do
-              sections ++ ["\n## Provider Health (degraded)\n#{Enum.join(degraded, "\n")}\n"]
-            else
-              sections
-            end
-          rescue
-            _ -> sections
-          catch
-            :exit, _ -> sections
-          end
-
-        sections
-      rescue
-        _ -> []
-      catch
-        :exit, _ -> []
-      end
-    else
-      []
-    end
-  end
-
-  # -- Stage 1.9: Substance Check --
-
-  defp maybe_check_substance(branch, repo_path) do
-    if @enable_substance_check do
-      try do
-        case GroundedVerifier.get_diff(branch, repo_path) do
-          {:ok, diff} ->
-            analysis = GroundedVerifier.analyze_substance(diff)
-
-            unless analysis.has_substance do
-              Logger.warning(
-                "[WorkDirector] Stage 1.9: STUB — #{analysis.meaningful_lines} lines, stubs: #{inspect(analysis.stub_patterns)}"
-              )
-
-              cleanup_branch(branch, repo_path)
-              throw({:stage1_9_failed, {:stub_detected, analysis}})
-            end
-
-            if analysis.warnings != [] do
-              Logger.info("[WorkDirector] Stage 1.9: OK with warnings: #{Enum.join(analysis.warnings, "; ")}")
-            else
-              Logger.info("[WorkDirector] Stage 1.9: Substance OK (#{analysis.meaningful_lines} lines)")
-            end
-
-          {:error, reason} ->
-            Logger.warning("[WorkDirector] Stage 1.9: diff failed (non-blocking): #{inspect(reason)}")
-        end
-      rescue
-        e ->
-          Logger.warning("[WorkDirector] Stage 1.9 error (non-blocking): #{Exception.message(e)}")
-      catch
-        :exit, r ->
-          Logger.warning("[WorkDirector] Stage 1.9 exit (non-blocking): #{inspect(r)}")
-      end
-    end
-  end
-
-  # -- Stage 2.75: Test Gate --
-
-  @test_gate_timeout_ms 120_000
-
-  defp maybe_run_test_gate(branch, repo_path) do
-    if @enable_test_gate do
-      try do
-        Logger.info("[WorkDirector] Stage 2.75: Running tests")
-        recover_branch(branch, repo_path)
-
-        # Use Port.open directly so we can explicitly close it on timeout,
-        # guaranteeing SIGHUP delivery to the OS process.
-        mix_exe = System.find_executable("mix") || "mix"
-        parent = self()
-        port_ref = make_ref()
-
-        # Only test files related to changed source files — avoids pre-existing failures
-        test_files = related_test_files(repo_path)
-        test_args = case test_files do
-          [] ->
-            Logger.info("[WorkDirector] Stage 2.75: No related test files, skipping test gate")
-            nil
-          files ->
-            Logger.info("[WorkDirector] Stage 2.75: Testing #{length(files)} related file(s)")
-            ["test", "--max-failures", "5"] ++ files
-        end
-
-        # Skip test execution if no related tests found
-        unless test_args do
-          Logger.info("[WorkDirector] Stage 2.75: Skipped (no related tests)")
-          throw(:test_gate_skipped)
-        end
-
-        task = Task.async(fn ->
-          port = Port.open({:spawn_executable, mix_exe}, [
-            :binary, :exit_status, :stderr_to_stdout,
-            args: test_args,
-            cd: String.to_charlist(repo_path),
-            env: [
-              {~c"MIX_ENV", ~c"test"},
-              {~c"ERL_AFLAGS", ~c"+S #{@subprocess_schedulers}:#{@subprocess_schedulers}"}
-            ]
-          ])
-          send(parent, {port_ref, port})
-          test_gate_collect_output(port, [])
-        end)
-
-        # Receive port ref for explicit cleanup on timeout
-        test_port = receive do
-          {^port_ref, port} -> port
-        after
-          5_000 -> nil
-        end
-
-        case Task.yield(task, @test_gate_timeout_ms) || Task.shutdown(task, :brutal_kill) do
-          {:ok, {_output, 0}} ->
-            Logger.info("[WorkDirector] Stage 2.75: Tests PASSED")
-
-          {:ok, {output, _}} ->
-            summary =
-              output
-              |> String.split("\n")
-              |> Enum.filter(&(String.contains?(&1, "failure") or String.contains?(&1, "error")))
-              |> Enum.take(3)
-              |> Enum.join("; ")
-
-            Logger.warning(
-              "[WorkDirector] Stage 2.75: Tests FAILED (hard gate): #{String.slice(summary, 0, 500)}"
-            )
-            cleanup_branch(branch, repo_path)
-            throw({:stage2_75_failed, {:test_failure, String.slice(summary, 0, 500)}})
-
-          nil ->
-            # Explicitly close port to send SIGHUP to the OS process
-            if test_port do
-              try do Port.close(test_port) catch _, _ -> :ok end
-            end
-            Logger.warning("[WorkDirector] Stage 2.75: Tests TIMED OUT (hard gate) after #{div(@test_gate_timeout_ms, 1000)}s")
-            cleanup_branch(branch, repo_path)
-            throw({:stage2_75_failed, {:test_timeout, "#{div(@test_gate_timeout_ms, 1000)}s"}})
-        end
-      rescue
-        e -> Logger.warning("[WorkDirector] Stage 2.75 error: #{Exception.message(e)}")
-      catch
-        :throw, :test_gate_skipped -> :ok
-        :exit, r -> Logger.warning("[WorkDirector] Stage 2.75 exit: #{inspect(r)}")
-      end
-    end
-  end
-
-  defp test_gate_collect_output(port, acc) do
-    receive do
-      {^port, {:data, data}} ->
-        test_gate_collect_output(port, [data | acc])
-      {^port, {:exit_status, code}} ->
-        {acc |> Enum.reverse() |> IO.iodata_to_binary(), code}
-    end
-  end
-
-  # Find test files related to changed source files in the current branch
-  defp related_test_files(repo_path) do
-    try do
-      {diff_output, 0} = System.cmd("git", ["diff", "--name-only", "main...HEAD"],
-        cd: repo_path, stderr_to_stdout: true)
-
-      diff_output
-      |> String.split("\n", trim: true)
-      |> Enum.filter(&String.starts_with?(&1, "lib/"))
-      |> Enum.flat_map(fn src_file ->
-        test_file = src_file
-          |> String.replace_prefix("lib/daemon/", "test/")
-          |> String.replace_suffix(".ex", "_test.exs")
-        if File.exists?(Path.join(repo_path, test_file)), do: [test_file], else: []
-      end)
-      |> Enum.uniq()
-    rescue
-      _ -> []
-    catch
-      _, _ -> []
-    end
-  end
-
-    # -- Stage 2.9: Code Review --
-
-  defp maybe_run_code_review(item, branch, session_id, repo_path) do
-    # Phase 2: force_review from judgment context overrides the flag
-    judgment_ctx = Process.get(:dispatch_judgment_context)
-    force_review = is_map(judgment_ctx) and judgment_ctx[:force_review] == true
-
-    if @enable_code_review or force_review do
-      try do
-        Logger.info("[WorkDirector] Stage 2.9: Running code review via debate")
-        recover_branch(branch, repo_path)
-
-        # Get actual diff content — includes committed + uncommitted + untracked
-        # (agent may not have committed yet at this stage)
-        diff = case Daemon.Agent.WorkDirector.GroundedVerifier.get_diff(branch, repo_path) do
-          {:ok, d} -> d
-          {:error, _} -> ""
-        end
-
-        if byte_size(diff) > 10 do
-          review_prompt = """
-          Review this Elixir code change for '#{item.title}'.
-          Check for: correctness, security issues, missing error handling, Elixir best practices.
-
-          IMPORTANT: Your first line MUST be exactly one of:
-          VERDICT: PASS
-          VERDICT: FIX
-
-          Then 3-5 bullet points explaining your assessment.
-
-          ```diff
-          #{String.slice(diff, 0, 4000)}
-          ```
-          """
-
-          case Debate.run(review_prompt, providers: ["anthropic"], timeout: 30_000) do
-            {:ok, %{synthesis: synthesis}} ->
-              verdict = parse_review_verdict(synthesis)
-              Logger.info("[WorkDirector] Stage 2.9: Review verdict=#{verdict}: #{String.slice(synthesis, 0, 300)}")
-
-              if @enable_review_fix_loop and verdict == :fix do
-                run_reflexion_fix(item, branch, session_id, repo_path, synthesis)
-              end
-
-            {:error, reason} ->
-              Logger.warning("[WorkDirector] Stage 2.9: Review failed (non-blocking): #{inspect(reason)}")
-          end
-        else
-          Logger.warning("[WorkDirector] Stage 2.9: No diff to review (#{byte_size(diff)} bytes)")
-        end
-      rescue
-        e -> Logger.warning("[WorkDirector] Stage 2.9 error: #{Exception.message(e)}")
-      catch
-        :exit, r -> Logger.warning("[WorkDirector] Stage 2.9 exit: #{inspect(r)}")
-      end
-    end
-  end
-
-  defp parse_review_verdict(synthesis) do
-    first_line = synthesis |> String.trim() |> String.split("\n") |> hd() |> String.upcase()
-
-    cond do
-      String.contains?(first_line, "PASS") -> :pass
-      String.contains?(first_line, "FIX") -> :fix
-      # Heuristic fallback: if review mentions critical issues, treat as fix
-      String.contains?(String.downcase(synthesis), "critical") or
-          String.contains?(String.downcase(synthesis), "security vulnerability") ->
-        :fix
-      true -> :pass
-    end
-  end
-
-  defp run_reflexion_fix(_item, branch, session_id, repo_path, synthesis) do
-    Logger.info("[WorkDirector] Stage 2.9: Reflexion — dispatching refinement agent (max_attempts=#{@review_fix_max_attempts})")
-
-    refinement_prompt = """
-    A code review found issues with your implementation. Fix them.
-
-    ## Repository
-    The codebase is at: `#{repo_path}`
-    You are on branch `#{branch}`.
-
-    CRITICAL: For ALL shell commands, use the `cwd` parameter set to `#{repo_path}`.
-    For file operations, use ABSOLUTE paths starting with `#{repo_path}/`.
-
-    ## MANDATORY GIT RULES — VIOLATION = TASK FAILURE
-    - NEVER run `git checkout`, `git switch`, or `git branch -D` — stay on `#{branch}`
-    - NEVER run `git commit`, `git push`, `git add`, `git stash`, `git merge`, `git rebase`
-    - ANY git command that changes branch state will cause your work to be LOST
-
-    ## Code Review Feedback
-    #{String.slice(synthesis, 0, 3000)}
-
-    ## Instructions
-    1. Read the files mentioned in the review
-    2. Fix ONLY the issues identified in the review
-    3. Run `mix compile` to verify (use cwd: "#{repo_path}")
-    4. Do NOT add features, refactor beyond what's requested, or change unrelated code
-
-    Do NOT modify: application.ex, supervisors/, security/, loop.ex, runtime.exs, mix.exs, or mix.lock.
-    """
-
-    fix_session = "#{session_id}-review-fix"
-
-    case execute_and_poll(refinement_prompt, fix_session) do
-      {:completed, _} ->
-        case run_compile(repo_path) do
-          :ok ->
-            Logger.info("[WorkDirector] Stage 2.9: Refinement complete, compilation OK")
-
-          {:error, _} ->
-            Logger.warning("[WorkDirector] Stage 2.9: Refinement broke compilation (non-blocking)")
-        end
-
-      {:failed, reason} ->
-        Logger.warning("[WorkDirector] Stage 2.9: Refinement failed (non-blocking): #{inspect(reason)}")
-
-      {:timeout, _} ->
-        Logger.warning("[WorkDirector] Stage 2.9: Refinement timed out (non-blocking)")
-    end
-  end
-
-  defp create_branch(branch, repo_path) do
-    # Remove stale lock file from crashed git processes
-    lock_path = Path.join([repo_path, ".git", "index.lock"])
-    if File.exists?(lock_path), do: File.rm(lock_path)
-
-    # Nuclear cleanup: abort any in-progress merge/rebase/cherry-pick, then hard reset
-    System.cmd("git", ["merge", "--abort"], cd: repo_path, stderr_to_stdout: true)
-    System.cmd("git", ["rebase", "--abort"], cd: repo_path, stderr_to_stdout: true)
-    System.cmd("git", ["cherry-pick", "--abort"], cd: repo_path, stderr_to_stdout: true)
-    System.cmd("git", ["checkout", "main"], cd: repo_path, stderr_to_stdout: true)
-    System.cmd("git", ["reset", "--hard", "origin/main"], cd: repo_path, stderr_to_stdout: true)
-    System.cmd("git", ["clean", "-fd"], cd: repo_path, stderr_to_stdout: true)
-
-    # Delete ALL stale workdir/ branches (from previous cycles or other systems)
-    {branches_raw, _} = System.cmd("git", ["branch"], cd: repo_path, stderr_to_stdout: true)
-    branches_raw
-    |> String.split("\n", trim: true)
-    |> Enum.map(&String.trim/1)
-    |> Enum.filter(&String.starts_with?(&1, "workdir/"))
-    |> Enum.each(fn b ->
-      System.cmd("git", ["branch", "-D", b], cd: repo_path, stderr_to_stdout: true)
-    end)
-
-    # Delete stale remote branch if it exists (prevents push rejection)
-    System.cmd("git", ["push", "origin", "--delete", branch], cd: repo_path, stderr_to_stdout: true)
-
-    case System.cmd("git", ["checkout", "-b", branch, "main"], cd: repo_path, stderr_to_stdout: true) do
-      {_, 0} -> :ok
-      {output, _} -> {:error, "git checkout -b failed: #{String.trim(output)}"}
-    end
-  rescue
-    e -> {:error, Exception.message(e)}
-  end
-
-  # Recover if the agent switched away from the workdir branch during Stage 1.
-  # Stashes any uncommitted changes, switches to the correct branch, then unstashes.
-  # If the agent committed to main, cherry-picks those commits to the branch and resets main.
-  defp recover_branch(branch, repo_path) do
-    {current_raw, _} = System.cmd("git", ["branch", "--show-current"], cd: repo_path, stderr_to_stdout: true)
-    current = String.trim(current_raw)
-
-    if current == branch do
-      Logger.debug("[WorkDirector] Branch OK: still on #{branch}")
-    else
-      Logger.warning("[WorkDirector] Branch drift! Expected #{branch}, on #{current}. Recovering...")
-
-      # Check if agent made rogue commits on the wrong branch (e.g., main)
-      if current == "main" do
-        {ahead_raw, _} = System.cmd("git", ["rev-list", "origin/main..main", "--count"], cd: repo_path, stderr_to_stdout: true)
-        ahead = String.trim(ahead_raw) |> String.to_integer()
-
-        if ahead > 0 do
-          Logger.warning("[WorkDirector] Found #{ahead} rogue commit(s) on main — cherry-picking to #{branch}")
-          # Get the rogue commit SHAs
-          {shas_raw, _} = System.cmd("git", ["rev-list", "origin/main..main", "--reverse"], cd: repo_path, stderr_to_stdout: true)
-          rogue_shas = String.split(shas_raw, "\n", trim: true)
-
-          # Stash any uncommitted changes
-          System.cmd("git", ["stash", "--include-untracked"], cd: repo_path, stderr_to_stdout: true)
-
-          # Reset main to origin/main (remove rogue commits from main)
-          System.cmd("git", ["reset", "--hard", "origin/main"], cd: repo_path, stderr_to_stdout: true)
-
-          # Switch to the workdir branch
-          System.cmd("git", ["checkout", branch], cd: repo_path, stderr_to_stdout: true)
-
-          # Cherry-pick the rogue commits onto the branch
-          Enum.each(rogue_shas, fn sha ->
-            case System.cmd("git", ["cherry-pick", sha], cd: repo_path, stderr_to_stdout: true) do
-              {_, 0} -> Logger.info("[WorkDirector] Cherry-picked #{String.slice(sha, 0, 8)} to #{branch}")
-              {err, _} ->
-                Logger.warning("[WorkDirector] Cherry-pick failed for #{String.slice(sha, 0, 8)}: #{String.trim(err)}")
-                System.cmd("git", ["cherry-pick", "--abort"], cd: repo_path, stderr_to_stdout: true)
-            end
-          end)
-
-          # Unstash working tree changes
-          System.cmd("git", ["stash", "pop"], cd: repo_path, stderr_to_stdout: true)
-        else
-          # No rogue commits, just stash + switch
-          System.cmd("git", ["stash", "--include-untracked"], cd: repo_path, stderr_to_stdout: true)
-
-          case System.cmd("git", ["checkout", branch], cd: repo_path, stderr_to_stdout: true) do
-            {_, 0} -> :ok
-            {_, _} ->
-              Logger.warning("[WorkDirector] Branch #{branch} gone from main — recreating")
-              System.cmd("git", ["checkout", "-b", branch], cd: repo_path, stderr_to_stdout: true)
-          end
-
-          System.cmd("git", ["stash", "pop"], cd: repo_path, stderr_to_stdout: true)
-        end
-      else
-        # On some other branch entirely — stash + switch
-        System.cmd("git", ["stash", "--include-untracked"], cd: repo_path, stderr_to_stdout: true)
-
-        case System.cmd("git", ["checkout", branch], cd: repo_path, stderr_to_stdout: true) do
-          {_, 0} ->
-            System.cmd("git", ["stash", "pop"], cd: repo_path, stderr_to_stdout: true)
-
-          {_err, _} ->
-            # Branch doesn't exist (was deleted) — recreate from main, not current HEAD
-            Logger.warning("[WorkDirector] Branch #{branch} gone — recreating from main")
-            System.cmd("git", ["checkout", "main"], cd: repo_path, stderr_to_stdout: true)
-            System.cmd("git", ["reset", "--hard", "origin/main"], cd: repo_path, stderr_to_stdout: true)
-            System.cmd("git", ["checkout", "-b", branch, "main"], cd: repo_path, stderr_to_stdout: true)
-            System.cmd("git", ["stash", "pop"], cd: repo_path, stderr_to_stdout: true)
-        end
-      end
-    end
-  rescue
-    e ->
-      Logger.error("[WorkDirector] Branch recovery failed: #{Exception.message(e)}")
-  end
-
-  defp cleanup_branch(branch, repo_path) do
-    # Nuclear cleanup: abort any in-progress operations, hard reset to origin/main
-    System.cmd("git", ["merge", "--abort"], cd: repo_path, stderr_to_stdout: true)
-    System.cmd("git", ["rebase", "--abort"], cd: repo_path, stderr_to_stdout: true)
-    System.cmd("git", ["cherry-pick", "--abort"], cd: repo_path, stderr_to_stdout: true)
-    System.cmd("git", ["checkout", "main"], cd: repo_path, stderr_to_stdout: true)
-    System.cmd("git", ["reset", "--hard", "origin/main"], cd: repo_path, stderr_to_stdout: true)
-    System.cmd("git", ["clean", "-fd"], cd: repo_path, stderr_to_stdout: true)
-    System.cmd("git", ["branch", "-D", branch], cd: repo_path, stderr_to_stdout: true)
-  rescue
-    _ -> :ok
-  end
-
-  defp execute_and_poll(prompt, session_id, item \\ nil) do
-    # Swarm dispatch: use SwarmMode with pattern selection
-    if @enable_swarm_dispatch and item != nil do
-      execute_via_swarm(prompt, session_id, item)
-    else
-      # Specialist routing: let Orchestrator auto-decompose and route
-      opts =
-        if @enable_specialist_routing do
-          Logger.info("[WorkDirector] Stage 1: Using specialist routing (Orchestrator auto-decomposition)")
-          [max_iterations: @agent_max_iterations, tier: :elite]
-        else
-          [force_simple: true, max_iterations: @agent_max_iterations, tier: :elite]
-        end
-
-      case Orchestrator.execute(prompt, session_id, opts) do
-        {:ok, task_id} -> await_orchestrator_completion(task_id)
-        {:error, reason} -> {:failed, reason}
-      end
-    end
-  end
-
-  defp execute_via_swarm(prompt, session_id, item) do
-    pattern = select_swarm_pattern(item)
-    Logger.info("[WorkDirector] Stage 1: Using swarm pattern #{inspect(pattern)}")
-
-    case SwarmMode.launch(prompt,
-           pattern: pattern,
-           session_id: session_id,
-           timeout_ms: @orchestrator_timeout_ms
-         ) do
-      {:ok, swarm_id} ->
-        await_swarm_completion(swarm_id)
-
-      {:error, reason} ->
-        Logger.warning("[WorkDirector] Swarm launch failed, falling back to simple dispatch: #{inspect(reason)}")
-        opts = [force_simple: true, max_iterations: @agent_max_iterations, tier: :elite]
-
-        case Orchestrator.execute(prompt, session_id, opts) do
-          {:ok, task_id} -> await_orchestrator_completion(task_id)
-          {:error, r} -> {:failed, r}
-        end
-    end
-  end
-
-  defp select_swarm_pattern(item) do
-    title = String.downcase(item.title || "")
-    desc = String.downcase(item.description || "")
-    text = title <> " " <> desc
-
-    cond do
-      String.contains?(text, "security") or String.contains?(text, "audit") -> :debate
-      String.contains?(text, "test") or String.contains?(text, "spec") -> :review
-      String.contains?(text, "refactor") or String.contains?(text, "review") -> :review
-      String.contains?(text, "debug") or String.contains?(text, "fix") -> :parallel
-      String.contains?(text, "pipeline") or String.contains?(text, "migration") -> :pipeline
-      true -> :review
-    end
-  end
-
-  defp await_swarm_completion(swarm_id) do
-    deadline = System.monotonic_time(:millisecond) + @orchestrator_timeout_ms
-    poll_swarm(swarm_id, deadline)
-  end
-
-  defp poll_swarm(swarm_id, deadline) do
-    if System.monotonic_time(:millisecond) > deadline do
-      {:timeout, :deadline_exceeded}
-    else
-      case SwarmMode.status(swarm_id) do
-        {:ok, %{status: :completed, result: result}} ->
-          {:completed, result || ""}
-
-        {:ok, %{status: :failed, error: error}} ->
-          {:failed, error}
-
-        {:ok, %{status: status}} when status in [:running, :planning] ->
-          Process.sleep(@orchestrator_poll_interval_ms)
-          poll_swarm(swarm_id, deadline)
-
-        {:error, :not_found} ->
-          {:failed, :swarm_not_found}
-
-        _ ->
-          Process.sleep(@orchestrator_poll_interval_ms)
-          poll_swarm(swarm_id, deadline)
-      end
-    end
-  rescue
-    _ -> {:failed, :swarm_poll_error}
-  catch
-    :exit, _ -> {:failed, :swarm_poll_exit}
-  end
-
-  defp verify_and_fix_compilation(item, branch, session_id, repo_path, attempt) do
-    if @enable_autofixer do
-      verify_compilation_autofixer(session_id, repo_path)
-    else
-      verify_compilation_simple(item, branch, session_id, repo_path, attempt)
-    end
-  end
-
-  defp verify_compilation_autofixer(session_id, repo_path) do
-    case run_compile(repo_path) do
-      :ok ->
-        :ok
-
-      {:error, _} ->
-        Logger.info("[WorkDirector] Stage 2 (AutoFixer): delegating compilation fix")
-
-        try do
-          case AutoFixer.run(%{
-                 type: :compile,
-                 session_id: "#{session_id}-autofix",
-                 cwd: repo_path,
-                 max_iterations: 10,
-                 command: "mix compile"
-               }) do
-            {:ok, %{success: true, iterations: n}} ->
-              Logger.info("[WorkDirector] Stage 2 (AutoFixer): fixed in #{n} iterations")
-              :ok
-
-            {:ok, %{success: false, remaining_errors: errors}} ->
-              {:error, {:autofixer_exhausted, Enum.join(errors, "\n")}}
-
-            {:error, reason} ->
-              {:error, {:autofixer_error, reason}}
-          end
-        rescue
-          e ->
-            Logger.warning("[WorkDirector] AutoFixer crashed, falling back: #{Exception.message(e)}")
-            verify_compilation_simple(nil, nil, nil, repo_path, 0)
-        catch
-          :exit, reason ->
-            Logger.warning("[WorkDirector] AutoFixer exit, falling back: #{inspect(reason)}")
-            verify_compilation_simple(nil, nil, nil, repo_path, 0)
-        end
-    end
-  end
-
-  defp verify_compilation_simple(_item, _branch, _session_id, repo_path, attempt)
-       when attempt >= @compile_fix_max_attempts do
-    case run_compile(repo_path) do
-      :ok -> :ok
-      {:error, errors} -> {:error, {:max_fix_attempts, errors}}
-    end
-  end
-
-  defp verify_compilation_simple(item, branch, session_id, repo_path, attempt) do
-    case run_compile(repo_path) do
-      :ok ->
-        :ok
-
-      {:error, errors} ->
-        Logger.info("[WorkDirector] Stage 2: Compilation failed (attempt #{attempt + 1}), dispatching fix agent")
-
-        fix_prompt = """
-        Fix the following compilation errors in this Elixir/OTP codebase.
-
-        ## Repository
-        The codebase is at: `#{repo_path}`
-        You are on branch `#{branch}`.
-
-        CRITICAL: For ALL shell commands, use the `cwd` parameter set to `#{repo_path}`.
-        For file operations, use ABSOLUTE paths starting with `#{repo_path}/`.
-
-        ## MANDATORY GIT RULES — VIOLATION = TASK FAILURE
-        - NEVER run `git checkout`, `git switch`, or `git branch -D` — stay on `#{branch}`
-        - NEVER run `git commit`, `git push`, `git add`, `git stash`, `git merge`, `git rebase`
-        - ANY git command that changes branch state will cause your work to be LOST
-
-        ## Compilation Errors
-        ```
-        #{String.slice(errors, 0, 3000)}
-        ```
-
-        ## Instructions
-        1. Read the files mentioned in the errors
-        2. Fix the compilation errors
-        3. Run `mix compile` to verify the fix (use cwd: "#{repo_path}")
-        4. If new errors appear, fix those too
-
-        ONLY fix compilation errors. Do NOT add features, refactor, or change behavior.
-        Do NOT modify: application.ex, supervisors/, security/, loop.ex, runtime.exs, mix.exs, or mix.lock.
-        """
-
-        fix_session = "#{session_id}-fix-#{attempt}"
-
-        case execute_and_poll(fix_prompt, fix_session) do
-          {:completed, _} ->
-            verify_compilation_simple(item, branch, session_id, repo_path, attempt + 1)
-
-          {:failed, reason} ->
-            {:error, {:fix_agent_failed, reason}}
-
-          {:timeout, _} ->
-            {:error, :fix_agent_timeout}
-        end
-    end
-  end
-
-  defp run_compile(repo_path) do
-    # Use plain `mix compile` — NOT --warnings-as-errors, because this codebase
-    # has 60+ pre-existing warnings (Bcrypt, film_pipeline, etc.) that would
-    # cause false failures on every agent attempt.
-    case System.cmd("mix", ["compile"],
-           cd: repo_path, stderr_to_stdout: true,
-           env: [{"MIX_ENV", "dev"}, {"ERL_AFLAGS", "+S #{@subprocess_schedulers}:#{@subprocess_schedulers}"}]) do
-      {_output, 0} -> :ok
-      {output, _} ->
-        # Filter out warnings — only report actual errors
-        errors = output
-          |> String.split("\n")
-          |> Enum.filter(fn line ->
-            String.contains?(line, "** (CompileError)") or
-            String.contains?(line, "error:") or
-            String.contains?(line, "== Compilation error")
-          end)
-          |> Enum.join("\n")
-
-        if errors == "" do
-          # Only warnings, no real errors — treat as success
-          :ok
-        else
-          {:error, output}
-        end
-    end
-  rescue
-    e -> {:error, Exception.message(e)}
-  end
-
-  # -- Stage 2.5: Grounded Reference Verification --
-
-  @reference_fix_max_attempts 1
-
-  defp verify_and_fix_references(_branch, _session_id, _repo_path, attempt)
-       when attempt > @reference_fix_max_attempts do
-    {:error, :max_reference_fix_attempts}
-  end
-
-  defp verify_and_fix_references(branch, session_id, repo_path, attempt) do
-    case GroundedVerifier.verify(branch, repo_path) do
-      {:ok, []} ->
-        :ok
-
-      {:ok, warnings} ->
-        {:warnings, warnings}
-
-      {:error, violations} ->
-        Logger.warning("[WorkDirector] Stage 2.5: #{length(violations)} phantom reference(s) found (attempt #{attempt + 1})")
-        Enum.each(violations, fn v -> Logger.warning("[WorkDirector] Stage 2.5 violation: #{v}") end)
-
-        fix_prompt = """
-        Fix the following reference errors in this Elixir/OTP codebase.
-
-        ## Repository
-        The codebase is at: `#{repo_path}`
-        You are on branch `#{branch}`.
-
-        CRITICAL: For ALL shell commands, use the `cwd` parameter set to `#{repo_path}`.
-        For file operations, use ABSOLUTE paths starting with `#{repo_path}/`.
-
-        ## MANDATORY GIT RULES — VIOLATION = TASK FAILURE
-        - NEVER run `git checkout`, `git switch`, or `git branch -D` — stay on `#{branch}`
-        - NEVER run `git commit`, `git push`, `git add`, `git stash`, `git merge`, `git rebase`
-        - ANY git command that changes branch state will cause your work to be LOST
-
-        ## Reference Violations
-        #{GroundedVerifier.fix_prompt(violations)}
-
-        ## Instructions
-        1. For each violation, either CREATE the missing module with real functionality, or CHANGE the code to use an existing module
-        2. Run `mix compile` to verify (use cwd: "#{repo_path}")
-        3. Do NOT create empty stubs — every module must have real working code
-
-        Do NOT modify: application.ex, supervisors/, security/, loop.ex, runtime.exs, mix.exs, or mix.lock.
-        """
-
-        fix_session = "#{session_id}-reffix-#{attempt}"
-
-        case execute_and_poll(fix_prompt, fix_session) do
-          {:completed, _} ->
-            # Re-verify after fix (also re-check compilation since fix agent may have introduced errors)
-            case run_compile(repo_path) do
-              :ok -> verify_and_fix_references(branch, session_id, repo_path, attempt + 1)
-              {:error, _} -> {:error, :fix_broke_compilation}
-            end
-
-          {:failed, reason} ->
-            {:error, {:reference_fix_failed, reason}}
-
-          {:timeout, _} ->
-            {:error, :reference_fix_timeout}
-        end
-    end
-  end
-
-  defp finalize_branch(item, branch, repo_path) do
-    # Last-resort recovery: ensure we're on the correct branch before committing
-    recover_branch(branch, repo_path)
-
-    {current_raw, _} = System.cmd("git", ["branch", "--show-current"], cd: repo_path, stderr_to_stdout: true)
-    current = String.trim(current_raw)
-
-    if current != branch do
-      Logger.error("[WorkDirector] Stage 3 ABORT: on #{current}, expected #{branch}. Recovery failed.")
-      {:error, {:wrong_branch, current, branch}}
-    else
-      finalize_branch_impl(item, branch, repo_path)
-    end
-  end
-
-  defp finalize_branch_impl(item, branch, repo_path) do
-    # Resolve any unmerged files by accepting the current version (ours)
-    {unmerged, _} = System.cmd("git", ["diff", "--name-only", "--diff-filter=U"], cd: repo_path, stderr_to_stdout: true)
-    unmerged_files = unmerged |> String.split("\n", trim: true)
-    if unmerged_files != [] do
-      Logger.warning("[WorkDirector] Stage 3: Resolving #{length(unmerged_files)} unmerged file(s): #{inspect(unmerged_files)}")
-      Enum.each(unmerged_files, fn f ->
-        System.cmd("git", ["checkout", "--ours", f], cd: repo_path, stderr_to_stdout: true)
-        System.cmd("git", ["add", f], cd: repo_path, stderr_to_stdout: true)
-      end)
-    end
-
-    # Check what files changed
-    case System.cmd("git", ["diff", "--name-only", "HEAD"], cd: repo_path, stderr_to_stdout: true) do
-      {output, 0} when byte_size(output) > 2 ->
-        files = output |> String.split("\n", trim: true) |> filter_safe_files()
-
-        if files == [] do
-          {:error, :no_changes}
-        else
-          # Git add only safe files
-          System.cmd("git", ["add" | files], cd: repo_path, stderr_to_stdout: true)
-
-          # Commit
-          commit_msg = "feat: #{item.title}\n\nSource: #{item.source}\nPriority: #{item.base_priority}\n\nAutonomously generated by WorkDirector staged execution."
-          case System.cmd("git", ["commit", "-m", commit_msg], cd: repo_path, stderr_to_stdout: true) do
-            {_, 0} ->
-              # Push
-              case System.cmd("git", ["push", "origin", branch], cd: repo_path, stderr_to_stdout: true) do
-                {_, 0} ->
-                  # Create draft PR
-                  pr_body = "Source: #{item.source}\nPriority: #{item.base_priority}\n\n#{String.slice(item.description || "", 0, 500)}\n\n---\n_Autonomously generated by WorkDirector staged execution._"
-                  pr_result = System.cmd("gh", [
-                    "pr", "create", "--draft",
-                    "--title", item.title,
-                    "--repo", @daemon_repo,
-                    "--body", pr_body
-                  ], cd: repo_path, stderr_to_stdout: true)
-
-                  case pr_result do
-                    {url, 0} -> {:ok, %{pr_url: String.trim(url)}}
-                    {_, _} -> {:ok, %{pr_url: nil, note: "pushed but PR creation failed"}}
-                  end
-
-                {push_err, _} ->
-                  {:error, {:push_failed, push_err}}
-              end
-
-            {commit_err, _} ->
-              {:error, {:commit_failed, commit_err}}
-          end
-        end
-
-      _ ->
-        # Also check untracked files
-        case System.cmd("git", ["status", "--porcelain"], cd: repo_path, stderr_to_stdout: true) do
-          {output, 0} when byte_size(output) > 2 ->
-            # There are changes — extract file paths
-            files =
-              output
-              |> String.split("\n", trim: true)
-              |> Enum.map(fn line -> String.slice(line, 3..-1//1) |> String.trim() end)
-              |> Enum.reject(&(&1 == ""))
-              |> filter_safe_files()
-
-            if files == [] do
-              {:error, :no_changes}
-            else
-              System.cmd("git", ["add" | files], cd: repo_path, stderr_to_stdout: true)
-              commit_msg = "feat: #{item.title}\n\nSource: #{item.source}\nPriority: #{item.base_priority}\n\nAutonomously generated by WorkDirector staged execution."
-              case System.cmd("git", ["commit", "-m", commit_msg], cd: repo_path, stderr_to_stdout: true) do
-                {_, 0} ->
-                  case System.cmd("git", ["push", "origin", branch], cd: repo_path, stderr_to_stdout: true) do
-                    {_, 0} ->
-                      pr_body = "Source: #{item.source}\nPriority: #{item.base_priority}\n\n#{String.slice(item.description || "", 0, 500)}"
-                      pr_result = System.cmd("gh", [
-                        "pr", "create", "--draft",
-                        "--title", item.title,
-                        "--repo", @daemon_repo,
-                        "--body", pr_body
-                      ], cd: repo_path, stderr_to_stdout: true)
-                      case pr_result do
-                        {url, 0} -> {:ok, %{pr_url: String.trim(url)}}
-                        {_, _} -> {:ok, %{pr_url: nil}}
-                      end
-                    {err, _} -> {:error, {:push_failed, err}}
-                  end
-                {err, _} -> {:error, {:commit_failed, err}}
-              end
-            end
-
-          _ ->
-            {:error, :no_changes}
-        end
-    end
-  rescue
-    e -> {:error, {:finalize_exception, Exception.message(e)}}
-  end
-
-  defp filter_safe_files(files) do
-    regexes = Enum.map(@protected_path_patterns, &Regex.compile!/1)
-
-    Enum.reject(files, fn file ->
-      Enum.any?(regexes, fn regex -> Regex.match?(regex, file) end)
-    end)
-  end
-
-  defp build_implementation_prompt(item, repo_path, pre_research_context) do
-    source_context =
-      case item.source do
-        :vision ->
-          "This task comes from VISION.md — a strategic product goal."
-
-        :issues ->
-          number = get_in(item.metadata, ["number"])
-          if number, do: "This task comes from GitHub Issue ##{number}. Closes ##{number}.", else: "This task comes from a GitHub Issue."
-
-        :investigation ->
-          "This task originated from an investigation finding backed by evidence."
-
-        :fitness ->
-          "This task addresses a fitness function violation."
-
-        :manual ->
-          "This task was manually submitted by a human operator."
-      end
-
-    # Pre-compute codebase context via DispatchIntelligence (zero LLM cost)
-    # Use cached result from risk assessment if available
-    codebase_context =
-      case Process.get(:dispatch_intelligence_cache) do
-        %{execution_trace: trace} ->
-          Logger.debug("[WorkDirector] DispatchIntelligence enriched prompt for '#{item.title}' (cached)")
-          trace
-
-        _ ->
-          case DispatchIntelligence.enrich(item.title, item.description || "", repo_path) do
-            {:ok, %{execution_trace: trace}} ->
-              Logger.debug("[WorkDirector] DispatchIntelligence enriched prompt for '#{item.title}'")
-              trace
-
-            {:error, reason} ->
-              Logger.warning("[WorkDirector] DispatchIntelligence failed: #{inspect(reason)}")
-              ""
-          end
-      end
-
-    branch = branch_name(item)
-
-    """
-    #{source_context}
-
-    ## Repository
-    The codebase is located at: `#{repo_path}`
-    You are on branch: `#{branch}`
-
-    CRITICAL: For ALL shell commands, use the `cwd` parameter set to `#{repo_path}`.
-    Example: shell_execute(command: "mix compile", cwd: "#{repo_path}")
-    For file operations, use ABSOLUTE paths starting with `#{repo_path}/`.
-
-    ## MANDATORY GIT RULES — VIOLATION = TASK FAILURE
-    - NEVER run `git checkout`, `git switch`, or `git branch` — you are already on the correct branch `#{branch}`
-    - NEVER run `git commit`, `git push`, `git add`, or `git stash` — post-processing handles this
-    - NEVER run `git merge`, `git rebase`, `git cherry-pick`, or `git pull`
-    - If you need to see what branch you're on, use `git branch --show-current` ONLY
-    - ANY git command that changes branch state will cause your work to be LOST
-
-    #{codebase_context}
-    #{pre_research_context}
-
-    ## Task
-    **#{item.title}**
-
-    #{item.description}
-
-    ## Instructions
-    Your ONLY job is to implement the code changes described above.
-
-    1. Study the reference implementations and file territory above
-    2. Implement the changes using file_write / file_edit tools with ABSOLUTE paths
-    3. Use shell_execute with cwd: "#{repo_path}" to run `mix compile`
-    4. If compilation fails, read the errors and fix them
-    5. Run `mix test` for relevant test files (with cwd: "#{repo_path}")
-    6. Verify your implementation is complete and compiles cleanly
-
-    IMPORTANT: Do NOT modify any files matching: application.ex, supervisors/, security/, loop.ex, runtime.exs, mix.exs, or mix.lock.
-    You MUST make at least one meaningful code change. Finish your implementation — do NOT just explore the codebase.
-    """
-  end
-
-  defp branch_name(%WorkItem{title: title}) do
-    slug =
-      title
-      |> String.downcase()
-      |> String.replace(~r/[^a-z0-9\s-]/, "")
-      |> String.replace(~r/\s+/, "-")
-      |> String.slice(0, 40)
-      |> String.trim_trailing("-")
-
-    "workdir/#{slug}"
-  end
-
-  defp verify_safety(branch) do
-    repo_path = Application.get_env(:daemon, :repo_path, Path.expand("~/vas-swarm"))
-    regexes = Enum.map(@protected_path_patterns, &Regex.compile!/1)
-
-    case System.cmd("git", ["diff", "--name-only", "main...#{branch}"],
-           cd: repo_path,
-           stderr_to_stdout: true) do
-      {output, 0} ->
-        files = String.split(output, "\n", trim: true)
-
-        unsafe =
-          Enum.any?(files, fn file ->
-            Enum.any?(regexes, fn regex -> Regex.match?(regex, file) end)
-          end)
-
-        if unsafe, do: :unsafe, else: :safe
-
-      _ ->
-        # Can't verify — assume safe (branch might not exist yet)
-        :safe
-    end
-  end
-
-  defp delete_branch(branch) do
-    repo_path = Application.get_env(:daemon, :repo_path, Path.expand("~/vas-swarm"))
-
-    System.cmd("git", ["branch", "-D", branch], cd: repo_path, stderr_to_stdout: true)
-    System.cmd("git", ["push", "origin", "--delete", branch], cd: repo_path, stderr_to_stdout: true)
-  end
-
-  defp poll_pr_outcomes(state) do
-    case System.cmd("gh", [
-           "pr", "list",
-           "--repo", @daemon_repo,
-           "--head", "workdir/",
-           "--json", "headRefName,state,mergedAt",
-           "--limit", "50",
-           "--state", "all"
-         ], stderr_to_stdout: true) do
-      {output, 0} ->
-        case Jason.decode(output) do
-          {:ok, prs} ->
-            process_pr_outcomes(state, prs)
-
-          _ ->
-            state
-        end
-
-      _ ->
-        state
-    end
-  end
-
-  defp process_pr_outcomes(state, prs) do
-    Enum.reduce(prs, state, fn pr, acc ->
-      branch = pr["headRefName"]
-
-      # Find matching completed PR
-      match = Enum.find(acc.completed_prs, fn cp -> cp.branch == branch end)
-
-      if match do
-        cond do
-          pr["state"] == "MERGED" ->
-            Logger.info("[WorkDirector] PR MERGED: #{branch}")
-
-            acc
-            |> reward_arm(match.source, 1.0)
-            |> Map.update!(:total_merged, &(&1 + 1))
-            |> remove_completed_pr(branch)
-
-          pr["state"] == "CLOSED" ->
-            Logger.info("[WorkDirector] PR REJECTED: #{branch}")
-
-            acc
-            |> reward_arm(match.source, 0.05)
-            |> Map.update!(:total_rejected, &(&1 + 1))
-            |> remove_completed_pr(branch)
-
-          true ->
-            acc
-        end
-      else
-        acc
-      end
-    end)
-  end
-
-  defp reward_arm(state, source, reward) do
-    clamped = max(0.0, min(1.0, reward))
-
-    arms =
-      Map.update(state.arms, source, %{alpha: 1.0, beta: 1.0}, fn arm ->
-        %{arm | alpha: arm.alpha + clamped, beta: arm.beta + (1.0 - clamped)}
-      end)
-
-    state = %{state | arms: arms}
-    persist_arms(state)
-    state
-  end
-
-  defp update_backlog_completed(state, content_hash, result) do
-    %{state | backlog: Backlog.mark_completed(state.backlog, content_hash, result)}
-  end
-
-  defp update_backlog_failed(state, content_hash, failure_context) do
-    %{state | backlog: Backlog.mark_failed(state.backlog, content_hash, failure_context)}
-  end
-
-  defp add_completed_pr(state, branch, source, content_hash) do
-    pr = %{branch: branch, source: source, content_hash: content_hash}
-    completed = [pr | state.completed_prs] |> Enum.take(@max_completed_prs)
-    %{state | completed_prs: completed}
-  end
-
-  defp remove_completed_pr(state, branch) do
-    completed = Enum.reject(state.completed_prs, fn cp -> cp.branch == branch end)
-    %{state | completed_prs: completed}
-  end
-
-  defp maybe_trip_circuit_breaker(state, failures) when failures >= @circuit_breaker_threshold do
-    until = DateTime.add(DateTime.utc_now(), @circuit_breaker_ms, :millisecond)
-    Logger.warning("[WorkDirector] Circuit breaker tripped: #{failures} consecutive failures, disabled until #{until}")
-    %{state | circuit_breaker_until: until}
-  end
-
-  defp maybe_trip_circuit_breaker(state, _failures), do: state
-
-  defp circuit_breaker_active?(%{circuit_breaker_until: nil}), do: false
-
-  defp circuit_breaker_active?(%{circuit_breaker_until: until}) do
-    DateTime.compare(DateTime.utc_now(), until) == :lt
-  end
-
-  defp budget_ok? do
-    try do
-      case MiosaBudget.Budget.check_budget() do
-        {:ok, _} -> true
-        _ -> false
-      end
-    rescue
-      e ->
-        Logger.warning("[WorkDirector] Budget check failed, allowing: #{Exception.message(e)}")
-        true
-    catch
-      :exit, reason ->
-        Logger.warning("[WorkDirector] Budget check exit, allowing: #{inspect(reason)}")
-        true
-    end
-  end
-
-  defp memory_ok? do
-    try do
-      # Use :memsup if available, otherwise fall back to macOS vm_stat
-      case :os.type() do
-        {:unix, :darwin} ->
-          {output, 0} = System.cmd("vm_stat", [])
-          # Parse "Pages free" and "Pages active" etc. from vm_stat
-          pages = fn label ->
-            case Regex.run(~r/#{label}:\s+(\d+)/, output) do
-              [_, n] -> String.to_integer(n)
-              _ -> 0
-            end
-          end
-
-          page_size = 16_384  # ARM64 macOS
-          free = pages.("Pages free") * page_size
-          inactive = pages.("Pages inactive") * page_size
-          active = pages.("Pages active") * page_size
-          wired = pages.("Pages wired down") * page_size
-          compressed = pages.("Pages occupied by compressor") * page_size
-
-          total = free + inactive + active + wired + compressed
-          used = active + wired + compressed
-          usage = if total > 0, do: used / total, else: 0.0
-
-          if usage > @memory_pressure_threshold do
-            Logger.warning("[WorkDirector] Memory usage #{Float.round(usage * 100, 1)}% > #{@memory_pressure_threshold * 100}% threshold")
-            false
-          else
-            true
-          end
-
-        _ ->
-          # Non-macOS — skip memory check
-          true
-      end
-    rescue
-      _ -> true
-    catch
-      _, _ -> true
-    end
-  end
-
-  defp maybe_reset_daily_counter(state) do
-    today = Date.utc_today()
-
-    if state.last_day_reset != today do
-      %{state | dispatches_today: 0, last_day_reset: today}
-    else
-      state
-    end
-  end
-
-  defp schedule_refresh do
-    Process.send_after(self(), :refresh_backlog, @backlog_refresh_ms)
-  end
-
-  defp schedule_pr_poll do
-    Process.send_after(self(), :poll_pr_outcomes, @pr_poll_ms)
-  end
-
   # -- Stage 3.5: Post-Dispatch Learning --
 
   defp post_dispatch_learn(dispatch, result) do
     # Vault: remember dispatch outcome
-    if @enable_vault_remember do
+    if get_flag(:enable_vault_remember, @enable_vault_remember) do
       try do
         {category, content} =
           case result do
@@ -2885,7 +1163,7 @@ defmodule Daemon.Agent.WorkDirector do
     end
 
     # Knowledge Store: assert dispatch outcome as triple
-    if @enable_knowledge_remember do
+    if get_flag(:enable_knowledge_remember, @enable_knowledge_remember) do
       try do
         store = "osa_default"
         slug = String.slice(dispatch.title, 0, 60) |> String.replace(~r/[^a-zA-Z0-9]/, "_")
@@ -2901,7 +1179,7 @@ defmodule Daemon.Agent.WorkDirector do
     end
 
     # SkillEvolution: trigger evolution on failure
-    if @enable_skill_evolution do
+    if get_flag(:enable_skill_evolution, @enable_skill_evolution) do
       case result do
         {:error, reason} ->
           try do
@@ -2950,58 +1228,6 @@ defmodule Daemon.Agent.WorkDirector do
   defp classify_failure(_), do: :unknown
 
   # Reward based on how far the dispatch got
-  # These partial signals help Thompson learn which sources produce completable tasks
-  # Reward spread: success=0.8, merge=1.0, rejection=0.05, failures=0.0-0.1
-  # Wide gap gives Thompson Sampling a clear signal to learn from.
-  defp failure_class_reward(:empty_branch), do: 0.0         # Agent wrote no code
-  defp failure_class_reward(:no_branch_created), do: 0.0    # Branch creation failed
-  defp failure_class_reward(:orchestrator_error), do: 0.0   # Orchestrator itself failed
-  defp failure_class_reward(:timeout), do: 0.0              # Task was too large
-  defp failure_class_reward(:compilation_error), do: 0.0    # Code written but won't compile
-  defp failure_class_reward(:phantom_references), do: 0.0   # Compiles but references non-existent modules
-  defp failure_class_reward(:stub_detected), do: 0.0        # Agent produced stubs, not real code
-  defp failure_class_reward(:commit_error), do: 0.05        # Code compiles but commit failed (close)
-  defp failure_class_reward(:test_failure), do: 0.1         # Code compiled but tests failed (closest to success)
-  defp failure_class_reward(:process_crash), do: 0.0        # Total failure
-  defp failure_class_reward(_), do: 0.0
-
-  # -- Orchestrator Completion Polling --
-
-  defp await_orchestrator_completion(task_id) do
-    deadline = System.monotonic_time(:millisecond) + @orchestrator_timeout_ms
-    poll_orchestrator(task_id, deadline)
-  end
-
-  defp poll_orchestrator(task_id, deadline) do
-    if System.monotonic_time(:millisecond) > deadline do
-      {:timeout, :deadline_exceeded}
-    else
-      case Orchestrator.progress(task_id) do
-        {:ok, %{status: :completed, synthesis: synthesis}} ->
-          {:completed, synthesis || ""}
-
-        {:ok, %{status: :failed, error: error}} ->
-          {:failed, error}
-
-        {:ok, %{status: status}} when status in [:running, :planning] ->
-          Process.sleep(@orchestrator_poll_interval_ms)
-          poll_orchestrator(task_id, deadline)
-
-        {:error, :not_found} ->
-          # Task may have been cleaned up — treat as failure
-          {:failed, :task_not_found}
-
-        _ ->
-          Process.sleep(@orchestrator_poll_interval_ms)
-          poll_orchestrator(task_id, deadline)
-      end
-    end
-  rescue
-    _ -> {:failed, :poll_error}
-  catch
-    :exit, _ -> {:failed, :poll_exit}
-  end
-
   # -- Arm Persistence --
 
   @arms_dir Path.expand("~/.daemon/work_director")
@@ -3069,5 +1295,227 @@ defmodule Daemon.Agent.WorkDirector do
     end
   rescue
     _ -> state
+  end
+
+  # -- PR Outcome Polling --
+
+  defp poll_pr_outcomes(state) do
+    case System.cmd("gh", [
+           "pr", "list",
+           "--repo", @daemon_repo,
+           "--head", "workdir/",
+           "--json", "headRefName,state,mergedAt,closedAt",
+           "--limit", "50"
+         ], stderr_to_stdout: true) do
+      {json, 0} ->
+        try do
+          prs = Jason.decode!(json)
+
+          Enum.reduce(prs, state, fn pr, acc ->
+            branch = pr["headRefName"]
+            pr_state = pr["state"]
+            merged_at = pr["mergedAt"]
+            closed_at = pr["closedAt"]
+
+            cond do
+              pr_state == "MERGED" and merged_at != nil ->
+                Logger.info("[WorkDirector] PR merged: #{branch}")
+                handle_pr_merged(acc, branch)
+
+              pr_state in ["CLOSED", "OPEN"] and closed_at != nil ->
+                Logger.info("[WorkDirector] PR closed without merge: #{branch}")
+                handle_pr_rejected(acc, branch)
+
+              true ->
+                acc
+            end
+          end)
+        rescue
+          e ->
+            Logger.warning("[WorkDirector] Failed to parse PR outcomes: #{Exception.message(e)}")
+            state
+        catch
+          :exit, _ -> state
+        end
+
+      {output, _} ->
+        Logger.warning("[WorkDirector] PR poll failed: #{String.slice(output, 0, 200)}")
+        state
+    end
+  end
+
+  defp handle_pr_merged(state, branch) do
+    case Enum.find(state.completed_prs, fn pr -> pr.branch == branch end) do
+      nil ->
+        # PR not tracked, ignore
+        state
+
+      %{source: source, content_hash: _hash} ->
+        # Update Thompson arm
+        state = reward_arm(state, source, 1.0)
+        state = %{state | total_merged: state.total_merged + 1}
+
+        # Remove from completed PRs tracking
+        completed_prs = Enum.reject(state.completed_prs, fn pr -> pr.branch == branch end)
+        state = %{state | completed_prs: completed_prs}
+
+        # Persist updated arms
+        persist_arms(state)
+        state
+    end
+  end
+
+  defp handle_pr_rejected(state, branch) do
+    case Enum.find(state.completed_prs, fn pr -> pr.branch == branch end) do
+      nil ->
+        # PR not tracked, ignore
+        state
+
+      %{source: source, content_hash: _hash} ->
+        # Penalize Thompson arm
+        state = reward_arm(state, source, 0.1)
+        state = %{state | total_rejected: state.total_rejected + 1}
+
+        # Remove from completed PRs tracking
+        completed_prs = Enum.reject(state.completed_prs, fn pr -> pr.branch == branch end)
+        state = %{state | completed_prs: completed_prs}
+
+        # Persist updated arms
+        persist_arms(state)
+        state
+    end
+  end
+
+  defp schedule_pr_poll do
+    Process.send_after(self(), :poll_pr_outcomes, @pr_poll_ms)
+  end
+
+  # -- Helper Functions --
+
+  defp maybe_reset_daily_counter(state) do
+    today = Date.utc_today()
+    if state.last_day_reset != today do
+      %{state | dispatches_today: 0, last_day_reset: today}
+    else
+      state
+    end
+  end
+
+  defp branch_name(%WorkItem{title: title}) do
+    slug =
+      title
+      |> String.downcase()
+      |> String.replace(~r/[^a-z0-9\s-]/, "")
+      |> String.replace(~r/\s+/, "-")
+      |> String.slice(0, 40)
+      |> String.trim_trailing("-")
+
+    "workdir/#{slug}"
+  end
+
+  defp reward_arm(state, source, reward) when is_number(reward) do
+    case Map.get(state.arms, source) do
+      nil ->
+        Logger.warning("[WorkDirector] Unknown arm source: #{source}")
+        state
+
+      %{alpha: alpha, beta: beta} ->
+        # Beta(α+reward, β+(1-reward))
+        # reward=1.0 → success: α+=1, β+=0
+        # reward=0.0 → failure: α+=0, β+=1
+        # reward=0.1 → soft failure: α+=0.1, β+=0.9
+        # reward=0.8 → strong success: α+=0.8, β+=0.2
+        new_alpha = alpha + reward
+        new_beta = beta + (1.0 - reward)
+        updated_arms = Map.put(state.arms, source, %{alpha: new_alpha, beta: new_beta})
+
+        %{state | arms: updated_arms}
+    end
+  end
+
+  defp add_completed_pr(state, branch, source, content_hash) do
+    completed = %{
+      branch: branch,
+      source: source,
+      content_hash: content_hash,
+      created_at: DateTime.utc_now()
+    }
+
+    completed_prs = [completed | state.completed_prs] |> Enum.take(@max_completed_prs)
+    %{state | completed_prs: completed_prs}
+  end
+
+  defp remove_completed_pr(state, branch) do
+    completed_prs = Enum.reject(state.completed_prs, fn pr -> pr.branch == branch end)
+    %{state | completed_prs: completed_prs}
+  end
+
+  defp failure_class_reward(:compilation_error), do: 0.2
+  defp failure_class_reward(:phantom_references), do: 0.1
+  defp failure_class_reward(:stub_detected), do: 0.05
+  defp failure_class_reward(:timeout), do: 0.3
+  defp failure_class_reward(:orchestrator_error), do: 0.25
+  defp failure_class_reward(:commit_error), do: 0.15
+  defp failure_class_reward(:no_branch_created), do: 0.0
+  defp failure_class_reward(:empty_branch), do: 0.1
+  defp failure_class_reward(:process_crash), do: 0.0
+  defp failure_class_reward(:unknown), do: 0.1
+
+  defp update_backlog_completed(state, content_hash, result) do
+    case Map.get(state.backlog, content_hash) do
+      nil -> state
+      item ->
+        updated_item = %{item | status: :completed, result: result, pr_branch: elem(result, 1)}
+        %{state | backlog: Map.put(state.backlog, content_hash, updated_item)}
+    end
+  end
+
+  defp update_backlog_failed(state, content_hash, error_info) do
+    case Map.get(state.backlog, content_hash) do
+      nil -> state
+      item ->
+        updated_item = %{item |
+          status: :failed,
+          attempt_count: item.attempt_count + 1,
+          last_failure_class: error_info.class,
+          last_failure_reason: error_info.reason
+        }
+        %{state | backlog: Map.put(state.backlog, content_hash, updated_item)}
+    end
+  end
+
+  defp verify_safety(branch) do
+    # Check if branch only modifies allowed files
+    repo_path = Application.get_env(:daemon, :repo_path, Path.expand("~/vas-swarm"))
+
+    {output, _} = System.cmd("git", ["diff", "--name-only", "main...#{branch}", "--", "*.ex", "*.exs"],
+      cd: repo_path, stderr_to_stdout: true)
+
+    changed_files = output |> String.split() |> Enum.filter(&(&1 != ""))
+
+    forbidden =
+      Enum.any?(state_blocked_regexes(), fn regex ->
+        Enum.any?(changed_files, fn file -> Regex.match?(regex, file) end)
+      end)
+
+    if forbidden do
+      :unsafe
+    else
+      :safe
+    end
+  end
+
+  defp state_blocked_regexes do
+    # This is a bit of a hack - we need to access @blocked_regexes from state
+    # In a proper refactor, this would be passed in init/1
+    Application.get_env(:daemon, :work_director_blocked_patterns, [])
+    |> Enum.map(&Regex.compile!/1)
+  end
+
+  defp delete_branch(branch) do
+    repo_path = Application.get_env(:daemon, :repo_path, Path.expand("~/vas-swarm"))
+    System.cmd("git", ["branch", "-D", branch], cd: repo_path, stderr_to_stdout: true)
+    System.cmd("git", ["push", "origin", "--delete", branch], cd: repo_path, stderr_to_stdout: true)
+    :ok
   end
 end

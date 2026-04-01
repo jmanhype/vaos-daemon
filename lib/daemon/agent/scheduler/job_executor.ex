@@ -21,6 +21,21 @@ defmodule Daemon.Agent.Scheduler.JobExecutor do
     execute_task(task, "cron_#{job["id"]}")
   end
 
+  def execute_cron_job(%{"type" => "work_director"} = job) do
+    Logger.debug("Cron '#{job["id"]}': running WorkDirector cycle")
+    alias Daemon.Agent.WorkDirector
+
+    case WorkDirector.refresh_and_select() do
+      {:ok, result} ->
+        Logger.info("Cron '#{job["id"]}': WorkDirector cycle completed: #{inspect(result)}")
+        {:ok, "work_director cycle: #{result}"}
+
+      {:error, reason} ->
+        Logger.warning("Cron '#{job["id"]}': WorkDirector cycle failed: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
   def execute_cron_job(%{"type" => "command", "command" => command} = job) do
     Logger.debug("Cron '#{job["id"]}': running command")
     run_shell_command(command)
