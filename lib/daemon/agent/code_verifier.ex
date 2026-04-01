@@ -14,6 +14,7 @@ defmodule Daemon.Agent.CodeVerifier do
 
   require Logger
 
+  # Verifies agent output against the real codebase.
   @doc """
   Verify the agent's output on the current branch against the real codebase.
 

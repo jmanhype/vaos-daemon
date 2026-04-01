@@ -1427,13 +1427,14 @@ defmodule Daemon.Agent.Loop do
 
       if has_write_tools do
         session_id = state.session_id
-        working_dir = state.working_dir
+        working_dir = state.working_dir || "."
 
+        # 1. Substance check + grounded verification
         Task.start(fn ->
           try do
-            # Substance check — nudge if stub ratio > 50%
-            {diff, 0} = System.cmd("git", ["diff", "--unified=0", "HEAD"], cd: working_dir || ".", stderr_to_stdout: true)
+            {diff, 0} = System.cmd("git", ["diff", "--unified=0", "HEAD"], cd: working_dir, stderr_to_stdout: true)
             if byte_size(diff) > 0 do
+              # Substance analysis
               analysis = Daemon.Agent.CodeVerifier.analyze_substance(diff)
               unless analysis.has_substance do
                 Logger.info("[quality] Substance check warning for session #{session_id}: #{inspect(analysis.warnings)}")
@@ -1443,32 +1444,32 @@ defmodule Daemon.Agent.Loop do
                   warnings: analysis.warnings
                 })
               end
+
+              # Grounded verification — check phantom module references
+              case Daemon.Agent.CodeVerifier.verify("HEAD", working_dir) do
+                {:error, violations} ->
+                  Logger.info("[quality] Grounded verification failures for session #{session_id}: #{length(violations)} violations")
+                  Bus.emit(:system_event, %{
+                    event: :quality_hook_verification,
+                    session_id: session_id,
+                    violations: violations
+                  })
+
+                {:ok, warnings} when warnings != [] ->
+                  Logger.debug("[quality] Grounded verification warnings: #{inspect(warnings)}")
+
+                _ -> :ok
+              end
             end
           rescue
-            e -> Logger.debug("[quality] Substance check failed: #{inspect(e)}")
+            e -> Logger.debug("[quality] Substance/verification check failed: #{inspect(e)}")
           end
         end)
 
-        # Test gate — run mix test on related test files
+        # 2. Test gate — run mix test on related test files
         Task.start(fn ->
           try do
-            changed_files =
-              results
-              |> Enum.flat_map(fn {tc, {_msg, result_str}} ->
-                if tc.name in ~w(file_write file_edit) do
-                  case tc.arguments do
-                    %{"path" => path} -> [path]
-                    args when is_binary(args) ->
-                      case Jason.decode(args) do
-                        {:ok, %{"path" => path}} -> [path]
-                        _ -> []
-                      end
-                    _ -> []
-                  end
-                else
-                  []
-                end
-              end)
+            changed_files = extract_changed_paths(results)
 
             test_files =
               changed_files
@@ -1481,11 +1482,9 @@ defmodule Daemon.Agent.Loop do
               |> Enum.filter(&File.exists?/1)
 
             if test_files != [] do
-              test_args = ["test", "--" | test_files]
-              case System.cmd("mix", test_args, cd: working_dir || ".", stderr_to_stdout: true) do
-                {output, 0} ->
+              case System.cmd("mix", ["test" | test_files], cd: working_dir, stderr_to_stdout: true) do
+                {_output, 0} ->
                   Logger.debug("[quality] Tests passed for session #{session_id}")
-                  :ok
 
                 {output, _code} ->
                   Logger.info("[quality] Test failures for session #{session_id}")
@@ -1500,10 +1499,68 @@ defmodule Daemon.Agent.Loop do
             e -> Logger.debug("[quality] Test gate failed: #{inspect(e)}")
           end
         end)
+
+        # 3. Code review nudge — flag patterns that warrant review
+        Task.start(fn ->
+          try do
+            changed_files = extract_changed_paths(results)
+            large_change = length(changed_files) >= 3
+
+            if large_change do
+              Bus.emit(:system_event, %{
+                event: :quality_hook_review_nudge,
+                session_id: session_id,
+                files_changed: length(changed_files),
+                message: "#{length(changed_files)} files changed — consider reviewing before committing"
+              })
+            end
+          rescue
+            _ -> :ok
+          end
+        end)
+
+        # 4. Fitness evaluation — run architectural fitness functions
+        Task.start(fn ->
+          try do
+            results = Daemon.Fitness.evaluate_all(working_dir)
+            violations = Enum.filter(results, fn {_name, {status, _score, _detail}} -> status == :not_kept end)
+
+            if violations != [] do
+              Logger.info("[quality] Fitness violations for session #{session_id}: #{length(violations)}")
+              Bus.emit(:system_event, %{
+                event: :quality_hook_fitness,
+                session_id: session_id,
+                violations: Enum.map(violations, fn {name, {_, score, detail}} ->
+                  %{name: name, score: score, detail: detail}
+                end)
+              })
+            end
+          rescue
+            e -> Logger.debug("[quality] Fitness evaluation failed: #{inspect(e)}")
+          end
+        end)
       end
     end
   rescue
     _ -> :ok
+  end
+
+  defp extract_changed_paths(results) do
+    Enum.flat_map(results, fn {tc, {_msg, _result_str}} ->
+      if tc.name in ~w(file_write file_edit) do
+        case tc.arguments do
+          %{"path" => path} -> [path]
+          args when is_binary(args) ->
+            case Jason.decode(args) do
+              {:ok, %{"path" => path}} -> [path]
+              _ -> []
+            end
+          _ -> []
+        end
+      else
+        []
+      end
+    end)
   end
 
   # --- Session-end learning hooks (Phase 2c) ---
@@ -1526,11 +1583,8 @@ defmodule Daemon.Agent.Loop do
 
       Task.start(fn ->
         try do
-          MiosaKnowledge.Store.put("osa_default", %{
-            key: "session_#{session_id}_#{System.system_time(:second)}",
-            content: String.slice(response, 0, 500),
-            metadata: %{session_id: session_id, type: :session_artifact}
-          })
+          MiosaKnowledge.assert("osa_default",
+            {"session:#{session_id}", "produced", String.slice(response, 0, 200)})
         rescue
           e -> Logger.debug("[learning] Knowledge remember failed: #{inspect(e)}")
         catch

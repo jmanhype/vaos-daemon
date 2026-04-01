@@ -776,21 +776,36 @@ defmodule Daemon.Agent.Context do
 
   defp knowledge_block(state) do
     latest_msg = find_latest_user_message(state.messages)
-    query = latest_msg || ""
 
     try do
-      case MiosaKnowledge.Store.search("osa_default", query, limit: 5) do
-        {:ok, entries} when entries != [] ->
-          lines =
-            Enum.map(entries, fn entry ->
-              content = Map.get(entry, :content, Map.get(entry, :value, ""))
-              "- #{content}"
-            end)
+      # Query the knowledge graph for triples matching any keyword from the user message
+      keywords =
+        (latest_msg || "")
+        |> String.downcase()
+        |> String.split(~r/\s+/, trim: true)
+        |> Enum.reject(&(String.length(&1) < 4))
+        |> Enum.take(5)
 
+      triples =
+        keywords
+        |> Enum.flat_map(fn kw ->
+          case MiosaKnowledge.query("osa_default", subject: kw) do
+            {:ok, results} when is_list(results) -> results
+            results when is_list(results) -> results
+            _ -> []
+          end
+        end)
+        |> Enum.uniq()
+        |> Enum.take(5)
+
+      case triples do
+        [] -> nil
+        entries ->
+          lines = Enum.map(entries, fn
+            {s, p, o} -> "- #{s} #{p} #{o}"
+            other -> "- #{inspect(other)}"
+          end)
           "## Knowledge Context\n#{Enum.join(lines, "\n")}"
-
-        _ ->
-          nil
       end
     rescue
       _ -> nil
