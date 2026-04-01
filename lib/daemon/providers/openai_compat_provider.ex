@@ -60,7 +60,7 @@ defmodule Daemon.Providers.OpenAICompatProvider do
       default_model: "moonshot-v1-128k"
     },
     zhipu: %{
-      default_url: "https://open.bigmodel.cn/api/coding/paas/v4",
+      default_url: "https://open.bigmodel.cn/api/paas/v4",
       default_model: "glm-4.7",
       available_models: ["glm-5", "glm-5-turbo", "glm-4.7", "glm-4.6", "glm-4.5", "glm-4.5-flash"]
     },
