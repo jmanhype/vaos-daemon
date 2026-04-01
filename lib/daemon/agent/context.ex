@@ -775,33 +775,29 @@ defmodule Daemon.Agent.Context do
   end
 
   defp knowledge_block(state) do
-    latest_msg = find_latest_user_message(state.messages)
-
     try do
-      # Query the knowledge graph for triples matching any keyword from the user message
-      keywords =
-        (latest_msg || "")
-        |> String.downcase()
-        |> String.split(~r/\s+/, trim: true)
-        |> Enum.reject(&(String.length(&1) < 4))
-        |> Enum.take(5)
+      # Query knowledge graph for self-diagnosis findings and investigation insights
+      # These are the high-value entries — not raw tool timestamps.
+      findings =
+        case MiosaKnowledge.query("osa_default", predicate: "vaos:topic") do
+          {:ok, results} when is_list(results) -> Enum.take(results, 5)
+          _ -> []
+        end
 
-      triples =
-        keywords
-        |> Enum.flat_map(fn kw ->
-          case MiosaKnowledge.query("osa_default", subject: kw) do
-            {:ok, results} when is_list(results) -> results
-            results when is_list(results) -> results
-            _ -> []
-          end
-        end)
-        |> Enum.uniq()
-        |> Enum.take(5)
+      directions =
+        case MiosaKnowledge.query("osa_default", predicate: "vaos:direction") do
+          {:ok, results} when is_list(results) -> Enum.take(results, 3)
+          _ -> []
+        end
 
-      case triples do
+      entries = findings ++ directions
+
+      case entries do
         [] -> nil
-        entries ->
+        _ ->
           lines = Enum.map(entries, fn
+            {_s, "vaos:topic", topic} -> "- Finding: #{topic}"
+            {_s, "vaos:direction", dir} -> "- Insight: #{dir}"
             {s, p, o} -> "- #{s} #{p} #{o}"
             other -> "- #{inspect(other)}"
           end)
