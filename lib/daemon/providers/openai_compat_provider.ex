@@ -60,9 +60,9 @@ defmodule Daemon.Providers.OpenAICompatProvider do
       default_model: "moonshot-v1-128k"
     },
     zhipu: %{
-      default_url: "https://open.bigmodel.cn/api/paas/v4",
+      default_url: "https://api.z.ai/api/coding/paas/v4",
       default_model: "glm-4.7",
-      available_models: ["glm-5", "glm-5-turbo", "glm-4.7", "glm-4.6", "glm-4.5", "glm-4.5-flash"]
+      available_models: ["glm-5.1", "glm-5", "glm-5-turbo", "glm-4.7", "glm-4.6", "glm-4.5", "glm-4.5-flash"]
     },
     volcengine: %{
       default_url: "https://ark.cn-beijing.volces.com/api/v3",
@@ -105,6 +105,8 @@ defmodule Daemon.Providers.OpenAICompatProvider do
       |> maybe_add_headers(config)
       |> maybe_extend_timeout(model)
 
+    api_key = maybe_generate_zhipu_jwt(provider, api_key)
+
     case OpenAICompat.chat(url, api_key, model, messages, opts) do
       {:error, "API key not configured"} ->
         {:error, "#{provider |> to_string() |> String.upcase()}_API_KEY not configured"}
@@ -133,6 +135,8 @@ defmodule Daemon.Providers.OpenAICompatProvider do
       |> maybe_add_headers(config)
       |> maybe_extend_timeout(model)
 
+    api_key = maybe_generate_zhipu_jwt(provider, api_key)
+
     case OpenAICompat.chat_stream(url, api_key, model, messages, callback, opts) do
       {:error, "API key not configured"} ->
         {:error, "#{provider |> to_string() |> String.upcase()}_API_KEY not configured"}
@@ -152,6 +156,40 @@ defmodule Daemon.Providers.OpenAICompatProvider do
     else
       opts
     end
+  end
+
+  # Zhipu API keys are in {id}.{secret} format and need JWT conversion.
+  # Raw keys return 401 "token expired". Generate HS256 JWT with 1h expiry.
+  defp maybe_generate_zhipu_jwt(:zhipu, api_key) when is_binary(api_key) do
+    case String.split(api_key, ".", parts: 2) do
+      [id, secret] when byte_size(secret) > 0 ->
+        generate_zhipu_jwt(id, secret)
+
+      _ ->
+        # Already a JWT or malformed — pass through
+        api_key
+    end
+  end
+
+  defp maybe_generate_zhipu_jwt(_provider, api_key), do: api_key
+
+  defp generate_zhipu_jwt(id, secret) do
+    now_ms = System.system_time(:millisecond)
+
+    header =
+      %{"alg" => "HS256", "typ" => "JWT", "sign_type" => "SIGN"}
+      |> Jason.encode!()
+      |> Base.url_encode64(padding: false)
+
+    payload =
+      %{"api_key" => id, "exp" => now_ms + 3_600_000, "timestamp" => now_ms}
+      |> Jason.encode!()
+      |> Base.url_encode64(padding: false)
+
+    signing_input = "#{header}.#{payload}"
+    signature = :crypto.mac(:hmac, :sha256, secret, signing_input) |> Base.url_encode64(padding: false)
+
+    "#{signing_input}.#{signature}"
   end
 
   defp get_config!(provider) do
