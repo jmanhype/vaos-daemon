@@ -1437,7 +1437,8 @@ defmodule Daemon.Agent.Loop do
         # Fast checks — synchronous with 5s timeout, return nudge messages
         fast_task = Task.async(fn ->
           try do
-            {diff, 0} = System.cmd("git", ["diff", "--unified=0", "HEAD"], cd: working_dir, stderr_to_stdout: true)
+            {diff, exit_code} = System.cmd("git", ["diff", "--unified=0", "HEAD"], cd: working_dir, stderr_to_stdout: true)
+            diff = if exit_code == 0, do: diff, else: ""
             if byte_size(diff) > 0 do
               # Substance analysis
               analysis = Daemon.Agent.CodeVerifier.analyze_substance(diff)
