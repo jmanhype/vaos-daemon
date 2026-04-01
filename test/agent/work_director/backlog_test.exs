@@ -1,5 +1,5 @@
 defmodule Daemon.Agent.WorkDirector.BacklogTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Daemon.Agent.WorkDirector.Backlog
   alias Daemon.Agent.WorkDirector.Backlog.WorkItem

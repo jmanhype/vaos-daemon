@@ -198,6 +198,7 @@ defmodule Daemon.Agent.Context do
       {:skills, 2, fn -> skills_block(state) end},
       {:scratchpad, 1, fn -> scratchpad_block(state) end},
       {:vault, 2, fn -> vault_block(state) end},
+      {:knowledge, 2, fn -> knowledge_block(state) end},
       {:decision_intelligence, 2, fn -> decision_intelligence_block(state) end}
     ]
 
@@ -770,6 +771,42 @@ defmodule Daemon.Agent.Context do
       _ -> ""
     catch
       :exit, _ -> ""
+    end
+  end
+
+  defp knowledge_block(state) do
+    try do
+      # Query knowledge graph for self-diagnosis findings and investigation insights
+      # These are the high-value entries — not raw tool timestamps.
+      findings =
+        case MiosaKnowledge.query("osa_default", predicate: "vaos:topic") do
+          {:ok, results} when is_list(results) -> Enum.take(results, 5)
+          _ -> []
+        end
+
+      directions =
+        case MiosaKnowledge.query("osa_default", predicate: "vaos:direction") do
+          {:ok, results} when is_list(results) -> Enum.take(results, 3)
+          _ -> []
+        end
+
+      entries = findings ++ directions
+
+      case entries do
+        [] -> nil
+        _ ->
+          lines = Enum.map(entries, fn
+            {_s, "vaos:topic", topic} -> "- Finding: #{topic}"
+            {_s, "vaos:direction", dir} -> "- Insight: #{dir}"
+            {s, p, o} -> "- #{s} #{p} #{o}"
+            other -> "- #{inspect(other)}"
+          end)
+          "## Knowledge Context\n#{Enum.join(lines, "\n")}"
+      end
+    rescue
+      _ -> nil
+    catch
+      :exit, _ -> nil
     end
   end
 

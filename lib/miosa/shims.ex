@@ -839,7 +839,7 @@ end
 
 defmodule MiosaKnowledge.Registry do
   @moduledoc "Bridge — lookups resolve through Vaos.Knowledge.Registry."
-  def lookup(name), do: Vaos.Knowledge.Registry.lookup(Vaos.Knowledge.Registry, name)
+  def lookup(name), do: Registry.lookup(Vaos.Knowledge.Registry, name)
 end
 
 defmodule MiosaKnowledge.Backend.ETS do

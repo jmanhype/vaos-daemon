@@ -136,6 +136,7 @@ defmodule Daemon.Providers.OpenAICompat do
     Process.put(stream_key, %{
       buffer: "",
       content: "",
+      reasoning_content: "",
       tool_calls: %{},   # index → %{id, name, arguments_json}
       usage: %{}
     })
@@ -241,7 +242,7 @@ defmodule Daemon.Providers.OpenAICompat do
       case delta do
         %{"reasoning_content" => text} when is_binary(text) and text != "" ->
           callback.({:thinking_delta, text})
-          acc
+          %{acc | reasoning_content: acc.reasoning_content <> text}
 
         _ ->
           acc
@@ -282,7 +283,10 @@ defmodule Daemon.Providers.OpenAICompat do
   defp maybe_append_args(tc, _), do: tc
 
   defp finalize_sse_stream(acc, callback, model) do
-    content = Text.strip_thinking_tokens(acc.content)
+    # GLM-5.1 sends complex responses as reasoning_content, not content.
+    # Use reasoning_content as fallback when content is empty.
+    raw_content = if String.trim(acc.content) == "", do: acc.reasoning_content, else: acc.content
+    content = Text.strip_thinking_tokens(raw_content)
 
     # Build tool_calls from accumulated deltas
     streamed_tool_calls =
@@ -308,13 +312,13 @@ defmodule Daemon.Providers.OpenAICompat do
         {streamed_tool_calls, content}
       else
         parsed =
-          case ToolCallParsers.parse(acc.content, model) do
-            [] -> parse_tool_calls_from_content(acc.content)
+          case ToolCallParsers.parse(raw_content, model) do
+            [] -> parse_tool_calls_from_content(raw_content)
             calls -> calls
           end
 
         if parsed != [] do
-          clean = acc.content |> strip_tool_call_markup() |> Text.strip_thinking_tokens()
+          clean = raw_content |> strip_tool_call_markup() |> Text.strip_thinking_tokens()
           {parsed, clean}
         else
           {[], content}
@@ -666,7 +670,7 @@ defmodule Daemon.Providers.OpenAICompat do
       String.starts_with?(name, "o1") or
       name == "deepseek-reasoner" or
       String.contains?(name, "kimi") or
-      String.contains?(name, "glm-4") or
+      String.contains?(name, "glm-") or
       String.contains?(name, "qwen3")
   end
 

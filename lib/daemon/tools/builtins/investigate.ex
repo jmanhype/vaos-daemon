@@ -132,6 +132,19 @@ defmodule Daemon.Tools.Builtins.Investigate do
   # -- Main pipeline ---------------------------------------------------
 
   defp run_investigation(topic, depth, steering, caller_metadata) do
+    # DecisionJournal dedup — check if this investigation conflicts with in-flight work
+    source = Map.get(caller_metadata, :source_module, :investigation)
+    case Daemon.Intelligence.DecisionJournal.propose(source, :investigate, %{topic: topic, branch: "n/a"}) do
+      {:conflict, reason} ->
+        Logger.info("[investigate] DecisionJournal conflict: #{reason}")
+        {:ok, "Investigation skipped — conflict: #{reason}"}
+
+      _ ->
+        do_run_investigation(topic, depth, steering, caller_metadata)
+    end
+  end
+
+  defp do_run_investigation(topic, depth, steering, caller_metadata) do
     :inets.start()
     :ssl.start()
     ensure_circuit_table()

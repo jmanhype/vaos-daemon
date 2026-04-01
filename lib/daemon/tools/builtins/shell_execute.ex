@@ -111,12 +111,22 @@ defmodule Daemon.Tools.Builtins.ShellExecute do
   end
 
   defp cd_outside_osa?(command) do
-    # Match any `cd <path>` where path is not under ~/.daemon/ or the configured repo_path.
+    # Match any `cd <path>` where path is not under allowed directories.
     osa_prefix = Path.expand("~/.daemon")
     repo_path = Application.get_env(:daemon, :repo_path, Path.expand("~/vas-swarm")) |> Path.expand()
+    working_dir = Application.get_env(:daemon, :working_dir)
     # Relative paths are resolved against the shell's CWD (~/.daemon/workspace/),
     # not the Elixir process CWD — otherwise `cd my-project` is incorrectly blocked.
     workspace = Path.expand("~/.daemon/workspace")
+    tmp_dir = System.tmp_dir!() |> Path.expand()
+
+    allowed_prefixes =
+      [osa_prefix, repo_path, tmp_dir]
+      |> then(fn list ->
+        if is_binary(working_dir) and working_dir != "",
+          do: [Path.expand(working_dir) | list],
+          else: list
+      end)
 
     Regex.scan(~r/\bcd\s+(\S+)/, command)
     |> Enum.any?(fn [_match, path] ->
@@ -127,8 +137,7 @@ defmodule Daemon.Tools.Builtins.ShellExecute do
           Path.expand(path)
         end
 
-      not (String.starts_with?(expanded, osa_prefix) or
-           String.starts_with?(expanded, repo_path))
+      not Enum.any?(allowed_prefixes, &String.starts_with?(expanded, &1))
     end)
   end
 end

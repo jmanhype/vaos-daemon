@@ -260,7 +260,7 @@ defmodule Daemon.Sandbox.Executor do
         end
 
       _ ->
-        {"sh", ["-c"]}
+        {System.find_executable("sh") || "/bin/sh", ["-c"]}
     end
   end
 
