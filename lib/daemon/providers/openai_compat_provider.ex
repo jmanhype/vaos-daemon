@@ -61,7 +61,8 @@ defmodule Daemon.Providers.OpenAICompatProvider do
     },
     zhipu: %{
       default_url: "https://open.bigmodel.cn/api/coding/paas/v4",
-      default_model: "glm-4.7"
+      default_model: "glm-4.7",
+      available_models: ["glm-5", "glm-5-turbo", "glm-4.7", "glm-4.6", "glm-4.5", "glm-4.5-flash"]
     },
     volcengine: %{
       default_url: "https://ark.cn-beijing.volces.com/api/v3",

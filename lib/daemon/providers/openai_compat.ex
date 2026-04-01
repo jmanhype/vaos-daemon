@@ -666,7 +666,7 @@ defmodule Daemon.Providers.OpenAICompat do
       String.starts_with?(name, "o1") or
       name == "deepseek-reasoner" or
       String.contains?(name, "kimi") or
-      String.contains?(name, "glm-4") or
+      String.contains?(name, "glm-") or
       String.contains?(name, "qwen3")
   end
 
