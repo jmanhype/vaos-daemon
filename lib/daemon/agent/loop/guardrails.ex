@@ -160,6 +160,9 @@ defmodule Daemon.Agent.Loop.Guardrails do
     {~S"^(好的|嗯|让我想想|我(先|需要|想))", ""},
     # Japanese — "確認します", "見てみましょう"
     {~S"(確認|チェック|読み|作成|編集|検索|実行)(します|しましょう|してみ)", ""},
+    # Approval-seeking / plan narration — model describes changes but doesn't act
+    {~S"\b(ready to (implement|proceed|start|execute)|proceeding with|shall i|should i|want me to)\b", "i"},
+    {~S"\b(here'?s (the|my) plan|files to modify|steps? \d+)\b", "i"},
     # Incomplete response heuristic: ends mid-sentence with colon, ellipsis, or numbered list setup
     {~S"(:\s*$|\.{3}\s*$|\d+\.\s*$)", "m"}
   ]
