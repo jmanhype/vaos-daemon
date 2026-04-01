@@ -380,27 +380,11 @@ defmodule Daemon.Intelligence.DecisionJournal do
     # Send reward signals to the originating module
     reward = if outcome == :merged, do: 1.0, else: 0.2
 
-    case source_module do
-      :insight_actuator ->
-        send_if_alive(Daemon.Agent.InsightActuator, {:journal_pr_outcome, branch, reward})
-
-      :convergence_engine ->
-        send_if_alive(Daemon.Agent.ConvergenceEngine, {:journal_pr_outcome, branch, reward})
-
-      :work_director ->
-        send_if_alive(Daemon.Agent.WorkDirector, {:journal_pr_outcome, branch, reward})
-
-      _ ->
-        :ok
-    end
+    # Reward routing — modules removed, log for observability
+    Logger.debug("[DecisionJournal] PR outcome for #{source_module}/#{branch}: reward=#{reward}")
+    :ok
   end
 
-  defp send_if_alive(module, message) do
-    case GenServer.whereis(module) do
-      pid when is_pid(pid) -> send(pid, message)
-      _ -> :ok
-    end
-  end
 
   # ── ALCOA Provenance ──────────────────────────────────────
 

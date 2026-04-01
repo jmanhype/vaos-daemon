@@ -146,13 +146,22 @@ defmodule Daemon.Agent.Loop.Guardrails do
   # rather than a final answer.
   # Stored as {source, opts} tuples — compiled at runtime (Elixir 1.18+ Reference escape).
   @intent_pattern_sources [
+    # English intent patterns
     {~S"\blet me (check|read|look|examine|create|write|edit|search|find|open|run|list|inspect)\b", "i"},
     {~S"\bi('ll| will) (check|read|look|create|write|edit|search|find|open|run|list|inspect)\b", "i"},
     {~S"\bi('m going to|am going to) ", "i"},
     {~S"\bfirst,? i (need|want) to ", "i"},
     {~S"\blet's start by ", "i"},
     {~S"\bnow (i'll|let me|i will|i need to) ", "i"},
-    {~S"\bi (need|want) to (check|read|look|examine|create|write|edit|search|find|open|run|list)\b", "i"}
+    {~S"\bi (need|want) to (check|read|look|examine|create|write|edit|search|find|open|run|list)\b", "i"},
+    # Chinese (GLM models) — "让我", "我来", "我将", "首先", "接下来"
+    {~S"(让我|我来|我将|我会|首先我|接下来我)(查看|检查|读取|创建|编写|修改|搜索|查找|运行|打开)", ""},
+    # GLM self-critique / thinking markers that look like intent
+    {~S"^(好的|嗯|让我想想|我(先|需要|想))", ""},
+    # Japanese — "確認します", "見てみましょう"
+    {~S"(確認|チェック|読み|作成|編集|検索|実行)(します|しましょう|してみ)", ""},
+    # Incomplete response heuristic: ends mid-sentence with colon, ellipsis, or numbered list setup
+    {~S"(:\s*$|\.{3}\s*$|\d+\.\s*$)", "m"}
   ]
 
   # Matches a code block with 5+ lines of actual code — indicates model wrote code

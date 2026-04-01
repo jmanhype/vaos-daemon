@@ -185,42 +185,7 @@ config :daemon,
   vault_checkpoint_interval: 10,
   vault_observation_min_score: 0.4,
   vault_observation_flush_interval: 60_000,
-  vault_context_max_chars: 3000,
-
-  # ---------------------------------------------------------------------------
-  # WorkDirector — feature flags (runtime-toggleable)
-  # ---------------------------------------------------------------------------
-  work_director_flags: %{
-    # Context enrichment (Stage 0.5)
-    vault_context: true,
-    knowledge_context: true,
-    investigation_pre: true,
-    appraiser: true,
-    specialist_routing: true,
-    introspector_feed: true,
-    impact_analysis: true,
-    production_context: true,
-    # Pipeline stages
-    swarm_dispatch: false,
-    substance_check: true,
-    autofixer: true,
-    test_gate: true,
-    code_review: true,
-    review_fix_loop: true,
-    # Post-dispatch learning
-    vault_remember: true,
-    knowledge_remember: true,
-    skill_evolution: true,
-    # Pre-dispatch gates
-    risk_assessment: true,
-    risk_approval_gate: true,
-    strategic_rejection: true,
-    strategic_debate: true,
-    already_solved_check: true,
-    pr_conflict_awareness: true,
-    dispatch_confidence: true,
-    task_decomposition: true
-  }
+  vault_context_max_chars: 3000
 
 # Database — SQLite3
 config :daemon, Daemon.Store.Repo,

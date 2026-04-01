@@ -524,6 +524,9 @@ defmodule Daemon.Agent.Loop do
       # 4. Persist assistant response to JSONL session storage
       Memory.append(state.session_id, %{role: "assistant", content: response, channel: state.channel})
 
+      # Session-end learning hooks — async, non-blocking
+      maybe_run_session_learning(state, response)
+
       emit_context_pressure(state)
 
       Bus.emit(:agent_response, %{
@@ -891,6 +894,9 @@ defmodule Daemon.Agent.Loop do
         # Append all tool messages in original order
         tool_messages = Enum.map(results, fn {_tc, {tool_msg, _result_str}} -> tool_msg end)
         state = %{state | messages: state.messages ++ tool_messages}
+
+        # Post-tool quality hooks — async, non-blocking
+        maybe_run_quality_gates(state, tool_calls, results)
 
         # Checkpoint after tool results — crash recovery can resume from here
         Checkpoint.checkpoint_state(state)
@@ -1410,4 +1416,129 @@ defmodule Daemon.Agent.Loop do
 
   @doc false
   defdelegate permission_tier_allows?(tier, tool), to: ToolExecutor
+
+  # --- Post-tool quality gates (Phase 2b) ---
+
+  defp maybe_run_quality_gates(state, tool_calls, results) do
+    unless Application.get_env(:daemon, :session_quality_hooks, true) do
+      :ok
+    else
+      has_write_tools = Enum.any?(tool_calls, fn tc -> tc.name in ~w(file_write file_edit) end)
+
+      if has_write_tools do
+        session_id = state.session_id
+        working_dir = state.working_dir
+
+        Task.start(fn ->
+          try do
+            # Substance check — nudge if stub ratio > 50%
+            {diff, 0} = System.cmd("git", ["diff", "--unified=0", "HEAD"], cd: working_dir || ".", stderr_to_stdout: true)
+            if byte_size(diff) > 0 do
+              analysis = Daemon.Agent.CodeVerifier.analyze_substance(diff)
+              unless analysis.has_substance do
+                Logger.info("[quality] Substance check warning for session #{session_id}: #{inspect(analysis.warnings)}")
+                Bus.emit(:system_event, %{
+                  event: :quality_hook_substance,
+                  session_id: session_id,
+                  warnings: analysis.warnings
+                })
+              end
+            end
+          rescue
+            e -> Logger.debug("[quality] Substance check failed: #{inspect(e)}")
+          end
+        end)
+
+        # Test gate — run mix test on related test files
+        Task.start(fn ->
+          try do
+            changed_files =
+              results
+              |> Enum.flat_map(fn {tc, {_msg, result_str}} ->
+                if tc.name in ~w(file_write file_edit) do
+                  case tc.arguments do
+                    %{"path" => path} -> [path]
+                    args when is_binary(args) ->
+                      case Jason.decode(args) do
+                        {:ok, %{"path" => path}} -> [path]
+                        _ -> []
+                      end
+                    _ -> []
+                  end
+                else
+                  []
+                end
+              end)
+
+            test_files =
+              changed_files
+              |> Enum.filter(&String.ends_with?(&1, ".ex"))
+              |> Enum.map(fn path ->
+                path
+                |> String.replace_prefix("lib/", "test/")
+                |> String.replace_suffix(".ex", "_test.exs")
+              end)
+              |> Enum.filter(&File.exists?/1)
+
+            if test_files != [] do
+              test_args = ["test", "--" | test_files]
+              case System.cmd("mix", test_args, cd: working_dir || ".", stderr_to_stdout: true) do
+                {output, 0} ->
+                  Logger.debug("[quality] Tests passed for session #{session_id}")
+                  :ok
+
+                {output, _code} ->
+                  Logger.info("[quality] Test failures for session #{session_id}")
+                  Bus.emit(:system_event, %{
+                    event: :quality_hook_test_failure,
+                    session_id: session_id,
+                    output: String.slice(output, 0, 2000)
+                  })
+              end
+            end
+          rescue
+            e -> Logger.debug("[quality] Test gate failed: #{inspect(e)}")
+          end
+        end)
+      end
+    end
+  rescue
+    _ -> :ok
+  end
+
+  # --- Session-end learning hooks (Phase 2c) ---
+
+  defp maybe_run_session_learning(state, response) do
+    unless Application.get_env(:daemon, :session_learning, true) do
+      :ok
+    else
+      session_id = state.session_id
+
+      Task.start(fn ->
+        try do
+          Daemon.Vault.remember(session_id, response)
+        rescue
+          e -> Logger.debug("[learning] Vault remember failed: #{inspect(e)}")
+        catch
+          :exit, _ -> :ok
+        end
+      end)
+
+      Task.start(fn ->
+        try do
+          MiosaKnowledge.Store.put("osa_default", %{
+            key: "session_#{session_id}_#{System.system_time(:second)}",
+            content: String.slice(response, 0, 500),
+            metadata: %{session_id: session_id, type: :session_artifact}
+          })
+        rescue
+          e -> Logger.debug("[learning] Knowledge remember failed: #{inspect(e)}")
+        catch
+          :exit, _ -> :ok
+        end
+      end)
+    end
+  rescue
+    _ -> :ok
+  end
 end

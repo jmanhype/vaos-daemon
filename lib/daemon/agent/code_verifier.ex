@@ -1,14 +1,9 @@
-defmodule Daemon.Agent.WorkDirector.GroundedVerifier do
+defmodule Daemon.Agent.CodeVerifier do
   @moduledoc """
   Zero-LLM-cost static verification of agent-generated code.
 
-  Runs after compilation (Stage 2) but before commit (Stage 3) to catch
-  phantom references — code that compiles but references modules, functions,
-  or routes that don't exist in the codebase.
-
-  Symmetrical to DispatchIntelligence: that module pre-computes codebase
-  context on the INPUT side, this module validates references on the OUTPUT side.
-  Same tools (git, file system), same zero cost, opposite ends of the pipeline.
+  Catches phantom references — code that compiles but references modules,
+  functions, or routes that don't exist in the codebase.
 
   Checks:
   1. Module references (alias/import/use/defdelegate) resolve to real files
@@ -51,13 +46,12 @@ defmodule Daemon.Agent.WorkDirector.GroundedVerifier do
         end
 
       {:error, reason} ->
-        Logger.warning("[GroundedVerifier] Could not get diff: #{inspect(reason)}")
-        # Don't block on diff failure — let the commit proceed
+        Logger.warning("[CodeVerifier] Could not get diff: #{inspect(reason)}")
         {:ok, ["Could not run verification: #{inspect(reason)}"]}
     end
   rescue
     e ->
-      Logger.warning("[GroundedVerifier] Verification crashed: #{Exception.message(e)}")
+      Logger.warning("[CodeVerifier] Verification crashed: #{Exception.message(e)}")
       {:ok, ["Verification error: #{Exception.message(e)}"]}
   end
 
@@ -86,18 +80,12 @@ defmodule Daemon.Agent.WorkDirector.GroundedVerifier do
 
   @doc "Get diff of all changes (committed + uncommitted + untracked) vs main."
   def get_diff(_branch, repo_path) do
-    # Get ALL changes vs main: committed + uncommitted + untracked
-    # Agent may or may not have committed during Stage 1
-
-    # 1. Committed changes on branch vs main
     {committed, _} = System.cmd("git", ["diff", "--unified=0", "main...HEAD", "--", "*.ex", "*.exs"],
                        cd: repo_path, stderr_to_stdout: true)
 
-    # 2. Uncommitted working tree changes
     {uncommitted, _} = System.cmd("git", ["diff", "--unified=0", "HEAD", "--", "*.ex", "*.exs"],
                          cd: repo_path, stderr_to_stdout: true)
 
-    # 3. Untracked new files
     {untracked_list, _} = System.cmd("git", ["ls-files", "--others", "--exclude-standard", "--", "*.ex", "*.exs"],
                             cd: repo_path, stderr_to_stdout: true)
 
@@ -137,7 +125,6 @@ defmodule Daemon.Agent.WorkDirector.GroundedVerifier do
   end
 
   defp extract_new_files(diff) do
-    # Files that appear in "--- /dev/null" -> "+++ b/path" pairs are new
     lines = String.split(diff, "\n")
 
     lines
@@ -156,7 +143,6 @@ defmodule Daemon.Agent.WorkDirector.GroundedVerifier do
   # -- Phantom Module Check --
 
   defp check_phantom_modules(added_lines, new_files, repo_path) do
-    # Extract module references from alias/import/use statements
     module_refs =
       added_lines
       |> Enum.flat_map(fn line ->
@@ -171,7 +157,6 @@ defmodule Daemon.Agent.WorkDirector.GroundedVerifier do
       end)
       |> Enum.uniq()
 
-    # Check each referenced module
     Enum.flat_map(module_refs, fn {kind, module} ->
       if module_exists?(module, new_files, repo_path) do
         []
@@ -224,14 +209,11 @@ defmodule Daemon.Agent.WorkDirector.GroundedVerifier do
   # -- Module Existence --
 
   defp module_exists?(module, new_files, repo_path) do
-    # Skip standard library / well-known modules
     if standard_module?(module) do
       true
     else
-      # Convert module name to possible file paths
       possible_paths = module_to_paths(module)
 
-      # Check if any path exists in repo OR was created by the agent
       Enum.any?(possible_paths, fn path ->
         full_path = Path.join(repo_path, path)
         File.exists?(full_path) or path in new_files
@@ -240,7 +222,6 @@ defmodule Daemon.Agent.WorkDirector.GroundedVerifier do
   end
 
   defp standard_module?(module) do
-    # Elixir stdlib, Erlang, and common deps
     prefix = module |> String.split(".") |> hd()
 
     prefix in ~w(
@@ -253,11 +234,10 @@ defmodule Daemon.Agent.WorkDirector.GroundedVerifier do
       Plug Phoenix Ecto Jason Req
       ExUnit Mix Config
       ETS Mnesia
-    ) or String.starts_with?(module, ":") # Erlang modules
+    ) or String.starts_with?(module, ":")
   end
 
   defp module_to_paths(module) do
-    # Daemon.Agent.WorkDirector -> lib/daemon/agent/work_director.ex
     snake =
       module
       |> String.split(".")
@@ -270,10 +250,6 @@ defmodule Daemon.Agent.WorkDirector.GroundedVerifier do
       "test/#{snake}_test.exs"
     ]
 
-    # Also check if this might be an aliased short module name.
-    # E.g., "API.PrometheusRoutes" in api.ex likely means
-    # "Daemon.Channels.HTTP.API.PrometheusRoutes" via alias.
-    # Try common expansions based on the module prefix.
     alias_paths =
       case String.split(module, ".") do
         ["API" | rest] ->
@@ -359,9 +335,6 @@ defmodule Daemon.Agent.WorkDirector.GroundedVerifier do
 
     %{
       meaningful_lines: meaningful_count,
-      # Stub patterns only block when they dominate the diff.
-      # A single no-op :ok in a 1500-line diff is normal (init callbacks, hooks).
-      # Block when: <25 meaningful lines OR stubs are >50% of meaningful lines.
       has_substance: meaningful_count >= @substance_threshold and
         (stub_patterns == [] or length(stub_patterns) < meaningful_count * 0.5),
       stub_patterns: stub_patterns,

@@ -198,6 +198,7 @@ defmodule Daemon.Agent.Context do
       {:skills, 2, fn -> skills_block(state) end},
       {:scratchpad, 1, fn -> scratchpad_block(state) end},
       {:vault, 2, fn -> vault_block(state) end},
+      {:knowledge, 2, fn -> knowledge_block(state) end},
       {:decision_intelligence, 2, fn -> decision_intelligence_block(state) end}
     ]
 
@@ -770,6 +771,31 @@ defmodule Daemon.Agent.Context do
       _ -> ""
     catch
       :exit, _ -> ""
+    end
+  end
+
+  defp knowledge_block(state) do
+    latest_msg = find_latest_user_message(state.messages)
+    query = latest_msg || ""
+
+    try do
+      case MiosaKnowledge.Store.search("osa_default", query, limit: 5) do
+        {:ok, entries} when entries != [] ->
+          lines =
+            Enum.map(entries, fn entry ->
+              content = Map.get(entry, :content, Map.get(entry, :value, ""))
+              "- #{content}"
+            end)
+
+          "## Knowledge Context\n#{Enum.join(lines, "\n")}"
+
+        _ ->
+          nil
+      end
+    rescue
+      _ -> nil
+    catch
+      :exit, _ -> nil
     end
   end
 
