@@ -223,7 +223,7 @@ defmodule Daemon.Agent.Orchestrator do
       {:reply, {:ok, task_id}, state}
 
     # force_simple: single agent, no decomposition, optional iteration override.
-    # Used by WorkDirector to avoid shattering sequential workflows across sub-agents.
+    # force_simple avoids shattering sequential workflows across sub-agents.
     else if force_simple do
       tier = Keyword.get(opts, :tier, :elite)
 

@@ -1,21 +1,15 @@
 defmodule Daemon.Intelligence.DecisionJournal do
   @moduledoc """
-  Coordination spine for autonomous decision-making modules.
+  Coordination spine for autonomous decision-making.
 
-  Every module that creates branches/PRs (InsightActuator, ConvergenceEngine,
-  WorkDirector) calls `propose/3` before acting. The Journal:
+  Modules that create branches/PRs call `propose/3` before acting. The Journal:
 
   1. **Dedup** — rejects proposals that conflict with in-flight work
   2. **ALCOA provenance** — records every decision to EpistemicLedger
-  3. **Unified PR polling** — single `gh pr list` replaces 3 independent loops
+  3. **Unified PR polling** — single `gh pr list` replaces independent loops
   4. **Cross-module reward routing** — PR outcomes update the originating module
      AND related modules get partial signal
-  5. **Observability** — `decisions/0` and `stats/0` show the full autonomous history
-
-  Branch prefix conventions:
-  - `insight/` — InsightActuator
-  - `convergence/` — ConvergenceEngine
-  - `workdir/` — WorkDirector
+  5. **Observability** — `decisions/0` and `stats/0` show the full decision history
   """
   use GenServer
   require Logger

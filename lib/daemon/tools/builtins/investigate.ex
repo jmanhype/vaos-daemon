@@ -644,7 +644,7 @@ Known failure patterns to avoid:
       MiosaKnowledge.assert(store, {atk_id, "vaos:summary", atk.description})
     end)
 
-    # Merge caller metadata (e.g. source_module from CodeIntrospector) into event payload
+    # Merge caller metadata into event payload
     json_metadata = Map.merge(json_metadata, caller_metadata)
 
     # Emit investigation_complete event for Retrospector strategy optimization
