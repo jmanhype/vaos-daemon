@@ -1436,13 +1436,12 @@ defmodule Daemon.Agent.Loop do
 
         # Fast checks — synchronous with 5s timeout, return nudge messages
         fast_task = Task.async(fn ->
-          nudges = []
           try do
             {diff, 0} = System.cmd("git", ["diff", "--unified=0", "HEAD"], cd: working_dir, stderr_to_stdout: true)
             if byte_size(diff) > 0 do
               # Substance analysis
               analysis = Daemon.Agent.CodeVerifier.analyze_substance(diff)
-              nudges = if not analysis.has_substance do
+              substance_nudges = if not analysis.has_substance do
                 warnings = Enum.join(analysis.warnings, "; ")
                 Logger.info("[quality] Substance warning: #{warnings}")
                 [%{role: "system", content:
@@ -1453,18 +1452,18 @@ defmodule Daemon.Agent.Loop do
               end
 
               # Grounded verification — phantom module references
-              nudges = case Daemon.Agent.CodeVerifier.verify("HEAD", working_dir) do
+              verify_nudges = case Daemon.Agent.CodeVerifier.verify("HEAD", working_dir) do
                 {:error, violations} ->
                   violation_text = Enum.map_join(violations, "\n", &("• #{&1}"))
                   Logger.info("[quality] #{length(violations)} phantom references")
-                  nudges ++ [%{role: "system", content:
+                  [%{role: "system", content:
                     "[Quality gate — phantom references detected]\n#{violation_text}\n" <>
                     "Fix these before continuing — they compile but will fail at runtime."}]
 
-                _ -> nudges
+                _ -> []
               end
 
-              nudges
+              substance_nudges ++ verify_nudges
             else
               []
             end
