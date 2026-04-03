@@ -136,19 +136,23 @@ defmodule Daemon.Channels.HTTP do
   end
 
   post "/onboarding/setup" do
+    import Daemon.Channels.HTTP.ErrorResponse
+
     case Plug.Conn.read_body(conn) do
       {:ok, raw, conn} ->
         setup_onboarding(conn, raw)
 
       {:more, _partial, conn} ->
-        conn |> put_resp_content_type("application/json") |> send_resp(413, ~s({"error":"payload_too_large"}))
+        send_error(conn, 413, "payload_too_large", "Request payload too large")
 
       {:error, _reason} ->
-        conn |> put_resp_content_type("application/json") |> send_resp(400, ~s({"error":"read_failed"}))
+        send_internal_error(conn, "Failed to read request body")
     end
   end
 
   defp setup_onboarding(conn, raw) do
+    import Daemon.Channels.HTTP.ErrorResponse
+
     case Jason.decode(raw) do
       {:ok, params} ->
         raw_provider = Map.get(params, "provider", "ollama")
@@ -244,25 +248,20 @@ defmodule Daemon.Channels.HTTP do
             |> send_resp(200, body)
 
           {:error, reason} ->
-            body = Jason.encode!(%{error: "setup_failed", details: reason})
-
-            conn
-            |> put_resp_content_type("application/json")
-            |> send_resp(500, body)
+            send_internal_error(conn, "Failed to complete setup",
+              details: %{reason: "Configuration could not be applied"})
         end
 
       {:error, _} ->
-        body = Jason.encode!(%{error: "invalid_json"})
-
-        conn
-        |> put_resp_content_type("application/json")
-        |> send_resp(400, body)
+        send_error(conn, 400, "invalid_json", "Invalid JSON in request body")
     end
   end
 
   # ── Survey / waitlist (no auth — anonymous submissions) ─────────────
 
   post "/api/survey" do
+    import Daemon.Channels.HTTP.ErrorResponse
+
     {:ok, raw, conn} = Plug.Conn.read_body(conn)
 
     case Jason.decode(raw) do
@@ -285,19 +284,17 @@ defmodule Daemon.Channels.HTTP do
             errors =
               Ecto.Changeset.traverse_errors(changeset, fn {msg, _opts} -> msg end)
 
-            conn
-            |> put_resp_content_type("application/json")
-            |> send_resp(422, Jason.encode!(%{error: "validation_failed", details: errors}))
+            send_validation_error(conn, errors)
         end
 
       {:error, _} ->
-        conn
-        |> put_resp_content_type("application/json")
-        |> send_resp(400, Jason.encode!(%{error: "invalid_json"}))
+        send_error(conn, 400, "invalid_json", "Invalid JSON in request body")
     end
   end
 
   post "/api/waitlist" do
+    import Daemon.Channels.HTTP.ErrorResponse
+
     {:ok, raw, conn} = Plug.Conn.read_body(conn)
 
     case Jason.decode(raw) do
@@ -339,8 +336,8 @@ defmodule Daemon.Channels.HTTP do
   # ── Catch-all ───────────────────────────────────────────────────────
 
   match _ do
-    conn
-    |> put_resp_content_type("application/json")
-    |> send_resp(404, Jason.encode!(%{error: "not_found"}))
+    import Daemon.Channels.HTTP.ErrorResponse
+
+    send_not_found(conn, "Endpoint not found")
   end
 end
