@@ -20,6 +20,7 @@ defmodule Daemon.Production.API do
           %{
             title: s["title"] || "",
             prompt: s["prompt"] || "",
+            mode: s["mode"] || "new",
             ingredients: s["ingredients"] || []
           }
         end)

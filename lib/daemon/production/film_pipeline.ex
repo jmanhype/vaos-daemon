@@ -42,6 +42,7 @@ defmodule Daemon.Production.FilmPipeline do
   @post_paste_ms 1_500
   @post_submit_ms 3_000
   @post_tile_click_ms 3_000
+  @post_extend_click_ms 3_000
 
   # ── Public API ──────────────────────────────────────────────────────────
 
@@ -200,40 +201,64 @@ defmodule Daemon.Production.FilmPipeline do
   def handle_continue(:submit_scene, state) do
     scene = Enum.at(state.scenes, state.current_scene)
     scene_num = state.current_scene + 1
-
-    # Per-scene ingredients, or legacy fallback
-    scene_ingredients = Map.get(scene, :ingredients, [])
-
-    scene_ingredients =
-      if scene_ingredients == [] && state.reference_image do
-        ["reference.jpg"]
-      else
-        scene_ingredients
-      end
+    mode = Map.get(scene, :mode, "new")
 
     Logger.info(
-      "[FilmPipeline] Submitting scene #{scene_num}/#{state.total_scenes}: #{scene[:title]}"
+      "[FilmPipeline] #{String.upcase(mode)} scene #{scene_num}/#{state.total_scenes}: #{scene[:title]}"
     )
 
-    FlowRateLimiter.check_and_wait(:flow_submit)
+    if mode == "extend" do
+      # Extend: click Extend button, attach any new ingredients, paste prompt
+      FlowRateLimiter.check_and_wait(:flow_extend)
+      click_extend()
+      Process.sleep(@post_extend_click_ms)
 
-    # Attach each ingredient for this scene
-    Enum.each(scene_ingredients, fn filename ->
-      Logger.info("[FilmPipeline] Attaching ingredient: #{filename}")
-      open_ingredient_picker()
-      Process.sleep(3_000)
-      click_ingredient_by_name(filename)
-      Process.sleep(2_000)
-    end)
+      # Attach ingredients for the extend (enables prop swaps)
+      scene_ingredients = Map.get(scene, :ingredients, [])
 
-    prompt = build_prompt(state, scene)
-    focus_and_paste(prompt)
-    Process.sleep(@post_paste_ms)
-    click_submit()
-    Process.sleep(@post_submit_ms)
+      Enum.each(scene_ingredients, fn filename ->
+        Logger.info("[FilmPipeline] Attaching ingredient for extend: #{filename}")
+        open_ingredient_picker()
+        Process.sleep(3_000)
+        click_ingredient_by_name(filename)
+        Process.sleep(2_000)
+      end)
 
-    broadcast(:scene_submitted, %{scene: scene_num, title: scene[:title]})
-    Logger.info("[FilmPipeline] Scene #{scene_num} submitted (awaiting render)")
+      prompt = build_prompt(state, scene)
+      focus_and_paste(prompt)
+      Process.sleep(@post_paste_ms)
+      click_submit()
+      Process.sleep(@post_submit_ms)
+    else
+      # New scene: full ingredient attachment + prompt
+      scene_ingredients = Map.get(scene, :ingredients, [])
+
+      scene_ingredients =
+        if scene_ingredients == [] && state.reference_image do
+          ["reference.jpg"]
+        else
+          scene_ingredients
+        end
+
+      FlowRateLimiter.check_and_wait(:flow_submit)
+
+      Enum.each(scene_ingredients, fn filename ->
+        Logger.info("[FilmPipeline] Attaching ingredient: #{filename}")
+        open_ingredient_picker()
+        Process.sleep(3_000)
+        click_ingredient_by_name(filename)
+        Process.sleep(2_000)
+      end)
+
+      prompt = build_prompt(state, scene)
+      focus_and_paste(prompt)
+      Process.sleep(@post_paste_ms)
+      click_submit()
+      Process.sleep(@post_submit_ms)
+    end
+
+    broadcast(:scene_submitted, %{scene: scene_num, title: scene[:title], mode: mode})
+    Logger.info("[FilmPipeline] Scene #{scene_num} submitted as #{mode} (awaiting render)")
 
     new_state = %{state | state: :rendering, current_scene: scene_num}
     new_state = schedule_render_complete(new_state)
@@ -241,17 +266,30 @@ defmodule Daemon.Production.FilmPipeline do
   end
 
   def handle_continue(:post_render, state) do
-    Logger.info("[FilmPipeline] Render complete for scene #{state.current_scene}")
-    click_first_tile()
-    Process.sleep(@post_tile_click_ms)
+    current_scene = Enum.at(state.scenes, state.current_scene - 1)
+    current_mode = Map.get(current_scene || %{}, :mode, "new")
+    Logger.info("[FilmPipeline] Render complete for scene #{state.current_scene} (was #{current_mode})")
 
-    if state.current_scene < state.total_scenes do
-      # Navigate back to project root for next scene
-      navigate_to_project(state.project_url)
-      Process.sleep(@post_navigate_ms)
-      {:noreply, %{state | state: :submitting}, {:continue, :submit_scene}}
-    else
+    if state.current_scene >= state.total_scenes do
+      # All done
       {:noreply, state, {:continue, :complete}}
+    else
+      next_scene = Enum.at(state.scenes, state.current_scene)
+      next_mode = Map.get(next_scene || %{}, :mode, "new")
+
+      if next_mode == "extend" do
+        # Next is extend — click tile to enter edit view, then extend from there
+        click_first_tile()
+        Process.sleep(@post_tile_click_ms)
+        {:noreply, %{state | state: :submitting}, {:continue, :submit_scene}}
+      else
+        # Next is new — click tile (to save), then navigate back to project root
+        click_first_tile()
+        Process.sleep(@post_tile_click_ms)
+        navigate_to_project(state.project_url)
+        Process.sleep(@post_navigate_ms)
+        {:noreply, %{state | state: :submitting}, {:continue, :submit_scene}}
+      end
     end
   end
 
@@ -314,6 +352,8 @@ defmodule Daemon.Production.FilmPipeline do
 
   @plus_button_js "var btns=document.querySelectorAll('button');var btn=null;for(var i=0;i<btns.length;i++){if(btns[i].textContent.trim()==='add_2Create'&&btns[i].getBoundingClientRect().y>700){btn=btns[i];break;}}if(btn){var r=btn.getBoundingClientRect();['pointerdown','mousedown','pointerup','mouseup','click'].forEach(function(t){btn.dispatchEvent(new PointerEvent(t,{bubbles:true,cancelable:true,clientX:r.x+r.width/2,clientY:r.y+r.height/2,pointerId:1}))});'opened'}else{'not found'}"
 
+  @extend_js ~S|var btns=document.querySelectorAll('button');for(var i=0;i<btns.length;i++){if(btns[i].textContent.indexOf('Ext')>-1&&btns[i].getBoundingClientRect().y>800){var r=btns[i].getBoundingClientRect();['pointerdown','mousedown','pointerup','mouseup','click'].forEach(function(t){btns[i].dispatchEvent(new PointerEvent(t,{bubbles:true,cancelable:true,clientX:r.x+r.width/2,clientY:r.y+r.height/2,pointerId:1}))});break;}}'clicked extend'|
+
   defp focus_and_paste(text) do
     execute_js(@focus_js)
 
@@ -357,6 +397,8 @@ defmodule Daemon.Production.FilmPipeline do
   end
 
   defp click_first_tile, do: execute_js(@tile_js)
+
+  defp click_extend, do: execute_js(@extend_js)
 
   defp open_ingredient_picker, do: execute_js(@plus_button_js)
 
