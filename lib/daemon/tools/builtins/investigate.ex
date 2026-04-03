@@ -140,7 +140,17 @@ defmodule Daemon.Tools.Builtins.Investigate do
         {:ok, "Investigation skipped — conflict: #{reason}"}
 
       _ ->
-        do_run_investigation(topic, depth, steering, caller_metadata)
+        result = do_run_investigation(topic, depth, steering, caller_metadata)
+
+        # Always clear in-flight status so future investigations aren't blocked
+        outcome = case result do
+          {:ok, _} -> :success
+          {:error, _} -> :failed
+          _ -> :success
+        end
+        Daemon.Intelligence.DecisionJournal.record_outcome("n/a", outcome, %{topic: topic})
+
+        result
     end
   end
 
