@@ -92,6 +92,7 @@ defmodule Daemon.Production.FilmPipeline do
       total_scenes: length(scenes),
       project_url: nil,
       errors: [],
+      clip_urls: [],
       timer_ref: nil,
       started_at: DateTime.utc_now()
     }
@@ -112,6 +113,7 @@ defmodule Daemon.Production.FilmPipeline do
         :current_scene,
         :total_scenes,
         :project_url,
+        :clip_urls,
         :errors,
         :started_at
       ])
@@ -262,22 +264,32 @@ defmodule Daemon.Production.FilmPipeline do
     current_mode = Map.get(current_scene || %{}, :mode, "new")
     Logger.info("[FilmPipeline] Render complete for scene #{state.current_scene} (was #{current_mode})")
 
+    # Click first tile to enter edit view
+    click_first_tile()
+    Process.sleep(@post_tile_click_ms)
+
+    # Capture clip URL before navigating away
+    clip_url = capture_clip_url()
+    clip_urls = state.clip_urls ++ [%{scene: state.current_scene, url: clip_url}]
+    state = %{state | clip_urls: clip_urls}
+
+    if clip_url do
+      Logger.info("[FilmPipeline] Captured clip #{state.current_scene}: #{clip_url}")
+    else
+      Logger.warning("[FilmPipeline] Could not capture clip URL for scene #{state.current_scene}")
+    end
+
     if state.current_scene >= state.total_scenes do
-      # All done
       {:noreply, state, {:continue, :complete}}
     else
       next_scene = Enum.at(state.scenes, state.current_scene)
       next_mode = Map.get(next_scene || %{}, :mode, "new")
 
       if next_mode == "extend" do
-        # Next is extend — click tile to enter edit view, then extend from there
-        click_first_tile()
-        Process.sleep(@post_tile_click_ms)
+        # Next is extend — stay in edit view
         {:noreply, %{state | state: :submitting}, {:continue, :submit_scene}}
       else
-        # Next is new — click tile (to save), then navigate back to project root
-        click_first_tile()
-        Process.sleep(@post_tile_click_ms)
+        # Next is new — navigate back to project root
         navigate_to_project(state.project_url)
         Process.sleep(@post_navigate_ms)
         {:noreply, %{state | state: :submitting}, {:continue, :submit_scene}}
@@ -295,7 +307,7 @@ defmodule Daemon.Production.FilmPipeline do
       "[FilmPipeline] Production complete: #{state.title} (#{state.total_scenes} scenes)"
     )
 
-    broadcast(:complete, %{title: state.title, project_url: project_url})
+    broadcast(:complete, %{title: state.title, project_url: project_url, clip_urls: state.clip_urls})
     {:noreply, final_state}
   end
 
@@ -567,9 +579,50 @@ defmodule Daemon.Production.FilmPipeline do
       current_scene: 0,
       total_scenes: 0,
       project_url: nil,
+      clip_urls: [],
       errors: [],
       timer_ref: nil,
       started_at: nil
     }
+  end
+
+  # Extract the video media URL from the edit page after clicking a tile.
+  # Looks for video elements or media redirect URLs on the page.
+  @capture_clip_js ~S"""
+  (function() {
+    // Try video element src first
+    var vid = document.querySelector('video source, video');
+    if (vid) {
+      var src = vid.src || (vid.querySelector('source') && vid.querySelector('source').src);
+      if (src) return src;
+    }
+    // Try og:video meta
+    var meta = document.querySelector('meta[property="og:video"]');
+    if (meta) return meta.content;
+    // Try any media redirect link in the page
+    var links = document.querySelectorAll('a[href*="getMediaUrlRedirect"]');
+    if (links.length > 0) return links[0].href;
+    // Try video poster or thumbnail with media ID
+    var imgs = document.querySelectorAll('img[src*="storage.googleapis.com"]');
+    if (imgs.length > 0) return imgs[0].src;
+    return 'no_clip_found';
+  })()
+  """
+
+  defp capture_clip_url do
+    result = execute_js(@capture_clip_js)
+    result = String.trim(result)
+
+    if result == "no_clip_found" || result == "" do
+      # Fallback: grab the current URL which contains the edit/media ID
+      url = get_project_url()
+      if String.contains?(url, "/edit/") do
+        url
+      else
+        nil
+      end
+    else
+      result
+    end
   end
 end
