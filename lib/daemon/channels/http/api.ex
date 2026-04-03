@@ -140,6 +140,7 @@ defmodule Daemon.Channels.HTTP.API do
 
   # Production (Film Pipeline)
   forward "/produce", to: Daemon.Production.API
+  forward "/produce/v3", to: Daemon.Production.APIV3
 
   # ── Command Center ───────────────────────────────────────────────────
   forward "/command-center", to: API.CommandCenterRoutes
