@@ -19,7 +19,6 @@ defmodule Daemon.Production.Supervisor do
       Daemon.Production.FlowRateLimiter,
       Daemon.Production.ChromeHealth,
       Daemon.Production.FilmPipeline,
-      Daemon.Production.FilmPipelineV3,
       Daemon.Production.SoraPipeline,
       Daemon.Production.KlingPipeline,
       Daemon.Production.FilmProducer,
