@@ -208,21 +208,13 @@ defmodule Daemon.Production.FilmPipeline do
     )
 
     if mode == "extend" do
-      # Extend: click Extend button, attach any new ingredients, paste prompt
+      # Extend: click Extend button, paste prompt, submit
+      # NOTE: Extend mode has NO ingredient picker — only insert/remove/camera.
+      # Ingredients were already set in the original "new" scene.
+      # Product swaps happen via the prompt text, not ingredient re-attachment.
       FlowRateLimiter.check_and_wait(:flow_extend)
       click_extend()
       Process.sleep(@post_extend_click_ms)
-
-      # Attach ingredients for the extend (enables prop swaps)
-      scene_ingredients = Map.get(scene, :ingredients, [])
-
-      Enum.each(scene_ingredients, fn filename ->
-        Logger.info("[FilmPipeline] Attaching ingredient for extend: #{filename}")
-        open_ingredient_picker()
-        Process.sleep(3_000)
-        click_ingredient_by_name(filename)
-        Process.sleep(2_000)
-      end)
 
       prompt = build_prompt(state, scene)
       focus_and_paste(prompt)
