@@ -69,6 +69,16 @@ defmodule Daemon.Channels.HTTP.API.Shared do
     |> Plug.Conn.send_resp(status, body)
   end
 
+  @doc """
+  Safely inspect a term for logging, limiting output size to prevent log injection
+  and excessive memory usage. Limits output to 500 bytes and uses inspect(limit: 50).
+  """
+  def safe_inspect(term) do
+    term
+    |> inspect(limit: 50)
+    |> String.slice(0, 500)
+  end
+
   @doc "Parse page/per_page from query params."
   def pagination_params(conn) do
     conn = Plug.Conn.fetch_query_params(conn)
