@@ -24,7 +24,8 @@ defmodule Daemon.Production.Supervisor do
       Daemon.Production.SoraPipeline,
       Daemon.Production.KlingPipeline,
       Daemon.Production.FilmProducer,
-      Daemon.Production.XPublisher
+      Daemon.Production.XPublisher,
+      Daemon.Production.AiStudioPipeline
     ]
 
     Supervisor.init(children, strategy: :one_for_one)

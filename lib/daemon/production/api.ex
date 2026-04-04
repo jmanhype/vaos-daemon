@@ -50,6 +50,77 @@ defmodule Daemon.Production.API do
     send_resp(conn, 200, Jason.encode!(%{status: "aborted"}))
   end
 
+  # ── AI Studio Pipeline ────────────────────────────────────────────────
+
+  post "/aistudio/connect" do
+    case Daemon.Production.AiStudioPipeline.connect() do
+      {:ok, result} ->
+        send_resp(conn, 200, Jason.encode!(%{status: "connected", window: result}))
+
+      {:error, reason} ->
+        send_resp(conn, 500, Jason.encode!(%{error: inspect(reason)}))
+    end
+  end
+
+  post "/aistudio/read" do
+    case Daemon.Production.AiStudioPipeline.read_page() do
+      {:ok, text} ->
+        send_resp(conn, 200, Jason.encode!(%{text: text}))
+
+      {:error, reason} ->
+        send_resp(conn, 400, Jason.encode!(%{error: inspect(reason)}))
+    end
+  end
+
+  post "/aistudio/prompt" do
+    text = conn.body_params["text"] || ""
+
+    case Daemon.Production.AiStudioPipeline.send_prompt(text) do
+      :ok ->
+        send_resp(conn, 202, Jason.encode!(%{status: "sent"}))
+
+      {:error, reason} ->
+        send_resp(conn, 400, Jason.encode!(%{error: inspect(reason)}))
+    end
+  end
+
+  get "/aistudio/response" do
+    case Daemon.Production.AiStudioPipeline.get_response() do
+      {:ok, text} ->
+        send_resp(conn, 200, Jason.encode!(%{text: text}))
+
+      {:error, reason} ->
+        send_resp(conn, 400, Jason.encode!(%{error: inspect(reason)}))
+    end
+  end
+
+  get "/aistudio/response/blocking" do
+    timeout = String.to_integer(conn.params["timeout"] || "120000")
+
+    case Daemon.Production.AiStudioPipeline.get_response_blocking(timeout) do
+      {:ok, text} ->
+        send_resp(conn, 200, Jason.encode!(%{text: text}))
+
+      :timeout ->
+        send_resp(conn, 408, Jason.encode!(%{error: "generation_timeout"}))
+    end
+  end
+
+  get "/aistudio/status" do
+    status = Daemon.Production.AiStudioPipeline.status()
+    send_resp(conn, 200, Jason.encode!(status))
+  end
+
+  get "/aistudio/url" do
+    case Daemon.Production.AiStudioPipeline.get_url() do
+      {:ok, url} ->
+        send_resp(conn, 200, Jason.encode!(%{url: url}))
+
+      {:error, reason} ->
+        send_resp(conn, 400, Jason.encode!(%{error: inspect(reason)}))
+    end
+  end
+
   match _ do
     send_resp(conn, 404, Jason.encode!(%{error: "not_found"}))
   end
