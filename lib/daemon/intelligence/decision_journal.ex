@@ -71,6 +71,17 @@ defmodule Daemon.Intelligence.DecisionJournal do
     end
   end
 
+  @doc "Clear all in-flight entries (use to recover from stale locks)."
+  def clear_in_flight do
+    try do
+      GenServer.call(__MODULE__, :clear_in_flight)
+    rescue
+      _ -> :ok
+    catch
+      :exit, _ -> :ok
+    end
+  end
+
   @doc "Get journal stats."
   def stats do
     try do
@@ -193,6 +204,23 @@ defmodule Daemon.Intelligence.DecisionJournal do
   end
 
   @impl true
+  def handle_call(:clear_in_flight, _from, state) do
+    count = map_size(state.in_flight)
+    Logger.info("[DecisionJournal] Clearing #{count} in-flight entries")
+
+    decisions = Enum.map(state.decisions, fn d ->
+      if d.status == :in_flight do
+        %{d | status: :cleared, completed_at: DateTime.utc_now(), outcome: :cleared}
+      else
+        d
+      end
+    end)
+
+    state = %{state | decisions: decisions, in_flight: %{}}
+    persist_state(state)
+    {:reply, {:ok, count}, state}
+  end
+
   def handle_cast({:record_outcome, branch, outcome, metadata}, state) do
     state = do_record_outcome(state, branch, outcome, metadata)
     {:noreply, state}
