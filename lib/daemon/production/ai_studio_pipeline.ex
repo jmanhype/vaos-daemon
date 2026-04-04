@@ -95,7 +95,9 @@ defmodule Daemon.Production.AiStudioPipeline do
 
   @impl true
   def handle_call(:connect, _from, state) do
-    result = BrowserPipeline.ensure_window(@window_name, @aistudio_url)
+    # First, try to find an existing Chrome window/tab already on aistudio.google.com
+    # and claim it by renaming to our window name
+    result = claim_existing_tab() || BrowserPipeline.ensure_window(@window_name, @aistudio_url)
 
     if result == :created do
       Process.sleep(@post_navigate_ms)
@@ -105,6 +107,36 @@ defmodule Daemon.Production.AiStudioPipeline do
 
     {:reply, {:ok, result},
      %{state | state: :ready, connected_at: DateTime.utc_now(), last_action: :connect}}
+  end
+
+  # Scan all Chrome windows for a tab already on aistudio.google.com.
+  # If found, rename that window to @window_name so BrowserPipeline can target it.
+  defp claim_existing_tab do
+    # AppleScript: find window with aistudio tab, rename it
+    result =
+      BrowserPipeline.osascript([
+        ~s(tell application "Google Chrome"),
+        ~s(  repeat with w in windows),
+        ~s(    repeat with t in tabs of w),
+        ~s(      if URL of t contains "aistudio.google.com" then),
+        ~s(        set active tab index of w to index of t),
+        ~s(        set given name of w to "#{@window_name}"),
+        ~s(        return "claimed"),
+        ~s(      end if),
+        ~s(    end repeat),
+        ~s(  end repeat),
+        ~s(  return "not_found"),
+        ~s(end tell)
+      ])
+
+    case String.trim(result) do
+      "claimed" ->
+        Logger.info("[AiStudioPipeline] Claimed existing AI Studio tab")
+        :existing
+
+      _ ->
+        nil
+    end
   end
 
   def handle_call(:read_page, _from, %{state: :idle} = state) do
