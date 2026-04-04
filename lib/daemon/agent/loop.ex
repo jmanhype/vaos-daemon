@@ -873,12 +873,22 @@ defmodule Daemon.Agent.Loop do
         # Execute all tool calls in parallel — independent by contract
         # (if the LLM needed sequential execution, it would return them
         # across separate iterations)
+        #
+        # Heavy tools (investigate, delegate) run multi-source pipelines that
+        # need minutes, not seconds. Scale timeout when any heavy tool is present.
+        tool_timeout =
+          if Enum.any?(tool_calls, &(&1.name in ~w(investigate delegate))) do
+            300_000  # 5 min
+          else
+            60_000   # 1 min
+          end
+
         results =
           tool_calls
           |> Task.async_stream(
             fn tool_call -> ToolExecutor.execute_tool_call(tool_call, state) end,
             max_concurrency: 10,
-            timeout: 60_000,
+            timeout: tool_timeout,
             on_timeout: :kill_task
           )
           |> Enum.zip(tool_calls)
