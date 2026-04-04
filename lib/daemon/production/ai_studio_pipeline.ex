@@ -28,14 +28,14 @@ defmodule Daemon.Production.AiStudioPipeline do
 
   # ── JS Selectors ──────────────────────────────────────────────────────
 
-  # Find the prompt textarea / contenteditable
+  # Find the prompt textarea — AI Studio uses Angular textarea with aria-label
   @prompt_selector_js ~S"""
-  document.querySelector('.ql-editor[contenteditable="true"]') || document.querySelector('textarea[aria-label*="prompt" i]') || document.querySelector('textarea[placeholder*="Type something" i]') || document.querySelector('[contenteditable="true"][role="textbox"]') || document.querySelector('textarea') || document.querySelector('[contenteditable="true"]')
+  document.querySelector('textarea[aria-label="Enter a prompt"]') || document.querySelector('textarea[placeholder*="Start typing"]') || document.querySelector('textarea.cdk-textarea-autosize') || document.querySelector('textarea') || document.querySelector('[contenteditable="true"]')
   """
 
-  # Click the Run / Send button
+  # Click the Run / Send button — AI Studio uses Angular with .run-button-label
   @click_run_js ~S"""
-  var btns=document.querySelectorAll('button');var found=false;for(var i=0;i<btns.length;i++){var t=btns[i].textContent.trim().toLowerCase();var aria=(btns[i].getAttribute('aria-label')||'').toLowerCase();if(t==='run'||t==='send'||aria==='run'||aria==='send message'||btns[i].querySelector('mat-icon[fonticon="play_arrow"]')||btns[i].querySelector('mat-icon[fonticon="send"]')){btns[i].click();found=true;break;}}found?'run_clicked':'run_not_found'
+  var found=false;var el=document.querySelector('.run-button-label');if(el){var btn=el.closest('button');if(btn){btn.click();found=true;}}if(!found){var btns=document.querySelectorAll('button');for(var i=0;i<btns.length;i++){var t=btns[i].textContent.trim();if(t.indexOf('Run')===0||t.indexOf('run')===0){btns[i].click();found=true;break;}}}found?'run_clicked':'run_not_found'
   """
 
   # Extract visible page text
@@ -161,9 +161,23 @@ defmodule Daemon.Production.AiStudioPipeline do
     BrowserPipeline.focus_and_paste(@window_name, @prompt_selector_js, text)
     Process.sleep(@post_paste_ms)
 
-    # Click Run
+    # Submit via Cmd+Enter (AI Studio's native shortcut), then fallback to clicking Run
+    BrowserPipeline.osascript([
+      ~s(tell application "Google Chrome"),
+      ~s(  set targetWindow to first window whose given name is "#{@window_name}"),
+      ~s(  set index of targetWindow to 1),
+      ~s(end tell),
+      ~s(delay 0.3),
+      ~s(tell application "System Events"),
+      ~s(  keystroke return using {command down}),
+      ~s(end tell)
+    ])
+
+    Process.sleep(500)
+
+    # Also try clicking Run button as backup
     result = BrowserPipeline.execute_js(@window_name, @click_run_js)
-    Logger.info("[AiStudioPipeline] Prompt sent, run button: #{result}")
+    Logger.info("[AiStudioPipeline] Prompt sent via Cmd+Enter + Run click: #{result}")
 
     {:reply, :ok, %{state | last_action: {:send_prompt, result}}}
   end
