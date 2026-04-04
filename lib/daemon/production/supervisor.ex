@@ -17,17 +17,14 @@ defmodule Daemon.Production.Supervisor do
     # Chrome CDP pipelines disabled — they hijack the active browser session.
     # Re-enable individually when running headless Chrome or a dedicated profile.
     children = [
-      # CDP connection — needed for computer_use and browser tools
       Daemon.Production.ChromeSlot,
+      Daemon.Production.FlowRateLimiter,
       Daemon.Production.ChromeHealth,
-      # Autonomous pipelines disabled — they hijack the active browser session.
-      # Re-enable individually when running headless Chrome or a dedicated profile.
-      # Daemon.Production.FlowRateLimiter,
-      # Daemon.Production.FilmPipeline,
-      # Daemon.Production.SoraPipeline,
-      # Daemon.Production.KlingPipeline,
-      # Daemon.Production.FilmProducer,
-      # Daemon.Production.XPublisher
+      Daemon.Production.FilmPipeline,
+      Daemon.Production.SoraPipeline,
+      Daemon.Production.KlingPipeline,
+      Daemon.Production.FilmProducer,
+      Daemon.Production.XPublisher
     ]
 
     Supervisor.init(children, strategy: :one_for_one)
