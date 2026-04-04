@@ -85,6 +85,10 @@ defmodule Daemon.Production.AiStudioPipeline do
   @spec get_url() :: {:ok, String.t()} | {:error, term()}
   def get_url, do: GenServer.call(__MODULE__, :get_url, 10_000)
 
+  @doc "Execute arbitrary JavaScript in the AI Studio window."
+  @spec evaluate(String.t()) :: {:ok, String.t()} | {:error, term()}
+  def evaluate(js), do: GenServer.call(__MODULE__, {:evaluate, js}, 15_000)
+
   @spec status() :: map()
   def status, do: GenServer.call(__MODULE__, :status)
 
@@ -193,6 +197,15 @@ defmodule Daemon.Production.AiStudioPipeline do
       :timeout ->
         {:reply, :timeout, %{state | last_action: :get_response_timeout}}
     end
+  end
+
+  def handle_call({:evaluate, js}, _from, %{state: :idle} = state) do
+    {:reply, {:error, :not_connected}, state}
+  end
+
+  def handle_call({:evaluate, js}, _from, state) do
+    result = BrowserPipeline.execute_js(@window_name, js)
+    {:reply, {:ok, String.trim(result)}, %{state | last_action: :evaluate}}
   end
 
   def handle_call(:get_url, _from, %{state: :idle} = state) do

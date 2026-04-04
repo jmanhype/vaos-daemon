@@ -106,6 +106,18 @@ defmodule Daemon.Production.API do
     end
   end
 
+  post "/aistudio/evaluate" do
+    js = conn.body_params["js"] || ""
+
+    case Daemon.Production.AiStudioPipeline.evaluate(js) do
+      {:ok, result} ->
+        send_resp(conn, 200, Jason.encode!(%{result: result}))
+
+      {:error, reason} ->
+        send_resp(conn, 400, Jason.encode!(%{error: inspect(reason)}))
+    end
+  end
+
   get "/aistudio/status" do
     status = Daemon.Production.AiStudioPipeline.status()
     send_resp(conn, 200, Jason.encode!(status))
