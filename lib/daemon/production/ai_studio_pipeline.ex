@@ -204,7 +204,14 @@ defmodule Daemon.Production.AiStudioPipeline do
   end
 
   def handle_call({:evaluate, js}, _from, state) do
-    result = BrowserPipeline.execute_js(@window_name, js)
+    result =
+      if String.starts_with?(js, "/") and File.exists?(js) do
+        # File path — use execute_js_file to avoid escaping issues
+        BrowserPipeline.execute_js_file(@window_name, js)
+      else
+        BrowserPipeline.execute_js(@window_name, js)
+      end
+
     {:reply, {:ok, String.trim(result)}, %{state | last_action: :evaluate}}
   end
 
