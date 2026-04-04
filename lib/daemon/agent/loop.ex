@@ -878,7 +878,7 @@ defmodule Daemon.Agent.Loop do
         # need minutes, not seconds. Scale timeout when any heavy tool is present.
         tool_timeout =
           if Enum.any?(tool_calls, &(&1.name in ~w(investigate delegate))) do
-            300_000  # 5 min
+            1_200_000  # 20 min — investigate runs multi-source paper search + adversarial LLM analysis
           else
             60_000   # 1 min
           end
