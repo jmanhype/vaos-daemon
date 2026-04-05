@@ -173,25 +173,30 @@ defmodule Daemon.Channels.HTTP.API.OrchestrationRoutes do
       depth = conn.body_params["depth"] || "deep"
       session_id = conn.body_params["session_id"] || generate_session_id()
 
-      # Create a session and send the autoresearch task as a message
-      {:ok, _session} = Session.create(session_id, conn.body_params["user_id"])
+      user_id = conn.body_params["user_id"] || conn.assigns[:user_id]
 
-      task_message = """
-      Run the autoresearch_loop tool with topic="#{topic}" depth="#{depth}".
-      Then execute each step of the returned workflow sequentially.
-      """
+      case Session.ensure_loop(session_id, user_id, :http) do
+        {:error, reason} ->
+          json_error(conn, 503, "session_unavailable", "Could not start session: #{inspect(reason)}")
 
-      Task.start(fn ->
-        Loop.handle_message(session_id, task_message)
-      end)
+        _ ->
+          task_message = """
+          Run the autoresearch_loop tool with topic="#{topic}" depth="#{depth}".
+          Then execute each step of the returned workflow sequentially.
+          """
 
-      json(conn, 200, %{
-        session_id: session_id,
-        topic: topic,
-        depth: depth,
-        status: "started",
-        monitor: "/api/v1/sessions/#{session_id}"
-      })
+          Task.start(fn ->
+            Loop.handle_message(session_id, task_message)
+          end)
+
+          json(conn, 200, %{
+            session_id: session_id,
+            topic: topic,
+            depth: depth,
+            status: "started",
+            monitor: "/api/v1/sessions/#{session_id}"
+          })
+      end
     else
       _ -> json(conn, 400, %{error: "Missing required field: topic"})
     end
