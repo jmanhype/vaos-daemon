@@ -185,8 +185,14 @@ defmodule Daemon.Channels.HTTP.API.OrchestrationRoutes do
           Then execute each step of the returned workflow sequentially.
           """
 
+          # Fire-and-forget — autoresearch runs 30-60min total
           Task.start(fn ->
-            Loop.process_message(session_id, task_message)
+            try do
+              Loop.process_message(session_id, task_message, timeout: :timer.hours(2))
+            catch
+              :exit, {:timeout, _} ->
+                Logger.warning("[Autoresearch] Session #{session_id} timed out")
+            end
           end)
 
           json(conn, 200, %{

@@ -130,7 +130,8 @@ defmodule Daemon.Agent.Loop do
   end
 
   def process_message(session_id, message, opts \\ []) do
-    GenServer.call(via(session_id), {:process, message, opts}, :timer.minutes(10))
+    timeout = Keyword.get(opts, :timeout, :timer.minutes(10))
+    GenServer.call(via(session_id), {:process, message, opts}, timeout)
   end
 
   @doc "Get metadata from the last process_message call (iteration_count, tools_used)."
