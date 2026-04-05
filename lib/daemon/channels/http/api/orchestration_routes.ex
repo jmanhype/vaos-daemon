@@ -186,7 +186,7 @@ defmodule Daemon.Channels.HTTP.API.OrchestrationRoutes do
           """
 
           Task.start(fn ->
-            Loop.handle_message(session_id, task_message)
+            Loop.process_message(session_id, task_message)
           end)
 
           json(conn, 200, %{
