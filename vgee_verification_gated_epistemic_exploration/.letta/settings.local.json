@@ -1,0 +1,17 @@
+{
+  "lastAgent": "agent-31d322fb-4804-48b2-97cb-eca0a46c959d",
+  "memoryReminderInterval": null,
+  "reflectionTrigger": "off",
+  "reflectionBehavior": "reminder",
+  "reflectionStepCount": 25,
+  "sessionsByServer": {
+    "192.168.1.143:8283": {
+      "agentId": "agent-31d322fb-4804-48b2-97cb-eca0a46c959d",
+      "conversationId": "conv-7fd85c3b-fae2-4425-8f30-2f5ae81fc716"
+    }
+  },
+  "lastSession": {
+    "agentId": "agent-31d322fb-4804-48b2-97cb-eca0a46c959d",
+    "conversationId": "conv-7fd85c3b-fae2-4425-8f30-2f5ae81fc716"
+  }
+}
