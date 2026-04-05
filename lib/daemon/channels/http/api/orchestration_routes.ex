@@ -165,6 +165,38 @@ defmodule Daemon.Channels.HTTP.API.OrchestrationRoutes do
     |> send_resp(200, body)
   end
 
+  # ── POST /autoresearch ──────────────────────────────────────────────
+  # Launches a bilevel autoresearch loop: investigate → paper → code → eval → fix
+
+  post "/autoresearch" do
+    with %{"topic" => topic} when is_binary(topic) and topic != "" <- conn.body_params do
+      depth = conn.body_params["depth"] || "deep"
+      session_id = conn.body_params["session_id"] || generate_session_id()
+
+      # Create a session and send the autoresearch task as a message
+      {:ok, _session} = Session.create(session_id, conn.body_params["user_id"])
+
+      task_message = """
+      Run the autoresearch_loop tool with topic="#{topic}" depth="#{depth}".
+      Then execute each step of the returned workflow sequentially.
+      """
+
+      Task.start(fn ->
+        Loop.handle_message(session_id, task_message)
+      end)
+
+      json(conn, 200, %{
+        session_id: session_id,
+        topic: topic,
+        depth: depth,
+        status: "started",
+        monitor: "/api/v1/sessions/#{session_id}"
+      })
+    else
+      _ -> json(conn, 400, %{error: "Missing required field: topic"})
+    end
+  end
+
   # ── POST /complex ───────────────────────────────────────────────────
 
   post "/complex" do
