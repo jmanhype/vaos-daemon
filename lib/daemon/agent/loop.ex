@@ -1133,18 +1133,21 @@ defmodule Daemon.Agent.Loop do
   # Clean up checkpoint on normal exit — only crash restarts should use it
   @impl true
   def terminate(:normal, state) do
+    fire_session_end(state)
     Checkpoint.clear_checkpoint(state.session_id)
     vault_sleep(state.session_id)
     :ok
   end
 
   def terminate(:shutdown, state) do
+    fire_session_end(state)
     Checkpoint.clear_checkpoint(state.session_id)
     vault_sleep(state.session_id)
     :ok
   end
 
   def terminate({:shutdown, _}, state) do
+    fire_session_end(state)
     Checkpoint.clear_checkpoint(state.session_id)
     vault_sleep(state.session_id)
     :ok
@@ -1154,6 +1157,18 @@ defmodule Daemon.Agent.Loop do
     # Abnormal termination — keep checkpoint for recovery
     # Dirty flag stays for next wake to detect
     :ok
+  end
+
+  defp fire_session_end(state) do
+    try do
+      alias Daemon.Agent.Hooks
+      payload = %{session_id: state.session_id, messages: state.messages}
+      Hooks.run_async(:session_end, payload)
+    rescue
+      _ -> :ok
+    catch
+      :exit, _ -> :ok
+    end
   end
 
   defp vault_sleep(session_id) do

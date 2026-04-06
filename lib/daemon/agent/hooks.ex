@@ -309,6 +309,15 @@ defmodule Daemon.Agent.Hooks do
         event: :post_tool_use,
         priority: 80,
         handler: &vault_auto_checkpoint/1
+      },
+
+      # Knowledge distillation — extract facts from session messages and assert
+      # to the knowledge triple store (session_end, priority 50)
+      %{
+        name: "knowledge_distill",
+        event: :session_end,
+        priority: 50,
+        handler: &knowledge_distill/1
       }
     ]
 
@@ -563,6 +572,59 @@ defmodule Daemon.Agent.Hooks do
   end
 
   defp mcp_cache_post(payload), do: {:ok, payload}
+
+  # Knowledge distillation — extract facts from session messages and assert to knowledge store
+  defp knowledge_distill(%{session_id: sid, messages: messages} = payload) when is_list(messages) do
+    alias Daemon.Vault.FactExtractor
+
+    try do
+      # Extract facts from user and assistant messages only (skip system/tool)
+      triples =
+        messages
+        |> Enum.filter(fn msg ->
+          role = Map.get(msg, :role) || Map.get(msg, "role")
+          role in ["user", "assistant", :user, :assistant]
+        end)
+        |> Enum.flat_map(fn msg ->
+          content = Map.get(msg, :content) || Map.get(msg, "content") || ""
+          text = if is_binary(content), do: content, else: ""
+          FactExtractor.extract_confident(text, 0.8)
+        end)
+        |> Enum.uniq_by(& &1.value)
+        |> Enum.map(fn fact ->
+          FactExtractor.to_triple(fact, "session:#{sid}")
+        end)
+
+      # Assert to knowledge store (fire-and-forget, non-blocking)
+      if triples != [] do
+        Task.start(fn ->
+          store_ref = try do
+            Vaos.Knowledge.open("osa_default")
+            Vaos.Knowledge.store_ref("osa_default")
+          rescue
+            _ -> nil
+          catch
+            :exit, _ -> nil
+          end
+
+          if store_ref do
+            Enum.each(triples, fn {s, p, o} ->
+              MiosaKnowledge.assert(store_ref, {s, p, o})
+            end)
+
+            Logger.info("[hooks/knowledge_distill] Asserted #{length(triples)} triples for session #{sid}")
+          end
+        end)
+      end
+    rescue
+      e ->
+        Logger.warning("[hooks/knowledge_distill] Failed: #{inspect(e)}")
+    end
+
+    {:ok, payload}
+  end
+
+  defp knowledge_distill(payload), do: {:ok, payload}
 
   # ── Helpers ────────────────────────────────────────────────────────
 
