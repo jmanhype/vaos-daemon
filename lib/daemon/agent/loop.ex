@@ -154,6 +154,13 @@ defmodule Daemon.Agent.Loop do
   This works even though handle_call blocks the GenServer mailbox,
   because ETS reads are concurrent.
   """
+  @doc "Stop a session's Loop GenServer, triggering terminate/session_end hooks."
+  def stop(session_id) do
+    GenServer.stop(via(session_id), :normal)
+  catch
+    :exit, _ -> {:error, :not_running}
+  end
+
   def cancel(session_id) do
     :ets.insert(@cancel_table, {session_id, true})
     Logger.info("[loop] Cancel requested for session #{session_id}")

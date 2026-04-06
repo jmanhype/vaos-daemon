@@ -199,8 +199,8 @@ defmodule Daemon.Channels.HTTP.API.SessionRoutes do
   delete "/:id" do
     session_id = conn.params["id"]
 
-    # Cancel active loop if running (ignore if already stopped)
-    Loop.cancel(session_id)
+    # Stop active loop if running (triggers terminate → session_end hooks)
+    Loop.stop(session_id)
 
     # Remove the session JSONL file from disk
     sessions_dir =
