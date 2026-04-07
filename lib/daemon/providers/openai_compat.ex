@@ -296,7 +296,6 @@ defmodule Daemon.Providers.OpenAICompat do
   defp finalize_sse_stream(acc, callback, model) do
     # GLM-5.1 sends complex responses as reasoning_content, not content.
     # Use reasoning_content as fallback when content is empty.
-    Logger.debug("[stream-finalize] content=#{byte_size(acc.content)}B reasoning=#{byte_size(acc.reasoning_content)}B tools=#{map_size(acc.tool_calls)}")
     raw_content = if String.trim(acc.content) == "", do: acc.reasoning_content, else: acc.content
     content = Text.strip_thinking_tokens(raw_content)
 
