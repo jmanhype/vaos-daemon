@@ -34,6 +34,7 @@ defmodule Daemon.Supervisors.AgentServices do
       Daemon.Agent.Hooks,
       Daemon.Agent.Learning,
       {MiosaKnowledge.Store, store_id: "osa_default", backend: knowledge_backend},
+      Daemon.Knowledge.Meta,
       Daemon.Agent.Memory.KnowledgeBridge,
       Daemon.Vault.Supervisor,
       Daemon.Agent.Scheduler,

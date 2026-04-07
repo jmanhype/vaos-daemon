@@ -318,6 +318,15 @@ defmodule Daemon.Agent.Hooks do
         event: :session_end,
         priority: 50,
         handler: &knowledge_distill/1
+      },
+
+      # Knowledge feedback — increment helpful/harmful counters on injected triples
+      # based on session outcome (session_end, priority 45 — before distill)
+      %{
+        name: "knowledge_feedback",
+        event: :session_end,
+        priority: 45,
+        handler: &knowledge_feedback/1
       }
     ]
 
@@ -493,10 +502,77 @@ defmodule Daemon.Agent.Hooks do
       ArgumentError -> :ok
     end
 
+    try do
+      :ets.delete(:daemon_knowledge_stash, {sid, :injected_knowledge})
+    rescue
+      ArgumentError -> :ok
+    end
+
     {:ok, payload}
   end
 
   defp session_cleanup(payload), do: {:ok, payload}
+
+  # Knowledge feedback — increment helpful/harmful on injected triples based on outcome
+  defp knowledge_feedback(%{session_id: sid, messages: messages} = payload)
+       when is_binary(sid) and is_list(messages) do
+    stash_key = {sid, :injected_knowledge}
+
+    triples =
+      try do
+        case :ets.lookup(:daemon_knowledge_stash, stash_key) do
+          [{^stash_key, triples}] when is_list(triples) -> triples
+          _ -> []
+        end
+      rescue
+        ArgumentError -> []
+      end
+
+    if triples != [] do
+      failed? = session_looks_failed?(messages)
+
+      if failed? do
+        Enum.each(triples, &Daemon.Knowledge.Meta.increment_harmful/1)
+        Logger.info("[knowledge_feedback] incremented harmful on #{length(triples)} triples for session #{sid}")
+      else
+        Enum.each(triples, &Daemon.Knowledge.Meta.increment_helpful/1)
+        Logger.info("[knowledge_feedback] incremented helpful on #{length(triples)} triples for session #{sid}")
+      end
+    end
+
+    {:ok, payload}
+  end
+
+  defp knowledge_feedback(payload), do: {:ok, payload}
+
+  defp session_looks_failed?(messages) do
+    last_assistant =
+      messages
+      |> Enum.reverse()
+      |> Enum.find(fn
+        %{"role" => "assistant"} -> true
+        %{role: "assistant"} -> true
+        _ -> false
+      end)
+
+    case last_assistant do
+      nil -> false
+      msg ->
+        text =
+          case msg do
+            %{"content" => c} -> extract_text_content(c)
+            %{content: c} -> extract_text_content(c)
+            _ -> ""
+          end
+
+        text = String.downcase(text)
+
+        Enum.any?(
+          ["i apologize", "error:", "failed to", "doom loop", "i'm sorry, i"],
+          &String.contains?(text, &1)
+        )
+    end
+  end
 
   # Vault auto-checkpoint — save vault state every N tool calls
   defp vault_auto_checkpoint(%{session_id: sid} = payload) when is_binary(sid) do
@@ -724,6 +800,7 @@ defmodule Daemon.Agent.Hooks do
     if store_name do
       Enum.each(triples, fn {s, p, o} ->
         MiosaKnowledge.assert(store_name, {s, p, o})
+        Daemon.Knowledge.Meta.ensure_meta({s, p, o})
       end)
       Logger.info("[hooks/knowledge_distill] Asserted #{length(triples)} facts for session #{sid}")
     else

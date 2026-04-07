@@ -774,47 +774,125 @@ defmodule Daemon.Agent.Context do
     end
   end
 
-  defp knowledge_block(_state) do
+  defp knowledge_block(state) do
     try do
-      # Query knowledge graph for distilled session knowledge.
-      # Only query predicates that are actually written:
-      #   - vaos:axiom_fact (from GLM distiller — verified truths)
-      #   - vaos:protocol_decision (from GLM distiller — decisions/preferences/workflows)
-      #   - vaos:topic / vaos:direction (from SelfDiagnosis, if still active)
-      predicates = [
-        {"vaos:axiom_fact", 8, "Fact"},
-        {"vaos:protocol_decision", 5, "Decision"},
-        {"vaos:topic", 3, "Finding"},
-        {"vaos:direction", 2, "Insight"}
-      ]
-
-      entries =
-        Enum.flat_map(predicates, fn {predicate, limit, _label} ->
-          case MiosaKnowledge.query("osa_default", predicate: predicate) do
-            {:ok, results} when is_list(results) -> Enum.take(results, limit)
-            _ -> []
-          end
-        end)
-
-      case entries do
-        [] -> nil
-        _ ->
-          lines = Enum.map(entries, fn
-            {_s, "vaos:topic", topic} -> "- Finding: #{topic}"
-            {_s, "vaos:direction", dir} -> "- Insight: #{dir}"
-            {_s, "vaos:axiom_fact", fact} -> "- Fact: #{fact}"
-            {_s, "vaos:protocol_decision", dec} -> "- Decision: #{dec}"
-            {s, p, o} -> "- #{s} #{p} #{o}"
-            other -> "- #{inspect(other)}"
-          end)
-          "## Knowledge Context\n#{Enum.join(lines, "\n")}"
-      end
+      do_knowledge_block(state)
     rescue
       _ -> nil
     catch
       :exit, _ -> nil
     end
   end
+
+  defp do_knowledge_block(state) do
+    # Fetch all triples from the 4 known predicates
+    predicates = ["vaos:axiom_fact", "vaos:protocol_decision", "vaos:topic", "vaos:direction"]
+
+    all_triples =
+      Enum.flat_map(predicates, fn pred ->
+        case MiosaKnowledge.query("osa_default", predicate: pred) do
+          {:ok, results} when is_list(results) -> results
+          _ -> []
+        end
+      end)
+
+    case all_triples do
+      [] -> nil
+      _ -> knowledge_block_semantic(state, all_triples)
+    end
+  end
+
+  defp knowledge_block_semantic(state, all_triples) do
+    user_query = find_latest_user_message(state[:messages] || state.messages)
+    sidecar_up? = Daemon.Python.Embeddings.available?()
+
+    ranked =
+      if sidecar_up? and is_binary(user_query) and user_query != "" do
+        semantic_rank(user_query, all_triples)
+      else
+        # Fallback: first-N per predicate (original behavior)
+        fallback_rank(all_triples)
+      end
+
+    # Stash injected triples for feedback hook
+    sid = state[:session_id]
+    if sid do
+      try do
+        :ets.new(:daemon_knowledge_stash, [:named_table, :public, :set])
+      rescue
+        ArgumentError -> :ok  # already exists
+      end
+      :ets.insert(:daemon_knowledge_stash, {{sid, :injected_knowledge}, ranked})
+    end
+
+    lines = Enum.map(ranked, &format_triple/1)
+    "## Knowledge Context\n#{Enum.join(lines, "\n")}"
+  end
+
+  defp semantic_rank(query, triples) do
+    alias Daemon.Python.Embeddings
+    alias Daemon.Knowledge.Meta
+
+    # Build entries for the sidecar
+    entries =
+      Enum.map(triples, fn {s, p, o} = triple ->
+        %{id: Integer.to_string(:erlang.phash2(triple)), content: "#{s} #{p} #{o}"}
+      end)
+
+    # Build a lookup from phash2 string -> triple
+    id_to_triple =
+      Map.new(triples, fn {_s, _p, _o} = t -> {Integer.to_string(:erlang.phash2(t)), t} end)
+
+    # Reindex if count changed (cache in process dict)
+    prev_count = Process.get(:knowledge_triple_count, 0)
+    cur_count = length(entries)
+
+    if cur_count != prev_count do
+      Embeddings.reindex(entries)
+      Process.put(:knowledge_triple_count, cur_count)
+    end
+
+    case Embeddings.search(query, top_k: 30) do
+      {:ok, results} ->
+        results
+        |> Enum.map(fn %{"id" => id, "score" => sim} ->
+          triple = Map.get(id_to_triple, id)
+          if triple do
+            net = Meta.net_score(triple)
+            boosted = sim * max(0.1, 1.0 + net * 0.1)
+            {boosted, triple}
+          end
+        end)
+        |> Enum.reject(&is_nil/1)
+        |> Enum.sort_by(fn {score, _} -> score end, :desc)
+        |> Enum.take(18)
+        |> Enum.map(fn {_score, triple} -> triple end)
+
+      {:error, _} ->
+        Logger.warning("[knowledge_block] semantic search failed, falling back")
+        fallback_rank(triples)
+    end
+  end
+
+  defp fallback_rank(triples) do
+    limits = %{
+      "vaos:axiom_fact" => 8,
+      "vaos:protocol_decision" => 5,
+      "vaos:topic" => 3,
+      "vaos:direction" => 2
+    }
+
+    triples
+    |> Enum.group_by(fn {_s, p, _o} -> p end)
+    |> Enum.flat_map(fn {pred, ts} -> Enum.take(ts, Map.get(limits, pred, 3)) end)
+  end
+
+  defp format_triple({_s, "vaos:topic", topic}), do: "- Finding: #{topic}"
+  defp format_triple({_s, "vaos:direction", dir}), do: "- Insight: #{dir}"
+  defp format_triple({_s, "vaos:axiom_fact", fact}), do: "- Fact: #{fact}"
+  defp format_triple({_s, "vaos:protocol_decision", dec}), do: "- Decision: #{dec}"
+  defp format_triple({s, p, o}), do: "- #{s} #{p} #{o}"
+  defp format_triple(other), do: "- #{inspect(other)}"
 
   defp decision_intelligence_block(_state) do
     try do
