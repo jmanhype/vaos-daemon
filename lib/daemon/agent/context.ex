@@ -46,7 +46,6 @@ defmodule Daemon.Agent.Context do
 
   @response_reserve 8_192
   @knowledge_store_default "osa_default"
-  @knowledge_select_batch 8
   @knowledge_predicate_limits [
     {"vaos:axiom_fact", 8},
     {"vaos:protocol_decision", 6},
@@ -888,7 +887,10 @@ defmodule Daemon.Agent.Context do
       ) do
     predicate_limits
     |> Enum.flat_map(fn {predicate, limit} ->
-      limited_predicate_triples(store_name, predicate, limit)
+      case MiosaKnowledge.query(store_name, [predicate: predicate], limit: limit) do
+        {:ok, triples} when is_list(triples) -> triples
+        _ -> []
+      end
     end)
     |> Enum.uniq()
   end
@@ -972,87 +974,6 @@ defmodule Daemon.Agent.Context do
       {:error, _} ->
         Logger.warning("[knowledge_block] semantic search failed, falling back")
         fallback_rank(triples)
-    end
-  end
-
-  defp limited_predicate_triples(_store_name, _predicate, limit) when limit <= 0, do: []
-
-  defp limited_predicate_triples(store_name, predicate, limit) do
-    case Vaos.Knowledge.Store.get_ets_refs(store_name) do
-      {:ok, %Vaos.Knowledge.Backend.ETS{pos: pos}} ->
-        match_spec = [{{{predicate, :"$1", :"$2"}}, [], [{{:"$2", predicate, :"$1"}}]}]
-        take_ets_matches(pos, match_spec, limit)
-
-      _ ->
-        limited_predicate_triples_sparql(store_name, predicate, limit)
-    end
-  rescue
-    _ -> []
-  end
-
-  defp take_ets_matches(_table, _match_spec, limit) when limit <= 0, do: []
-
-  defp take_ets_matches(table, match_spec, limit) do
-    chunk_size = min(limit, @knowledge_select_batch)
-
-    case :ets.select(table, match_spec, chunk_size) do
-      :"$end_of_table" ->
-        []
-
-      {rows, :"$end_of_table"} ->
-        Enum.take(rows, limit)
-
-      {rows, continuation} ->
-        remaining = limit - length(rows)
-
-        if remaining <= 0 do
-          Enum.take(rows, limit)
-        else
-          take_ets_continuation(continuation, limit, rows)
-        end
-    end
-  end
-
-  defp take_ets_continuation(continuation, limit, acc) do
-    case :ets.select(continuation) do
-      :"$end_of_table" ->
-        acc
-
-      {rows, :"$end_of_table"} ->
-        Enum.take(acc ++ rows, limit)
-
-      {rows, next_continuation} ->
-        remaining = limit - length(acc) - length(rows)
-
-        if remaining <= 0 do
-          Enum.take(acc ++ rows, limit)
-        else
-          take_ets_continuation(next_continuation, limit, acc ++ rows)
-        end
-    end
-  end
-
-  defp limited_predicate_triples_sparql(store_name, predicate, limit) do
-    query = "SELECT ?s ?o WHERE { ?s #{predicate} ?o } LIMIT #{limit}"
-
-    case MiosaKnowledge.sparql(store_name, query) do
-      {:ok, results} when is_list(results) ->
-        results
-        |> Enum.map(fn row ->
-          {binding_value(row, "s"), predicate, binding_value(row, "o")}
-        end)
-        |> Enum.reject(fn {s, _p, o} -> is_nil(s) or is_nil(o) end)
-
-      _ ->
-        []
-    end
-  end
-
-  defp binding_value(row, key) when is_map(row) do
-    case key do
-      "s" -> Map.get(row, "s") || Map.get(row, :s)
-      "o" -> Map.get(row, "o") || Map.get(row, :o)
-      _ -> nil
     end
   end
 

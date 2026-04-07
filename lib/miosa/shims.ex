@@ -49,8 +49,10 @@ defmodule MiosaLLM.HealthChecker do
   defdelegate child_spec(opts), to: Daemon.Providers.HealthChecker
   defdelegate record_success(provider), to: Daemon.Providers.HealthChecker
   defdelegate record_failure(provider, reason), to: Daemon.Providers.HealthChecker
+
   defdelegate record_rate_limited(provider, retry_after_seconds \\ nil),
     to: Daemon.Providers.HealthChecker
+
   defdelegate is_available?(provider), to: Daemon.Providers.HealthChecker
   defdelegate state(), to: Daemon.Providers.HealthChecker
 end
@@ -65,10 +67,13 @@ defmodule MiosaProviders.Registry do
   defdelegate start_link(opts \\ []), to: Daemon.Providers.Registry
   defdelegate child_spec(opts), to: Daemon.Providers.Registry
   defdelegate chat(messages, opts \\ []), to: Daemon.Providers.Registry
+
   defdelegate chat_stream(messages, callback, opts \\ []),
     to: Daemon.Providers.Registry
+
   defdelegate chat_with_fallback(messages, chain, opts \\ []),
     to: Daemon.Providers.Registry
+
   defdelegate list_providers(), to: Daemon.Providers.Registry
   defdelegate provider_info(provider), to: Daemon.Providers.Registry
   defdelegate context_window(model), to: Daemon.Providers.Registry
@@ -85,8 +90,10 @@ defmodule MiosaProviders.Ollama do
   defdelegate model_supports_tools?(model_name), to: Daemon.Providers.Ollama
   defdelegate thinking_model?(model_name), to: Daemon.Providers.Ollama
   defdelegate chat(messages, opts \\ []), to: Daemon.Providers.Ollama
+
   defdelegate chat_stream(messages, callback, opts \\ []),
     to: Daemon.Providers.Ollama
+
   defdelegate pick_best_model(models), to: Daemon.Providers.Ollama
   defdelegate name(), to: Daemon.Providers.Ollama
   defdelegate default_model(), to: Daemon.Providers.Ollama
@@ -104,10 +111,22 @@ defmodule MiosaSignal.Event do
 
   # Re-export the struct so that %MiosaSignal.Event{} pattern matches compile.
   defstruct [
-    :id, :type, :source, :time,
-    :subject, :data, :dataschema,
-    :parent_id, :session_id, :correlation_id,
-    :signal_mode, :signal_genre, :signal_type, :signal_format, :signal_structure, :signal_sn,
+    :id,
+    :type,
+    :source,
+    :time,
+    :subject,
+    :data,
+    :dataschema,
+    :parent_id,
+    :session_id,
+    :correlation_id,
+    :signal_mode,
+    :signal_genre,
+    :signal_type,
+    :signal_format,
+    :signal_structure,
+    :signal_sn,
     specversion: "1.0.2",
     datacontenttype: "application/json",
     extensions: %{}
@@ -131,8 +150,14 @@ defmodule MiosaSignal.CloudEvent do
   """
 
   defstruct [
-    :specversion, :type, :source, :subject, :id, :time,
-    :datacontenttype, :data
+    :specversion,
+    :type,
+    :source,
+    :subject,
+    :id,
+    :time,
+    :datacontenttype,
+    :data
   ]
 
   @type t :: %__MODULE__{}
@@ -149,6 +174,7 @@ defmodule MiosaSignal.CloudEvent do
       data: Map.get(attrs, :data)
     }
   end
+
   def new(_), do: new(%{})
 
   def encode(%__MODULE__{} = event), do: {:ok, Jason.encode!(Map.from_struct(event))}
@@ -156,12 +182,16 @@ defmodule MiosaSignal.CloudEvent do
 
   def decode(json) when is_binary(json) do
     case Jason.decode(json) do
-      {:ok, map} -> {:ok, new(map |> Enum.into(%{}, fn {k, v} -> {String.to_existing_atom(k), v} end))}
-      error -> error
+      {:ok, map} ->
+        {:ok, new(map |> Enum.into(%{}, fn {k, v} -> {String.to_existing_atom(k), v} end))}
+
+      error ->
+        error
     end
   rescue
     _ -> {:error, :decode_failed}
   end
+
   def decode(_), do: {:error, :invalid_input}
 
   def from_bus_event(%{} = event) do
@@ -171,12 +201,14 @@ defmodule MiosaSignal.CloudEvent do
       data: event
     })
   end
+
   def from_bus_event(_), do: new(%{type: "bus.event", source: "daemon.bus"})
 
   def to_bus_event(%__MODULE__{} = event), do: event.data || %{}
   def to_bus_event(_), do: %{}
 
-  defp generate_id, do: :crypto.strong_rand_bytes(8) |> Base.hex_encode32(case: :lower, padding: false)
+  defp generate_id,
+    do: :crypto.strong_rand_bytes(8) |> Base.hex_encode32(case: :lower, padding: false)
 end
 
 defmodule MiosaSignal.Classifier do
@@ -209,8 +241,15 @@ defmodule MiosaSignal.MessageClassifier do
   """
 
   defstruct [
-    :mode, :genre, :type, :format, :weight,
-    :raw, :channel, :timestamp, :confidence
+    :mode,
+    :genre,
+    :type,
+    :format,
+    :weight,
+    :raw,
+    :channel,
+    :timestamp,
+    :confidence
   ]
 
   @type t :: %__MODULE__{}
@@ -225,12 +264,15 @@ defmodule MiosaSignal.MessageClassifier do
       :undefined ->
         try do
           :ets.new(@cache_table, [
-            :set, :public, :named_table,
+            :set,
+            :public,
+            :named_table,
             read_concurrency: true
           ])
         rescue
           ArgumentError -> @cache_table
         end
+
       _ref ->
         @cache_table
     end
@@ -257,6 +299,7 @@ defmodule MiosaSignal.MessageClassifier do
         classify_and_cache(key, message, channel)
     end
   end
+
   def classify_fast(message, channel), do: classify_deterministic(message, channel)
 
   defp classify_and_cache(key, message, channel) do
@@ -268,27 +311,56 @@ defmodule MiosaSignal.MessageClassifier do
   @doc "Deterministic pattern-matching classification (no LLM)."
   def classify_deterministic(message, _channel) when is_binary(message) do
     msg = String.downcase(message)
-    mode = cond do
-      Regex.match?(~r/\b(run|execute|send|deploy|delete|trigger|sync|import|export)\b/, msg) -> :execute
-      Regex.match?(~r/\b(create|generate|write|scaffold|design|build|develop|make|implement)\b/, msg) -> :build
-      Regex.match?(~r/\b(analyze|report|compare|metrics|trend|dashboard|review|kpi)\b/, msg) -> :analyze
-      Regex.match?(~r/\b(fix|update|migrate|backup|restore|rollback|patch|upgrade|debug)\b/, msg) -> :maintain
-      true -> :assist
-    end
-    genre = cond do
-      Regex.match?(~r/\b(please|can you|could you|do|make|create)\b/, msg) -> :direct
-      Regex.match?(~r/\b(i will|i'll|let me|i can)\b/, msg) -> :commit
-      Regex.match?(~r/\b(approve|reject|confirm|cancel|choose|decide)\b/, msg) -> :decide
-      Regex.match?(~r/[!?]|great|thanks|thank you|sorry|frustrated/, msg) -> :express
-      true -> :inform
-    end
+
+    mode =
+      cond do
+        Regex.match?(~r/\b(run|execute|send|deploy|delete|trigger|sync|import|export)\b/, msg) ->
+          :execute
+
+        Regex.match?(
+          ~r/\b(create|generate|write|scaffold|design|build|develop|make|implement)\b/,
+          msg
+        ) ->
+          :build
+
+        Regex.match?(~r/\b(analyze|report|compare|metrics|trend|dashboard|review|kpi)\b/, msg) ->
+          :analyze
+
+        Regex.match?(
+          ~r/\b(fix|update|migrate|backup|restore|rollback|patch|upgrade|debug)\b/,
+          msg
+        ) ->
+          :maintain
+
+        true ->
+          :assist
+      end
+
+    genre =
+      cond do
+        Regex.match?(~r/\b(please|can you|could you|do|make|create)\b/, msg) -> :direct
+        Regex.match?(~r/\b(i will|i'll|let me|i can)\b/, msg) -> :commit
+        Regex.match?(~r/\b(approve|reject|confirm|cancel|choose|decide)\b/, msg) -> :decide
+        Regex.match?(~r/[!?]|great|thanks|thank you|sorry|frustrated/, msg) -> :express
+        true -> :inform
+      end
+
     weight = calculate_weight(message)
-    {:ok, %__MODULE__{
-      mode: mode, genre: genre, type: "general",
-      format: :text, weight: weight, raw: message,
-      channel: nil, timestamp: DateTime.utc_now(), confidence: :low
-    }}
+
+    {:ok,
+     %__MODULE__{
+       mode: mode,
+       genre: genre,
+       type: "general",
+       format: :text,
+       weight: weight,
+       raw: message,
+       channel: nil,
+       timestamp: DateTime.utc_now(),
+       confidence: :low
+     }}
   end
+
   def classify_deterministic(_, _), do: {:error, :invalid_message}
 
   @doc "Calculate signal weight (0.0 - 1.0) based on message characteristics."
@@ -297,6 +369,7 @@ defmodule MiosaSignal.MessageClassifier do
     base = min(len / 500.0, 1.0)
     Float.round(base, 2)
   end
+
   def calculate_weight(_), do: 0.5
 end
 
@@ -310,17 +383,26 @@ defmodule MiosaSignal.FailureModes do
   @spec detect(map()) :: [{failure_mode(), String.t()}]
   def detect(%{} = event) do
     violations = []
-    violations = if Map.get(event, :iteration, 0) > 10,
-      do: [{:doom_loop, "iteration count exceeded 10"} | violations], else: violations
-    violations = if Map.get(event, :consecutive_failures, 0) > 3,
-      do: [{:stall, "consecutive failures exceeded 3"} | violations], else: violations
+
+    violations =
+      if Map.get(event, :iteration, 0) > 10,
+        do: [{:doom_loop, "iteration count exceeded 10"} | violations],
+        else: violations
+
+    violations =
+      if Map.get(event, :consecutive_failures, 0) > 3,
+        do: [{:stall, "consecutive failures exceeded 3"} | violations],
+        else: violations
+
     violations
   end
+
   def detect(_), do: []
 
   def check(%{} = event, mode) when is_atom(mode) do
     event |> detect() |> Enum.any?(fn {m, _} -> m == mode end)
   end
+
   def check(_, _), do: false
 end
 
@@ -435,6 +517,7 @@ defmodule MiosaMemory.Injector do
   @doc "Filter taxonomy entries relevant to the given context."
   def inject_relevant(entries, context) when is_list(entries) do
     task = Map.get(context, :task, "")
+
     if task == "" do
       Enum.take(entries, 5)
     else
@@ -502,6 +585,7 @@ defmodule MiosaMemory.Taxonomy do
       true -> :general
     end
   end
+
   def categorize(_), do: :general
 
   def filter_by(entries, filters) when is_list(entries) and is_list(filters) do
@@ -513,6 +597,7 @@ defmodule MiosaMemory.Taxonomy do
       end)
     end)
   end
+
   def filter_by(entries, _), do: entries
 
   def categories, do: @categories
@@ -632,7 +717,7 @@ defmodule MiosaBudget.Budget do
   use GenServer
   require Logger
 
-  @daily_default_usd   50.0
+  @daily_default_usd 50.0
   @monthly_default_usd 200.0
 
   # Public API
@@ -688,6 +773,7 @@ defmodule MiosaBudget.Budget do
       daily_reset_at: tomorrow_midnight(),
       monthly_reset_at: next_month_midnight()
     }
+
     {:ok, state}
   end
 
@@ -710,6 +796,7 @@ defmodule MiosaBudget.Budget do
   @impl true
   def handle_call(:get_status, _from, state) do
     state = maybe_reset(state)
+
     status = %{
       daily_limit: state.daily_limit,
       monthly_limit: state.monthly_limit,
@@ -721,23 +808,31 @@ defmodule MiosaBudget.Budget do
       monthly_reset_at: state.monthly_reset_at,
       ledger_entries: length(state.entries)
     }
+
     {:reply, {:ok, status}, state}
   end
 
   @impl true
   def handle_cast({:record_cost, provider, model, tokens_in, tokens_out, session_id}, state) do
     cost = calculate_cost(provider, tokens_in, tokens_out)
+
     entry = %{
-      provider: provider, model: model,
-      tokens_in: tokens_in, tokens_out: tokens_out,
-      cost: cost, session_id: session_id,
+      provider: provider,
+      model: model,
+      tokens_in: tokens_in,
+      tokens_out: tokens_out,
+      cost: cost,
+      session_id: session_id,
       recorded_at: DateTime.utc_now()
     }
-    state = %{state |
-      daily_spent: state.daily_spent + cost,
-      monthly_spent: state.monthly_spent + cost,
-      entries: Enum.take([entry | state.entries], 10_000)
+
+    state = %{
+      state
+      | daily_spent: state.daily_spent + cost,
+        monthly_spent: state.monthly_spent + cost,
+        entries: Enum.take([entry | state.entries], 10_000)
     }
+
     {:noreply, state}
   end
 
@@ -753,6 +848,7 @@ defmodule MiosaBudget.Budget do
 
   defp maybe_reset(state) do
     now = DateTime.utc_now()
+
     state
     |> maybe_reset_daily(now)
     |> maybe_reset_monthly(now)
@@ -782,7 +878,10 @@ defmodule MiosaBudget.Budget do
 
   defp next_month_midnight do
     today = Date.utc_today()
-    {year, month} = if today.month == 12, do: {today.year + 1, 1}, else: {today.year, today.month + 1}
+
+    {year, month} =
+      if today.month == 12, do: {today.year + 1, 1}, else: {today.year, today.month + 1}
+
     Date.new!(year, month, 1)
     |> DateTime.new!(Time.new!(0, 0, 0), "Etc/UTC")
   end
@@ -816,18 +915,23 @@ defmodule MiosaBudget.Treasury do
   @impl true
   def init(:ok), do: {:ok, %{balance: 0.0, reserved: 0.0, log: []}}
   @impl true
-  def handle_call(:balance, _from, s), do: {:reply, {:ok, %{balance: s.balance, reserved: s.reserved}}, s}
+  def handle_call(:balance, _from, s),
+    do: {:reply, {:ok, %{balance: s.balance, reserved: s.reserved}}, s}
+
   def handle_call(:audit_log, _from, s), do: {:reply, {:ok, s.log}, s}
   @impl true
   def handle_cast({:deposit, amt, reason}, s) do
     {:noreply, %{s | balance: s.balance + amt, log: [{:deposit, amt, reason} | s.log]}}
   end
+
   def handle_cast({:withdraw, amt, reason}, s) do
     {:noreply, %{s | balance: s.balance - amt, log: [{:withdraw, amt, reason} | s.log]}}
   end
+
   def handle_cast({:reserve, amt, reason}, s) do
     {:noreply, %{s | reserved: s.reserved + amt, log: [{:reserve, amt, reason} | s.log]}}
   end
+
   def handle_cast({:release, amt, reason}, s) do
     {:noreply, %{s | reserved: s.reserved - amt, log: [{:release, amt, reason} | s.log]}}
   end
@@ -871,6 +975,7 @@ defmodule MiosaKnowledge.Reasoner do
 
   def materialize(store_ref, _rules \\ []) do
     name = MiosaKnowledge.extract_name(store_ref)
+
     case Vaos.Knowledge.materialize(name) do
       {:ok, rounds} -> {:ok, rounds}
       error -> error
@@ -908,16 +1013,21 @@ defmodule MiosaKnowledge do
 
   def assert(store_ref, triple), do: Vaos.Knowledge.assert(extract_name(store_ref), triple)
 
-  def assert_many(store_ref, triples), do: Vaos.Knowledge.assert_many(extract_name(store_ref), triples)
+  def assert_many(store_ref, triples),
+    do: Vaos.Knowledge.assert_many(extract_name(store_ref), triples)
 
   def retract(store_ref, triple), do: Vaos.Knowledge.retract(extract_name(store_ref), triple)
 
   def query(store_ref, pattern), do: Vaos.Knowledge.query(extract_name(store_ref), pattern)
 
+  def query(store_ref, pattern, opts),
+    do: Vaos.Knowledge.query(extract_name(store_ref), pattern, opts)
+
   def count(store_ref), do: Vaos.Knowledge.count(extract_name(store_ref))
   def count(store_ref, _pattern), do: Vaos.Knowledge.count(extract_name(store_ref))
 
-  def sparql(store_ref, query_string), do: Vaos.Knowledge.sparql(extract_name(store_ref), query_string)
+  def sparql(store_ref, query_string),
+    do: Vaos.Knowledge.sparql(extract_name(store_ref), query_string)
 end
 
 # ---------------------------------------------------------------------------
@@ -934,17 +1044,22 @@ defmodule MiosaSignal do
   @type signal_structure :: :simple | :compound | :complex
 
   @type t :: %__MODULE__{
-    mode: signal_mode(),
-    genre: signal_genre(),
-    type: signal_type(),
-    format: signal_format(),
-    weight: float(),
-    content: String.t(),
-    metadata: map()
-  }
+          mode: signal_mode(),
+          genre: signal_genre(),
+          type: signal_type(),
+          format: signal_format(),
+          weight: float(),
+          content: String.t(),
+          metadata: map()
+        }
 
-  defstruct mode: :assist, genre: :direct, type: :general,
-            format: :text, weight: 0.5, content: "", metadata: %{}
+  defstruct mode: :assist,
+            genre: :direct,
+            type: :general,
+            format: :text,
+            weight: 0.5,
+            content: "",
+            metadata: %{}
 
   def new(attrs) when is_map(attrs) do
     struct(__MODULE__, attrs)
@@ -952,9 +1067,11 @@ defmodule MiosaSignal do
 
   def valid?(%__MODULE__{mode: m, genre: g, type: t, format: f})
       when m in [:execute, :build, :analyze, :maintain, :assist] and
-           g in [:direct, :inform, :commit, :decide, :express] and
-           t in [:question, :request, :issue, :scheduling, :summary, :report, :general] and
-           f in [:text, :code, :json, :markdown, :binary], do: true
+             g in [:direct, :inform, :commit, :decide, :express] and
+             t in [:question, :request, :issue, :scheduling, :summary, :report, :general] and
+             f in [:text, :code, :json, :markdown, :binary],
+      do: true
+
   def valid?(_), do: false
 
   def to_cloud_event(%__MODULE__{} = signal) do
@@ -972,6 +1089,7 @@ defmodule MiosaSignal do
   rescue
     _ -> new(%{})
   end
+
   def from_cloud_event(_), do: new(%{})
 
   def measure_sn_ratio(%__MODULE__{weight: w}), do: w
@@ -994,6 +1112,7 @@ defmodule MiosaTools.Instruction do
 
   def normalize(name) when is_binary(name) do
     trimmed = String.trim(name)
+
     if trimmed == "" do
       {:error, "tool name cannot be empty"}
     else
@@ -1011,7 +1130,8 @@ defmodule MiosaTools.Instruction do
   def normalize({_tool, params}) when not is_map(params),
     do: {:error, "params must be a map"}
 
-  def normalize({tool, params, context}) when is_binary(tool) and is_map(params) and is_map(context) do
+  def normalize({tool, params, context})
+      when is_binary(tool) and is_map(params) and is_map(context) do
     case normalize(tool) do
       {:ok, inst} -> {:ok, %{inst | params: params, context: context}}
       err -> err
@@ -1065,6 +1185,7 @@ defmodule MiosaTools.Middleware do
     def call(instruction, next, opts) do
       required = Keyword.get(opts, :required, [])
       missing = Enum.reject(required, &Map.has_key?(instruction.params, &1))
+
       if missing == [] do
         next.(instruction)
       else
@@ -1082,6 +1203,7 @@ defmodule MiosaTools.Middleware do
       start = System.monotonic_time(:microsecond)
       result = next.(instruction)
       elapsed = System.monotonic_time(:microsecond) - start
+
       case result do
         {:ok, val} -> {:ok, val, elapsed}
         other -> other
@@ -1121,11 +1243,14 @@ defmodule MiosaTools.Pipeline do
       case Instruction.normalize(raw) do
         {:ok, inst} ->
           merged = Map.merge(acc, inst.params)
+
           case executor.(inst.tool, merged) do
             {:ok, result} -> {:cont, {:ok, result}}
             {:error, _} = err -> {:halt, err}
           end
-        {:error, _} = err -> {:halt, err}
+
+        {:error, _} = err ->
+          {:halt, err}
       end
     end)
   end
@@ -1147,6 +1272,7 @@ defmodule MiosaTools.Pipeline do
     results = Task.await_many(tasks, 30_000)
 
     errors = Enum.filter(results, &match?({:error, _}, &1))
+
     if errors == [] do
       {:ok, Enum.map(results, fn {:ok, v} -> v end)}
     else
@@ -1165,7 +1291,9 @@ defmodule MiosaTools.Pipeline do
             {:ok, _} = ok -> {:halt, ok}
             {:error, _} = err -> {:cont, err}
           end
-        {:error, _} = err -> {:cont, err}
+
+        {:error, _} = err ->
+          {:cont, err}
       end
     end)
   end
@@ -1176,7 +1304,9 @@ defmodule MiosaTools.Pipeline do
     attempts = Keyword.get(opts, :attempts, 3)
 
     case Instruction.normalize(instruction) do
-      {:error, _} = err -> err
+      {:error, _} = err ->
+        err
+
       {:ok, inst} ->
         Enum.reduce_while(1..attempts, {:error, "not attempted"}, fn _i, _acc ->
           case executor.(inst.tool, inst.params) do
@@ -1207,8 +1337,10 @@ defmodule MiosaProviders.Anthropic do
   defdelegate chat(messages, opts \\ []), to: Daemon.Providers.Anthropic
   defdelegate chat_stream(messages, callback, opts \\ []), to: Daemon.Providers.Anthropic
   defdelegate format_messages(messages), to: Daemon.Providers.Anthropic
+
   def format_messages_with_thinking(messages),
     do: Daemon.Providers.Anthropic.format_messages(messages)
+
   defdelegate extract_thinking(response), to: Daemon.Providers.Anthropic
   defdelegate extract_usage(response), to: Daemon.Providers.Anthropic
   defdelegate maybe_add_thinking(body, thinking), to: Daemon.Providers.Anthropic
