@@ -17,12 +17,8 @@ defmodule Daemon.Supervisors.AgentServices do
 
   @impl true
   def init(_init_arg) do
-    env = Application.get_env(:daemon, :env, :prod)
-
-    knowledge_backend =
-      if env == :test,
-        do: MiosaKnowledge.Backend.ETS,
-        else: MiosaKnowledge.Backend.Mnesia
+    # Mnesia backend was never implemented — always use ETS
+    knowledge_backend = MiosaKnowledge.Backend.ETS
 
     children = [
       Daemon.Agent.Memory,

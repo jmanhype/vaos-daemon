@@ -204,10 +204,13 @@ defmodule Daemon.Agent.Context do
 
     blocks_spec
     |> Enum.map(fn {label, priority, fun} ->
-      Logger.debug("[Context] building block: #{label}")
-      content = fun.()
-      Logger.debug("[Context] block #{label} done (#{if content, do: byte_size(content || ""), else: "nil"})")
-      {content, priority, to_string(label)}
+      task = Task.async(fn -> fun.() end)
+      case Task.yield(task, 5_000) || Task.shutdown(task, :brutal_kill) do
+        {:ok, content} -> {content, priority, to_string(label)}
+        nil ->
+          Logger.warning("[Context] block #{label} timed out after 5s")
+          {nil, priority, to_string(label)}
+      end
     end)
     |> Enum.reject(fn {content, _, _} -> is_nil(content) or content == "" end)
   end
