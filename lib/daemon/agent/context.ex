@@ -204,8 +204,13 @@ defmodule Daemon.Agent.Context do
 
     blocks_spec
     |> Enum.map(fn {label, priority, fun} ->
-      content = fun.()
-      {content, priority, to_string(label)}
+      task = Task.async(fn -> fun.() end)
+      case Task.yield(task, 5_000) || Task.shutdown(task, :brutal_kill) do
+        {:ok, content} -> {content, priority, to_string(label)}
+        nil ->
+          Logger.warning("[Context] block #{label} timed out after 5s")
+          {nil, priority, to_string(label)}
+      end
     end)
     |> Enum.reject(fn {content, _, _} -> is_nil(content) or content == "" end)
   end
@@ -687,28 +692,63 @@ defmodule Daemon.Agent.Context do
   end
 
   defp gather_git_info do
+    Logger.debug("[Context] gather_git_info starting first git command")
     parts = []
 
-    parts = case System.cmd("git", ["branch", "--show-current"], stderr_to_stdout: true) do
-      {b, 0} -> ["- Git branch: #{String.trim(b)}" | parts]
+    parts = case git_cmd(["branch", "--show-current"]) do
+      {:ok, b} -> ["- Git branch: #{String.trim(b)}" | parts]
       _ -> parts
     end
 
-    parts = case System.cmd("git", ["status", "--short"], stderr_to_stdout: true) do
-      {s, 0} when s != "" ->
+    parts = case git_cmd(["status", "--short"]) do
+      {:ok, s} when s != "" ->
         trimmed = String.trim(s)
         if trimmed != "", do: ["- Modified files:\n#{trimmed}" | parts], else: parts
       _ -> parts
     end
 
-    parts = case System.cmd("git", ["log", "--oneline", "-3"], stderr_to_stdout: true) do
-      {l, 0} -> ["- Recent commits:\n#{String.trim(l)}" | parts]
+    parts = case git_cmd(["log", "--oneline", "-3"]) do
+      {:ok, l} -> ["- Recent commits:\n#{String.trim(l)}" | parts]
       _ -> parts
     end
 
     Enum.reverse(parts) |> Enum.join("\n")
   rescue
     _ -> ""
+  end
+
+  # Run a git command via Port with explicit stdin close to prevent hangs under nohup.
+  @git_env [{"GIT_TERMINAL_PROMPT", "0"}, {"GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o ConnectTimeout=3"}]
+
+  defp git_cmd(args) do
+    git = System.find_executable("git") || "/usr/bin/git"
+
+    port = Port.open(
+      {:spawn_executable, git},
+      [:binary, :exit_status, :stderr_to_stdout,
+       args: args,
+       env: Enum.map(@git_env, fn {k, v} -> {String.to_charlist(k), String.to_charlist(v)} end)]
+    )
+
+    receive_git_output(port, "")
+  rescue
+    _ -> :error
+  end
+
+  defp receive_git_output(port, acc) do
+    receive do
+      {^port, {:data, data}} ->
+        receive_git_output(port, acc <> data)
+      {^port, {:exit_status, 0}} ->
+        {:ok, acc}
+      {^port, {:exit_status, _}} ->
+        :error
+    after
+      5_000 ->
+        Port.close(port)
+        Logger.warning("[Context] git command timed out after 5s")
+        :error
+    end
   end
 
   defp get_active_model(:anthropic), do: Application.get_env(:daemon, :anthropic_model, "claude-sonnet-4-6")
@@ -776,39 +816,128 @@ defmodule Daemon.Agent.Context do
 
   defp knowledge_block(state) do
     try do
-      # Query knowledge graph for self-diagnosis findings and investigation insights
-      # These are the high-value entries — not raw tool timestamps.
-      findings =
-        case MiosaKnowledge.query("osa_default", predicate: "vaos:topic") do
-          {:ok, results} when is_list(results) -> Enum.take(results, 5)
-          _ -> []
-        end
-
-      directions =
-        case MiosaKnowledge.query("osa_default", predicate: "vaos:direction") do
-          {:ok, results} when is_list(results) -> Enum.take(results, 3)
-          _ -> []
-        end
-
-      entries = findings ++ directions
-
-      case entries do
-        [] -> nil
-        _ ->
-          lines = Enum.map(entries, fn
-            {_s, "vaos:topic", topic} -> "- Finding: #{topic}"
-            {_s, "vaos:direction", dir} -> "- Insight: #{dir}"
-            {s, p, o} -> "- #{s} #{p} #{o}"
-            other -> "- #{inspect(other)}"
-          end)
-          "## Knowledge Context\n#{Enum.join(lines, "\n")}"
-      end
+      do_knowledge_block(state)
     rescue
       _ -> nil
     catch
       :exit, _ -> nil
     end
   end
+
+  defp do_knowledge_block(state) do
+    # Fetch all triples from the 4 known predicates
+    predicates = [
+      "vaos:axiom_fact", "vaos:protocol_decision", "vaos:topic", "vaos:direction",
+      "vaos:has_evidence", "vaos:summary"
+    ]
+
+    all_triples =
+      Enum.flat_map(predicates, fn pred ->
+        case MiosaKnowledge.query("osa_default", predicate: pred) do
+          {:ok, results} when is_list(results) -> results
+          _ -> []
+        end
+      end)
+
+    case all_triples do
+      [] -> nil
+      _ -> knowledge_block_semantic(state, all_triples)
+    end
+  end
+
+  defp knowledge_block_semantic(state, all_triples) do
+    user_query = find_latest_user_message(Map.get(state, :messages, []))
+    sidecar_up? = Daemon.Python.Embeddings.available?()
+
+    ranked =
+      if sidecar_up? and is_binary(user_query) and user_query != "" do
+        semantic_rank(user_query, all_triples)
+      else
+        # Fallback: first-N per predicate (original behavior)
+        fallback_rank(all_triples)
+      end
+
+    # Stash injected triples for feedback hook
+    sid = Map.get(state, :session_id)
+    if sid do
+      try do
+        :ets.new(:daemon_knowledge_stash, [:named_table, :public, :set])
+      rescue
+        ArgumentError -> :ok  # already exists
+      end
+      :ets.insert(:daemon_knowledge_stash, {{sid, :injected_knowledge}, ranked})
+    end
+
+    Logger.info("[knowledge_block] injected #{length(ranked)} triples (sidecar=#{sidecar_up?}) for session #{sid || "unknown"}")
+
+    lines = Enum.map(ranked, &format_triple/1)
+    "## Knowledge Context\n#{Enum.join(lines, "\n")}"
+  end
+
+  defp semantic_rank(query, triples) do
+    alias Daemon.Python.Embeddings
+    alias Daemon.Knowledge.Meta
+
+    # Build entries for the sidecar
+    entries =
+      Enum.map(triples, fn {s, p, o} = triple ->
+        %{id: Integer.to_string(:erlang.phash2(triple)), content: "#{s} #{p} #{o}"}
+      end)
+
+    # Build a lookup from phash2 string -> triple
+    id_to_triple =
+      Map.new(triples, fn {_s, _p, _o} = t -> {Integer.to_string(:erlang.phash2(t)), t} end)
+
+    # Reindex if count changed (cache in process dict)
+    prev_count = Process.get(:knowledge_triple_count, 0)
+    cur_count = length(entries)
+
+    if cur_count != prev_count do
+      Embeddings.reindex(entries)
+      Process.put(:knowledge_triple_count, cur_count)
+    end
+
+    case Embeddings.search(query, top_k: 30) do
+      {:ok, results} ->
+        results
+        |> Enum.map(fn %{"id" => id, "score" => sim} ->
+          triple = Map.get(id_to_triple, id)
+          if triple do
+            net = Meta.net_score(triple)
+            boosted = sim * max(0.1, 1.0 + net * 0.1)
+            {boosted, triple}
+          end
+        end)
+        |> Enum.reject(&is_nil/1)
+        |> Enum.sort_by(fn {score, _} -> score end, :desc)
+        |> Enum.take(18)
+        |> Enum.map(fn {_score, triple} -> triple end)
+
+      {:error, _} ->
+        Logger.warning("[knowledge_block] semantic search failed, falling back")
+        fallback_rank(triples)
+    end
+  end
+
+  defp fallback_rank(triples) do
+    limits = %{
+      "vaos:axiom_fact" => 8,
+      "vaos:protocol_decision" => 5,
+      "vaos:topic" => 3,
+      "vaos:direction" => 2
+    }
+
+    triples
+    |> Enum.group_by(fn {_s, p, _o} -> p end)
+    |> Enum.flat_map(fn {pred, ts} -> Enum.take(ts, Map.get(limits, pred, 3)) end)
+  end
+
+  defp format_triple({_s, "vaos:topic", topic}), do: "- Finding: #{topic}"
+  defp format_triple({_s, "vaos:direction", dir}), do: "- Insight: #{dir}"
+  defp format_triple({_s, "vaos:axiom_fact", fact}), do: "- Fact: #{fact}"
+  defp format_triple({_s, "vaos:protocol_decision", dec}), do: "- Decision: #{dec}"
+  defp format_triple({s, p, o}), do: "- #{s} #{p} #{o}"
+  defp format_triple(other), do: "- #{inspect(other)}"
 
   defp decision_intelligence_block(_state) do
     try do

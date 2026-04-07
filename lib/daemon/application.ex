@@ -101,7 +101,7 @@ defmodule Daemon.Application do
 
         # Start MCP servers asynchronously — don't block boot if servers are slow.
         # After servers initialise, register their tools in Tools.Registry.
-        Task.start(fn ->
+        Task.Supervisor.start_child(Daemon.TaskSupervisor, fn ->
           Daemon.MCP.Client.start_servers()
           # Block on list_tools() — it's a GenServer.call that queues behind initialize.
           # No sleep needed; we wait for all servers to complete their JSON-RPC handshake.

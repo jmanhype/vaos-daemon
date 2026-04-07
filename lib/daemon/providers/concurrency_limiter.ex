@@ -3,7 +3,7 @@ defmodule Daemon.Providers.ConcurrencyLimiter do
   Global LLM concurrency limiter using ETS counters.
 
   Caps the total number of in-flight LLM API calls across all subsystems
-  (WorkDirector, Orchestrator, SwarmMode, AutoFixer, Debate, Investigation, etc.)
+  (Orchestrator, SwarmMode, AutoFixer, Debate, Investigation, etc.)
   to prevent resource exhaustion on constrained hardware.
 
   Uses `:counters` (OTP atomic counters) — lock-free, no GenServer bottleneck,

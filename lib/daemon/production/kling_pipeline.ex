@@ -45,6 +45,7 @@ defmodule Daemon.Production.KlingPipeline do
 
   @window_name "Kling"
   @kling_url "https://app.klingai.com/global/"
+  @kling_motion_url "https://kling.ai/app/video-motion-control/new"
 
   @render_wait_ms 120_000
   @post_navigate_ms 5_000
@@ -128,6 +129,57 @@ defmodule Daemon.Production.KlingPipeline do
   var indicators=document.querySelectorAll('[class*="progress"],[class*="loading"],[class*="generating"],[class*="pending"],.ant-spin,.loading-spinner');var text=document.body.innerText.toLowerCase();var isRendering=(indicators.length>0)||(text.indexOf('generating')>-1&&text.indexOf('in queue')>-1)||(text.indexOf('processing')>-1);isRendering?'rendering':'done'
   """
 
+  # ── Motion Control selectors ────────────────────────────────────
+  # The motion control page at kling.ai/app/video-motion-control/new
+  # has: upload[0] for .mp4/.mov (motion video), upload[1] for .jpg/.png
+  # (character image), a tiptap ProseMirror prompt editor, and a Generate button.
+
+  # Upload a file to a specific input[type=file] by index (0=motion video, 1=character image)
+  @motion_upload_js_template ~S"""
+  (function(){
+    var inputs = document.querySelectorAll('input.el-upload__input[type="file"]');
+    if (inputs.length > UPLOAD_INDEX) {
+      inputs[UPLOAD_INDEX].value = '';
+      'upload_input_found_' + UPLOAD_INDEX;
+    } else {
+      'upload_input_not_found_' + UPLOAD_INDEX + '_of_' + inputs.length;
+    }
+  })()
+  """
+
+  # Focus the tiptap ProseMirror prompt editor (Kling motion control uses contenteditable)
+  @motion_prompt_js ~S"""
+  var el = document.querySelector('.tiptap.ProseMirror[contenteditable="true"]');
+  if (el) {
+    var r = el.getBoundingClientRect();
+    ['pointerdown','mousedown','pointerup','mouseup','click'].forEach(function(t) {
+      el.dispatchEvent(new PointerEvent(t, {
+        bubbles: true, cancelable: true,
+        clientX: r.x + r.width/2, clientY: r.y + r.height/2,
+        pointerId: 1
+      }));
+    });
+    el.focus();
+    Math.round(r.x + r.width/2) + ',' + Math.round(r.y + r.height/2);
+  } else { '0,0'; }
+  """
+
+  # Click the Generate button on motion control page
+  @motion_generate_js ~S"""
+  var btn = document.querySelector('button.generic-button.critical.big.button-pay');
+  if (btn) {
+    var r = btn.getBoundingClientRect();
+    ['pointerdown','mousedown','pointerup','mouseup','click'].forEach(function(t) {
+      btn.dispatchEvent(new PointerEvent(t, {
+        bubbles: true, cancelable: true,
+        clientX: r.x + r.width/2, clientY: r.y + r.height/2,
+        pointerId: 1
+      }));
+    });
+    'generate_clicked';
+  } else { 'generate_not_found'; }
+  """
+
   # Navigate to My Creatives gallery
   @navigate_creatives_js ~S"""
   var links=document.querySelectorAll('a,span,div,button');var found=false;for(var i=0;i<links.length;i++){var text=links[i].textContent.trim().toLowerCase();if(text.indexOf('my creative')>-1||text.indexOf('my video')>-1||text.indexOf('history')>-1){links[i].click();found=true;break;}}found?'creatives_clicked':'creatives_not_found'
@@ -150,6 +202,25 @@ defmodule Daemon.Production.KlingPipeline do
     - `:duration` — optional, one of "5s", "10s", "15s" (default "5s")
     - `:quality` — optional, one of "standard", "pro", "master" (default "pro")
     - `:motion_intensity` — optional, integer 1-5 (default 3)
+    - `:mode` — optional, `:image_to_video` (default) or `:motion_control`
+    - `:motion_video` — path to motion reference video (required for `:motion_control`)
+    - `:ingredients` — map of `%{"filename" => "/path"}` ingredient images (motion control)
+
+  ## Motion Control Usage
+
+      KlingPipeline.produce(%{
+        title: "Kinuk Itta",
+        mode: :motion_control,
+        motion_video: "/tmp/kling_motion_refs/man_talking_camera.mp4",
+        ingredients: %{
+          "elder_man.jpg" => "/tmp/ingredients/elder.jpg",
+          "cabin.jpg" => "/tmp/ingredients/cabin.jpg"
+        },
+        scenes: [
+          %{title: "Hook", prompt: "Warm cabin interior, golden hour light", ingredient: "elder_man.jpg"},
+          %{title: "Kitchen", prompt: "Rustic kitchen, morning light", ingredient: "elder_man.jpg"}
+        ]
+      })
   """
   @spec produce(map()) :: :ok | {:error, :already_producing}
   def produce(brief) when is_map(brief) do
@@ -178,12 +249,26 @@ defmodule Daemon.Production.KlingPipeline do
   @impl true
   def handle_call({:produce, brief}, _from, %{state: :idle} = _state) do
     scenes = Map.get(brief, :scenes, [])
+    mode = Map.get(brief, :mode, :image_to_video)
+
+    # Build ingredients map (motion control mode)
+    ingredients = Map.get(brief, :ingredients, %{})
+
+    ingredients =
+      if ingredients == %{} && Map.get(brief, :reference_image) do
+        %{"reference.jpg" => brief.reference_image}
+      else
+        ingredients
+      end
 
     new_state = %{
       state: :acquiring,
+      mode: mode,
       title: Map.get(brief, :title, "Untitled"),
       character_bible: Map.get(brief, :character_bible, ""),
       reference_image: Map.get(brief, :reference_image, nil),
+      motion_video: Map.get(brief, :motion_video, nil),
+      ingredients: ingredients,
       preset: Map.get(brief, :preset, ""),
       aspect_ratio: Map.get(brief, :aspect_ratio, "16:9"),
       duration: Map.get(brief, :duration, "5s"),
@@ -241,29 +326,40 @@ defmodule Daemon.Production.KlingPipeline do
   end
 
   def handle_continue(:navigate_to_kling, state) do
-    # Navigate to Kling AI main page
-    BrowserPipeline.navigate(@window_name, @kling_url)
-    Process.sleep(@post_navigate_ms)
+    case state.mode do
+      :motion_control ->
+        # Navigate directly to motion control page
+        BrowserPipeline.navigate(@window_name, @kling_motion_url)
+        Process.sleep(@post_navigate_ms)
 
-    url = BrowserPipeline.get_url(@window_name)
-    Logger.info("[KlingPipeline] Navigated to Kling AI (URL: #{url})")
+        url = BrowserPipeline.get_url(@window_name)
+        Logger.info("[KlingPipeline] Navigated to Motion Control (URL: #{url})")
 
-    # Click the AI Video tab in the sidebar
-    tab_result = BrowserPipeline.execute_js(@window_name, @click_ai_video_tab_js)
-    Logger.info("[KlingPipeline] AI Video tab click: #{tab_result}")
-    Process.sleep(@post_click_ms)
+        {:noreply, %{state | state: :submitting}, {:continue, :submit_motion_scene}}
 
-    # Choose mode based on whether we have a reference image
-    if state.reference_image && File.exists?(state.reference_image) do
-      mode_result = BrowserPipeline.execute_js(@window_name, @click_image_to_video_js)
-      Logger.info("[KlingPipeline] Image-to-Video mode: #{mode_result}")
-      Process.sleep(@post_click_ms)
-      {:noreply, %{state | state: :uploading_reference}, {:continue, :upload_reference}}
-    else
-      mode_result = BrowserPipeline.execute_js(@window_name, @click_text_to_video_js)
-      Logger.info("[KlingPipeline] Text-to-Video mode: #{mode_result}")
-      Process.sleep(@post_click_ms)
-      {:noreply, %{state | state: :submitting_first}, {:continue, :configure_settings}}
+      _ ->
+        # Standard I2V/T2V flow
+        BrowserPipeline.navigate(@window_name, @kling_url)
+        Process.sleep(@post_navigate_ms)
+
+        url = BrowserPipeline.get_url(@window_name)
+        Logger.info("[KlingPipeline] Navigated to Kling AI (URL: #{url})")
+
+        tab_result = BrowserPipeline.execute_js(@window_name, @click_ai_video_tab_js)
+        Logger.info("[KlingPipeline] AI Video tab click: #{tab_result}")
+        Process.sleep(@post_click_ms)
+
+        if state.reference_image && File.exists?(state.reference_image) do
+          mode_result = BrowserPipeline.execute_js(@window_name, @click_image_to_video_js)
+          Logger.info("[KlingPipeline] Image-to-Video mode: #{mode_result}")
+          Process.sleep(@post_click_ms)
+          {:noreply, %{state | state: :uploading_reference}, {:continue, :upload_reference}}
+        else
+          mode_result = BrowserPipeline.execute_js(@window_name, @click_text_to_video_js)
+          Logger.info("[KlingPipeline] Text-to-Video mode: #{mode_result}")
+          Process.sleep(@post_click_ms)
+          {:noreply, %{state | state: :submitting_first}, {:continue, :configure_settings}}
+        end
     end
   end
 
@@ -362,13 +458,114 @@ defmodule Daemon.Production.KlingPipeline do
     {:noreply, new_state}
   end
 
+  # ── Motion Control Scene Submission ──────────────────────────────
+
+  def handle_continue(:submit_motion_scene, state) do
+    scene = Enum.at(state.scenes, state.current_scene)
+    scene_num = state.current_scene + 1
+
+    Logger.info(
+      "[KlingPipeline] Motion control scene #{scene_num}/#{state.total_scenes}: #{scene[:title]}"
+    )
+
+    # Navigate to motion control page (fresh for each scene)
+    if state.current_scene > 0 do
+      BrowserPipeline.navigate(@window_name, @kling_motion_url)
+      Process.sleep(@post_navigate_ms)
+    end
+
+    # Step 1: Upload motion reference video (upload input index 0: .mp4/.mov)
+    if state.motion_video do
+      Logger.info("[KlingPipeline] Uploading motion video: #{state.motion_video}")
+      upload_to_input(state.motion_video, 0)
+      Process.sleep(@post_upload_ms)
+    end
+
+    # Step 2: Upload character image (upload input index 1: .jpg/.png)
+    # Use per-scene ingredient or fall back to reference_image
+    ingredient_key = Map.get(scene, :ingredient) || Map.get(scene, "ingredient")
+
+    character_image =
+      cond do
+        ingredient_key && Map.has_key?(state.ingredients, ingredient_key) ->
+          Map.get(state.ingredients, ingredient_key)
+
+        state.reference_image ->
+          state.reference_image
+
+        true ->
+          nil
+      end
+
+    if character_image && File.exists?(character_image) do
+      Logger.info("[KlingPipeline] Uploading character image: #{character_image}")
+      upload_to_input(character_image, 1)
+      Process.sleep(@post_upload_ms)
+    end
+
+    # Step 3: Paste prompt into tiptap ProseMirror editor
+    prompt = build_motion_prompt(state, scene)
+    coords = BrowserPipeline.execute_js(@window_name, @motion_prompt_js)
+
+    case String.split(String.trim(coords), ",") do
+      [x_str, y_str] ->
+        x = String.to_integer(x_str)
+        y = String.to_integer(y_str)
+
+        if x > 0 and y > 0 do
+          BrowserPipeline.focus_and_click(@window_name, x, y + 112)
+        end
+
+      _ ->
+        :ok
+    end
+
+    Process.sleep(300)
+    File.write!("/tmp/osa_browser_paste.txt", prompt)
+    System.cmd("bash", ["-c", "cat /tmp/osa_browser_paste.txt | pbcopy"])
+
+    BrowserPipeline.osascript([
+      ~s(tell application "Google Chrome"),
+      ~s(  set targetWindow to first window whose given name is "#{@window_name}"),
+      ~s(  set index of targetWindow to 1),
+      ~s(end tell),
+      ~s(delay 0.3),
+      ~s(tell application "System Events"),
+      ~s(  keystroke "v" using {command down}),
+      ~s(end tell)
+    ])
+
+    Process.sleep(@post_paste_ms)
+
+    # Step 4: Click Generate button
+    gen_result = BrowserPipeline.execute_js(@window_name, @motion_generate_js)
+    Logger.info("[KlingPipeline] Motion generate result: #{gen_result}")
+    Process.sleep(@post_submit_ms)
+
+    broadcast(:scene_submitted, %{scene: scene_num, title: scene[:title], mode: :motion_control})
+    Logger.info("[KlingPipeline] Motion scene #{scene_num} submitted (awaiting render)")
+
+    count_before = get_video_count()
+    new_state = %{state | state: :rendering, current_scene: scene_num, video_count_before: count_before}
+    new_state = schedule_render_poll(new_state)
+    {:noreply, new_state}
+  end
+
   def handle_continue(:post_render, state) do
     Logger.info("[KlingPipeline] Render complete for scene #{state.current_scene}")
 
-    if state.current_scene < state.total_scenes do
-      {:noreply, %{state | state: :extending}, {:continue, :extend_next_scene}}
-    else
+    if state.current_scene >= state.total_scenes do
       {:noreply, state, {:continue, :complete}}
+    else
+      case state.mode do
+        :motion_control ->
+          # Motion control: each scene is independent (fresh page)
+          {:noreply, %{state | state: :submitting}, {:continue, :submit_motion_scene}}
+
+        _ ->
+          # Standard: extend from previous scene
+          {:noreply, %{state | state: :extending}, {:continue, :extend_next_scene}}
+      end
     end
   end
 
@@ -529,6 +726,67 @@ defmodule Daemon.Production.KlingPipeline do
     Process.sleep(@post_submit_ms)
   end
 
+  defp upload_to_input(file_path, input_index) do
+    # Build upload JS targeting a specific input[type=file] by index
+    ext = Path.extname(file_path) |> String.downcase() |> String.trim_leading(".")
+
+    mime =
+      case ext do
+        "jpg" -> "image/jpeg"
+        "jpeg" -> "image/jpeg"
+        "png" -> "image/png"
+        "mp4" -> "video/mp4"
+        "mov" -> "video/quicktime"
+        _ -> "application/octet-stream"
+      end
+
+    fname = Path.basename(file_path)
+
+    script = """
+    #!/bin/bash
+    B64=$(base64 -i "$1" | tr -d '\\n')
+    cat > /tmp/osa_motion_upload.js << JSEOF
+    var b64 = "$B64";
+    var binary = atob(b64);
+    var arr = new Uint8Array(binary.length);
+    for (var i = 0; i < binary.length; i++) arr[i] = binary.charCodeAt(i);
+    var file = new File([arr], "#{fname}", {type: "#{mime}"});
+    var dt = new DataTransfer();
+    dt.items.add(file);
+    var inputs = document.querySelectorAll('input.el-upload__input[type="file"]');
+    if (inputs.length > #{input_index}) {
+      inputs[#{input_index}].files = dt.files;
+      inputs[#{input_index}].dispatchEvent(new Event("change", {bubbles: true}));
+      "uploaded " + file.size + " bytes to input #{input_index}";
+    } else {
+      "no input at index #{input_index}, found " + inputs.length;
+    }
+    JSEOF
+    """
+
+    File.write!("/tmp/osa_build_motion_upload.sh", script)
+    System.cmd("bash", ["/tmp/osa_build_motion_upload.sh", file_path])
+
+    BrowserPipeline.execute_js_file(@window_name, "/tmp/osa_motion_upload.js")
+  end
+
+  defp build_motion_prompt(state, scene) do
+    # Motion control prompts describe scene/atmosphere ONLY, not action
+    # (the motion reference video handles all movement)
+    parts = []
+    parts = if state.preset != "", do: parts ++ ["[#{state.preset}]"], else: parts
+    parts = parts ++ [scene[:prompt] || scene.prompt]
+
+    prompt = Enum.join(parts, "\n\n")
+
+    if String.length(prompt) > 2500 do
+      Logger.warning("[KlingPipeline] Motion prompt truncated to 2500 chars")
+      String.slice(prompt, 0, 2500)
+    else
+      prompt
+    end
+  end
+
   defp get_video_count do
     result = BrowserPipeline.execute_js(@window_name, @count_videos_js)
 
@@ -597,9 +855,12 @@ defmodule Daemon.Production.KlingPipeline do
   defp initial_state do
     %{
       state: :idle,
+      mode: :image_to_video,
       title: nil,
       character_bible: nil,
       reference_image: nil,
+      motion_video: nil,
+      ingredients: %{},
       preset: nil,
       aspect_ratio: "16:9",
       duration: "5s",

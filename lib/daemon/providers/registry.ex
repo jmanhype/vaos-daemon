@@ -270,7 +270,7 @@ defmodule Daemon.Providers.Registry do
 
     # Stash the boot-time decision in the process dictionary so private
     # chain-building helpers can read it without a self-GenServer-call.
-    Process.put(:daemon_ollama_excluded, not ollama_reachable)
+    :persistent_term.put(:daemon_ollama_excluded, not ollama_reachable)
 
     {:ok, %{extra_providers: %{}, ollama_excluded: not ollama_reachable}}
   end
@@ -367,7 +367,7 @@ defmodule Daemon.Providers.Registry do
   # providers are key-configured and assumed available until a runtime
   # failure flips the circuit breaker.
   defp filter_boot_excluded_providers(chain) do
-    if Process.get(:daemon_ollama_excluded, false) do
+    if :persistent_term.get(:daemon_ollama_excluded, false) do
       Enum.reject(chain, &(&1 == :ollama))
     else
       chain

@@ -28,7 +28,7 @@ All autonomous LLM calls route through ProactiveMode before reaching the agent l
 - Minimum 30 seconds between consecutive messages
 
 **Budget check:**
-- Calls `MiosaBudget.Budget.check_budget()` before every autonomous dispatch
+- Calls `MiosaBudget.Budget.check_budget()` before every autonomous action
 - If the budget is exceeded, the work is skipped and logged as `autonomous_skipped`
 
 Both limits apply to proactive-initiated work only, not to user-initiated conversations.
@@ -82,7 +82,7 @@ ProactiveMode.handle_alert(%{
 | `:critical` | Queues notification AND dispatches autonomous agent work (budget permitting) |
 | Other | Queues notification only |
 
-When an autonomous dispatch completes, the result is logged and the user receives a notification:
+When an autonomous action completes, the result is logged and the user receives a notification:
 
 ```
 [work_complete] Autonomous fix for: Memory usage at 95%

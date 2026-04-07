@@ -85,11 +85,21 @@ defmodule Daemon.Agent.Hooks do
   @spec run_async(hook_event(), map()) :: :ok
   def run_async(event, payload) do
     Task.start(fn ->
-      hooks = hooks_for_event(event)
-      started_at = System.monotonic_time(:microsecond)
-      result = run_chain(hooks, payload, event)
-      elapsed_us = System.monotonic_time(:microsecond) - started_at
-      update_metrics_ets(event, elapsed_us, result)
+      try do
+        hooks = hooks_for_event(event)
+        Logger.info("[Hooks] run_async #{event}: #{length(hooks)} hooks")
+        started_at = System.monotonic_time(:microsecond)
+        result = run_chain(hooks, payload, event)
+        elapsed_us = System.monotonic_time(:microsecond) - started_at
+        Logger.info("[Hooks] #{event} completed in #{div(elapsed_us, 1000)}ms: #{inspect(result)}")
+        update_metrics_ets(event, elapsed_us, result)
+      rescue
+        e ->
+          Logger.error("[Hooks] run_async #{event} crashed: #{Exception.message(e)}")
+      catch
+        kind, reason ->
+          Logger.error("[Hooks] run_async #{event} #{kind}: #{inspect(reason)}")
+      end
     end)
     :ok
   end
@@ -309,6 +319,24 @@ defmodule Daemon.Agent.Hooks do
         event: :post_tool_use,
         priority: 80,
         handler: &vault_auto_checkpoint/1
+      },
+
+      # Knowledge distillation — extract facts from session messages and assert
+      # to the knowledge triple store (session_end, priority 50)
+      %{
+        name: "knowledge_distill",
+        event: :session_end,
+        priority: 50,
+        handler: &knowledge_distill/1
+      },
+
+      # Knowledge feedback — increment helpful/harmful counters on injected triples
+      # based on session outcome (session_end, priority 45 — before distill)
+      %{
+        name: "knowledge_feedback",
+        event: :session_end,
+        priority: 45,
+        handler: &knowledge_feedback/1
       }
     ]
 
@@ -484,10 +512,92 @@ defmodule Daemon.Agent.Hooks do
       ArgumentError -> :ok
     end
 
+    try do
+      :ets.delete(:daemon_knowledge_stash, {sid, :injected_knowledge})
+    rescue
+      ArgumentError -> :ok
+    end
+
+    try do
+      :ets.delete(:daemon_cancel_flags, sid)
+    rescue
+      ArgumentError -> :ok
+    end
+
+    try do
+      :ets.tab2list(:daemon_pending_questions)
+      |> Enum.each(fn {ref, meta} ->
+        if meta[:session_id] == sid, do: :ets.delete(:daemon_pending_questions, ref)
+      end)
+    rescue
+      ArgumentError -> :ok
+    end
+
     {:ok, payload}
   end
 
   defp session_cleanup(payload), do: {:ok, payload}
+
+  # Knowledge feedback — increment helpful/harmful on injected triples based on outcome
+  defp knowledge_feedback(%{session_id: sid, messages: messages} = payload)
+       when is_binary(sid) and is_list(messages) do
+    stash_key = {sid, :injected_knowledge}
+
+    triples =
+      try do
+        case :ets.lookup(:daemon_knowledge_stash, stash_key) do
+          [{^stash_key, triples}] when is_list(triples) -> triples
+          _ -> []
+        end
+      rescue
+        ArgumentError -> []
+      end
+
+    if triples != [] do
+      failed? = session_looks_failed?(messages)
+
+      if failed? do
+        Enum.each(triples, &Daemon.Knowledge.Meta.increment_harmful/1)
+        Logger.info("[knowledge_feedback] incremented harmful on #{length(triples)} triples for session #{sid}")
+      else
+        Enum.each(triples, &Daemon.Knowledge.Meta.increment_helpful/1)
+        Logger.info("[knowledge_feedback] incremented helpful on #{length(triples)} triples for session #{sid}")
+      end
+    end
+
+    {:ok, payload}
+  end
+
+  defp knowledge_feedback(payload), do: {:ok, payload}
+
+  defp session_looks_failed?(messages) do
+    last_assistant =
+      messages
+      |> Enum.reverse()
+      |> Enum.find(fn
+        %{"role" => "assistant"} -> true
+        %{role: "assistant"} -> true
+        _ -> false
+      end)
+
+    case last_assistant do
+      nil -> false
+      msg ->
+        text =
+          case msg do
+            %{"content" => c} -> extract_text_content(c)
+            %{content: c} -> extract_text_content(c)
+            _ -> ""
+          end
+
+        text = String.downcase(text)
+
+        Enum.any?(
+          ["i apologize", "error:", "failed to", "doom loop", "i'm sorry, i"],
+          &String.contains?(text, &1)
+        )
+    end
+  end
 
   # Vault auto-checkpoint — save vault state every N tool calls
   defp vault_auto_checkpoint(%{session_id: sid} = payload) when is_binary(sid) do
@@ -563,6 +673,184 @@ defmodule Daemon.Agent.Hooks do
   end
 
   defp mcp_cache_post(payload), do: {:ok, payload}
+
+  # Knowledge distillation — extract grounded facts via GLM, assert to knowledge store.
+  # Runs async (fire-and-forget) so it never blocks the agent loop.
+  # Fires at :session_end — receives full session messages.
+  @glm_extract_prompt """
+  Extract genuine, grounded knowledge from this developer work session.
+  Return JSON: {"facts":[{"fact":"...","source_quote":"...","layer":"axiomatic|protocol|episodic","topic":"tag"}]}
+  Rules:
+  - Only extract facts with direct evidence in the text
+  - source_quote must be a verbatim snippet from the transcript
+  - axiomatic = verified truths about systems/tools
+  - protocol = decisions, preferences, workflows, lessons learned
+  - episodic = one-time observations
+  - topic = short tag (e.g. "ane", "networking", "elixir", "git")
+  - Max 15 facts. Empty array if nothing qualifies.
+  """
+
+  defp knowledge_distill(%{session_id: sid, messages: messages} = payload) when is_list(messages) do
+    # Build text from user + assistant messages
+    text =
+      messages
+      |> Enum.filter(fn msg ->
+        role = Map.get(msg, :role) || Map.get(msg, "role")
+        role in ["user", "assistant", :user, :assistant]
+      end)
+      |> Enum.map(fn msg ->
+        content = Map.get(msg, :content) || Map.get(msg, "content") || ""
+        extract_text_content(content)
+      end)
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.join("\n\n")
+
+    # Only distill if there's enough content
+    if String.length(text) > 200 do
+      # Truncate to ~6K chars for reasoning model headroom
+      text = if String.length(text) > 6000 do
+        String.slice(text, 0, 2000) <> "\n\n[...truncated...]\n\n" <> String.slice(text, -4000, 4000)
+      else
+        text
+      end
+
+      # Fire-and-forget async GLM extraction + assertion
+      Task.start(fn ->
+        glm_extract_and_assert(sid, text)
+      end)
+    end
+
+    {:ok, payload}
+  end
+
+  defp knowledge_distill(payload), do: {:ok, payload}
+
+  defp glm_extract_and_assert(sid, text) do
+    alias Daemon.Providers.OpenAICompat
+
+    url = Application.get_env(:daemon, :zhipu_url) || "https://api.z.ai/api/coding/paas/v4"
+    api_key = Application.get_env(:daemon, :zhipu_api_key)
+    model = "glm-5.1"
+
+    unless api_key do
+      Logger.debug("[hooks/knowledge_distill] No ZHIPU_API_KEY, skipping GLM extraction")
+      :skip
+    else
+      api_key = Daemon.Providers.OpenAICompatProvider.maybe_generate_zhipu_jwt(:zhipu, api_key)
+
+      messages = [
+        %{"role" => "system", "content" => @glm_extract_prompt},
+        %{"role" => "user", "content" => "Session transcript:\n\n#{text}"}
+      ]
+
+      # reasoning_content fallback already handled in OpenAICompat.do_chat/5 (line 79-81)
+      case OpenAICompat.chat(url, api_key, model, messages,
+             max_tokens: 4096, temperature: 0.3, receive_timeout: 180_000) do
+        {:ok, %{content: content}} when is_binary(content) and content != "" ->
+          parse_and_assert_facts(sid, content)
+
+        {:ok, _} ->
+          Logger.debug("[hooks/knowledge_distill] Empty GLM response for session #{sid}")
+
+        {:error, reason} ->
+          Logger.warning("[hooks/knowledge_distill] GLM call failed: #{inspect(reason)}")
+      end
+    end
+  rescue
+    e ->
+      Logger.warning("[hooks/knowledge_distill] GLM extraction failed: #{inspect(e)}")
+  catch
+    :exit, reason ->
+      Logger.warning("[hooks/knowledge_distill] GLM extraction exit: #{inspect(reason)}")
+  end
+
+  defp parse_and_assert_facts(sid, content) do
+    # Strip markdown fences
+    content = content
+      |> String.trim()
+      |> String.replace(~r/^```(?:json)?\s*/, "")
+      |> String.replace(~r/\s*```$/, "")
+
+    # Find JSON object
+    case Regex.run(~r/\{[\s\S]*\}/, content) do
+      [json_str] ->
+        case Jason.decode(json_str) do
+          {:ok, %{"facts" => facts}} when is_list(facts) ->
+            triples = facts
+              |> Enum.filter(fn f -> is_map(f) and is_binary(f["fact"]) end)
+              |> Enum.filter(fn f -> String.length(f["fact"]) >= 10 and String.length(f["fact"]) <= 200 end)
+              |> Enum.map(fn f ->
+                layer = f["layer"] || "episodic"
+                topic = f["topic"] || "general"
+                # Map all GLM layers to predicates that context.ex actually queries
+                predicate = case layer do
+                  "axiomatic" -> "vaos:axiom_fact"
+                  "protocol" -> "vaos:protocol_decision"
+                  # episodic still stored — useful for batch promotion later
+                  _ -> "vaos:axiom_fact"
+                end
+                {"topic:#{topic}", predicate, f["fact"]}
+              end)
+
+            if triples != [] do
+              assert_triples(sid, triples)
+            end
+
+          _ ->
+            Logger.debug("[hooks/knowledge_distill] No valid JSON facts in response")
+        end
+
+      _ ->
+        Logger.debug("[hooks/knowledge_distill] No JSON object in GLM response")
+    end
+  end
+
+  defp assert_triples(sid, triples) do
+    # Open store and verify it actually exists (store_ref returns {:error, _} if not found)
+    store_name =
+      try do
+        Vaos.Knowledge.open("osa_default")
+        case Vaos.Knowledge.store_ref("osa_default") do
+          {:error, _} -> nil
+          name when is_binary(name) -> name
+          name when is_atom(name) -> name
+          _ -> nil
+        end
+      rescue
+        _ -> nil
+      catch
+        :exit, _ -> nil
+      end
+
+    if store_name do
+      Enum.each(triples, fn {s, p, o} ->
+        MiosaKnowledge.assert(store_name, {s, p, o})
+        Daemon.Knowledge.Meta.ensure_meta({s, p, o})
+      end)
+      Logger.info("[hooks/knowledge_distill] Asserted #{length(triples)} facts for session #{sid}")
+    else
+      Logger.warning("[hooks/knowledge_distill] Knowledge store not available")
+    end
+  end
+
+  # Extract text from message content (binary string or list of content blocks)
+  defp extract_text_content(content) when is_binary(content), do: content
+
+  defp extract_text_content(content) when is_list(content) do
+    content
+    |> Enum.filter(fn
+      %{"type" => "text"} -> true
+      %{type: "text"} -> true
+      _ -> false
+    end)
+    |> Enum.map_join("\n", fn
+      %{"text" => t} -> t
+      %{text: t} -> t
+      _ -> ""
+    end)
+  end
+
+  defp extract_text_content(_), do: ""
 
   # ── Helpers ────────────────────────────────────────────────────────
 

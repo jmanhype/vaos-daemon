@@ -17,12 +17,8 @@ defmodule Daemon.Supervisors.AgentServices do
 
   @impl true
   def init(_init_arg) do
-    env = Application.get_env(:daemon, :env, :prod)
-
-    knowledge_backend =
-      if env == :test,
-        do: MiosaKnowledge.Backend.ETS,
-        else: MiosaKnowledge.Backend.Mnesia
+    # Mnesia backend was never implemented — always use ETS
+    knowledge_backend = MiosaKnowledge.Backend.ETS
 
     children = [
       Daemon.Agent.Memory,
@@ -33,8 +29,18 @@ defmodule Daemon.Supervisors.AgentServices do
       Daemon.Agent.Progress,
       Daemon.Agent.Hooks,
       Daemon.Agent.Learning,
-      {MiosaKnowledge.Store, store_id: "osa_default", backend: knowledge_backend},
-      Daemon.Agent.Memory.KnowledgeBridge,
+      %{
+        id: Daemon.Supervisors.Knowledge,
+        type: :supervisor,
+        start: {Supervisor, :start_link, [
+          [
+            {MiosaKnowledge.Store, store_id: "osa_default", backend: knowledge_backend},
+            Daemon.Knowledge.Meta,
+            Daemon.Agent.Memory.KnowledgeBridge
+          ],
+          [strategy: :rest_for_one, name: Daemon.Supervisors.Knowledge]
+        ]}
+      },
       Daemon.Vault.Supervisor,
       Daemon.Agent.Scheduler,
       Daemon.Agent.Compactor,

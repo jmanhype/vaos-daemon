@@ -140,7 +140,17 @@ defmodule Daemon.Tools.Builtins.Investigate do
         {:ok, "Investigation skipped — conflict: #{reason}"}
 
       _ ->
-        do_run_investigation(topic, depth, steering, caller_metadata)
+        result = do_run_investigation(topic, depth, steering, caller_metadata)
+
+        # Always clear in-flight status so future investigations aren't blocked
+        outcome = case result do
+          {:ok, _} -> :success
+          {:error, _} -> :failed
+          _ -> :success
+        end
+        Daemon.Intelligence.DecisionJournal.record_outcome("n/a", outcome, %{topic: topic})
+
+        result
     end
   end
 
@@ -644,7 +654,7 @@ Known failure patterns to avoid:
       MiosaKnowledge.assert(store, {atk_id, "vaos:summary", atk.description})
     end)
 
-    # Merge caller metadata (e.g. source_module from CodeIntrospector) into event payload
+    # Merge caller metadata into event payload
     json_metadata = Map.merge(json_metadata, caller_metadata)
 
     # Emit investigation_complete event for Retrospector strategy optimization

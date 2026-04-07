@@ -1,21 +1,15 @@
 defmodule Daemon.Intelligence.DecisionJournal do
   @moduledoc """
-  Coordination spine for autonomous decision-making modules.
+  Coordination spine for autonomous decision-making.
 
-  Every module that creates branches/PRs (InsightActuator, ConvergenceEngine,
-  WorkDirector) calls `propose/3` before acting. The Journal:
+  Modules that create branches/PRs call `propose/3` before acting. The Journal:
 
   1. **Dedup** — rejects proposals that conflict with in-flight work
   2. **ALCOA provenance** — records every decision to EpistemicLedger
-  3. **Unified PR polling** — single `gh pr list` replaces 3 independent loops
+  3. **Unified PR polling** — single `gh pr list` replaces independent loops
   4. **Cross-module reward routing** — PR outcomes update the originating module
      AND related modules get partial signal
-  5. **Observability** — `decisions/0` and `stats/0` show the full autonomous history
-
-  Branch prefix conventions:
-  - `insight/` — InsightActuator
-  - `convergence/` — ConvergenceEngine
-  - `workdir/` — WorkDirector
+  5. **Observability** — `decisions/0` and `stats/0` show the full decision history
   """
   use GenServer
   require Logger
@@ -74,6 +68,17 @@ defmodule Daemon.Intelligence.DecisionJournal do
       _ -> []
     catch
       :exit, _ -> []
+    end
+  end
+
+  @doc "Clear all in-flight entries (use to recover from stale locks)."
+  def clear_in_flight do
+    try do
+      GenServer.call(__MODULE__, :clear_in_flight)
+    rescue
+      _ -> :ok
+    catch
+      :exit, _ -> :ok
     end
   end
 
@@ -199,6 +204,23 @@ defmodule Daemon.Intelligence.DecisionJournal do
   end
 
   @impl true
+  def handle_call(:clear_in_flight, _from, state) do
+    count = map_size(state.in_flight)
+    Logger.info("[DecisionJournal] Clearing #{count} in-flight entries")
+
+    decisions = Enum.map(state.decisions, fn d ->
+      if d.status == :in_flight do
+        %{d | status: :cleared, completed_at: DateTime.utc_now(), outcome: :cleared}
+      else
+        d
+      end
+    end)
+
+    state = %{state | decisions: decisions, in_flight: %{}}
+    persist_state(state)
+    {:reply, {:ok, count}, state}
+  end
+
   def handle_cast({:record_outcome, branch, outcome, metadata}, state) do
     state = do_record_outcome(state, branch, outcome, metadata)
     {:noreply, state}

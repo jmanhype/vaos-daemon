@@ -14,6 +14,8 @@ defmodule Daemon.Production.Supervisor do
 
   @impl true
   def init(_init_arg) do
+    # Chrome CDP pipelines disabled — they hijack the active browser session.
+    # Re-enable individually when running headless Chrome or a dedicated profile.
     children = [
       Daemon.Production.ChromeSlot,
       Daemon.Production.FlowRateLimiter,
@@ -22,7 +24,8 @@ defmodule Daemon.Production.Supervisor do
       Daemon.Production.SoraPipeline,
       Daemon.Production.KlingPipeline,
       Daemon.Production.FilmProducer,
-      Daemon.Production.XPublisher
+      Daemon.Production.XPublisher,
+      Daemon.Production.AiStudioPipeline
     ]
 
     Supervisor.init(children, strategy: :one_for_one)

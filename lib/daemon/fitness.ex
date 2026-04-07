@@ -10,7 +10,7 @@ defmodule Daemon.Fitness do
 
   ## FreezingArchRule
 
-  On first run, the ConvergenceEngine snapshots all existing violations into
+  On first run, existing violations are snapshotted into
   `~/.daemon/frozen_violations/`. Subsequent runs only act on NEW violations —
   violations not present in the frozen snapshot. When violations are fixed,
   they're removed from the frozen store (ratchet effect).
@@ -95,7 +95,7 @@ defmodule Daemon.Fitness do
 
   @doc """
   Snapshot current violations to initialize the frozen store.
-  Called once on ConvergenceEngine's first cycle.
+  Called once on first cycle to establish the frozen baseline.
   """
   def freeze_current!(workspace) do
     Enum.each(all(), fn mod ->

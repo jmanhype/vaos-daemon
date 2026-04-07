@@ -75,7 +75,11 @@ defmodule Daemon.Providers.OpenAICompat do
     try do
       case Req.post(url, json: body, headers: headers, receive_timeout: timeout) do
         {:ok, %{status: 200, body: %{"choices" => [%{"message" => msg} | _]} = resp}} ->
-          raw_content = msg["content"] || ""
+          # GLM-5.1 reasoning models put output in reasoning_content when content is empty
+          raw_content = case msg["content"] do
+            c when is_binary(c) and c != "" -> c
+            _ -> msg["reasoning_content"] || ""
+          end
           tool_calls = parse_tool_calls(msg, model)
           # Strip XML tool-call markup from content when calls were parsed from text (not tool_calls field)
           content =
@@ -175,6 +179,13 @@ defmodule Daemon.Providers.OpenAICompat do
   #   data: {"choices":[{"delta":{"content":"tok"}}]}
   #   data: [DONE]
   defp handle_sse_chunk(data, callback, acc) do
+    # Detect non-SSE error responses (e.g., Zhipu rate limit returns raw JSON, not SSE)
+    acc = case Jason.decode(data) do
+      {:ok, %{"error" => %{"message" => msg, "code" => code}}} ->
+        Logger.warning("[stream] API error in SSE: code=#{code} #{msg}")
+        %{acc | content: acc.content <> "[API Error: #{msg}]"}
+      _ -> acc
+    end
     {lines, new_buffer} = split_sse_lines(acc.buffer <> data)
     acc = %{acc | buffer: new_buffer}
     Enum.reduce(lines, acc, &process_sse_line(&1, callback, &2))

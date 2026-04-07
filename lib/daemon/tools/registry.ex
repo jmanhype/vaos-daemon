@@ -817,7 +817,8 @@ defmodule Daemon.Tools.Registry do
       "vault_checkpoint" => Daemon.Tools.Builtins.VaultCheckpoint,
       "vault_inject" => Daemon.Tools.Builtins.VaultInject,
       "compute_vm" => Daemon.Tools.Builtins.ComputeVm,
-      "investigate" => Daemon.Tools.Builtins.Investigate
+      "investigate" => Daemon.Tools.Builtins.Investigate,
+      "autoresearch_loop" => Daemon.Tools.Builtins.AutoresearchLoop
     }
   end
 

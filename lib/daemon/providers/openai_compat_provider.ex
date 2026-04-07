@@ -158,9 +158,11 @@ defmodule Daemon.Providers.OpenAICompatProvider do
     end
   end
 
-  # Zhipu API keys are in {id}.{secret} format and need JWT conversion.
-  # Raw keys return 401 "token expired". Generate HS256 JWT with 1h expiry.
-  defp maybe_generate_zhipu_jwt(:zhipu, api_key) when is_binary(api_key) do
+  @doc """
+  Convert Zhipu API key to JWT if needed. Keys in {id}.{secret} format
+  need HS256 JWT conversion. Raw keys return 401 "token expired".
+  """
+  def maybe_generate_zhipu_jwt(:zhipu, api_key) when is_binary(api_key) do
     case String.split(api_key, ".", parts: 2) do
       [id, secret] when byte_size(secret) > 0 ->
         generate_zhipu_jwt(id, secret)
@@ -171,7 +173,7 @@ defmodule Daemon.Providers.OpenAICompatProvider do
     end
   end
 
-  defp maybe_generate_zhipu_jwt(_provider, api_key), do: api_key
+  def maybe_generate_zhipu_jwt(_provider, api_key), do: api_key
 
   defp generate_zhipu_jwt(id, secret) do
     now_ms = System.system_time(:millisecond)
