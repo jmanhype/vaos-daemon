@@ -68,10 +68,8 @@ defmodule Daemon.Vault.FactExtractor do
   """
   @spec extract(String.t()) :: [fact()]
   def extract(content) when is_binary(content) do
-    @pattern_sources
-    |> Enum.flat_map(fn {type, {src, opts}, confidence} ->
-      regex = Regex.compile!(src, opts)
-
+    compiled_patterns()
+    |> Enum.flat_map(fn {type, regex, confidence} ->
       case Regex.run(regex, content) do
         [_match | captures] ->
           value = Enum.join(captures, " ") |> String.trim()
@@ -126,5 +124,19 @@ defmodule Daemon.Vault.FactExtractor do
   @spec to_triple(fact(), String.t()) :: {String.t(), String.t(), String.t()}
   def to_triple(fact, subject) do
     {subject, fact.predicate, fact.value}
+  end
+
+  # Compile regexes once and cache in persistent_term (survives across calls)
+  defp compiled_patterns do
+    case :persistent_term.get({__MODULE__, :patterns}, nil) do
+      nil ->
+        patterns = Enum.map(@pattern_sources, fn {type, {src, opts}, confidence} ->
+          {type, Regex.compile!(src, opts), confidence}
+        end)
+        :persistent_term.put({__MODULE__, :patterns}, patterns)
+        patterns
+      patterns ->
+        patterns
+    end
   end
 end

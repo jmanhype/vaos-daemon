@@ -133,6 +133,50 @@ defmodule Daemon.Production.API do
     end
   end
 
+  # ── X Publisher Pipeline ──────────────────────────────────────────────
+
+  post "/publish/article" do
+    params = conn.body_params
+
+    article = %{
+      title: params["title"],
+      html_path: params["html_path"],
+      cover_image_path: params["cover_image_path"],
+      video_path: params["video_path"],
+      inline_images: params["inline_images"] || []
+    }
+
+    case Daemon.Production.XPublisher.publish_article(article) do
+      :ok ->
+        send_resp(conn, 202, Jason.encode!(%{status: "started", title: article.title}))
+
+      {:error, reason} ->
+        send_resp(conn, 409, Jason.encode!(%{error: inspect(reason)}))
+    end
+  end
+
+  post "/publish/thread" do
+    params = conn.body_params
+
+    case Daemon.Production.XPublisher.post_thread(%{
+      tweets: params["tweets"] || [],
+      media_path: params["media_path"]
+    }) do
+      :ok -> send_resp(conn, 202, Jason.encode!(%{status: "started"}))
+      {:error, reason} -> send_resp(conn, 409, Jason.encode!(%{error: inspect(reason)}))
+    end
+  end
+
+  get "/publish/status" do
+    status = Daemon.Production.XPublisher.status()
+    send_resp(conn, 200, Jason.encode!(status))
+  end
+
+  post "/publish/abort" do
+    Daemon.Production.XPublisher.abort()
+    send_resp(conn, 200, Jason.encode!(%{status: "aborted"}))
+  end
+
   match _ do
     send_resp(conn, 404, Jason.encode!(%{error: "not_found"}))
   end

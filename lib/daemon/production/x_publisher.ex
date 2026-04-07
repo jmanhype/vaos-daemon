@@ -130,35 +130,40 @@ defmodule Daemon.Production.XPublisher do
 
   def handle_info({:step, :art_paste}, state) do
     html_path = state.params[:html_path] || state.params["html_path"]
-    Logger.info("[XPub] Pasting content")
+    Logger.info("[XPub] Injecting HTML into DraftJS editor via JS")
 
-    # Run clipboard copy in a Task so it doesn't block
-    task = Task.async(fn ->
-      System.cmd("python3", ["/tmp/copy_to_clipboard.py", "html", "--file", html_path])
-      :clipboard_done
-    end)
+    # Read HTML, base64-encode it, inject via chrome_js
+    # This avoids needing Chrome to be frontmost (no keyboard paste)
+    html = File.read!(html_path)
+    b64 = Base.encode64(html)
 
-    {:noreply, %{state | step: :paste_content, task_ref: task.ref}}
-  end
+    # Inject in chunks if needed - DraftJS needs focus + execCommand
+    # We use a JS approach: decode base64, focus contenteditable, execCommand insertHTML
+    js = """
+    (function(){
+      var b64='#{b64}';
+      var html=atob(b64);
+      var ed=document.querySelector('[contenteditable=true]');
+      if(!ed){return 'NO_EDITOR'}
+      ed.focus();
+      var sel=window.getSelection();
+      sel.selectAllChildren(ed);
+      sel.collapseToEnd();
+      document.execCommand('selectAll',false,null);
+      document.execCommand('delete',false,null);
+      document.execCommand('insertHTML',false,html);
+      return 'INJECTED '+html.length+' chars';
+    })()
+    """
+    |> String.replace("\n", " ")
 
-  def handle_info({ref, :clipboard_done}, %{task_ref: ref} = state) do
-    Process.demonitor(ref, [:flush])
-    schedule_step(:art_paste_focus, 1_000)
-    {:noreply, %{state | task_ref: nil}}
-  end
+    {result, _} = chrome_js(js)
+    Logger.info("[XPub] JS inject result: #{String.trim(result)}")
 
-  def handle_info({:step, :art_paste_focus}, state) do
-    chrome_js(~s|var e=document.querySelector("[role=textbox]");if(e){e.focus();e.click()}|)
-    schedule_step(:art_paste_key, 500)
-    {:noreply, state}
-  end
-
-  def handle_info({:step, :art_paste_key}, state) do
-    computer_use_key("cmd+v")
     cover = state.params[:cover_image_path] || state.params["cover_image_path"]
-    next = if cover, do: :art_cover, else: :art_check_video
-    schedule_step(next, 3_000)
-    {:noreply, state}
+    next = if cover, do: :art_cover, else: :art_inline_images
+    schedule_step(next, 5_000)
+    {:noreply, %{state | step: :paste_content}}
   end
 
   def handle_info({:step, :art_cover}, state) do
@@ -171,8 +176,62 @@ defmodule Daemon.Production.XPublisher do
 
   def handle_info({:step, :art_cover_apply}, state) do
     chrome_js(~s|var b=document.querySelectorAll("button");for(var i=0;i<b.length;i++){if(b[i].textContent.trim()==="Apply"){b[i].click();break}}|)
-    schedule_step(:art_check_video, 2_000)
+    schedule_step(:art_inline_images, 2_000)
     {:noreply, state}
+  end
+
+  # ── Inline Image Pipeline ───────────────────────────────────────────────
+  # Inserts images at specific text anchors in the article body.
+  # Each inline image: position cursor after anchor text → Add Media → upload
+
+  def handle_info({:step, :art_inline_images}, state) do
+    images = state.params[:inline_images] || state.params["inline_images"] || []
+    if images == [] do
+      schedule_step(:art_check_video, 0)
+      {:noreply, state}
+    else
+      Logger.info("[XPub] Inserting #{length(images)} inline images")
+      state = put_in(state.params[:_inline_queue], images)
+      schedule_step(:art_inline_next, 500)
+      {:noreply, state}
+    end
+  end
+
+  def handle_info({:step, :art_inline_next}, state) do
+    queue = get_in(state.params, [:_inline_queue]) || []
+    case queue do
+      [] ->
+        Logger.info("[XPub] All inline images inserted")
+        schedule_step(:art_check_video, 1_000)
+        {:noreply, state}
+
+      [img | rest] ->
+        path = img["path"] || img[:path]
+        anchor = img["after_text"] || img[:after_text] || ""
+        Logger.info("[XPub] Inserting inline image after: #{String.slice(anchor, 0..40)}...")
+
+        # Position cursor after the anchor text in the editor
+        js = ~s|(function(){var ed=document.querySelector('[contenteditable=true]');if(!ed)return 'NO_ED';var tw=document.createTreeWalker(ed,NodeFilter.SHOW_TEXT,null,false);var found=false;while(tw.nextNode()){var n=tw.currentNode;var idx=n.textContent.indexOf("#{esc(anchor)}");if(idx>=0){var r=document.createRange();r.setStart(n,idx+#{String.length(anchor)});r.collapse(true);var s=window.getSelection();s.removeAllRanges();s.addRange(r);found=true;break}}if(!found)return 'ANCHOR_NOT_FOUND';document.execCommand('insertParagraph',false,null);return 'CURSOR_SET'})()|
+        {result, _} = chrome_js(js)
+        Logger.info("[XPub] Cursor position: #{String.trim(result)}")
+
+        # Click "Add Media" button
+        :timer.sleep(500)
+        chrome_js(~s|var b=document.querySelectorAll("button,[role=button]");for(var i=0;i<b.length;i++){if(b[i].getAttribute("aria-label")==="Add Media"){b[i].click();break}}|)
+        :timer.sleep(1_000)
+
+        # Click "Media" menu item
+        chrome_js(~s|var m=document.querySelectorAll("[role=menuitem]");for(var i=0;i<m.length;i++){if(m[i].textContent.trim()==="Media"){m[i].click();break}}|)
+        :timer.sleep(1_000)
+
+        # Upload the image via DataTransfer injection on the file input that appears
+        upload_image_datatransfer(path, ~s|input[type=file]|)
+
+        state = put_in(state.params[:_inline_queue], rest)
+        # Wait for image to process before next one
+        schedule_step(:art_inline_next, 5_000)
+        {:noreply, %{state | step: :inline_image}}
+    end
   end
 
   def handle_info({:step, :art_check_video}, state) do
