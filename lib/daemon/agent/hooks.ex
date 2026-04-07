@@ -508,6 +508,21 @@ defmodule Daemon.Agent.Hooks do
       ArgumentError -> :ok
     end
 
+    try do
+      :ets.delete(:daemon_cancel_flags, sid)
+    rescue
+      ArgumentError -> :ok
+    end
+
+    try do
+      :ets.tab2list(:daemon_pending_questions)
+      |> Enum.each(fn {ref, meta} ->
+        if meta[:session_id] == sid, do: :ets.delete(:daemon_pending_questions, ref)
+      end)
+    rescue
+      ArgumentError -> :ok
+    end
+
     {:ok, payload}
   end
 

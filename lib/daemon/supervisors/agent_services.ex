@@ -33,9 +33,18 @@ defmodule Daemon.Supervisors.AgentServices do
       Daemon.Agent.Progress,
       Daemon.Agent.Hooks,
       Daemon.Agent.Learning,
-      {MiosaKnowledge.Store, store_id: "osa_default", backend: knowledge_backend},
-      Daemon.Knowledge.Meta,
-      Daemon.Agent.Memory.KnowledgeBridge,
+      %{
+        id: Daemon.Supervisors.Knowledge,
+        type: :supervisor,
+        start: {Supervisor, :start_link, [
+          [
+            {MiosaKnowledge.Store, store_id: "osa_default", backend: knowledge_backend},
+            Daemon.Knowledge.Meta,
+            Daemon.Agent.Memory.KnowledgeBridge
+          ],
+          [strategy: :rest_for_one, name: Daemon.Supervisors.Knowledge]
+        ]}
+      },
       Daemon.Vault.Supervisor,
       Daemon.Agent.Scheduler,
       Daemon.Agent.Compactor,

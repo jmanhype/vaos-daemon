@@ -458,13 +458,17 @@ defmodule Daemon.Production.XPublisher do
   end
 
   defp computer_use_key(key) do
-    json = Jason.encode!(%{arguments: %{action: "key", text: key}})
-    System.cmd("curl", ["-s", "-X", "POST", "http://localhost:8089/api/v1/tools/computer_use/execute", "-H", "Content-Type: application/json", "-d", json])
+    case Daemon.Tools.Builtins.ComputerUse.execute(%{"action" => "key", "text" => key}) do
+      {:ok, result} -> {Jason.encode!(result), 0}
+      {:error, reason} -> {to_string(reason), 1}
+    end
   end
 
   defp computer_use_type(text) do
-    json = Jason.encode!(%{arguments: %{action: "type", text: text}})
-    System.cmd("curl", ["-s", "-X", "POST", "http://localhost:8089/api/v1/tools/computer_use/execute", "-H", "Content-Type: application/json", "-d", json])
+    case Daemon.Tools.Builtins.ComputerUse.execute(%{"action" => "type", "text" => text}) do
+      {:ok, result} -> {Jason.encode!(result), 0}
+      {:error, reason} -> {to_string(reason), 1}
+    end
   end
 
   defp esc(text), do: text |> String.replace("\\", "\\\\") |> String.replace("\"", "\\\"") |> String.replace("\n", "\\n")

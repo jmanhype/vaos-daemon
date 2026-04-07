@@ -93,6 +93,11 @@ defmodule Daemon.Agent.Loop do
     # :full | :workspace | :read_only
     # Controls which tools the agent is allowed to execute this session.
     permission_tier: :full,
+    # Stored `from` ref for async reply via GenServer.reply/2.
+    # Set when handle_call defers work to handle_continue.
+    reply_to: nil,
+    # Whether to skip plan mode (carried into handle_continue).
+    skip_plan: false,
     # Pluggable reasoning strategy (module implementing Strategy behaviour).
     # Defaults to ReAct for backward compatibility.
     strategy: nil,
@@ -245,7 +250,7 @@ defmodule Daemon.Agent.Loop do
   end
 
   @impl true
-  def handle_call({:process, message, opts}, _from, state) do
+  def handle_call({:process, message, opts}, from, state) do
     skip_plan = Keyword.get(opts, :skip_plan, false)
 
     # Clear any stale cancel flag for this session
@@ -432,124 +437,18 @@ defmodule Daemon.Agent.Loop do
 
       :execute_tools ->
 
-    # 3. Check if plan mode should trigger
-    if not skip_plan and should_plan?(state) do
-      # Plan mode: single LLM call with plan overlay, no tools
-      state = %{state | plan_mode: true}
-      context = Context.build(state)
-
-      Bus.emit(:llm_request, %{session_id: state.session_id, iteration: 0, agent: state.session_id})
-      start_time = System.monotonic_time(:millisecond)
-
-      result = LLMClient.llm_chat(state, context.messages, tools: [], temperature: 0.3)
-
-      duration_ms = System.monotonic_time(:millisecond) - start_time
-
-      usage =
-        case result do
-          {:ok, resp} -> Map.get(resp, :usage, %{})
-          _ -> %{}
-        end
-
-      Bus.emit(:llm_response, %{
-        session_id: state.session_id,
-        provider: state.provider,
-        duration_ms: duration_ms,
-        usage: usage,
-        agent: state.session_id
-      })
-
-      case result do
-        {:ok, %{content: plan_text}} ->
-          Memory.append(state.session_id, %{role: "assistant", content: plan_text, channel: state.channel})
-          state = %{state | plan_mode: false, status: :idle}
-          emit_context_pressure(state)
-
-          Bus.emit(:agent_response, %{
-            session_id: state.session_id,
-            response: plan_text,
-            response_type: "plan",
-            agent: state.session_id
-          })
-
-          {:reply, {:plan, plan_text}, state}
-
-        {:error, reason} ->
-          # Fall through to normal execution on plan failure
-          Logger.warning(
-            "Plan mode LLM call failed (#{inspect(reason)}), falling back to normal execution"
-          )
-
-          state = %{state | plan_mode: false}
-          {response, state} = run_loop(state)
-
-          response = maybe_scrub_prompt_leak(response)
-
-          state = %{
-            state
-            | messages: state.messages ++ [%{role: "assistant", content: response}],
-              status: :idle
-          }
-
-          Memory.append(state.session_id, %{role: "assistant", content: response, channel: state.channel})
-
-          emit_context_pressure(state)
-
-          meta = %{iteration_count: state.iteration, tools_used: extract_tools_used(state.messages)}
-          state = %{state | last_meta: meta}
-
-          Bus.emit(:agent_response, %{
-            session_id: state.session_id,
-            response: response,
-            agent: state.session_id
-          })
-
-          Phoenix.PubSub.broadcast(Daemon.PubSub, "osa:session:#{state.session_id}",
-            {:daemon_event, %{type: :done, session_id: state.session_id}})
-
-          {:reply, {:ok, response}, state}
-      end
-    else
-      # Normal execution path — message goes straight to LLM
-      Logger.info("[loop] Entering run_loop for session #{state.session_id}")
-      {response, state} = try do
-        run_loop(state)
-      rescue
-        e ->
-          Logger.error("[loop] CRASH in run_loop: #{Exception.message(e)}\n#{Exception.format_stacktrace(__STACKTRACE__)}")
-          {"Sorry, an internal error occurred.", state}
+    # 3. Defer expensive work (LLM calls, tool execution) to handle_continue
+    #    so the GenServer mailbox is unblocked for cancel messages etc.
+    continue_tag =
+      if not skip_plan and should_plan?(state) do
+        :plan_loop
+      else
+        :run_loop
       end
 
-      response = maybe_scrub_prompt_leak(response)
+    state = %{state | reply_to: from, skip_plan: skip_plan}
+    {:noreply, state, {:continue, continue_tag}}
 
-      meta = %{iteration_count: state.iteration, tools_used: extract_tools_used(state.messages)}
-
-      state = %{
-        state
-        | messages: state.messages ++ [%{role: "assistant", content: response}],
-          status: :idle,
-          last_meta: meta
-      }
-
-      # 4. Persist assistant response to JSONL session storage
-      Memory.append(state.session_id, %{role: "assistant", content: response, channel: state.channel})
-
-      # Session-end learning hooks — async, non-blocking
-      maybe_run_session_learning(state, response)
-
-      emit_context_pressure(state)
-
-      Bus.emit(:agent_response, %{
-        session_id: state.session_id,
-        response: response,
-        agent: state.session_id
-      })
-
-      Phoenix.PubSub.broadcast(Daemon.PubSub, "osa:session:#{state.session_id}",
-        {:daemon_event, %{type: :done, session_id: state.session_id}})
-
-      {:reply, {:ok, response}, state}
-    end
     end  # closes :execute_tools arm of route_by_genre case
     end  # closes noise_filter :pass else branch
     end  # closes prompt_injection? else branch
@@ -564,11 +463,6 @@ defmodule Daemon.Agent.Loop do
     uptime = if state.started_at, do: DateTime.diff(DateTime.utc_now(), state.started_at), else: 0
     snap = %{session_id: state.session_id, iteration: state.iteration, tokens_used: estimate_tokens_for_introspection(state), tools_called: state.last_meta[:tools_used] || [], status: state.status, started_at: state.started_at, uptime_seconds: uptime, provider: state.provider, model: state.model}
     {:reply, {:ok, snap}, state}
-  end
-
-  @impl true
-  def handle_call({:swap_provider, provider, model}, _from, state) do
-    {:reply, :ok, %{state | provider: provider, model: model}}
   end
 
   @impl true
@@ -611,6 +505,138 @@ defmodule Daemon.Agent.Loop do
   def handle_call(:get_strategy, _from, state) do
     name = if state.strategy, do: state.strategy.name(), else: :none
     {:reply, {:ok, name, state.strategy_state}, state}
+  end
+
+  # --- handle_continue: deferred expensive work ---
+  # These run after handle_call returns {:noreply, ...}, keeping the mailbox open.
+
+  @impl true
+  def handle_continue(:plan_loop, state) do
+    # Plan mode: single LLM call with plan overlay, no tools
+    state = %{state | plan_mode: true}
+    context = Context.build(state)
+
+    Bus.emit(:llm_request, %{session_id: state.session_id, iteration: 0, agent: state.session_id})
+    start_time = System.monotonic_time(:millisecond)
+
+    result = LLMClient.llm_chat(state, context.messages, tools: [], temperature: 0.3)
+
+    duration_ms = System.monotonic_time(:millisecond) - start_time
+
+    usage =
+      case result do
+        {:ok, resp} -> Map.get(resp, :usage, %{})
+        _ -> %{}
+      end
+
+    Bus.emit(:llm_response, %{
+      session_id: state.session_id,
+      provider: state.provider,
+      duration_ms: duration_ms,
+      usage: usage,
+      agent: state.session_id
+    })
+
+    case result do
+      {:ok, %{content: plan_text}} ->
+        Memory.append(state.session_id, %{role: "assistant", content: plan_text, channel: state.channel})
+        from = state.reply_to
+        state = %{state | plan_mode: false, status: :idle, reply_to: nil}
+        emit_context_pressure(state)
+
+        Bus.emit(:agent_response, %{
+          session_id: state.session_id,
+          response: plan_text,
+          response_type: "plan",
+          agent: state.session_id
+        })
+
+        GenServer.reply(from, {:plan, plan_text})
+        {:noreply, state}
+
+      {:error, reason} ->
+        # Fall through to normal execution on plan failure
+        Logger.warning(
+          "Plan mode LLM call failed (#{inspect(reason)}), falling back to normal execution"
+        )
+
+        state = %{state | plan_mode: false}
+        {response, state} = run_loop(state)
+
+        response = maybe_scrub_prompt_leak(response)
+
+        state = %{
+          state
+          | messages: state.messages ++ [%{role: "assistant", content: response}],
+            status: :idle
+        }
+
+        Memory.append(state.session_id, %{role: "assistant", content: response, channel: state.channel})
+
+        emit_context_pressure(state)
+
+        meta = %{iteration_count: state.iteration, tools_used: extract_tools_used(state.messages)}
+        state = %{state | last_meta: meta}
+
+        Bus.emit(:agent_response, %{
+          session_id: state.session_id,
+          response: response,
+          agent: state.session_id
+        })
+
+        Phoenix.PubSub.broadcast(Daemon.PubSub, "osa:session:#{state.session_id}",
+          {:daemon_event, %{type: :done, session_id: state.session_id}})
+
+        from = state.reply_to
+        state = %{state | reply_to: nil}
+        GenServer.reply(from, {:ok, response})
+        {:noreply, state}
+    end
+  end
+
+  @impl true
+  def handle_continue(:run_loop, state) do
+    Logger.info("[loop] Entering run_loop for session #{state.session_id}")
+    {response, state} = try do
+      run_loop(state)
+    rescue
+      e ->
+        Logger.error("[loop] CRASH in run_loop: #{Exception.message(e)}\n#{Exception.format_stacktrace(__STACKTRACE__)}")
+        {"Sorry, an internal error occurred.", state}
+    end
+
+    response = maybe_scrub_prompt_leak(response)
+
+    meta = %{iteration_count: state.iteration, tools_used: extract_tools_used(state.messages)}
+
+    state = %{
+      state
+      | messages: state.messages ++ [%{role: "assistant", content: response}],
+        status: :idle,
+        last_meta: meta
+    }
+
+    # Persist assistant response to JSONL session storage
+    Memory.append(state.session_id, %{role: "assistant", content: response, channel: state.channel})
+
+    # Session-end learning hooks — async, non-blocking
+    maybe_run_session_learning(state, response)
+
+    emit_context_pressure(state)
+
+    Bus.emit(:agent_response, %{
+      session_id: state.session_id,
+      response: response,
+      agent: state.session_id
+    })
+
+    Phoenix.PubSub.broadcast(Daemon.PubSub, "osa:session:#{state.session_id}",
+      {:daemon_event, %{type: :done, session_id: state.session_id}})
+
+    from = state.reply_to
+    state = %{state | reply_to: nil}
+    GenServer.reply(from, {:ok, response})
+    {:noreply, state}
   end
 
   # --- Agent Loop ---

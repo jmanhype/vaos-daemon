@@ -786,7 +786,10 @@ defmodule Daemon.Agent.Context do
 
   defp do_knowledge_block(state) do
     # Fetch all triples from the 4 known predicates
-    predicates = ["vaos:axiom_fact", "vaos:protocol_decision", "vaos:topic", "vaos:direction"]
+    predicates = [
+      "vaos:axiom_fact", "vaos:protocol_decision", "vaos:topic", "vaos:direction",
+      "vaos:has_evidence", "vaos:summary"
+    ]
 
     all_triples =
       Enum.flat_map(predicates, fn pred ->
