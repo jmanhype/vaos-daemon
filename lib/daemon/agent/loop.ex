@@ -156,7 +156,9 @@ defmodule Daemon.Agent.Loop do
   """
   @doc "Stop a session's Loop GenServer, triggering terminate/session_end hooks."
   def stop(session_id) do
-    GenServer.stop(via(session_id), :normal)
+    # Cancel first to break any in-flight LLM call, then stop cleanly
+    cancel(session_id)
+    GenServer.stop(via(session_id), :normal, 10_000)
   catch
     :exit, _ -> {:error, :not_running}
   end
@@ -1160,9 +1162,10 @@ defmodule Daemon.Agent.Loop do
     :ok
   end
 
-  def terminate(_reason, _state) do
-    # Abnormal termination — keep checkpoint for recovery
-    # Dirty flag stays for next wake to detect
+  def terminate(_reason, state) do
+    # Abnormal termination — keep checkpoint for recovery, but still distill knowledge.
+    # Knowledge from crashed sessions is often the most valuable (error patterns, root causes).
+    fire_session_end(state)
     :ok
   end
 

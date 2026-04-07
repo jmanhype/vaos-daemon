@@ -573,58 +573,182 @@ defmodule Daemon.Agent.Hooks do
 
   defp mcp_cache_post(payload), do: {:ok, payload}
 
-  # Knowledge distillation — extract facts from session messages and assert to knowledge store
+  # Knowledge distillation — extract grounded facts via GLM, assert to knowledge store.
+  # Runs async (fire-and-forget) so it never blocks the agent loop.
+  # Fires at :session_end — receives full session messages.
+  @glm_extract_prompt """
+  Extract genuine, grounded knowledge from this developer work session.
+  Return JSON: {"facts":[{"fact":"...","source_quote":"...","layer":"axiomatic|protocol|episodic","topic":"tag"}]}
+  Rules:
+  - Only extract facts with direct evidence in the text
+  - source_quote must be a verbatim snippet from the transcript
+  - axiomatic = verified truths about systems/tools
+  - protocol = decisions, preferences, workflows, lessons learned
+  - episodic = one-time observations
+  - topic = short tag (e.g. "ane", "networking", "elixir", "git")
+  - Max 15 facts. Empty array if nothing qualifies.
+  """
+
   defp knowledge_distill(%{session_id: sid, messages: messages} = payload) when is_list(messages) do
-    alias Daemon.Vault.FactExtractor
+    # Build text from user + assistant messages
+    text =
+      messages
+      |> Enum.filter(fn msg ->
+        role = Map.get(msg, :role) || Map.get(msg, "role")
+        role in ["user", "assistant", :user, :assistant]
+      end)
+      |> Enum.map(fn msg ->
+        content = Map.get(msg, :content) || Map.get(msg, "content") || ""
+        extract_text_content(content)
+      end)
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.join("\n\n")
 
-    try do
-      # Extract facts from user and assistant messages only (skip system/tool)
-      triples =
-        messages
-        |> Enum.filter(fn msg ->
-          role = Map.get(msg, :role) || Map.get(msg, "role")
-          role in ["user", "assistant", :user, :assistant]
-        end)
-        |> Enum.flat_map(fn msg ->
-          content = Map.get(msg, :content) || Map.get(msg, "content") || ""
-          text = if is_binary(content), do: content, else: ""
-          FactExtractor.extract_confident(text, 0.8)
-        end)
-        |> Enum.uniq_by(& &1.value)
-        |> Enum.map(fn fact ->
-          FactExtractor.to_triple(fact, "session:#{sid}")
-        end)
-
-      # Assert to knowledge store (fire-and-forget, non-blocking)
-      if triples != [] do
-        Task.start(fn ->
-          store_ref = try do
-            Vaos.Knowledge.open("osa_default")
-            Vaos.Knowledge.store_ref("osa_default")
-          rescue
-            _ -> nil
-          catch
-            :exit, _ -> nil
-          end
-
-          if store_ref do
-            Enum.each(triples, fn {s, p, o} ->
-              MiosaKnowledge.assert(store_ref, {s, p, o})
-            end)
-
-            Logger.info("[hooks/knowledge_distill] Asserted #{length(triples)} triples for session #{sid}")
-          end
-        end)
+    # Only distill if there's enough content
+    if String.length(text) > 200 do
+      # Truncate to ~6K chars for reasoning model headroom
+      text = if String.length(text) > 6000 do
+        String.slice(text, 0, 2000) <> "\n\n[...truncated...]\n\n" <> String.slice(text, -4000, 4000)
+      else
+        text
       end
-    rescue
-      e ->
-        Logger.warning("[hooks/knowledge_distill] Failed: #{inspect(e)}")
+
+      # Fire-and-forget async GLM extraction + assertion
+      Task.start(fn ->
+        glm_extract_and_assert(sid, text)
+      end)
     end
 
     {:ok, payload}
   end
 
   defp knowledge_distill(payload), do: {:ok, payload}
+
+  defp glm_extract_and_assert(sid, text) do
+    alias Daemon.Providers.OpenAICompat
+
+    url = Application.get_env(:daemon, :zhipu_url) || "https://api.z.ai/api/coding/paas/v4"
+    api_key = Application.get_env(:daemon, :zhipu_api_key)
+    model = "glm-5.1"
+
+    unless api_key do
+      Logger.debug("[hooks/knowledge_distill] No ZHIPU_API_KEY, skipping GLM extraction")
+      :skip
+    else
+      api_key = Daemon.Providers.OpenAICompatProvider.maybe_generate_zhipu_jwt(:zhipu, api_key)
+
+      messages = [
+        %{"role" => "system", "content" => @glm_extract_prompt},
+        %{"role" => "user", "content" => "Session transcript:\n\n#{text}"}
+      ]
+
+      # reasoning_content fallback already handled in OpenAICompat.do_chat/5 (line 79-81)
+      case OpenAICompat.chat(url, api_key, model, messages,
+             max_tokens: 4096, temperature: 0.3, receive_timeout: 180_000) do
+        {:ok, %{content: content}} when is_binary(content) and content != "" ->
+          parse_and_assert_facts(sid, content)
+
+        {:ok, _} ->
+          Logger.debug("[hooks/knowledge_distill] Empty GLM response for session #{sid}")
+
+        {:error, reason} ->
+          Logger.warning("[hooks/knowledge_distill] GLM call failed: #{inspect(reason)}")
+      end
+    end
+  rescue
+    e ->
+      Logger.warning("[hooks/knowledge_distill] GLM extraction failed: #{inspect(e)}")
+  catch
+    :exit, reason ->
+      Logger.warning("[hooks/knowledge_distill] GLM extraction exit: #{inspect(reason)}")
+  end
+
+  defp parse_and_assert_facts(sid, content) do
+    # Strip markdown fences
+    content = content
+      |> String.trim()
+      |> String.replace(~r/^```(?:json)?\s*/, "")
+      |> String.replace(~r/\s*```$/, "")
+
+    # Find JSON object
+    case Regex.run(~r/\{[\s\S]*\}/, content) do
+      [json_str] ->
+        case Jason.decode(json_str) do
+          {:ok, %{"facts" => facts}} when is_list(facts) ->
+            triples = facts
+              |> Enum.filter(fn f -> is_map(f) and is_binary(f["fact"]) end)
+              |> Enum.filter(fn f -> String.length(f["fact"]) >= 10 and String.length(f["fact"]) <= 200 end)
+              |> Enum.map(fn f ->
+                layer = f["layer"] || "episodic"
+                topic = f["topic"] || "general"
+                # Map all GLM layers to predicates that context.ex actually queries
+                predicate = case layer do
+                  "axiomatic" -> "vaos:axiom_fact"
+                  "protocol" -> "vaos:protocol_decision"
+                  # episodic still stored — useful for batch promotion later
+                  _ -> "vaos:axiom_fact"
+                end
+                {"topic:#{topic}", predicate, f["fact"]}
+              end)
+
+            if triples != [] do
+              assert_triples(sid, triples)
+            end
+
+          _ ->
+            Logger.debug("[hooks/knowledge_distill] No valid JSON facts in response")
+        end
+
+      _ ->
+        Logger.debug("[hooks/knowledge_distill] No JSON object in GLM response")
+    end
+  end
+
+  defp assert_triples(sid, triples) do
+    # Open store and verify it actually exists (store_ref returns {:error, _} if not found)
+    store_name =
+      try do
+        Vaos.Knowledge.open("osa_default")
+        case Vaos.Knowledge.store_ref("osa_default") do
+          {:error, _} -> nil
+          name when is_binary(name) -> name
+          name when is_atom(name) -> name
+          _ -> nil
+        end
+      rescue
+        _ -> nil
+      catch
+        :exit, _ -> nil
+      end
+
+    if store_name do
+      Enum.each(triples, fn {s, p, o} ->
+        MiosaKnowledge.assert(store_name, {s, p, o})
+      end)
+      Logger.info("[hooks/knowledge_distill] Asserted #{length(triples)} facts for session #{sid}")
+    else
+      Logger.warning("[hooks/knowledge_distill] Knowledge store not available")
+    end
+  end
+
+  # Extract text from message content (binary string or list of content blocks)
+  defp extract_text_content(content) when is_binary(content), do: content
+
+  defp extract_text_content(content) when is_list(content) do
+    content
+    |> Enum.filter(fn
+      %{"type" => "text"} -> true
+      %{type: "text"} -> true
+      _ -> false
+    end)
+    |> Enum.map_join("\n", fn
+      %{"text" => t} -> t
+      %{text: t} -> t
+      _ -> ""
+    end)
+  end
+
+  defp extract_text_content(_), do: ""
 
   # ── Helpers ────────────────────────────────────────────────────────
 

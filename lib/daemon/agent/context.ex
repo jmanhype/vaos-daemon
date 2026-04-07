@@ -774,23 +774,27 @@ defmodule Daemon.Agent.Context do
     end
   end
 
-  defp knowledge_block(state) do
+  defp knowledge_block(_state) do
     try do
-      # Query knowledge graph for self-diagnosis findings and investigation insights
-      # These are the high-value entries — not raw tool timestamps.
-      findings =
-        case MiosaKnowledge.query("osa_default", predicate: "vaos:topic") do
-          {:ok, results} when is_list(results) -> Enum.take(results, 5)
-          _ -> []
-        end
+      # Query knowledge graph for distilled session knowledge.
+      # Only query predicates that are actually written:
+      #   - vaos:axiom_fact (from GLM distiller — verified truths)
+      #   - vaos:protocol_decision (from GLM distiller — decisions/preferences/workflows)
+      #   - vaos:topic / vaos:direction (from SelfDiagnosis, if still active)
+      predicates = [
+        {"vaos:axiom_fact", 8, "Fact"},
+        {"vaos:protocol_decision", 5, "Decision"},
+        {"vaos:topic", 3, "Finding"},
+        {"vaos:direction", 2, "Insight"}
+      ]
 
-      directions =
-        case MiosaKnowledge.query("osa_default", predicate: "vaos:direction") do
-          {:ok, results} when is_list(results) -> Enum.take(results, 3)
-          _ -> []
-        end
-
-      entries = findings ++ directions
+      entries =
+        Enum.flat_map(predicates, fn {predicate, limit, _label} ->
+          case MiosaKnowledge.query("osa_default", predicate: predicate) do
+            {:ok, results} when is_list(results) -> Enum.take(results, limit)
+            _ -> []
+          end
+        end)
 
       case entries do
         [] -> nil
@@ -798,6 +802,8 @@ defmodule Daemon.Agent.Context do
           lines = Enum.map(entries, fn
             {_s, "vaos:topic", topic} -> "- Finding: #{topic}"
             {_s, "vaos:direction", dir} -> "- Insight: #{dir}"
+            {_s, "vaos:axiom_fact", fact} -> "- Fact: #{fact}"
+            {_s, "vaos:protocol_decision", dec} -> "- Decision: #{dec}"
             {s, p, o} -> "- #{s} #{p} #{o}"
             other -> "- #{inspect(other)}"
           end)

@@ -75,7 +75,11 @@ defmodule Daemon.Providers.OpenAICompat do
     try do
       case Req.post(url, json: body, headers: headers, receive_timeout: timeout) do
         {:ok, %{status: 200, body: %{"choices" => [%{"message" => msg} | _]} = resp}} ->
-          raw_content = msg["content"] || ""
+          # GLM-5.1 reasoning models put output in reasoning_content when content is empty
+          raw_content = case msg["content"] do
+            c when is_binary(c) and c != "" -> c
+            _ -> msg["reasoning_content"] || ""
+          end
           tool_calls = parse_tool_calls(msg, model)
           # Strip XML tool-call markup from content when calls were parsed from text (not tool_calls field)
           content =
