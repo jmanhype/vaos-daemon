@@ -11,7 +11,7 @@ defmodule Daemon.Agent.ContextTest do
   Tests that verify the token budget calculation mirror the arithmetic in
   context.ex directly so they serve as living documentation of that contract.
   """
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Daemon.Agent.Context
 
@@ -157,6 +157,72 @@ defmodule Daemon.Agent.ContextTest do
     end
   end
 
+  describe "knowledge context" do
+    test "uses the configured knowledge store and caps candidates per predicate" do
+      unique = :erlang.unique_integer([:positive])
+      store_name = "ctx-knowledge-#{unique}"
+      journal_dir = Path.join(System.tmp_dir!(), "ctx-knowledge-#{unique}")
+      old_store_name = Application.get_env(:daemon, :knowledge_store_name)
+      old_ollama_url = Application.get_env(:daemon, :ollama_url)
+
+      Application.put_env(:daemon, :knowledge_store_name, store_name)
+      Application.put_env(:daemon, :ollama_url, "http://127.0.0.1:1")
+
+      on_exit(fn ->
+        if old_store_name do
+          Application.put_env(:daemon, :knowledge_store_name, old_store_name)
+        else
+          Application.delete_env(:daemon, :knowledge_store_name)
+        end
+
+        if old_ollama_url do
+          Application.put_env(:daemon, :ollama_url, old_ollama_url)
+        else
+          Application.delete_env(:daemon, :ollama_url)
+        end
+
+        Vaos.Knowledge.close(store_name)
+      end)
+
+      {:ok, _pid} = Vaos.Knowledge.open(store_name, journal_dir: journal_dir)
+
+      summary_triples =
+        for i <- 1..20 do
+          {"summary-subject-#{i}", "vaos:summary", "Context summary #{i}"}
+        end
+
+      :ok =
+        Vaos.Knowledge.assert_many(
+          store_name,
+          [
+            {"fact-1", "vaos:axiom_fact", "Context test axiom"},
+            {"decision-1", "vaos:protocol_decision", "Context test decision"},
+            {"topic-1", "vaos:topic", "Context test topic"},
+            {"direction-1", "vaos:direction", "Context test direction"}
+            | summary_triples
+          ]
+        )
+
+      candidates = Context.knowledge_candidates(store_name)
+
+      assert Enum.count(candidates, fn {_s, p, _o} -> p == "vaos:summary" end) == 10
+
+      %{messages: [system_msg | _]} =
+        Context.build(
+          base_state(%{
+            messages: [%{role: "user", content: "What should I know about the context test?"}]
+          })
+        )
+
+      prompt_text = extract_system_text(system_msg)
+      assert String.contains?(prompt_text, "## Knowledge Context")
+      assert String.contains?(prompt_text, "Fact: Context test axiom")
+      assert String.contains?(prompt_text, "Decision: Context test decision")
+      assert String.contains?(prompt_text, "Finding: Context test topic")
+      assert String.contains?(prompt_text, "Insight: Context test direction")
+    end
+  end
+
   # ---------------------------------------------------------------------------
   # token_budget/1 — arithmetic correctness
   # ---------------------------------------------------------------------------
@@ -199,7 +265,9 @@ defmodule Daemon.Agent.ContextTest do
 
     test "conversation_tokens increases with message content" do
       state_empty = base_state(%{messages: []})
-      state_full = base_state(%{messages: [%{role: "user", content: String.duplicate("word ", 200)}]})
+
+      state_full =
+        base_state(%{messages: [%{role: "user", content: String.duplicate("word ", 200)}]})
 
       budget_empty = Context.token_budget(state_empty)
       budget_full = Context.token_budget(state_full)
@@ -326,6 +394,7 @@ defmodule Daemon.Agent.ContextTest do
 
     test "adds tool call tokens when tool_calls are present" do
       msg_no_tools = %{role: "assistant", content: "plain response"}
+
       msg_with_tools = %{
         role: "assistant",
         content: "",

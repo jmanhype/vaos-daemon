@@ -99,7 +99,11 @@ defmodule Daemon.Python.Embeddings do
   def available? do
     url = ollama_url()
 
-    case Req.get("#{url}/api/tags", receive_timeout: 3_000, connect_options: [timeout: 2_000]) do
+    case Req.get("#{url}/api/tags",
+           retry: false,
+           receive_timeout: 3_000,
+           connect_options: [timeout: 2_000]
+         ) do
       {:ok, %{status: 200}} -> true
       _ -> false
     end
@@ -114,8 +118,10 @@ defmodule Daemon.Python.Embeddings do
 
     case Req.post("#{url}/api/embeddings",
            json: %{model: @model, prompt: text},
+           retry: false,
            receive_timeout: @timeout,
-           connect_options: [timeout: 5_000]) do
+           connect_options: [timeout: 5_000]
+         ) do
       {:ok, %{status: 200, body: %{"embedding" => vec}}} when is_list(vec) ->
         {:ok, vec}
 
@@ -158,6 +164,7 @@ defmodule Daemon.Python.Embeddings do
   defp ensure_table do
     :ets.new(@ets_table, [:named_table, :public, :set])
   rescue
-    ArgumentError -> :ok  # already exists
+    # already exists
+    ArgumentError -> :ok
   end
 end

@@ -45,6 +45,15 @@ defmodule Daemon.Agent.Context do
   alias Daemon.Soul
 
   @response_reserve 8_192
+  @knowledge_store_default "osa_default"
+  @knowledge_select_batch 8
+  @knowledge_predicate_limits [
+    {"vaos:axiom_fact", 8},
+    {"vaos:protocol_decision", 6},
+    {"vaos:topic", 4},
+    {"vaos:direction", 4},
+    {"vaos:summary", 10}
+  ]
 
   defp max_tokens, do: Application.get_env(:daemon, :max_context_tokens, 128_000)
   defp max_tokens(model), do: MiosaProviders.Registry.context_window(model)
@@ -66,11 +75,12 @@ defmodule Daemon.Agent.Context do
     conversation = state.messages || []
     conversation_tokens = estimate_tokens_messages(conversation)
 
-    max_tok = case Map.get(state, :model) do
-      nil -> max_tokens()
-      "" -> max_tokens()
-      model -> max_tokens(model)
-    end
+    max_tok =
+      case Map.get(state, :model) do
+        nil -> max_tokens()
+        "" -> max_tokens()
+        model -> max_tokens(model)
+      end
 
     # Tier 1: Cached static base
     static_base = Soul.static_base()
@@ -205,8 +215,11 @@ defmodule Daemon.Agent.Context do
     blocks_spec
     |> Enum.map(fn {label, priority, fun} ->
       task = Task.async(fn -> fun.() end)
+
       case Task.yield(task, 5_000) || Task.shutdown(task, :brutal_kill) do
-        {:ok, content} -> {content, priority, to_string(label)}
+        {:ok, content} ->
+          {content, priority, to_string(label)}
+
         nil ->
           Logger.warning("[Context] block #{label} timed out after 5s")
           {nil, priority, to_string(label)}
@@ -335,6 +348,7 @@ defmodule Daemon.Agent.Context do
 
   defp memory_block_relevant(state) do
     latest_user_msg = find_latest_user_message(state.messages)
+
     content =
       if latest_user_msg do
         try do
@@ -526,7 +540,11 @@ defmodule Daemon.Agent.Context do
             ts = Map.get(event, :timestamp)
             type = Map.get(event, :event_type, :unknown)
             data = Map.get(event, :data, %{})
-            summary = Map.get(data, :summary) || Map.get(data, :tool) || Map.get(data, :message) || inspect(data)
+
+            summary =
+              Map.get(data, :summary) || Map.get(data, :tool) || Map.get(data, :message) ||
+                inspect(data)
+
             time_str = if ts, do: Calendar.strftime(ts, "%H:%M:%S"), else: "??:??:??"
             "[#{time_str}] #{type}: #{summary}"
           end)
@@ -695,22 +713,27 @@ defmodule Daemon.Agent.Context do
     Logger.debug("[Context] gather_git_info starting first git command")
     parts = []
 
-    parts = case git_cmd(["branch", "--show-current"]) do
-      {:ok, b} -> ["- Git branch: #{String.trim(b)}" | parts]
-      _ -> parts
-    end
+    parts =
+      case git_cmd(["branch", "--show-current"]) do
+        {:ok, b} -> ["- Git branch: #{String.trim(b)}" | parts]
+        _ -> parts
+      end
 
-    parts = case git_cmd(["status", "--short"]) do
-      {:ok, s} when s != "" ->
-        trimmed = String.trim(s)
-        if trimmed != "", do: ["- Modified files:\n#{trimmed}" | parts], else: parts
-      _ -> parts
-    end
+    parts =
+      case git_cmd(["status", "--short"]) do
+        {:ok, s} when s != "" ->
+          trimmed = String.trim(s)
+          if trimmed != "", do: ["- Modified files:\n#{trimmed}" | parts], else: parts
 
-    parts = case git_cmd(["log", "--oneline", "-3"]) do
-      {:ok, l} -> ["- Recent commits:\n#{String.trim(l)}" | parts]
-      _ -> parts
-    end
+        _ ->
+          parts
+      end
+
+    parts =
+      case git_cmd(["log", "--oneline", "-3"]) do
+        {:ok, l} -> ["- Recent commits:\n#{String.trim(l)}" | parts]
+        _ -> parts
+      end
 
     Enum.reverse(parts) |> Enum.join("\n")
   rescue
@@ -718,17 +741,25 @@ defmodule Daemon.Agent.Context do
   end
 
   # Run a git command via Port with explicit stdin close to prevent hangs under nohup.
-  @git_env [{"GIT_TERMINAL_PROMPT", "0"}, {"GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o ConnectTimeout=3"}]
+  @git_env [
+    {"GIT_TERMINAL_PROMPT", "0"},
+    {"GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o ConnectTimeout=3"}
+  ]
 
   defp git_cmd(args) do
     git = System.find_executable("git") || "/usr/bin/git"
 
-    port = Port.open(
-      {:spawn_executable, git},
-      [:binary, :exit_status, :stderr_to_stdout,
-       args: args,
-       env: Enum.map(@git_env, fn {k, v} -> {String.to_charlist(k), String.to_charlist(v)} end)]
-    )
+    port =
+      Port.open(
+        {:spawn_executable, git},
+        [
+          :binary,
+          :exit_status,
+          :stderr_to_stdout,
+          args: args,
+          env: Enum.map(@git_env, fn {k, v} -> {String.to_charlist(k), String.to_charlist(v)} end)
+        ]
+      )
 
     receive_git_output(port, "")
   rescue
@@ -739,8 +770,10 @@ defmodule Daemon.Agent.Context do
     receive do
       {^port, {:data, data}} ->
         receive_git_output(port, acc <> data)
+
       {^port, {:exit_status, 0}} ->
         {:ok, acc}
+
       {^port, {:exit_status, _}} ->
         :error
     after
@@ -751,9 +784,12 @@ defmodule Daemon.Agent.Context do
     end
   end
 
-  defp get_active_model(:anthropic), do: Application.get_env(:daemon, :anthropic_model, "claude-sonnet-4-6")
+  defp get_active_model(:anthropic),
+    do: Application.get_env(:daemon, :anthropic_model, "claude-sonnet-4-6")
+
   defp get_active_model(:ollama), do: Application.get_env(:daemon, :ollama_model, "detecting...")
   defp get_active_model(:openai), do: Application.get_env(:daemon, :openai_model, "gpt-4o")
+
   defp get_active_model(provider) do
     key = :"#{provider}_model"
     Application.get_env(:daemon, key, to_string(provider))
@@ -794,8 +830,9 @@ defmodule Daemon.Agent.Context do
   end
 
   defp scratchpad_block(state) do
-    provider = Map.get(state, :provider) ||
-      Application.get_env(:daemon, :default_provider, :ollama)
+    provider =
+      Map.get(state, :provider) ||
+        Application.get_env(:daemon, :default_provider, :ollama)
 
     if Scratchpad.inject?(provider) do
       Scratchpad.instruction()
@@ -825,32 +862,43 @@ defmodule Daemon.Agent.Context do
   end
 
   defp do_knowledge_block(state) do
-    # Fetch all triples from the 4 known predicates
-    predicates = [
-      "vaos:axiom_fact", "vaos:protocol_decision", "vaos:topic", "vaos:direction",
-      "vaos:has_evidence", "vaos:summary"
-    ]
-
-    all_triples =
-      Enum.flat_map(predicates, fn pred ->
-        case MiosaKnowledge.query("osa_default", predicate: pred) do
-          {:ok, results} when is_list(results) -> results
-          _ -> []
-        end
-      end)
+    started_at = System.monotonic_time(:millisecond)
+    all_triples = knowledge_candidates()
+    fetch_ms = System.monotonic_time(:millisecond) - started_at
 
     case all_triples do
-      [] -> nil
-      _ -> knowledge_block_semantic(state, all_triples)
+      [] ->
+        Logger.debug("[knowledge_block] fetched 0 candidates in #{fetch_ms}ms")
+        nil
+
+      _ ->
+        knowledge_block_semantic(state, all_triples)
     end
+  end
+
+  @doc false
+  def knowledge_store_name do
+    Application.get_env(:daemon, :knowledge_store_name, @knowledge_store_default)
+  end
+
+  @doc false
+  def knowledge_candidates(
+        store_name \\ knowledge_store_name(),
+        predicate_limits \\ @knowledge_predicate_limits
+      ) do
+    predicate_limits
+    |> Enum.flat_map(fn {predicate, limit} ->
+      limited_predicate_triples(store_name, predicate, limit)
+    end)
+    |> Enum.uniq()
   end
 
   defp knowledge_block_semantic(state, all_triples) do
     user_query = find_latest_user_message(Map.get(state, :messages, []))
-    sidecar_up? = Daemon.Python.Embeddings.available?()
+    embeddings_up? = Daemon.Python.Embeddings.available?()
 
     ranked =
-      if sidecar_up? and is_binary(user_query) and user_query != "" do
+      if embeddings_up? and is_binary(user_query) and user_query != "" do
         semantic_rank(user_query, all_triples)
       else
         # Fallback: first-N per predicate (original behavior)
@@ -859,16 +907,23 @@ defmodule Daemon.Agent.Context do
 
     # Stash injected triples for feedback hook
     sid = Map.get(state, :session_id)
+
     if sid do
       try do
         :ets.new(:daemon_knowledge_stash, [:named_table, :public, :set])
       rescue
-        ArgumentError -> :ok  # already exists
+        # already exists
+        ArgumentError -> :ok
       end
+
       :ets.insert(:daemon_knowledge_stash, {{sid, :injected_knowledge}, ranked})
     end
 
-    Logger.info("[knowledge_block] injected #{length(ranked)} triples (sidecar=#{sidecar_up?}) for session #{sid || "unknown"}")
+    Logger.info(
+      "[knowledge_block] injected #{length(ranked)} triples " <>
+        "(embeddings=#{embeddings_up?}, candidates=#{length(all_triples)}) " <>
+        "for session #{sid || "unknown"}"
+    )
 
     lines = Enum.map(ranked, &format_triple/1)
     "## Knowledge Context\n#{Enum.join(lines, "\n")}"
@@ -888,13 +943,13 @@ defmodule Daemon.Agent.Context do
     id_to_triple =
       Map.new(triples, fn {_s, _p, _o} = t -> {Integer.to_string(:erlang.phash2(t)), t} end)
 
-    # Reindex if count changed (cache in process dict)
-    prev_count = Process.get(:knowledge_triple_count, 0)
-    cur_count = length(entries)
+    # Reindex only when the actual candidate set changes.
+    prev_signature = Process.get(:knowledge_triple_signature)
+    cur_signature = :erlang.phash2(entries)
 
-    if cur_count != prev_count do
+    if cur_signature != prev_signature do
       Embeddings.reindex(entries)
-      Process.put(:knowledge_triple_count, cur_count)
+      Process.put(:knowledge_triple_signature, cur_signature)
     end
 
     case Embeddings.search(query, top_k: 30) do
@@ -902,6 +957,7 @@ defmodule Daemon.Agent.Context do
         results
         |> Enum.map(fn %{"id" => id, "score" => sim} ->
           triple = Map.get(id_to_triple, id)
+
           if triple do
             net = Meta.net_score(triple)
             boosted = sim * max(0.1, 1.0 + net * 0.1)
@@ -916,6 +972,87 @@ defmodule Daemon.Agent.Context do
       {:error, _} ->
         Logger.warning("[knowledge_block] semantic search failed, falling back")
         fallback_rank(triples)
+    end
+  end
+
+  defp limited_predicate_triples(_store_name, _predicate, limit) when limit <= 0, do: []
+
+  defp limited_predicate_triples(store_name, predicate, limit) do
+    case Vaos.Knowledge.Store.get_ets_refs(store_name) do
+      {:ok, %Vaos.Knowledge.Backend.ETS{pos: pos}} ->
+        match_spec = [{{{predicate, :"$1", :"$2"}}, [], [{{:"$2", predicate, :"$1"}}]}]
+        take_ets_matches(pos, match_spec, limit)
+
+      _ ->
+        limited_predicate_triples_sparql(store_name, predicate, limit)
+    end
+  rescue
+    _ -> []
+  end
+
+  defp take_ets_matches(_table, _match_spec, limit) when limit <= 0, do: []
+
+  defp take_ets_matches(table, match_spec, limit) do
+    chunk_size = min(limit, @knowledge_select_batch)
+
+    case :ets.select(table, match_spec, chunk_size) do
+      :"$end_of_table" ->
+        []
+
+      {rows, :"$end_of_table"} ->
+        Enum.take(rows, limit)
+
+      {rows, continuation} ->
+        remaining = limit - length(rows)
+
+        if remaining <= 0 do
+          Enum.take(rows, limit)
+        else
+          take_ets_continuation(continuation, limit, rows)
+        end
+    end
+  end
+
+  defp take_ets_continuation(continuation, limit, acc) do
+    case :ets.select(continuation) do
+      :"$end_of_table" ->
+        acc
+
+      {rows, :"$end_of_table"} ->
+        Enum.take(acc ++ rows, limit)
+
+      {rows, next_continuation} ->
+        remaining = limit - length(acc) - length(rows)
+
+        if remaining <= 0 do
+          Enum.take(acc ++ rows, limit)
+        else
+          take_ets_continuation(next_continuation, limit, acc ++ rows)
+        end
+    end
+  end
+
+  defp limited_predicate_triples_sparql(store_name, predicate, limit) do
+    query = "SELECT ?s ?o WHERE { ?s #{predicate} ?o } LIMIT #{limit}"
+
+    case MiosaKnowledge.sparql(store_name, query) do
+      {:ok, results} when is_list(results) ->
+        results
+        |> Enum.map(fn row ->
+          {binding_value(row, "s"), predicate, binding_value(row, "o")}
+        end)
+        |> Enum.reject(fn {s, _p, o} -> is_nil(s) or is_nil(o) end)
+
+      _ ->
+        []
+    end
+  end
+
+  defp binding_value(row, key) when is_map(row) do
+    case key do
+      "s" -> Map.get(row, "s") || Map.get(row, :s)
+      "o" -> Map.get(row, "o") || Map.get(row, :o)
+      _ -> nil
     end
   end
 
