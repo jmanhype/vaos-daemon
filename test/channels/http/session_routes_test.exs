@@ -142,6 +142,21 @@ defmodule Daemon.Channels.HTTP.SessionRoutesTest do
       assert body["alive"] == true
     end
 
+    test "returns 200 for a persisted session without a live process" do
+      session_id = "persisted-session-#{System.unique_integer([:positive])}"
+      :ok = Daemon.Agent.Memory.SQLiteBridge.append(session_id, %{role: "user", content: "hello"})
+
+      conn = json_get("/#{session_id}")
+
+      assert conn.status == 200
+
+      body = decode_body(conn)
+      assert body["id"] == session_id
+      assert body["alive"] == false
+      assert body["message_count"] >= 1
+      assert Enum.any?(body["messages"], &(&1["content"] == "hello"))
+    end
+
     test "session response includes message_count" do
       post_conn = json_post("/")
       session_id = decode_body(post_conn)["id"]
@@ -269,12 +284,17 @@ defmodule Daemon.Channels.HTTP.SessionRoutesTest do
 
       inserted =
         try do
-          :ets.insert(:daemon_pending_questions, {ref_str, %{
-            session_id: session_id,
-            question: "Which option do you prefer?",
-            options: ["A", "B"],
-            asked_at: asked_at
-          }})
+          :ets.insert(
+            :daemon_pending_questions,
+            {ref_str,
+             %{
+               session_id: session_id,
+               question: "Which option do you prefer?",
+               options: ["A", "B"],
+               asked_at: asked_at
+             }}
+          )
+
           true
         rescue
           ArgumentError -> false
@@ -308,12 +328,16 @@ defmodule Daemon.Channels.HTTP.SessionRoutesTest do
       ref_str = "ref-cross-#{System.unique_integer([:positive])}"
 
       try do
-        :ets.insert(:daemon_pending_questions, {ref_str, %{
-          session_id: session_a,
-          question: "For session A only",
-          options: [],
-          asked_at: DateTime.utc_now() |> DateTime.to_iso8601()
-        }})
+        :ets.insert(
+          :daemon_pending_questions,
+          {ref_str,
+           %{
+             session_id: session_a,
+             question: "For session A only",
+             options: [],
+             asked_at: DateTime.utc_now() |> DateTime.to_iso8601()
+           }}
+        )
 
         conn = json_get("/#{session_b}/pending_questions")
         body = decode_body(conn)

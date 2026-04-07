@@ -21,8 +21,8 @@ defmodule Daemon.Channels.HTTP.API.SessionRoutes do
   alias Daemon.Agent.Memory
   alias Daemon.Agent.Loop
 
-  plug :match
-  plug :dispatch
+  plug(:match)
+  plug(:dispatch)
 
   # ── GET /sessions ──────────────────────────────────────────────────
 
@@ -82,7 +82,12 @@ defmodule Daemon.Channels.HTTP.API.SessionRoutes do
         |> send_resp(201, body)
 
       {:error, _reason} ->
-        json_error(conn, 500, "session_create_failed", "An internal error occurred while creating the session")
+        json_error(
+          conn,
+          500,
+          "session_create_failed",
+          "An internal error occurred while creating the session"
+        )
     end
   end
 
@@ -90,17 +95,11 @@ defmodule Daemon.Channels.HTTP.API.SessionRoutes do
 
   get "/:id" do
     session_id = conn.params["id"]
-    persisted = Memory.list_sessions()
-    meta = Enum.find(persisted, fn s -> s.session_id == session_id end)
+    messages = Memory.load_session(session_id) || []
+    alive = session_alive?(session_id)
 
-    alive =
-      case Registry.lookup(Daemon.SessionRegistry, session_id) do
-        [{_pid, _}] -> true
-        [] -> false
-      end
-
-    if meta || alive do
-      messages = Memory.load_session(session_id) || []
+    if messages != [] or alive do
+      {title, created_at, last_active} = session_metadata(messages)
 
       formatted_messages =
         messages
@@ -116,10 +115,10 @@ defmodule Daemon.Channels.HTTP.API.SessionRoutes do
       body =
         Jason.encode!(%{
           id: session_id,
-          title: if(meta, do: meta.topic_hint),
-          message_count: if(meta, do: meta.message_count, else: length(messages)),
-          created_at: if(meta, do: meta.first_active),
-          last_active: if(meta, do: meta.last_active),
+          title: title,
+          message_count: length(messages),
+          created_at: created_at,
+          last_active: last_active,
           alive: alive,
           messages: formatted_messages
         })
@@ -221,7 +220,12 @@ defmodule Daemon.Channels.HTTP.API.SessionRoutes do
         json_error(conn, 404, "session_not_found", "Session #{session_id} not found")
 
       {:error, _reason} ->
-        json_error(conn, 500, "delete_failed", "An internal error occurred while deleting the session")
+        json_error(
+          conn,
+          500,
+          "delete_failed",
+          "An internal error occurred while deleting the session"
+        )
     end
   end
 
@@ -374,7 +378,12 @@ defmodule Daemon.Channels.HTTP.API.SessionRoutes do
             # (Task.start would create an unsupervised process that may be reaped).
             opts = [timeout: :timer.minutes(30)]
             working_dir = body["working_dir"]
-            opts = if is_binary(working_dir) and working_dir != "", do: Keyword.put(opts, :working_dir, working_dir), else: opts
+
+            opts =
+              if is_binary(working_dir) and working_dir != "",
+                do: Keyword.put(opts, :working_dir, working_dir),
+                else: opts
+
             Task.Supervisor.start_child(
               Daemon.TaskSupervisor,
               fn -> Loop.process_message(session_id, message, opts) end,
@@ -414,7 +423,12 @@ defmodule Daemon.Channels.HTTP.API.SessionRoutes do
         conn |> put_resp_content_type("application/json") |> send_resp(202, resp)
 
       {:error, :not_found} ->
-        json_error(conn, 404, "no_history", "No stored conversation for session #{source_session_id}")
+        json_error(
+          conn,
+          404,
+          "no_history",
+          "No stored conversation for session #{source_session_id}"
+        )
 
       {:error, reason} ->
         json_error(conn, 500, "replay_failed", inspect(reason))
@@ -522,10 +536,12 @@ defmodule Daemon.Channels.HTTP.API.SessionRoutes do
             end
 
           {:error, reason} ->
-            Logger.warning("[SSE] session=#{session_id} encode failed for #{event_type}: #{inspect(reason)}")
+            Logger.warning(
+              "[SSE] session=#{session_id} encode failed for #{event_type}: #{inspect(reason)}"
+            )
+
             session_sse_loop(conn, session_id)
         end
-
     after
       30_000 ->
         case chunk(conn, ": keepalive\n\n") do
@@ -533,5 +549,50 @@ defmodule Daemon.Channels.HTTP.API.SessionRoutes do
           {:error, _} -> conn
         end
     end
+  end
+
+  defp session_alive?(session_id) do
+    case Registry.lookup(Daemon.SessionRegistry, session_id) do
+      [{_pid, _}] -> true
+      [] -> false
+    end
+  end
+
+  defp session_metadata(messages) when is_list(messages) do
+    title =
+      messages
+      |> Enum.find_value(fn message ->
+        case message_content(message) do
+          text when is_binary(text) and text != "" ->
+            text
+            |> String.slice(0, 80)
+            |> String.trim()
+
+          _ ->
+            nil
+        end
+      end)
+
+    created_at =
+      case List.first(messages) do
+        nil -> nil
+        message -> message_timestamp(message)
+      end
+
+    last_active =
+      case List.last(messages) do
+        nil -> created_at
+        message -> message_timestamp(message) || created_at
+      end
+
+    {title, created_at, last_active}
+  end
+
+  defp message_content(message) when is_map(message) do
+    Map.get(message, "content") || Map.get(message, :content)
+  end
+
+  defp message_timestamp(message) when is_map(message) do
+    Map.get(message, "timestamp") || Map.get(message, :timestamp)
   end
 end
