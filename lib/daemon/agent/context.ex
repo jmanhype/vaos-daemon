@@ -689,26 +689,39 @@ defmodule Daemon.Agent.Context do
   defp gather_git_info do
     parts = []
 
-    parts = case System.cmd("git", ["branch", "--show-current"], stderr_to_stdout: true) do
-      {b, 0} -> ["- Git branch: #{String.trim(b)}" | parts]
+    parts = case git_cmd(["branch", "--show-current"]) do
+      {:ok, b} -> ["- Git branch: #{String.trim(b)}" | parts]
       _ -> parts
     end
 
-    parts = case System.cmd("git", ["status", "--short"], stderr_to_stdout: true) do
-      {s, 0} when s != "" ->
+    parts = case git_cmd(["status", "--short"]) do
+      {:ok, s} when s != "" ->
         trimmed = String.trim(s)
         if trimmed != "", do: ["- Modified files:\n#{trimmed}" | parts], else: parts
       _ -> parts
     end
 
-    parts = case System.cmd("git", ["log", "--oneline", "-3"], stderr_to_stdout: true) do
-      {l, 0} -> ["- Recent commits:\n#{String.trim(l)}" | parts]
+    parts = case git_cmd(["log", "--oneline", "-3"]) do
+      {:ok, l} -> ["- Recent commits:\n#{String.trim(l)}" | parts]
       _ -> parts
     end
 
     Enum.reverse(parts) |> Enum.join("\n")
   rescue
     _ -> ""
+  end
+
+  # Run a git command with a 5-second timeout to prevent hanging the context build.
+  defp git_cmd(args) do
+    task = Task.async(fn -> System.cmd("git", args, stderr_to_stdout: true) end)
+
+    case Task.yield(task, 5_000) || Task.shutdown(task) do
+      {:ok, {output, 0}} -> {:ok, output}
+      {:ok, {_, _code}} -> :error
+      nil ->
+        Logger.warning("[Context] git command timed out: git #{Enum.join(args, " ")}")
+        :error
+    end
   end
 
   defp get_active_model(:anthropic), do: Application.get_env(:daemon, :anthropic_model, "claude-sonnet-4-6")
