@@ -85,11 +85,21 @@ defmodule Daemon.Agent.Hooks do
   @spec run_async(hook_event(), map()) :: :ok
   def run_async(event, payload) do
     Task.start(fn ->
-      hooks = hooks_for_event(event)
-      started_at = System.monotonic_time(:microsecond)
-      result = run_chain(hooks, payload, event)
-      elapsed_us = System.monotonic_time(:microsecond) - started_at
-      update_metrics_ets(event, elapsed_us, result)
+      try do
+        hooks = hooks_for_event(event)
+        Logger.info("[Hooks] run_async #{event}: #{length(hooks)} hooks")
+        started_at = System.monotonic_time(:microsecond)
+        result = run_chain(hooks, payload, event)
+        elapsed_us = System.monotonic_time(:microsecond) - started_at
+        Logger.info("[Hooks] #{event} completed in #{div(elapsed_us, 1000)}ms: #{inspect(result)}")
+        update_metrics_ets(event, elapsed_us, result)
+      rescue
+        e ->
+          Logger.error("[Hooks] run_async #{event} crashed: #{Exception.message(e)}")
+      catch
+        kind, reason ->
+          Logger.error("[Hooks] run_async #{event} #{kind}: #{inspect(reason)}")
+      end
     end)
     :ok
   end
