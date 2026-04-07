@@ -803,7 +803,7 @@ defmodule Daemon.Agent.Context do
   end
 
   defp knowledge_block_semantic(state, all_triples) do
-    user_query = find_latest_user_message(state[:messages] || state.messages)
+    user_query = find_latest_user_message(Map.get(state, :messages, []))
     sidecar_up? = Daemon.Python.Embeddings.available?()
 
     ranked =
@@ -815,7 +815,7 @@ defmodule Daemon.Agent.Context do
       end
 
     # Stash injected triples for feedback hook
-    sid = state[:session_id]
+    sid = Map.get(state, :session_id)
     if sid do
       try do
         :ets.new(:daemon_knowledge_stash, [:named_table, :public, :set])
@@ -824,6 +824,8 @@ defmodule Daemon.Agent.Context do
       end
       :ets.insert(:daemon_knowledge_stash, {{sid, :injected_knowledge}, ranked})
     end
+
+    Logger.info("[knowledge_block] injected #{length(ranked)} triples (sidecar=#{sidecar_up?}) for session #{sid || "unknown"}")
 
     lines = Enum.map(ranked, &format_triple/1)
     "## Knowledge Context\n#{Enum.join(lines, "\n")}"
