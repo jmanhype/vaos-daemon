@@ -687,6 +687,7 @@ defmodule Daemon.Agent.Context do
   end
 
   defp gather_git_info do
+    Logger.debug("[Context] gather_git_info starting first git command")
     parts = []
 
     parts = case git_cmd(["branch", "--show-current"]) do
