@@ -1196,14 +1196,19 @@ defmodule Daemon.Agent.Loop do
   end
 
   defp fire_session_end(state) do
+    Logger.info("[loop] fire_session_end for #{state.session_id} (#{length(state.messages)} messages)")
     try do
       alias Daemon.Agent.Hooks
       payload = %{session_id: state.session_id, messages: state.messages}
       Hooks.run_async(:session_end, payload)
     rescue
-      _ -> :ok
+      e ->
+        Logger.warning("[loop] fire_session_end rescue: #{inspect(e)}")
+        :ok
     catch
-      :exit, _ -> :ok
+      :exit, reason ->
+        Logger.warning("[loop] fire_session_end exit: #{inspect(reason)}")
+        :ok
     end
   end
 
