@@ -711,17 +711,16 @@ defmodule Daemon.Agent.Context do
     _ -> ""
   end
 
-  # Run a git command with a 5-second timeout to prevent hanging the context build.
-  defp git_cmd(args) do
-    task = Task.async(fn -> System.cmd("git", args, stderr_to_stdout: true) end)
+  # Run a git command with env vars to prevent prompts/hangs.
+  @git_env [{"GIT_TERMINAL_PROMPT", "0"}, {"GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o ConnectTimeout=3"}]
 
-    case Task.yield(task, 5_000) || Task.shutdown(task) do
-      {:ok, {output, 0}} -> {:ok, output}
-      {:ok, {_, _code}} -> :error
-      nil ->
-        Logger.warning("[Context] git command timed out: git #{Enum.join(args, " ")}")
-        :error
+  defp git_cmd(args) do
+    case System.cmd("git", args, stderr_to_stdout: true, env: @git_env) do
+      {output, 0} -> {:ok, output}
+      _ -> :error
     end
+  rescue
+    _ -> :error
   end
 
   defp get_active_model(:anthropic), do: Application.get_env(:daemon, :anthropic_model, "claude-sonnet-4-6")
