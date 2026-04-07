@@ -712,16 +712,38 @@ defmodule Daemon.Agent.Context do
     _ -> ""
   end
 
-  # Run a git command with env vars to prevent prompts/hangs.
+  # Run a git command via Port with explicit stdin close to prevent hangs under nohup.
   @git_env [{"GIT_TERMINAL_PROMPT", "0"}, {"GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o ConnectTimeout=3"}]
 
   defp git_cmd(args) do
-    case System.cmd("git", args, stderr_to_stdout: true, env: @git_env) do
-      {output, 0} -> {:ok, output}
-      _ -> :error
-    end
+    git = System.find_executable("git") || "/usr/bin/git"
+
+    port = Port.open(
+      {:spawn_executable, git},
+      [:binary, :exit_status, :stderr_to_stdout,
+       args: args,
+       env: Enum.map(@git_env, fn {k, v} -> {String.to_charlist(k), String.to_charlist(v)} end)]
+    )
+
+    receive_git_output(port, "")
   rescue
     _ -> :error
+  end
+
+  defp receive_git_output(port, acc) do
+    receive do
+      {^port, {:data, data}} ->
+        receive_git_output(port, acc <> data)
+      {^port, {:exit_status, 0}} ->
+        {:ok, acc}
+      {^port, {:exit_status, _}} ->
+        :error
+    after
+      5_000 ->
+        Port.close(port)
+        Logger.warning("[Context] git command timed out after 5s")
+        :error
+    end
   end
 
   defp get_active_model(:anthropic), do: Application.get_env(:daemon, :anthropic_model, "claude-sonnet-4-6")
