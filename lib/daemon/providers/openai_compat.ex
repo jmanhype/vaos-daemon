@@ -179,6 +179,7 @@ defmodule Daemon.Providers.OpenAICompat do
   #   data: {"choices":[{"delta":{"content":"tok"}}]}
   #   data: [DONE]
   defp handle_sse_chunk(data, callback, acc) do
+    Logger.debug("[sse-raw] #{String.slice(data, 0, 200)}")
     {lines, new_buffer} = split_sse_lines(acc.buffer <> data)
     acc = %{acc | buffer: new_buffer}
     Enum.reduce(lines, acc, &process_sse_line(&1, callback, &2))
@@ -199,6 +200,7 @@ defmodule Daemon.Providers.OpenAICompat do
   defp process_sse_line("[DONE]", _callback, acc), do: acc
 
   defp process_sse_line(json_str, callback, acc) do
+    Logger.debug("[sse-line] #{String.slice(json_str, 0, 300)}")
     case Jason.decode(json_str) do
       {:ok, %{"choices" => [%{"delta" => delta} | _]} = chunk} ->
         acc = process_delta(delta, callback, acc)
