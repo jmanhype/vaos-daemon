@@ -9,7 +9,7 @@ defmodule Daemon.Knowledge.Meta do
   require Logger
 
   @ets_table :daemon_knowledge_meta
-  @dets_file ~c"priv/data/knowledge_meta.dets"
+  @dets_file "priv/data/knowledge_meta.dets"
   @flush_interval :timer.seconds(60)
 
   # ── Public API ──────────────────────────────────────────────────
