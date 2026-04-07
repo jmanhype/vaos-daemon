@@ -204,7 +204,9 @@ defmodule Daemon.Agent.Context do
 
     blocks_spec
     |> Enum.map(fn {label, priority, fun} ->
+      Logger.debug("[Context] building block: #{label}")
       content = fun.()
+      Logger.debug("[Context] block #{label} done (#{if content, do: byte_size(content || ""), else: "nil"})")
       {content, priority, to_string(label)}
     end)
     |> Enum.reject(fn {content, _, _} -> is_nil(content) or content == "" end)
