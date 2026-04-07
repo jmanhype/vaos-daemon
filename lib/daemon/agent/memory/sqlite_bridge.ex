@@ -31,7 +31,9 @@ defmodule Daemon.Agent.Memory.SQLiteBridge do
     }
 
     case Message.changeset(attrs) |> Repo.insert() do
-      {:ok, _msg} -> :ok
+      {:ok, _msg} ->
+        :ok
+
       {:error, changeset} ->
         Logger.warning("[SQLiteBridge] Failed to persist message: #{inspect(changeset.errors)}")
         :ok
@@ -90,6 +92,47 @@ defmodule Daemon.Agent.Memory.SQLiteBridge do
   rescue
     e ->
       Logger.warning("[SQLiteBridge] search_messages error: #{Exception.message(e)}")
+      []
+  end
+
+  @doc "List persisted sessions with aggregated metadata from SQLite."
+  def list_sessions(opts \\ []) do
+    limit = Keyword.get(opts, :limit)
+
+    query =
+      from(m in Message,
+        group_by: m.session_id,
+        order_by: [desc: max(m.inserted_at)],
+        select: %{
+          session_id: m.session_id,
+          message_count: count(m.id),
+          first_active: min(m.inserted_at),
+          last_active: max(m.inserted_at),
+          topic_hint: type(^nil, :string)
+        }
+      )
+
+    query =
+      if is_integer(limit) and limit > 0 do
+        from(m in query, limit: ^limit)
+      else
+        query
+      end
+
+    query
+    |> Repo.all()
+    |> Enum.map(fn session ->
+      %{
+        session_id: session.session_id,
+        message_count: session.message_count || 0,
+        first_active: naive_to_iso8601(session.first_active),
+        last_active: naive_to_iso8601(session.last_active),
+        topic_hint: session.topic_hint
+      }
+    end)
+  rescue
+    e ->
+      Logger.warning("[SQLiteBridge] list_sessions error: #{Exception.message(e)}")
       []
   end
 
@@ -166,4 +209,8 @@ defmodule Daemon.Agent.Memory.SQLiteBridge do
   end
 
   defp ensure_utf8(val), do: to_string(val)
+
+  defp naive_to_iso8601(nil), do: nil
+  defp naive_to_iso8601(%NaiveDateTime{} = dt), do: NaiveDateTime.to_iso8601(dt)
+  defp naive_to_iso8601(other), do: other
 end

@@ -64,6 +64,24 @@ defmodule Daemon.Channels.HTTP.SessionRoutesTest do
       assert length(body["sessions"]) <= body["per_page"]
       assert body["page"] == 1
     end
+
+    test "includes persisted sessions from SQLite without requiring a live process" do
+      session_id = "persisted-list-#{System.unique_integer([:positive])}"
+
+      :ok =
+        Daemon.Agent.Memory.SQLiteBridge.append(session_id, %{role: "user", content: "list me"})
+
+      conn = json_get("/")
+
+      assert conn.status == 200
+
+      body = decode_body(conn)
+      session = Enum.find(body["sessions"], &(&1["id"] == session_id))
+
+      assert session
+      assert session["alive"] == false
+      assert session["message_count"] >= 1
+    end
   end
 
   # ── POST /sessions ────────────────────────────────────────────────────

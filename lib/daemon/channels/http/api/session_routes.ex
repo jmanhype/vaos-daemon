@@ -19,6 +19,7 @@ defmodule Daemon.Channels.HTTP.API.SessionRoutes do
   require Logger
 
   alias Daemon.Agent.Memory
+  alias Daemon.Agent.Memory.SQLiteBridge
   alias Daemon.Agent.Loop
 
   plug(:match)
@@ -30,7 +31,7 @@ defmodule Daemon.Channels.HTTP.API.SessionRoutes do
     {page, per_page} = pagination_params(conn)
 
     # Merge persisted sessions (from Memory/SQLite) with live Registry sessions.
-    persisted = Memory.list_sessions()
+    persisted = persisted_sessions()
 
     live_ids =
       Registry.select(Daemon.SessionRegistry, [{{:"$1", :_, :_}, [], [:"$1"]}])
@@ -555,6 +556,13 @@ defmodule Daemon.Channels.HTTP.API.SessionRoutes do
     case Registry.lookup(Daemon.SessionRegistry, session_id) do
       [{_pid, _}] -> true
       [] -> false
+    end
+  end
+
+  defp persisted_sessions do
+    case SQLiteBridge.list_sessions() do
+      [] -> Memory.list_sessions()
+      sessions -> sessions
     end
   end
 
