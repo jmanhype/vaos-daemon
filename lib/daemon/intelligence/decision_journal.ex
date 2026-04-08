@@ -1061,6 +1061,7 @@ defmodule Daemon.Intelligence.DecisionJournal do
     String.contains?(event_type, "revert") or
       String.contains?(event_type, "inconclusive") or
       String.contains?(event_type, "error") or
+      event_type == "quality_gate_skip" or
       outcome in ["failure", "failed", "reverted", "error", :failure, :failed, :reverted, :error] or
       status in ["failure", "failed", "error", :failure, :failed, :error]
   end

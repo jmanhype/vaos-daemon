@@ -232,13 +232,19 @@ defmodule Daemon.Intelligence.AdaptationTrials do
   end
 
   defp extract_adaptation_signal(payload) when is_map(payload) do
-    event = payload_value(payload, :event)
-    domain = normalize_name(payload_value(payload, :domain))
-    event_type = normalize_name(payload_value(payload, :event_type))
+    data =
+      case payload_value(payload, :data) do
+        value when is_map(value) -> value
+        _ -> payload
+      end
+
+    event = payload_value(data, :event)
+    domain = normalize_name(payload_value(data, :domain))
+    event_type = normalize_name(payload_value(data, :event_type))
 
     if normalize_name(event) == "adaptation_signal" and domain == "coordination" and
          MapSet.member?(@supported_intents, event_type) do
-      {event_type, normalize_context(payload_value(payload, :context) || %{})}
+      {event_type, normalize_context(payload_value(data, :context) || %{})}
     else
       nil
     end

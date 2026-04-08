@@ -75,7 +75,11 @@ defmodule Daemon.Intelligence.DecisionJournalAdaptationTest do
     assert meta.active_bottleneck == "low_verification"
     assert meta.pivot_reason == "rate limit regression"
     assert meta.active_steering_hypothesis == "Prefer abstract-verified evidence"
-    assert length(meta.recent_failed_adaptations) == 1
+
+    assert Enum.map(meta.recent_failed_adaptations, & &1.event_type) == [
+             "strategy_experiment_revert",
+             "quality_gate_skip"
+           ]
   end
 
   test "loads persisted adaptation entries from disk" do

@@ -265,6 +265,39 @@ defmodule Daemon.Intelligence.AdaptationTrialsTest do
              AdaptationTrials.current_trial(name)
   end
 
+  test "accepts live event-bus envelopes with adaptation payload under data" do
+    name = :"adaptation-trials-envelope-#{System.unique_integer([:positive])}"
+
+    start_supervised!(
+      {AdaptationTrials,
+       name: name,
+       journal: JournalStub,
+       bus: BusStub,
+       scorer: fn _ -> 0.0 end,
+       subscribe?: true,
+       subscribe_retry_ms: 10,
+       trial_ttl_ms: :timer.minutes(10)}
+    )
+
+    start_supervised!(BusStub)
+    Process.sleep(30)
+
+    BusStub.emit_system_event(%{
+      type: :system_event,
+      data: %{
+        event: :adaptation_signal,
+        domain: :coordination,
+        event_type: :meta_pivot_requested,
+        context: %{authority_domain: "research", bottleneck: "low_verification"}
+      }
+    })
+
+    Process.sleep(30)
+
+    assert %{trigger_event: "meta_pivot_requested", status: :pending} =
+             AdaptationTrials.current_trial(name)
+  end
+
   test "promotes repeated helpful trials into a temporary default" do
     name = :"adaptation-trials-promotion-#{System.unique_integer([:positive])}"
 

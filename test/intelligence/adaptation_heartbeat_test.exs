@@ -26,7 +26,14 @@ defmodule Daemon.Intelligence.AdaptationHeartbeatTest do
           meta_state: meta_state,
           recent_events: recent_events,
           stats:
-            Map.merge(%{status: :running, adaptation_event_count: length(recent_events), in_flight_count: 0}, stats),
+            Map.merge(
+              %{
+                status: :running,
+                adaptation_event_count: length(recent_events),
+                in_flight_count: 0
+              },
+              stats
+            ),
           recorded: []
         }
       end)
@@ -45,7 +52,11 @@ defmodule Daemon.Intelligence.AdaptationHeartbeatTest do
 
     def stats do
       Agent.get(__MODULE__, fn state ->
-        Map.put(state.stats, :adaptation_event_count, length(state.recorded) + length(state.recent_events))
+        Map.put(
+          state.stats,
+          :adaptation_event_count,
+          length(state.recorded) + length(state.recent_events)
+        )
       end)
     end
 
@@ -90,7 +101,10 @@ defmodule Daemon.Intelligence.AdaptationHeartbeatTest do
     meta_state = %{
       authority_domain: "research",
       active_bottleneck: "low_verification",
-      recent_failed_adaptations: [%{event_type: "strategy_experiment_revert"}, %{event_type: "quality_gate_skip"}],
+      recent_failed_adaptations: [
+        %{event_type: "strategy_experiment_revert"},
+        %{event_type: "quality_gate_skip"}
+      ],
       last_experiment: %{domain: "research", event_type: "strategy_experiment_inconclusive"}
     }
 
@@ -99,7 +113,11 @@ defmodule Daemon.Intelligence.AdaptationHeartbeatTest do
       event("research", "quality_gate_skip")
     ]
 
-    intents = AdaptationHeartbeat.detect_intents(meta_state, recent_events, %{status: :running, in_flight_count: 1})
+    intents =
+      AdaptationHeartbeat.detect_intents(meta_state, recent_events, %{
+        status: :running,
+        in_flight_count: 1
+      })
 
     assert {:meta_reflect_requested, reflect_context} = Enum.at(intents, 0)
     assert reflect_context.trigger == "failed_adaptation_cluster"
@@ -133,11 +151,36 @@ defmodule Daemon.Intelligence.AdaptationHeartbeatTest do
     assert context.progress_event_count == 6
   end
 
+  test "detect_intents requests pivot from fresh research stagnation under a live bottleneck" do
+    meta_state = %{
+      authority_domain: "research",
+      active_bottleneck: "low_verification",
+      recent_failed_adaptations: [%{event_type: "quality_gate_skip"}],
+      last_experiment: nil
+    }
+
+    recent_events = [
+      event("research", "quality_gate_skip"),
+      event("research", "topic_selected")
+    ]
+
+    intents = AdaptationHeartbeat.detect_intents(meta_state, recent_events, %{status: :running})
+
+    assert [{:meta_pivot_requested, context}] = intents
+    assert context.trigger == "fresh_research_stagnation"
+    assert context.research_failure_count == 1
+    assert context.progress_event_count == 1
+    assert context.bottleneck == "low_verification"
+  end
+
   test "detect_intents suppresses duplicate markers within cooldown window" do
     meta_state = %{
       authority_domain: "research",
       active_bottleneck: "low_verification",
-      recent_failed_adaptations: [%{event_type: "strategy_experiment_revert"}, %{event_type: "quality_gate_skip"}],
+      recent_failed_adaptations: [
+        %{event_type: "strategy_experiment_revert"},
+        %{event_type: "quality_gate_skip"}
+      ],
       last_experiment: %{domain: "research", event_type: "strategy_experiment_inconclusive"}
     }
 
@@ -184,7 +227,10 @@ defmodule Daemon.Intelligence.AdaptationHeartbeatTest do
       %{
         authority_domain: "research",
         active_bottleneck: "low_verification",
-        recent_failed_adaptations: [%{event_type: "strategy_experiment_revert"}, %{event_type: "quality_gate_skip"}],
+        recent_failed_adaptations: [
+          %{event_type: "strategy_experiment_revert"},
+          %{event_type: "quality_gate_skip"}
+        ],
         last_experiment: %{domain: "research", event_type: "strategy_experiment_inconclusive"}
       },
       [

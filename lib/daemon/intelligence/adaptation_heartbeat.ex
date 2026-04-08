@@ -24,16 +24,18 @@ defmodule Daemon.Intelligence.AdaptationHeartbeat do
   @intent_cooldown_events 8
   @reflect_failure_threshold 2
   @pivot_failure_threshold 2
+  @fresh_stagnation_failure_threshold 1
+  @fresh_stagnation_progress_threshold 1
   @consolidate_progress_threshold 6
 
   @consolidation_event_types MapSet.new([
-                             "topic_selected",
-                             "steering_applied",
-                             "prompt_evolution_triggered",
-                             "prompt_variant_registered",
-                             "strategy_experiment_keep",
-                             "synthesis_completed"
-                           ])
+                               "topic_selected",
+                               "steering_applied",
+                               "prompt_evolution_triggered",
+                               "prompt_variant_registered",
+                               "strategy_experiment_keep",
+                               "synthesis_completed"
+                             ])
 
   defstruct journal: DecisionJournal,
             interval_ms: @default_interval_ms,
@@ -82,7 +84,12 @@ defmodule Daemon.Intelligence.AdaptationHeartbeat do
   def init(opts) do
     state = %__MODULE__{
       journal: Keyword.get(opts, :journal, DecisionJournal),
-      interval_ms: Keyword.get(opts, :interval_ms, Application.get_env(:daemon, :adaptation_heartbeat_interval_ms, @default_interval_ms)),
+      interval_ms:
+        Keyword.get(
+          opts,
+          :interval_ms,
+          Application.get_env(:daemon, :adaptation_heartbeat_interval_ms, @default_interval_ms)
+        ),
       recent_limit: Keyword.get(opts, :recent_limit, @default_recent_limit)
     }
 
@@ -122,7 +129,10 @@ defmodule Daemon.Intelligence.AdaptationHeartbeat do
 
     Enum.each(intents, fn {event_type, context} ->
       state.journal.record_adaptation(:coordination, event_type, context)
-      Logger.info("[AdaptationHeartbeat] intent=#{event_type} trigger=#{Map.get(context, :trigger, "-")}")
+
+      Logger.info(
+        "[AdaptationHeartbeat] intent=#{event_type} trigger=#{Map.get(context, :trigger, "-")}"
+      )
     end)
 
     intents_emitted =
@@ -134,7 +144,12 @@ defmodule Daemon.Intelligence.AdaptationHeartbeat do
         end
       end)
 
-    %{state | tick_count: state.tick_count + 1, last_tick_at: DateTime.utc_now(), intents_emitted: intents_emitted}
+    %{
+      state
+      | tick_count: state.tick_count + 1,
+        last_tick_at: DateTime.utc_now(),
+        intents_emitted: intents_emitted
+    }
   end
 
   defp maybe_add_reflect(intents, meta_state, recent_events, journal_stats) do
@@ -181,24 +196,50 @@ defmodule Daemon.Intelligence.AdaptationHeartbeat do
 
   defp maybe_add_pivot(intents, meta_state, recent_events, journal_stats) do
     research_failure_count = Enum.count(recent_events, &research_failure_event?/1)
+    progress_count = Enum.count(recent_events, &research_progress_event?/1)
     authority_domain = Map.get(meta_state, :authority_domain)
+    bottleneck = Map.get(meta_state, :active_bottleneck)
 
-    if research_failure_count >= @pivot_failure_threshold and authority_domain in ["research", nil] and
-         not recent_intent?(recent_events, "meta_pivot_requested") do
-      intents ++
-        [
-          {:meta_pivot_requested,
-           %{
-             trigger: "repeated_research_stagnation",
-             authority_domain: authority_domain,
-             bottleneck: Map.get(meta_state, :active_bottleneck),
-             research_failure_count: research_failure_count,
-             last_experiment: format_last_experiment(Map.get(meta_state, :last_experiment)),
-             in_flight_count: Map.get(journal_stats, :in_flight_count, 0)
-           }}
-        ]
-    else
-      intents
+    cond do
+      authority_domain not in ["research", nil] ->
+        intents
+
+      recent_intent?(recent_events, "meta_pivot_requested") ->
+        intents
+
+      research_failure_count >= @pivot_failure_threshold ->
+        intents ++
+          [
+            {:meta_pivot_requested,
+             %{
+               trigger: "repeated_research_stagnation",
+               authority_domain: authority_domain,
+               bottleneck: bottleneck,
+               research_failure_count: research_failure_count,
+               last_experiment: format_last_experiment(Map.get(meta_state, :last_experiment)),
+               in_flight_count: Map.get(journal_stats, :in_flight_count, 0)
+             }}
+          ]
+
+      research_failure_count >= @fresh_stagnation_failure_threshold and
+        progress_count >= @fresh_stagnation_progress_threshold and
+        is_binary(bottleneck) and bottleneck != "" ->
+        intents ++
+          [
+            {:meta_pivot_requested,
+             %{
+               trigger: "fresh_research_stagnation",
+               authority_domain: authority_domain,
+               bottleneck: bottleneck,
+               research_failure_count: research_failure_count,
+               progress_event_count: progress_count,
+               last_experiment: format_last_experiment(Map.get(meta_state, :last_experiment)),
+               in_flight_count: Map.get(journal_stats, :in_flight_count, 0)
+             }}
+          ]
+
+      true ->
+        intents
     end
   end
 
@@ -262,7 +303,9 @@ defmodule Daemon.Intelligence.AdaptationHeartbeat do
 
   defp context_value(_, _), do: nil
 
-  defp format_last_experiment(%{domain: domain, event_type: event_type}), do: "#{domain}/#{event_type}"
+  defp format_last_experiment(%{domain: domain, event_type: event_type}),
+    do: "#{domain}/#{event_type}"
+
   defp format_last_experiment(_), do: nil
 
   defp schedule_tick(interval_ms) do
