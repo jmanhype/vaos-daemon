@@ -58,7 +58,10 @@ defmodule Daemon.Investigation.Retrospector do
 
   def handle_info({:investigation_outcome, meta}, state) do
     quality = compute_quality(meta)
-    Logger.info("[Retrospector] Investigation quality: #{Float.round(quality, 3)} (hash: #{meta[:strategy_hash] || "unknown"})")
+
+    Logger.info(
+      "[Retrospector] Investigation quality: #{Float.round(quality, 3)} (hash: #{meta[:strategy_hash] || "unknown"})"
+    )
 
     outcome = %{
       strategy_hash: meta[:strategy_hash] || "unknown",
@@ -121,21 +124,30 @@ defmodule Daemon.Investigation.Retrospector do
 
     # Count sourced & verified from evidence lists
     all_evidence = supporting ++ opposing
-    sourced = Enum.filter(all_evidence, fn ev ->
-      is_map(ev) and (Map.get(ev, :source_type) == :sourced or Map.get(ev, "source_type") == "sourced")
-    end)
+
+    sourced =
+      Enum.filter(all_evidence, fn ev ->
+        is_map(ev) and
+          (Map.get(ev, :source_type) == :sourced or Map.get(ev, "source_type") == "sourced")
+      end)
+
     total_sourced = length(sourced)
-    count_verified = Enum.count(sourced, fn ev ->
-      v = Map.get(ev, :verification) || Map.get(ev, "verification")
-      v in ["verified", :verified]
-    end)
+
+    count_verified =
+      Enum.count(sourced, fn ev ->
+        v = Map.get(ev, :verification) || Map.get(ev, "verification")
+        v in ["verified", :verified]
+      end)
 
     verification_rate = if total_sourced > 0, do: count_verified / total_sourced, else: 0.0
     grounded_ratio = if total_evidence > 0, do: grounded_count / total_evidence, else: 0.0
     fraud_penalty = if total_evidence > 0, do: fraud / total_evidence, else: 0.0
     certainty = 1.0 - uncertainty
 
-    score = 0.4 * verification_rate + 0.3 * grounded_ratio - 0.2 * fraud_penalty + 0.1 * max(0.0, certainty)
+    score =
+      0.4 * verification_rate + 0.3 * grounded_ratio - 0.2 * fraud_penalty +
+        0.1 * max(0.0, certainty)
+
     max(0.0, min(1.0, score))
   end
 
@@ -164,6 +176,7 @@ defmodule Daemon.Investigation.Retrospector do
 
   defp variance(samples, mean) do
     n = length(samples)
+
     if n < 2 do
       0.0
     else
@@ -194,7 +207,8 @@ defmodule Daemon.Investigation.Retrospector do
 
     # Collect variant_ids used during this experiment's "after" phase.
     # Outcomes are prepended (newest first), so take the count matching scores_after.
-    experiment_variant_ids = state.outcomes
+    experiment_variant_ids =
+      state.outcomes
       |> Enum.take(length(exp.scores_after))
       |> Enum.map(&Map.get(&1, :variant_id))
       |> Enum.reject(&is_nil/1)
@@ -202,23 +216,67 @@ defmodule Daemon.Investigation.Retrospector do
 
     cond do
       mean_after > mean_before and p < @significance_threshold ->
-        Logger.info("[Retrospector] Experiment KEEP: #{exp.param} = #{exp.proposed_value} " <>
-          "(mean #{Float.round(mean_before, 3)} -> #{Float.round(mean_after, 3)}, t=#{Float.round(t, 2)}, p=#{Float.round(p, 3)})")
+        Logger.info(
+          "[Retrospector] Experiment KEEP: #{exp.param} = #{exp.proposed_value} " <>
+            "(mean #{Float.round(mean_before, 3)} -> #{Float.round(mean_after, 3)}, t=#{Float.round(t, 2)}, p=#{Float.round(p, 3)})"
+        )
+
+        record_adaptation(:strategy_experiment_keep, %{
+          param: exp.param,
+          original_value: exp.original_value,
+          proposed_value: exp.proposed_value,
+          mean_before: mean_before,
+          mean_after: mean_after,
+          p_value: p,
+          outcome: :keep,
+          authority_domain: :research
+        })
+
         # Reward prompt variants that were active during this successful experiment
         reward_prompt_variants(experiment_variant_ids, :keep)
         %{state | experiment: nil, experiment_count: 0}
 
       mean_after < mean_before and p < @significance_threshold ->
-        Logger.info("[Retrospector] Experiment REVERT: #{exp.param} back to #{exp.original_value} " <>
-          "(mean #{Float.round(mean_before, 3)} -> #{Float.round(mean_after, 3)}, t=#{Float.round(t, 2)}, p=#{Float.round(p, 3)})")
+        Logger.info(
+          "[Retrospector] Experiment REVERT: #{exp.param} back to #{exp.original_value} " <>
+            "(mean #{Float.round(mean_before, 3)} -> #{Float.round(mean_after, 3)}, t=#{Float.round(t, 2)}, p=#{Float.round(p, 3)})"
+        )
+
+        record_adaptation(:strategy_experiment_revert, %{
+          param: exp.param,
+          original_value: exp.original_value,
+          proposed_value: exp.proposed_value,
+          mean_before: mean_before,
+          mean_after: mean_after,
+          p_value: p,
+          outcome: :reverted,
+          reason: "quality regression",
+          authority_domain: :research
+        })
+
         StrategyStore.update_param(exp.topic, exp.param, exp.original_value)
         # Penalize prompt variants that were active during this failed experiment
         reward_prompt_variants(experiment_variant_ids, :revert)
         %{state | experiment: nil, experiment_count: 0}
 
       true ->
-        Logger.info("[Retrospector] Experiment INCONCLUSIVE, reverting #{exp.param} to #{exp.original_value} " <>
-          "(p=#{Float.round(p, 3)} >= #{@significance_threshold})")
+        Logger.info(
+          "[Retrospector] Experiment INCONCLUSIVE, reverting #{exp.param} to #{exp.original_value} " <>
+            "(p=#{Float.round(p, 3)} >= #{@significance_threshold})"
+        )
+
+        record_adaptation(:strategy_experiment_inconclusive, %{
+          param: exp.param,
+          original_value: exp.original_value,
+          proposed_value: exp.proposed_value,
+          mean_before: mean_before,
+          mean_after: mean_after,
+          p_value: p,
+          outcome: :inconclusive,
+          reason: "no significant improvement",
+          authority_domain: :research
+        })
+
         StrategyStore.update_param(exp.topic, exp.param, exp.original_value)
         %{state | experiment: nil, experiment_count: 0}
     end
@@ -226,7 +284,8 @@ defmodule Daemon.Investigation.Retrospector do
 
   defp maybe_start_experiment(%{experiment: %{}} = state), do: state
 
-  defp maybe_start_experiment(%{outcomes: outcomes} = state) when length(outcomes) < @min_sample_size do
+  defp maybe_start_experiment(%{outcomes: outcomes} = state)
+       when length(outcomes) < @min_sample_size do
     state
   end
 
@@ -234,10 +293,11 @@ defmodule Daemon.Investigation.Retrospector do
     topic = "_global"
 
     # Load current strategy
-    current = case StrategyStore.load_best(topic) do
-      {:ok, s} -> s
-      :error -> %Strategy{topic: topic, created_at: DateTime.utc_now() |> DateTime.to_iso8601()}
-    end
+    current =
+      case StrategyStore.load_best(topic) do
+        {:ok, s} -> s
+        :error -> %Strategy{topic: topic, created_at: DateTime.utc_now() |> DateTime.to_iso8601()}
+      end
 
     # Pick a random param
     param_keys = Strategy.param_keys()
@@ -257,26 +317,29 @@ defmodule Daemon.Investigation.Retrospector do
       # Determine if auto-approve (tiny change) or needs governance
       relative_change = abs(delta) / (hi - lo)
 
-      approval_result = if relative_change < @auto_approve_threshold do
-        :auto_approved
-      else
-        try do
-          Daemon.Governance.Approvals.create(%{
-            type: "strategy_change",
-            title: "Retrospector: #{param} #{Float.round(current_value * 1.0, 4)} -> #{Float.round(proposed * 1.0, 4)}",
-            description: "A/B test perturbation of #{param} (relative change: #{Float.round(relative_change * 100, 1)}%)",
-            requested_by: "retrospector",
-            context: %{
-              "param" => Atom.to_string(param),
-              "original" => current_value,
-              "proposed" => proposed,
-              "relative_change" => relative_change
-            }
-          })
-        rescue
-          _ -> :auto_approved
+      approval_result =
+        if relative_change < @auto_approve_threshold do
+          :auto_approved
+        else
+          try do
+            Daemon.Governance.Approvals.create(%{
+              type: "strategy_change",
+              title:
+                "Retrospector: #{param} #{Float.round(current_value * 1.0, 4)} -> #{Float.round(proposed * 1.0, 4)}",
+              description:
+                "A/B test perturbation of #{param} (relative change: #{Float.round(relative_change * 100, 1)}%)",
+              requested_by: "retrospector",
+              context: %{
+                "param" => Atom.to_string(param),
+                "original" => current_value,
+                "proposed" => proposed,
+                "relative_change" => relative_change
+              }
+            })
+          rescue
+            _ -> :auto_approved
+          end
         end
-      end
 
       case approval_result do
         :auto_approved ->
@@ -297,7 +360,8 @@ defmodule Daemon.Investigation.Retrospector do
   defp start_experiment(state, topic, param, original_value, proposed_value, outcomes) do
     StrategyStore.update_param(topic, param, proposed_value)
 
-    scores_before = outcomes
+    scores_before =
+      outcomes
       |> Enum.take(@min_sample_size)
       |> Enum.map(& &1.quality)
 
@@ -311,7 +375,18 @@ defmodule Daemon.Investigation.Retrospector do
       scores_after: []
     }
 
-    Logger.info("[Retrospector] Started experiment: #{param} #{Float.round(original_value * 1.0, 4)} -> #{Float.round(proposed_value * 1.0, 4)}")
+    Logger.info(
+      "[Retrospector] Started experiment: #{param} #{Float.round(original_value * 1.0, 4)} -> #{Float.round(proposed_value * 1.0, 4)}"
+    )
+
+    record_adaptation(:strategy_experiment_started, %{
+      param: param,
+      original_value: original_value,
+      proposed_value: proposed_value,
+      baseline_sample_size: length(scores_before),
+      authority_domain: :research
+    })
+
     %{state | experiment: experiment, experiment_count: 0}
   end
 
@@ -329,11 +404,21 @@ defmodule Daemon.Investigation.Retrospector do
 
           :revert ->
             PromptSelector.update(variant_id, 0, 1)
-            Logger.info("[Retrospector] Penalized prompt variant #{variant_id} (experiment REVERT)")
+
+            Logger.info(
+              "[Retrospector] Penalized prompt variant #{variant_id} (experiment REVERT)"
+            )
         end
       rescue
-        e -> Logger.warning("[Retrospector] Failed to update PromptSelector for #{variant_id}: #{Exception.message(e)}")
+        e ->
+          Logger.warning(
+            "[Retrospector] Failed to update PromptSelector for #{variant_id}: #{Exception.message(e)}"
+          )
       end
     end)
+  end
+
+  defp record_adaptation(event_type, context) do
+    Daemon.Intelligence.DecisionJournal.record_adaptation(:research, event_type, context)
   end
 end

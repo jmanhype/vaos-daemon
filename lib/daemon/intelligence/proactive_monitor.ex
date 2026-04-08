@@ -97,6 +97,7 @@ defmodule Daemon.Intelligence.ProactiveMonitor do
 
     if alerts != [] do
       Logger.info("[ProactiveMonitor] #{length(alerts)} alert(s) detected")
+      record_adaptation(:proactive_alerts_detected, alerts)
       Bus.emit(:system_event, %{event: :proactive_alerts, count: length(alerts), alerts: alerts})
 
       # Route alerts through ProactiveMode (handles budget, rate limiting, notifications)
@@ -153,6 +154,7 @@ defmodule Daemon.Intelligence.ProactiveMonitor do
 
     if alerts != [] do
       Logger.info("[ProactiveMonitor] Manual scan: #{length(alerts)} alert(s) detected")
+      record_adaptation(:proactive_alerts_detected, alerts)
       Bus.emit(:system_event, %{event: :proactive_alerts, count: length(alerts), alerts: alerts})
     end
 
@@ -348,6 +350,27 @@ defmodule Daemon.Intelligence.ProactiveMonitor do
         []
       end
     end)
+  end
+
+  defp record_adaptation(event_type, alerts) do
+    types =
+      alerts
+      |> Enum.map(&Map.get(&1, :type))
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+
+    severities =
+      alerts
+      |> Enum.map(&Map.get(&1, :severity))
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+
+    Daemon.Intelligence.DecisionJournal.record_adaptation(:reliability, event_type, %{
+      alert_count: length(alerts),
+      alert_types: types,
+      severities: severities,
+      authority_domain: :reliability
+    })
   end
 
   # ---------------------------------------------------------------------------

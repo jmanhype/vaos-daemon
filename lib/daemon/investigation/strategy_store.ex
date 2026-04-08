@@ -37,6 +37,39 @@ defmodule Daemon.Investigation.StrategyStore do
     :ok
   end
 
+  @doc """
+  Update a single strategy parameter for a topic and persist the result.
+
+  If no strategy exists yet for the topic, a default strategy is created first.
+  Returns `{:ok, strategy}` with the persisted strategy or `{:error, reason}`.
+  """
+  @spec update_param(String.t(), atom(), number()) :: {:ok, Strategy.t()} | {:error, atom()}
+  def update_param(topic, param, value)
+      when is_binary(topic) and is_atom(param) and is_number(value) do
+    if param in Strategy.param_keys() do
+      strategy =
+        case load_best(topic) do
+          {:ok, existing} -> existing
+          :error -> %Strategy{Strategy.default() | topic: topic}
+        end
+
+      updated =
+        %Strategy{
+          strategy
+          | topic: topic,
+            generation: (strategy.generation || 0) + 1,
+            parent_hash: Strategy.param_hash(strategy),
+            created_at: DateTime.utc_now() |> DateTime.to_iso8601()
+        }
+        |> Map.put(param, normalize_param_value(param, value))
+
+      :ok = save(updated)
+      {:ok, updated}
+    else
+      {:error, :unknown_param}
+    end
+  end
+
   @doc "Load all persisted strategies (for future cross-topic learning)."
   @spec load_all() :: [Strategy.t()]
   def load_all do
@@ -101,5 +134,15 @@ defmodule Daemon.Investigation.StrategyStore do
       parent_hash: data["parent_hash"],
       created_at: data["created_at"] || ""
     }
+  end
+
+  defp normalize_param_value(param, value) do
+    {lo, hi} = Map.get(Strategy.bounds(), param, {value, value})
+    clamped = max(lo, min(hi, value))
+
+    case param do
+      key when key in [:top_n_papers, :per_query_limit] -> round(clamped)
+      _ -> clamped
+    end
   end
 end

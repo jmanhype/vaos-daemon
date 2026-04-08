@@ -59,13 +59,14 @@ defmodule Daemon.Investigation.SelfDiagnosis do
     Process.send_after(self(), :poll, @initial_delay_ms)
     Logger.info("[SelfDiagnosis] Started, first poll in #{div(@initial_delay_ms, 1000)}s")
 
-    {:ok, %{
-      timer_ref: nil,
-      investigated_patterns: %{},
-      active_task: nil,
-      findings: [],
-      last_pitfall_count: 0
-    }}
+    {:ok,
+     %{
+       timer_ref: nil,
+       investigated_patterns: %{},
+       active_task: nil,
+       findings: [],
+       last_pitfall_count: 0
+     }}
   end
 
   @impl true
@@ -100,11 +101,17 @@ defmodule Daemon.Investigation.SelfDiagnosis do
 
     cond do
       state.active_task != nil ->
-        Logger.debug("[SelfDiagnosis] Skipping external trigger for #{pattern_key} — investigation already in progress")
+        Logger.debug(
+          "[SelfDiagnosis] Skipping external trigger for #{pattern_key} — investigation already in progress"
+        )
+
         {:noreply, state}
 
       recently_investigated_hash?(state, hash, now) ->
-        Logger.debug("[SelfDiagnosis] Skipping external trigger for #{pattern_key} — cooldown active")
+        Logger.debug(
+          "[SelfDiagnosis] Skipping external trigger for #{pattern_key} — cooldown active"
+        )
+
         {:noreply, state}
 
       true ->
@@ -121,7 +128,10 @@ defmodule Daemon.Investigation.SelfDiagnosis do
         current_count = length(pitfalls)
 
         if current_count > state.last_pitfall_count do
-          Logger.info("[SelfDiagnosis] New pitfalls detected (#{state.last_pitfall_count} -> #{current_count})")
+          Logger.info(
+            "[SelfDiagnosis] New pitfalls detected (#{state.last_pitfall_count} -> #{current_count})"
+          )
+
           state = %{state | last_pitfall_count: current_count}
           maybe_investigate_pitfall(state, pitfalls)
         else
@@ -155,10 +165,11 @@ defmodule Daemon.Investigation.SelfDiagnosis do
     now = DateTime.utc_now()
 
     # Find first pitfall with count >= 3 that hasn't been investigated recently
-    candidate = Enum.find(pitfalls, fn p ->
-      count = Map.get(p, :count, 0)
-      count >= 3 and not recently_investigated?(state, p, now)
-    end)
+    candidate =
+      Enum.find(pitfalls, fn p ->
+        count = Map.get(p, :count, 0)
+        count >= 3 and not recently_investigated?(state, p, now)
+      end)
 
     case candidate do
       nil -> state
@@ -177,7 +188,9 @@ defmodule Daemon.Investigation.SelfDiagnosis do
     hash = pattern_hash(pitfall)
 
     case Map.get(state.investigated_patterns, hash) do
-      nil -> false
+      nil ->
+        false
+
       last_at ->
         diff = DateTime.diff(now, last_at, :second)
         diff < @cooldown_seconds
@@ -192,35 +205,45 @@ defmodule Daemon.Investigation.SelfDiagnosis do
 
     Logger.info("[SelfDiagnosis] Spawning investigation for pitfall: #{summary}")
 
-    topic = "#{@self_diagnosis_prefix} in the VAOS daemon investigation pipeline: #{summary}. " <>
-            "What is the root cause and how can the system automatically prevent or work around it?"
+    record_adaptation(:self_diagnosis_started, %{
+      trigger: :pitfall,
+      pattern_hash: hash,
+      summary: summary,
+      authority_domain: :reliability
+    })
+
+    topic =
+      "#{@self_diagnosis_prefix} in the VAOS daemon investigation pipeline: #{summary}. " <>
+        "What is the root cause and how can the system automatically prevent or work around it?"
 
     parent = self()
 
-    task = Task.async(fn ->
-      result = try do
-        case Daemon.Tools.Builtins.Investigate.execute(%{"topic" => topic, "depth" => "standard"}) do
-          {:ok, investigation_result} -> {:ok, investigation_result}
-          {:error, reason} -> {:error, reason}
-          other -> {:ok, other}
-        end
-      rescue
-        e ->
-          Logger.warning("[SelfDiagnosis] Investigation failed (rescued): #{inspect(e)}")
-          {:error, inspect(e)}
-      end
+    task =
+      Task.async(fn ->
+        result =
+          try do
+            case Daemon.Tools.Builtins.Investigate.execute(%{
+                   "topic" => topic,
+                   "depth" => "standard"
+                 }) do
+              {:ok, investigation_result} -> {:ok, investigation_result}
+              {:error, reason} -> {:error, reason}
+              other -> {:ok, other}
+            end
+          rescue
+            e ->
+              Logger.warning("[SelfDiagnosis] Investigation failed (rescued): #{inspect(e)}")
+              {:error, inspect(e)}
+          end
 
-      send(parent, {:diagnosis_complete, hash, result})
-      result
-    end)
+        send(parent, {:diagnosis_complete, hash, result})
+        result
+      end)
 
     now = DateTime.utc_now()
     investigated = Map.put(state.investigated_patterns, hash, now)
 
-    %{state |
-      active_task: task.ref,
-      investigated_patterns: investigated
-    }
+    %{state | active_task: task.ref, investigated_patterns: investigated}
   end
 
   # -- External diagnosis (triggered by DecisionLedger escalation) ----------
@@ -233,40 +256,57 @@ defmodule Daemon.Investigation.SelfDiagnosis do
 
     errors_str = recent_errors |> Enum.take(3) |> Enum.join("; ")
 
-    Logger.info("[SelfDiagnosis] External trigger: #{pattern_key} " <>
-      "(#{session_failures} session failures, session_rate=#{session_rate}%, historical=#{historical_rate}%)")
+    Logger.info(
+      "[SelfDiagnosis] External trigger: #{pattern_key} " <>
+        "(#{session_failures} session failures, session_rate=#{session_rate}%, historical=#{historical_rate}%)"
+    )
 
-    topic = "#{@self_diagnosis_prefix}: tool '#{pattern_key}' is failing #{session_failures} times " <>
-            "consecutively in the current session (#{session_rate}% failure rate vs #{historical_rate}% historical). " <>
-            "Recent errors: #{errors_str}. " <>
-            "What is the root cause and how can the system automatically prevent or work around it?"
+    record_adaptation(:self_diagnosis_started, %{
+      trigger: :external_escalation,
+      pattern_key: pattern_key,
+      session_failures: session_failures,
+      historical_rate: historical_rate,
+      session_rate: session_rate,
+      authority_domain: :reliability
+    })
+
+    topic =
+      "#{@self_diagnosis_prefix}: tool '#{pattern_key}' is failing #{session_failures} times " <>
+        "consecutively in the current session (#{session_rate}% failure rate vs #{historical_rate}% historical). " <>
+        "Recent errors: #{errors_str}. " <>
+        "What is the root cause and how can the system automatically prevent or work around it?"
 
     parent = self()
 
-    task = Task.async(fn ->
-      result = try do
-        case Daemon.Tools.Builtins.Investigate.execute(%{"topic" => topic, "depth" => "standard"}) do
-          {:ok, investigation_result} -> {:ok, investigation_result}
-          {:error, reason} -> {:error, reason}
-          other -> {:ok, other}
-        end
-      rescue
-        e ->
-          Logger.warning("[SelfDiagnosis] External investigation failed (rescued): #{inspect(e)}")
-          {:error, inspect(e)}
-      end
+    task =
+      Task.async(fn ->
+        result =
+          try do
+            case Daemon.Tools.Builtins.Investigate.execute(%{
+                   "topic" => topic,
+                   "depth" => "standard"
+                 }) do
+              {:ok, investigation_result} -> {:ok, investigation_result}
+              {:error, reason} -> {:error, reason}
+              other -> {:ok, other}
+            end
+          rescue
+            e ->
+              Logger.warning(
+                "[SelfDiagnosis] External investigation failed (rescued): #{inspect(e)}"
+              )
 
-      send(parent, {:diagnosis_complete, hash, result})
-      result
-    end)
+              {:error, inspect(e)}
+          end
+
+        send(parent, {:diagnosis_complete, hash, result})
+        result
+      end)
 
     now = DateTime.utc_now()
     investigated = Map.put(state.investigated_patterns, hash, now)
 
-    %{state |
-      active_task: task.ref,
-      investigated_patterns: investigated
-    }
+    %{state | active_task: task.ref, investigated_patterns: investigated}
   end
 
   # -- Finding storage -----------------------------------------------------
@@ -288,6 +328,13 @@ defmodule Daemon.Investigation.SelfDiagnosis do
     # Store finding triple in knowledge graph
     store_finding_triple(result)
 
+    record_adaptation(:self_diagnosis_completed, %{
+      status: :ok,
+      topic: Map.get(result, :topic) || Map.get(result, "topic"),
+      reason: Map.get(result, :summary) || Map.get(result, "summary"),
+      authority_domain: :reliability
+    })
+
     direction = Map.get(result, :direction) || Map.get(result, "direction")
 
     case direction do
@@ -305,12 +352,26 @@ defmodule Daemon.Investigation.SelfDiagnosis do
 
   defp maybe_take_action(state, {:error, reason}) do
     Logger.info("[SelfDiagnosis] Investigation returned error: #{inspect(reason)}")
+
+    record_adaptation(:self_diagnosis_error, %{
+      status: :error,
+      reason: reason,
+      authority_domain: :reliability
+    })
+
     emit_diagnosis_event(%{status: :error, reason: reason})
     state
   end
 
   defp maybe_take_action(state, _other) do
     Logger.info("[SelfDiagnosis] Investigation returned unexpected result")
+
+    record_adaptation(:self_diagnosis_error, %{
+      status: :error,
+      reason: "unexpected result shape",
+      authority_domain: :reliability
+    })
+
     state
   end
 
@@ -319,7 +380,9 @@ defmodule Daemon.Investigation.SelfDiagnosis do
       store = "osa_default"
       finding_id = "self_diagnosis:#{:erlang.phash2(result)}_#{System.system_time(:millisecond)}"
       topic = Map.get(result, :topic) || Map.get(result, "topic") || "unknown"
-      direction = to_string(Map.get(result, :direction) || Map.get(result, "direction") || "unknown")
+
+      direction =
+        to_string(Map.get(result, :direction) || Map.get(result, "direction") || "unknown")
 
       triples = [
         {finding_id, "rdf:type", "vaos:SelfDiagnosisFinding"},
@@ -344,13 +407,22 @@ defmodule Daemon.Investigation.SelfDiagnosis do
     cond do
       String.contains?(summary_lower, "rate limit") or String.contains?(summary_lower, "timeout") ->
         Logger.info("[SelfDiagnosis] Suggesting strategy adjustment for rate limit/timeout issue")
+
+        record_adaptation(:corrective_action_suggested, %{
+          action: :strategy_change,
+          reason: "rate limit or timeout issue",
+          summary: summary,
+          authority_domain: :reliability
+        })
+
         try do
           Daemon.Governance.Approvals.create(%{
             type: "strategy_change",
             title: "SelfDiagnosis: rate limit/timeout adjustment suggested",
-            description: "Self-diagnosis found recurring rate limit or timeout failures. " <>
-                         "Consider adjusting retry intervals or concurrency parameters. " <>
-                         "Finding: #{String.slice(summary, 0, 500)}",
+            description:
+              "Self-diagnosis found recurring rate limit or timeout failures. " <>
+                "Consider adjusting retry intervals or concurrency parameters. " <>
+                "Finding: #{String.slice(summary, 0, 500)}",
             requested_by: "self_diagnosis",
             context: %{"source" => "self_diagnosis", "finding_summary" => summary}
           })
@@ -360,6 +432,13 @@ defmodule Daemon.Investigation.SelfDiagnosis do
 
       String.contains?(summary_lower, "missing") or String.contains?(summary_lower, "capability") ->
         Logger.info("[SelfDiagnosis] Suggesting new skill creation for missing capability")
+
+        record_adaptation(:corrective_action_suggested, %{
+          action: :skill_creation,
+          reason: "missing capability",
+          summary: summary,
+          authority_domain: :reliability
+        })
 
       true ->
         Logger.info("[SelfDiagnosis] Finding recorded, no specific corrective action identified")
@@ -387,5 +466,9 @@ defmodule Daemon.Investigation.SelfDiagnosis do
   defp pattern_hash(pitfall) do
     pattern = Map.get(pitfall, :pattern, Map.get(pitfall, :summary, ""))
     :erlang.phash2(pattern)
+  end
+
+  defp record_adaptation(event_type, context) do
+    Daemon.Intelligence.DecisionJournal.record_adaptation(:reliability, event_type, context)
   end
 end

@@ -10,6 +10,10 @@ defmodule Daemon.Intelligence.DecisionJournal do
   4. **Cross-module reward routing** — PR outcomes update the originating module
      AND related modules get partial signal
   5. **Observability** — `decisions/0` and `stats/0` show the full decision history
+
+  VAOS now also uses the Journal as an adaptation rationale spine. Adaptive
+  workers append high-signal entries here so the system can reconstruct why
+  research or reliability behavior changed without adding a global coordinator.
   """
   use GenServer
   require Logger
@@ -19,6 +23,8 @@ defmodule Daemon.Intelligence.DecisionJournal do
   @pr_poll_interval_ms :timer.hours(1)
   @daemon_repo "jmanhype/vaos-daemon"
   @max_decisions 200
+  @max_adaptation_entries 500
+  @max_failed_adaptations 5
   @persistence_dir Path.expand("~/.daemon/intelligence")
   @persistence_file "decision_journal.json"
   @ledger_name :investigate_ledger
@@ -71,6 +77,52 @@ defmodule Daemon.Intelligence.DecisionJournal do
     end
   end
 
+  @doc """
+  Record a high-signal adaptation event from a domain-specific loop.
+
+  `domain` should be a stable label like `:research`, `:reliability`, or
+  `:coordination`. `event_type` should describe the adaptation decision or
+  signal, for example `:topic_selected`, `:strategy_experiment_started`, or
+  `:tool_failure_escalated`.
+  """
+  @spec record_adaptation(atom() | String.t(), atom() | String.t(), map()) :: :ok
+  def record_adaptation(domain, event_type, context \\ %{}) when is_map(context) do
+    try do
+      GenServer.cast(
+        __MODULE__,
+        {:record_adaptation, normalize_name(domain), normalize_name(event_type), context}
+      )
+    rescue
+      _ -> :ok
+    catch
+      :exit, _ -> :ok
+    end
+  end
+
+  @doc "Return recent adaptation entries (most recent first)."
+  @spec adaptation_events(pos_integer()) :: [map()]
+  def adaptation_events(limit \\ 50) when is_integer(limit) and limit > 0 do
+    try do
+      GenServer.call(__MODULE__, {:adaptation_events, limit})
+    rescue
+      _ -> []
+    catch
+      :exit, _ -> []
+    end
+  end
+
+  @doc "Return the derived adaptation meta-state snapshot."
+  @spec meta_state() :: map()
+  def meta_state do
+    try do
+      GenServer.call(__MODULE__, :meta_state)
+    rescue
+      _ -> empty_meta_state()
+    catch
+      :exit, _ -> empty_meta_state()
+    end
+  end
+
   @doc "Clear all in-flight entries (use to recover from stale locks)."
   def clear_in_flight do
     try do
@@ -100,6 +152,8 @@ defmodule Daemon.Intelligence.DecisionJournal do
     state = %{
       # [{branch, source_module, action_type, topic, status, timestamps, claim_id}]
       decisions: [],
+      # [%{domain, event_type, timestamp, context}]
+      adaptation_entries: [],
       # %{normalized_topic => %{branch, source_module, started_at}}
       in_flight: %{},
       total_proposed: 0,
@@ -135,6 +189,15 @@ defmodule Daemon.Intelligence.DecisionJournal do
         Logger.info(
           "[DecisionJournal] CONFLICT: #{source_module}/#{action_type} on '#{String.slice(topic, 0, 50)}' — #{reason}"
         )
+
+        state =
+          append_adaptation_entry(state, "coordination", "suppression", %{
+            source_module: source_module,
+            action_type: action_type,
+            topic: topic,
+            branch: branch,
+            reason: reason
+          })
 
         {:reply, {:conflict, reason}, state}
 
@@ -172,6 +235,14 @@ defmodule Daemon.Intelligence.DecisionJournal do
             total_approved: state.total_approved + 1
         }
 
+        state =
+          append_adaptation_entry(state, "coordination", "approval", %{
+            source_module: source_module,
+            action_type: action_type,
+            topic: topic,
+            branch: branch
+          })
+
         # Emit event
         emit_decision_event(:decision_proposed, %{
           source_module: source_module,
@@ -205,6 +276,14 @@ defmodule Daemon.Intelligence.DecisionJournal do
     {:reply, recent, state}
   end
 
+  def handle_call({:adaptation_events, limit}, _from, state) do
+    {:reply, Enum.take(state.adaptation_entries, limit), state}
+  end
+
+  def handle_call(:meta_state, _from, state) do
+    {:reply, derive_meta_state(state), state}
+  end
+
   def handle_call(:stats, _from, state) do
     stats = %{
       status: :running,
@@ -218,7 +297,9 @@ defmodule Daemon.Intelligence.DecisionJournal do
         Enum.map(state.in_flight, fn {topic, info} ->
           %{topic: String.slice(topic, 0, 40), branch: info.branch, source: info.source_module}
         end),
-      decision_count: length(state.decisions)
+      decision_count: length(state.decisions),
+      adaptation_event_count: length(state.adaptation_entries),
+      meta_state: derive_meta_state(state)
     }
 
     {:reply, stats, state}
@@ -243,8 +324,14 @@ defmodule Daemon.Intelligence.DecisionJournal do
     {:reply, {:ok, count}, state}
   end
 
+  @impl true
   def handle_cast({:record_outcome, branch, outcome, metadata}, state) do
     state = do_record_outcome(state, branch, outcome, metadata)
+    {:noreply, state}
+  end
+
+  def handle_cast({:record_adaptation, domain, event_type, context}, state) do
+    state = append_adaptation_entry(state, domain, event_type, context)
     {:noreply, state}
   end
 
@@ -610,8 +697,13 @@ defmodule Daemon.Intelligence.DecisionJournal do
 
   defp persist_state(state) do
     data = %{
-      "version" => 1,
+      "version" => 2,
       "decisions" => Enum.map(Enum.take(state.decisions, @max_decisions), &serialize_decision/1),
+      "adaptation_entries" =>
+        Enum.map(
+          Enum.take(state.adaptation_entries, @max_adaptation_entries),
+          &serialize_adaptation_entry/1
+        ),
       "stats" => %{
         "total_proposed" => state.total_proposed,
         "total_approved" => state.total_approved,
@@ -632,48 +724,17 @@ defmodule Daemon.Intelligence.DecisionJournal do
     case File.read(persistence_path()) do
       {:ok, json} ->
         case Jason.decode(json) do
+          {:ok,
+           %{
+             "version" => 2,
+             "decisions" => raw,
+             "adaptation_entries" => entries,
+             "stats" => stats
+           }} ->
+            load_persisted_state_v2(state, raw, entries, stats)
+
           {:ok, %{"version" => 1, "decisions" => raw, "stats" => stats}} ->
-            now = DateTime.utc_now()
-
-            {decisions, recovered_count} =
-              raw
-              |> Enum.map(&deserialize_decision/1)
-              |> Enum.reject(&is_nil/1)
-              |> recover_stale_in_flight(now)
-
-            # Rebuild in_flight from decisions that are still :in_flight
-            in_flight =
-              decisions
-              |> Enum.filter(fn d -> d.status == :in_flight end)
-              |> Map.new(fn d ->
-                {d.normalized_topic,
-                 %{
-                   branch: d.branch,
-                   source_module: d.source_module,
-                   started_at: d.proposed_at
-                 }}
-              end)
-
-            state = %{
-              state
-              | decisions: decisions,
-                in_flight: in_flight,
-                total_proposed: Map.get(stats, "total_proposed", 0),
-                total_approved: Map.get(stats, "total_approved", 0),
-                total_conflicts: Map.get(stats, "total_conflicts", 0),
-                total_merged: Map.get(stats, "total_merged", 0),
-                total_rejected: Map.get(stats, "total_rejected", 0)
-            }
-
-            if recovered_count > 0 do
-              Logger.warning(
-                "[DecisionJournal] Recovered #{recovered_count} stale in-flight decision(s) from persistence"
-              )
-
-              persist_state(state)
-            end
-
-            state
+            load_persisted_state_v2(state, raw, [], stats)
 
           _ ->
             state
@@ -701,6 +762,15 @@ defmodule Daemon.Intelligence.DecisionJournal do
     }
   end
 
+  defp serialize_adaptation_entry(entry) do
+    %{
+      "domain" => entry.domain,
+      "event_type" => entry.event_type,
+      "timestamp" => entry.timestamp && DateTime.to_iso8601(entry.timestamp),
+      "context" => stringify_keys(entry.context)
+    }
+  end
+
   defp deserialize_decision(raw) when is_map(raw) do
     try do
       %{
@@ -722,6 +792,19 @@ defmodule Daemon.Intelligence.DecisionJournal do
   end
 
   defp deserialize_decision(_), do: nil
+
+  defp deserialize_adaptation_entry(raw) when is_map(raw) do
+    %{
+      domain: to_string(raw["domain"] || "unknown"),
+      event_type: to_string(raw["event_type"] || "unknown"),
+      timestamp: parse_datetime(raw["timestamp"]) || DateTime.utc_now(),
+      context: normalize_context_map(raw["context"] || %{})
+    }
+  rescue
+    _ -> nil
+  end
+
+  defp deserialize_adaptation_entry(_), do: nil
 
   defp parse_datetime(nil), do: nil
 
@@ -769,6 +852,214 @@ defmodule Daemon.Intelligence.DecisionJournal do
   end
 
   defp stale_in_flight?(_decision, _now), do: true
+
+  defp load_persisted_state_v2(state, raw_decisions, raw_entries, stats) do
+    now = DateTime.utc_now()
+
+    {decisions, recovered_count} =
+      raw_decisions
+      |> Enum.map(&deserialize_decision/1)
+      |> Enum.reject(&is_nil/1)
+      |> recover_stale_in_flight(now)
+
+    in_flight =
+      decisions
+      |> Enum.filter(fn d -> d.status == :in_flight end)
+      |> Map.new(fn d ->
+        {d.normalized_topic,
+         %{
+           branch: d.branch,
+           source_module: d.source_module,
+           started_at: d.proposed_at
+         }}
+      end)
+
+    adaptation_entries =
+      raw_entries
+      |> Enum.map(&deserialize_adaptation_entry/1)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.take(@max_adaptation_entries)
+
+    state = %{
+      state
+      | decisions: decisions,
+        adaptation_entries: adaptation_entries,
+        in_flight: in_flight,
+        total_proposed: Map.get(stats, "total_proposed", 0),
+        total_approved: Map.get(stats, "total_approved", 0),
+        total_conflicts: Map.get(stats, "total_conflicts", 0),
+        total_merged: Map.get(stats, "total_merged", 0),
+        total_rejected: Map.get(stats, "total_rejected", 0)
+    }
+
+    if recovered_count > 0 do
+      Logger.warning(
+        "[DecisionJournal] Recovered #{recovered_count} stale in-flight decision(s) from persistence"
+      )
+
+      persist_state(state)
+    end
+
+    state
+  end
+
+  defp append_adaptation_entry(state, domain, event_type, context) do
+    entry = %{
+      domain: normalize_name(domain),
+      event_type: normalize_name(event_type),
+      timestamp: DateTime.utc_now(),
+      context: sanitize_context(context)
+    }
+
+    emit_decision_event(:system_event, %{
+      event: :adaptation_signal,
+      domain: entry.domain,
+      event_type: entry.event_type,
+      context: entry.context,
+      timestamp: entry.timestamp
+    })
+
+    adaptation_entries =
+      [entry | state.adaptation_entries]
+      |> Enum.take(@max_adaptation_entries)
+
+    state = %{state | adaptation_entries: adaptation_entries}
+    persist_state(state)
+    state
+  end
+
+  defp derive_meta_state(state) do
+    entries = state.adaptation_entries
+
+    %{
+      authority_domain:
+        latest_context_value(entries, ~w(authority_domain authority)) ||
+          (List.first(entries) && List.first(entries).domain),
+      active_bottleneck: latest_context_value(entries, ~w(bottleneck)),
+      pivot_reason: latest_context_value(entries, ~w(pivot_reason reason)),
+      active_steering_hypothesis:
+        latest_context_value(entries, ~w(steering_hypothesis steering hypothesis)),
+      last_experiment: latest_experiment(entries),
+      recent_failed_adaptations:
+        entries
+        |> Enum.filter(&failed_adaptation?/1)
+        |> Enum.take(@max_failed_adaptations)
+        |> Enum.map(&summarize_adaptation_entry/1),
+      last_updated_at: entries |> List.first() |> then(fn e -> e && e.timestamp end)
+    }
+  end
+
+  defp latest_experiment(entries) do
+    entries
+    |> Enum.find(fn entry -> String.contains?(entry.event_type, "experiment") end)
+    |> case do
+      nil -> nil
+      entry -> summarize_adaptation_entry(entry)
+    end
+  end
+
+  defp failed_adaptation?(entry) do
+    event_type = entry.event_type
+    outcome = context_value(entry.context, "outcome")
+    status = context_value(entry.context, "status")
+
+    String.contains?(event_type, "revert") or
+      String.contains?(event_type, "inconclusive") or
+      String.contains?(event_type, "error") or
+      outcome in ["failure", "failed", "reverted", "error", :failure, :failed, :reverted, :error] or
+      status in ["failure", "failed", "error", :failure, :failed, :error]
+  end
+
+  defp summarize_adaptation_entry(entry) do
+    %{
+      domain: entry.domain,
+      event_type: entry.event_type,
+      timestamp: entry.timestamp,
+      reason: context_value(entry.context, "reason"),
+      bottleneck: context_value(entry.context, "bottleneck"),
+      outcome: context_value(entry.context, "outcome")
+    }
+  end
+
+  defp latest_context_value(entries, keys) do
+    Enum.find_value(entries, fn entry ->
+      Enum.find_value(keys, fn key -> context_value(entry.context, key) end)
+    end)
+  end
+
+  defp context_value(context, key) do
+    Map.get(context, key)
+  end
+
+  defp normalize_name(value) when is_atom(value), do: Atom.to_string(value)
+  defp normalize_name(value) when is_binary(value), do: value
+  defp normalize_name(value), do: to_string(value)
+
+  defp sanitize_context(context) when is_map(context) do
+    context
+    |> Enum.take(20)
+    |> Map.new(fn {key, value} ->
+      {normalize_name(key), sanitize_value(value)}
+    end)
+  end
+
+  defp sanitize_context(_), do: %{}
+
+  defp sanitize_value(value) when is_binary(value) do
+    String.slice(value, 0, 500)
+  end
+
+  defp sanitize_value(value) when is_atom(value), do: Atom.to_string(value)
+
+  defp sanitize_value(value) when is_number(value) or is_boolean(value) or is_nil(value),
+    do: value
+
+  defp sanitize_value(value) when is_list(value) do
+    value
+    |> Enum.take(10)
+    |> Enum.map(&sanitize_value/1)
+  end
+
+  defp sanitize_value(value) when is_map(value) do
+    sanitize_context(value)
+  end
+
+  defp sanitize_value(value), do: inspect(value, limit: 20)
+
+  defp stringify_keys(map) when is_map(map) do
+    Map.new(map, fn {key, value} ->
+      {normalize_name(key), stringify_value(value)}
+    end)
+  end
+
+  defp stringify_value(value) when is_map(value), do: stringify_keys(value)
+  defp stringify_value(value) when is_list(value), do: Enum.map(value, &stringify_value/1)
+  defp stringify_value(value), do: value
+
+  defp normalize_context_map(map) when is_map(map) do
+    Map.new(map, fn {key, value} ->
+      {normalize_name(key), normalize_context_value(value)}
+    end)
+  end
+
+  defp normalize_context_value(value) when is_map(value), do: normalize_context_map(value)
+
+  defp normalize_context_value(value) when is_list(value),
+    do: Enum.map(value, &normalize_context_value/1)
+
+  defp normalize_context_value(value), do: value
+
+  defp empty_meta_state do
+    %{
+      authority_domain: nil,
+      active_bottleneck: nil,
+      pivot_reason: nil,
+      active_steering_hypothesis: nil,
+      last_experiment: nil,
+      recent_failed_adaptations: [],
+      last_updated_at: nil
+    }
+  end
 
   defp normalize_topic(text) do
     text

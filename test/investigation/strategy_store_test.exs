@@ -85,6 +85,22 @@ defmodule Daemon.Investigation.StrategyStoreTest do
       assert loaded.generation == 3
       assert loaded.parent_hash == "abc123"
     end
+
+    test "update_param persists a single parameter change with lineage metadata" do
+      strategy = %{Strategy.default() | topic: @test_topic, grounded_threshold: 0.4}
+      StrategyStore.save(strategy)
+
+      assert {:ok, updated} =
+               StrategyStore.update_param(@test_topic, :grounded_threshold, 0.62)
+
+      assert updated.grounded_threshold == 0.62
+      assert updated.generation == 1
+      assert is_binary(updated.parent_hash)
+
+      assert {:ok, loaded} = StrategyStore.load_best(@test_topic)
+      assert loaded.grounded_threshold == 0.62
+      assert loaded.generation == 1
+    end
   end
 
   describe "load_all/0" do

@@ -28,9 +28,15 @@ defmodule Daemon.Agent.Loop.ToolExecutor do
   @doc false
   def permission_tier_allows?(:full, _tool), do: true
   def permission_tier_allows?(:read_only, tool), do: tool in @read_only_tools
-  def permission_tier_allows?(:workspace, tool), do: tool in (@read_only_tools ++ @workspace_tools)
+
+  def permission_tier_allows?(:workspace, tool),
+    do: tool in (@read_only_tools ++ @workspace_tools)
+
   def permission_tier_allows?(tier, tool) do
-    Logger.warning("[loop] Unknown permission tier #{inspect(tier)} denied #{tool} — defaulting to deny")
+    Logger.warning(
+      "[loop] Unknown permission tier #{inspect(tier)} denied #{tool} — defaulting to deny"
+    )
+
     false
   end
 
@@ -41,7 +47,17 @@ defmodule Daemon.Agent.Loop.ToolExecutor do
   def execute_tool_call(tool_call, state) do
     max_tool_output_bytes = Application.get_env(:daemon, :max_tool_output_bytes, 10_240)
     arg_hint = tool_call_hint(tool_call.arguments)
-    Bus.emit(:tool_call, %{name: tool_call.name, phase: :start, args: arg_hint, session_id: state.session_id, agent: state.session_id, iteration: state.iteration, tool_call_id: tool_call.id})
+
+    Bus.emit(:tool_call, %{
+      name: tool_call.name,
+      phase: :start,
+      args: arg_hint,
+      session_id: state.session_id,
+      agent: state.session_id,
+      iteration: state.iteration,
+      tool_call_id: tool_call.id
+    })
+
     start_time_tool = System.monotonic_time(:millisecond)
 
     # Run pre_tool_use hooks sync (security_check/spend_guard can block)
@@ -53,51 +69,59 @@ defmodule Daemon.Agent.Loop.ToolExecutor do
 
     tool_result =
       if not permission_tier_allows?(state.permission_tier, tool_call.name) do
-        Logger.warning("[loop] Permission denied: tier=#{state.permission_tier} blocked #{tool_call.name} (session: #{state.session_id})")
+        Logger.warning(
+          "[loop] Permission denied: tier=#{state.permission_tier} blocked #{tool_call.name} (session: #{state.session_id})"
+        )
+
         "Blocked: #{state.permission_tier} mode — #{tool_call.name} is not permitted at this permission level"
       else
-      case run_hooks(:pre_tool_use, pre_payload) do
-        {:blocked, reason} ->
-          "Blocked: #{reason}"
+        case run_hooks(:pre_tool_use, pre_payload) do
+          {:blocked, reason} ->
+            "Blocked: #{reason}"
 
-        {:error, :hooks_unavailable} ->
-          # Hooks GenServer is down — fail closed. Never execute a tool when
-          # security_check and spend_guard are unreachable.
-          Logger.error("[loop] Blocking tool #{tool_call.name} — pre_tool_use hooks unavailable (session: #{state.session_id})")
-          "Blocked: security pipeline unavailable"
+          {:error, :hooks_unavailable} ->
+            # Hooks GenServer is down — fail closed. Never execute a tool when
+            # security_check and spend_guard are unreachable.
+            Logger.error(
+              "[loop] Blocking tool #{tool_call.name} — pre_tool_use hooks unavailable (session: #{state.session_id})"
+            )
 
-        _ ->
-          # Inject session_id so tools like ask_user can register pending state
-          enriched_args = Map.put(tool_call.arguments, "__session_id__", state.session_id)
+            "Blocked: security pipeline unavailable"
 
-          case Tools.execute(tool_call.name, enriched_args) do
-            {:ok, {:image, %{media_type: mt, data: b64, path: p}}} ->
-              {:image, mt, b64, p}
+          _ ->
+            # Inject session_id so tools like ask_user can register pending state
+            enriched_args = Map.put(tool_call.arguments, "__session_id__", state.session_id)
 
-            {:ok, content} ->
-              content
+            case Tools.execute(tool_call.name, enriched_args) do
+              {:ok, {:image, %{media_type: mt, data: b64, path: p}}} ->
+                {:image, mt, b64, p}
 
-            {:error, reason} ->
-              case Tools.suggest_fallback_tool(tool_call.name) do
-                {:ok, alt_tool} ->
-                  Logger.info("[loop] Tool '#{tool_call.name}' failed (#{inspect(reason)}), trying fallback '#{alt_tool}'")
+              {:ok, content} ->
+                content
 
-                  case Tools.execute(alt_tool, enriched_args) do
-                    {:ok, {:image, %{media_type: mt, data: b64, path: p}}} ->
-                      {:image, mt, b64, p}
+              {:error, reason} ->
+                case Tools.suggest_fallback_tool(tool_call.name) do
+                  {:ok, alt_tool} ->
+                    Logger.info(
+                      "[loop] Tool '#{tool_call.name}' failed (#{inspect(reason)}), trying fallback '#{alt_tool}'"
+                    )
 
-                    {:ok, alt_content} ->
-                      "[used #{alt_tool} as fallback for #{tool_call.name}]\n#{alt_content}"
+                    case Tools.execute(alt_tool, enriched_args) do
+                      {:ok, {:image, %{media_type: mt, data: b64, path: p}}} ->
+                        {:image, mt, b64, p}
 
-                    {:error, _alt_reason} ->
-                      "Error: #{reason}"
-                  end
+                      {:ok, alt_content} ->
+                        "[used #{alt_tool} as fallback for #{tool_call.name}]\n#{alt_content}"
 
-                :no_alternative ->
-                  "Error: #{reason}"
-              end
-          end
-      end
+                      {:error, _alt_reason} ->
+                        "Error: #{reason}"
+                    end
+
+                  :no_alternative ->
+                    "Error: #{reason}"
+                end
+            end
+        end
       end
 
     tool_duration_ms = System.monotonic_time(:millisecond) - start_time_tool
@@ -111,7 +135,8 @@ defmodule Daemon.Agent.Loop.ToolExecutor do
       end
 
     # Annotate result with reliability context from DecisionLedger
-    result_str = maybe_annotate_with_reliability(result_str, tool_call.name, arg_hint, state.session_id)
+    result_str =
+      maybe_annotate_with_reliability(result_str, tool_call.name, arg_hint, state.session_id)
 
     # Run post_tool_use hooks async (cost tracker, telemetry, learning)
     post_payload = %{
@@ -142,7 +167,9 @@ defmodule Daemon.Agent.Loop.ToolExecutor do
       tool_call_id: tool_call.id
     })
 
-    tool_success = not (String.starts_with?(result_str, "Error:") or String.starts_with?(result_str, "Blocked:"))
+    tool_success =
+      not (String.starts_with?(result_str, "Error:") or
+             String.starts_with?(result_str, "Blocked:"))
 
     Bus.emit(:tool_result, %{
       name: tool_call.name,
@@ -189,10 +216,13 @@ defmodule Daemon.Agent.Loop.ToolExecutor do
 
         _ ->
           limit = max_tool_output_bytes
+
           content =
             if byte_size(result_str) > limit do
               truncated = binary_part(result_str, 0, limit)
-              truncated <> "\n\n[Output truncated — #{byte_size(result_str)} bytes total, showing first #{limit} bytes]"
+
+              truncated <>
+                "\n\n[Output truncated — #{byte_size(result_str)} bytes total, showing first #{limit} bytes]"
             else
               result_str
             end
@@ -228,11 +258,14 @@ defmodule Daemon.Agent.Loop.ToolExecutor do
         state
       else
         paths_str = Enum.join(nudged_paths, ", ")
+
         nudge_msg = %{
           role: "system",
-          content: "[System: You modified #{paths_str} without reading #{if length(nudged_paths) == 1, do: "it", else: "them"} first. " <>
-            "Always call file_read before file_edit/file_write on existing files to understand current content.]"
+          content:
+            "[System: You modified #{paths_str} without reading #{if length(nudged_paths) == 1, do: "it", else: "them"} first. " <>
+              "Always call file_read before file_edit/file_write on existing files to understand current content.]"
         }
+
         %{state | messages: state.messages ++ [nudge_msg]}
       end
     end
@@ -266,6 +299,7 @@ defmodule Daemon.Agent.Loop.ToolExecutor do
   defp get_nudge_count(session_id, path) do
     try do
       nudge_key = {session_id, :nudge_count, path}
+
       case :ets.lookup(:daemon_files_read, nudge_key) do
         [{^nudge_key, n}] -> n
         _ -> 0
@@ -298,7 +332,9 @@ defmodule Daemon.Agent.Loop.ToolExecutor do
   #   2. Historical reliability (<50% with n>=5)
   #   3. Next-tool suggestion (only when problem detected AND strong pair data)
   defp maybe_annotate_with_reliability(result_str, tool_name, args_hint, session_id) do
-    context_type = Daemon.Intelligence.DecisionLedger.derive_context(tool_name, to_string(args_hint || ""))
+    context_type =
+      Daemon.Intelligence.DecisionLedger.derive_context(tool_name, to_string(args_hint || ""))
+
     pattern_key = "#{tool_name}:#{context_type}"
 
     annotations = []
@@ -316,7 +352,12 @@ defmodule Daemon.Agent.Loop.ToolExecutor do
       %{consecutive: n} = stats when n >= 3 ->
         # Escalate to SelfDiagnosis if failure rate is 2x+ above historical average
         maybe_escalate_to_self_diagnosis(pattern_key, n, stats)
-        [{:session, "[session: #{n} consecutive failures — likely transient issue, try a different approach]"} | annotations]
+
+        [
+          {:session,
+           "[session: #{n} consecutive failures — likely transient issue, try a different approach]"}
+          | annotations
+        ]
 
       _ ->
         annotations
@@ -337,11 +378,25 @@ defmodule Daemon.Agent.Loop.ToolExecutor do
         if total >= 5 do
           historical_failure_rate = pattern.failure_count / total * 100
           session_total = session_stats.total_failures + consecutive
-          session_failure_rate = if session_total > 0, do: consecutive / session_total * 100, else: 100.0
+
+          session_failure_rate =
+            if session_total > 0, do: consecutive / session_total * 100, else: 100.0
 
           # Escalate if session failure rate is 2x+ historical OR historical is already bad (>50%)
           if session_failure_rate > historical_failure_rate * 2 or historical_failure_rate > 50 do
             try do
+              Daemon.Intelligence.DecisionJournal.record_adaptation(
+                :reliability,
+                :tool_failure_escalated,
+                %{
+                  pattern_key: pattern_key,
+                  session_failures: consecutive,
+                  historical_rate: Float.round(historical_failure_rate, 1),
+                  session_rate: Float.round(session_failure_rate, 1),
+                  authority_domain: :reliability
+                }
+              )
+
               Daemon.Investigation.SelfDiagnosis.trigger_diagnosis(pattern_key, %{
                 session_failures: consecutive,
                 historical_rate: Float.round(historical_failure_rate, 1),
@@ -374,10 +429,18 @@ defmodule Daemon.Agent.Loop.ToolExecutor do
 
           cond do
             rate < 30 ->
-              [{:reliability, "[reliability: #{trunc(rate)}% success in #{context_type} (n=#{total}) — consider an alternative tool]"} | annotations]
+              [
+                {:reliability,
+                 "[reliability: #{trunc(rate)}% success in #{context_type} (n=#{total}) — consider an alternative tool]"}
+                | annotations
+              ]
 
             rate < 50 ->
-              [{:reliability, "[reliability: #{trunc(rate)}% success in #{context_type} (n=#{total}) — may be unreliable]"} | annotations]
+              [
+                {:reliability,
+                 "[reliability: #{trunc(rate)}% success in #{context_type} (n=#{total}) — may be unreliable]"}
+                | annotations
+              ]
 
             true ->
               annotations
@@ -436,7 +499,10 @@ defmodule Daemon.Agent.Loop.ToolExecutor do
       Hooks.run_async(event, payload)
     catch
       :exit, reason ->
-        Logger.warning("[loop] Hooks GenServer unreachable for async #{event} (#{inspect(reason)})")
+        Logger.warning(
+          "[loop] Hooks GenServer unreachable for async #{event} (#{inspect(reason)})"
+        )
+
         :ok
     end
   end
