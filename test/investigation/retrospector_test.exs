@@ -102,6 +102,22 @@ defmodule Daemon.Investigation.RetrospectorTest do
       quality = Retrospector.compute_quality(meta)
       assert quality > 0.0
     end
+
+    test "string-keyed top-level metadata with atom-valued source_type works" do
+      meta = %{
+        "supporting" => [
+          %{"source_type" => :sourced, "verification" => "verified"}
+        ],
+        "opposing" => [],
+        "grounded_for_count" => 1,
+        "grounded_against_count" => 0,
+        "fraudulent_citations" => 0,
+        "uncertainty" => 0.0
+      }
+
+      quality = Retrospector.compute_quality(meta)
+      assert quality >= 0.75
+    end
   end
 
   # -- welch_t_test/2 tests ---------------------------------------------

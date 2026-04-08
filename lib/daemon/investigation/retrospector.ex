@@ -111,24 +111,23 @@ defmodule Daemon.Investigation.Retrospector do
   """
   @spec compute_quality(map()) :: float()
   def compute_quality(meta) do
-    supporting = meta[:supporting] || []
-    opposing = meta[:opposing] || []
+    supporting = payload_value(meta, :supporting) || []
+    opposing = payload_value(meta, :opposing) || []
     total_evidence = length(supporting) + length(opposing)
 
-    grounded_for = meta[:grounded_for_count] || 0
-    grounded_against = meta[:grounded_against_count] || 0
+    grounded_for = payload_value(meta, :grounded_for_count) || 0
+    grounded_against = payload_value(meta, :grounded_against_count) || 0
     grounded_count = grounded_for + grounded_against
 
-    fraud = meta[:fraudulent_citations] || 0
-    uncertainty = meta[:uncertainty] || 1.0
+    fraud = payload_value(meta, :fraudulent_citations) || 0
+    uncertainty = payload_value(meta, :uncertainty) || 1.0
 
     # Count sourced & verified from evidence lists
     all_evidence = supporting ++ opposing
 
     sourced =
       Enum.filter(all_evidence, fn ev ->
-        is_map(ev) and
-          (Map.get(ev, :source_type) == :sourced or Map.get(ev, "source_type") == "sourced")
+        is_map(ev) and sourced_evidence?(ev)
       end)
 
     total_sourced = length(sourced)
@@ -149,6 +148,20 @@ defmodule Daemon.Investigation.Retrospector do
         0.1 * max(0.0, certainty)
 
     max(0.0, min(1.0, score))
+  end
+
+  defp payload_value(payload, key) when is_map(payload) do
+    Map.get(payload, key) || Map.get(payload, Atom.to_string(key))
+  end
+
+  defp payload_value(_, _), do: nil
+
+  defp sourced_evidence?(evidence) when is_map(evidence) do
+    case payload_value(evidence, :source_type) do
+      :sourced -> true
+      "sourced" -> true
+      _ -> false
+    end
   end
 
   # -- Welch's t-test ---------------------------------------------------

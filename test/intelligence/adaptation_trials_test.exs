@@ -176,6 +176,51 @@ defmodule Daemon.Intelligence.AdaptationTrialsTest do
     assert completed.context["quality"] == 0.72
   end
 
+  test "normalized investigation payload still scores helpful when evidence is present" do
+    name = :"adaptation-trials-normalized-#{System.unique_integer([:positive])}"
+
+    start_supervised!(
+      {AdaptationTrials,
+       name: name,
+       journal: JournalStub,
+       subscribe?: false,
+       trial_ttl_ms: :timer.minutes(10)}
+    )
+
+    assert {:started, _trial} =
+             AdaptationTrials.consider_intent(
+               :meta_reflect_requested,
+               %{authority_domain: "research", bottleneck: "low_verification"},
+               name
+             )
+
+    assert {:ok, _consumed} = AdaptationTrials.consume_trial("normalized payload topic", name)
+
+    :ok =
+      AdaptationTrials.observe_investigation(
+        %{
+          "topic" => "normalized payload topic",
+          "strategy_hash" => "normalized-hash",
+          "supporting" => [
+            %{"source_type" => :sourced, "verification" => "verified"}
+          ],
+          "opposing" => [],
+          "grounded_for_count" => 1,
+          "grounded_against_count" => 0,
+          "fraudulent_citations" => 0,
+          "uncertainty" => 0.0
+        },
+        name
+      )
+
+    completed =
+      JournalStub.recorded()
+      |> Enum.find(&(&1.event_type == "trial_completed"))
+
+    assert completed.context["outcome"] == "helpful"
+    assert completed.context["quality"] >= 0.75
+  end
+
   test "ignores non-research authority intents for steering trials" do
     name = :"adaptation-trials-ignore-#{System.unique_integer([:positive])}"
 
