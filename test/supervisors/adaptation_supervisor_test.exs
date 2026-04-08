@@ -16,6 +16,7 @@ defmodule Daemon.Supervisors.AdaptationSupervisorTest do
                Daemon.Agent.SkillEvolution,
                Daemon.Agent.ActiveLearner,
                Daemon.Intelligence.DecisionJournal,
+               Daemon.Intelligence.AdaptationHeartbeat,
                Daemon.Intelligence.ProactiveMonitor
              ]
     end
@@ -34,6 +35,7 @@ defmodule Daemon.Supervisors.AdaptationSupervisorTest do
       refute Daemon.Intelligence.DecisionLedger in ids
       refute Daemon.Agent.ActiveLearner in ids
       refute Daemon.Intelligence.DecisionJournal in ids
+      refute Daemon.Intelligence.AdaptationHeartbeat in ids
       refute Vaos.Ledger.ML.CrashLearner in ids
       refute Daemon.Intelligence.ProactiveMonitor in ids
     end

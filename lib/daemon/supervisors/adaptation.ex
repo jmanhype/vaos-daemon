@@ -25,6 +25,7 @@ defmodule Daemon.Supervisors.Adaptation do
       Daemon.Agent.SkillEvolution,
       Daemon.Agent.ActiveLearner,
       Daemon.Intelligence.DecisionJournal,
+      Daemon.Intelligence.AdaptationHeartbeat,
       Daemon.Intelligence.ProactiveMonitor
     ]
 
