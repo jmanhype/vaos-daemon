@@ -15,7 +15,7 @@ defmodule Daemon.Test.MockProvider do
          Application.put_env(:daemon, :mock_provider_module, __MODULE__)
   """
 
-  @behaviour MiosaProviders.Behaviour
+  @behaviour Daemon.Providers.Behaviour
 
   # ── Behaviour callbacks ──────────────────────────────────────────────
 
@@ -35,7 +35,9 @@ defmodule Daemon.Test.MockProvider do
   Subsequent calls: returns a plain-text final answer.
   """
   @impl true
-  def chat(_messages, _opts) do
+  def chat(_messages, opts) do
+    Process.put(:mock_provider_last_opts, opts)
+
     case Process.get(:mock_provider_call_count, 0) do
       0 ->
         Process.put(:mock_provider_call_count, 1)
@@ -63,11 +65,24 @@ defmodule Daemon.Test.MockProvider do
   invokes `{:done, result}` so the Loop's process-dictionary capture works.
   """
   @impl true
-  def chat_stream(_messages, callback, _opts) do
+  def chat_stream(_messages, callback, opts) do
+    Process.put(:mock_provider_last_opts, opts)
+
     case Process.get(:mock_provider_call_count, 0) do
       0 ->
         Process.put(:mock_provider_call_count, 1)
-        result = %{content: "", tool_calls: [%{id: "call_mock_001", name: "memory_recall", arguments: %{"query" => "smoke test context"}}]}
+
+        result = %{
+          content: "",
+          tool_calls: [
+            %{
+              id: "call_mock_001",
+              name: "memory_recall",
+              arguments: %{"query" => "smoke test context"}
+            }
+          ]
+        }
+
         callback.({:done, result})
         :ok
 
@@ -84,6 +99,11 @@ defmodule Daemon.Test.MockProvider do
   @doc "Reset the per-process call counter (call in test setup)."
   def reset do
     Process.delete(:mock_provider_call_count)
+    Process.delete(:mock_provider_last_opts)
     :ok
+  end
+
+  def last_opts do
+    Process.get(:mock_provider_last_opts)
   end
 end

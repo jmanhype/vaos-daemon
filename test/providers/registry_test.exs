@@ -2,7 +2,6 @@ defmodule MiosaProviders.RegistryTest do
   use ExUnit.Case, async: true
 
   alias MiosaProviders.Registry
-
   # ---------------------------------------------------------------------------
   # Module smoke tests
   # ---------------------------------------------------------------------------

@@ -67,23 +67,22 @@ defmodule Daemon.Application do
 
     children =
       platform_repo_children() ++
-      [
-        # General-purpose Task.Supervisor for fire-and-forget async work
-        # (HTTP message dispatch, background learning, etc.)
-        {Task.Supervisor, name: Daemon.TaskSupervisor},
+        [
+          # General-purpose Task.Supervisor for fire-and-forget async work
+          # (HTTP message dispatch, background learning, etc.)
+          {Task.Supervisor, name: Daemon.TaskSupervisor},
+          Daemon.Supervisors.Infrastructure,
+          Daemon.Supervisors.Sessions,
+          Daemon.Supervisors.AgentServices,
+          Daemon.Supervisors.Extensions,
 
-        Daemon.Supervisors.Infrastructure,
-        Daemon.Supervisors.Sessions,
-        Daemon.Supervisors.AgentServices,
-        Daemon.Supervisors.Extensions,
+          # Deferred channel startup — starts configured channels in handle_continue
+          Daemon.Channels.Starter,
 
-        # Deferred channel startup — starts configured channels in handle_continue
-        Daemon.Channels.Starter,
-
-        # HTTP channel — Plug/Bandit on port 8089 (SDK API surface)
-        # Started LAST so all agent processes are ready before accepting requests
-        {Bandit, plug: Daemon.Channels.HTTP, port: http_port()}
-      ]
+          # HTTP channel — Plug/Bandit on port 8089 (SDK API surface)
+          # Started LAST so all agent processes are ready before accepting requests
+          {Bandit, plug: Daemon.Channels.HTTP, port: http_port()}
+        ]
 
     opts = [strategy: :rest_for_one, name: Daemon.Supervisor]
 
@@ -91,6 +90,9 @@ defmodule Daemon.Application do
     # starts — agents need identity/soul content from their first LLM call.
     Daemon.Soul.load()
     Daemon.PromptLoader.load()
+    # Apply persisted operator config before provider/tool processes boot so
+    # `~/.daemon/config.json` wins over ambient shell keys.
+    Daemon.Onboarding.apply_config()
 
     case Supervisor.start_link(children, opts) do
       {:ok, pid} ->

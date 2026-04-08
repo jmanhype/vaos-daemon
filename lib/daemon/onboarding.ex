@@ -32,7 +32,8 @@ defmodule Daemon.Onboarding do
     {7, "google", "Google", "gemini-2.0-flash", "GOOGLE_API_KEY"},
     {8, "deepseek", "DeepSeek", "deepseek-chat", "DEEPSEEK_API_KEY"},
     {9, "mistral", "Mistral", "mistral-large-latest", "MISTRAL_API_KEY"},
-    {10, "together", "Together AI", "meta-llama/Llama-3.3-70B-Instruct-Turbo", "TOGETHER_API_KEY"},
+    {10, "together", "Together AI", "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+     "TOGETHER_API_KEY"},
     {11, "fireworks", "Fireworks", "accounts/fireworks/models/llama-v3p3-70b-instruct",
      "FIREWORKS_API_KEY"},
     {12, "perplexity", "Perplexity", "sonar-pro", "PERPLEXITY_API_KEY"},
@@ -73,6 +74,7 @@ defmodule Daemon.Onboarding do
   @spec first_run?() :: boolean()
   def first_run? do
     config_path = Path.join(config_dir(), "config.json")
+
     not File.exists?(config_path) or
       not config_has_provider?(config_path) or
       not provider_ready?()
@@ -184,7 +186,8 @@ defmodule Daemon.Onboarding do
 
   Returns `{:ok, provider, model, env_var, api_key}` or `:none`.
   """
-  @spec detect_provider() :: {:ok, String.t(), String.t(), String.t() | nil, String.t() | nil} | :none
+  @spec detect_provider() ::
+          {:ok, String.t(), String.t(), String.t() | nil, String.t() | nil} | :none
   def detect_provider do
     # 1. Probe Ollama
     case probe_http("http://localhost:11434/api/tags") do
@@ -266,6 +269,8 @@ defmodule Daemon.Onboarding do
 
     with {:ok, content} <- File.read(config_path),
          {:ok, config} <- Jason.decode(content) do
+      config_api_keys = Map.get(config, "api_keys", %{})
+
       # Provider + model — handle both flat ("provider": "ollama") and
       # nested ("provider": {"default": "ollama", "model": "..."}) config shapes
       {provider, model} =
@@ -302,7 +307,7 @@ defmodule Daemon.Onboarding do
       end
 
       # API keys → both System env and Application env
-      for {env_var, value} <- Map.get(config, "api_keys", %{}),
+      for {env_var, value} <- config_api_keys,
           is_binary(value) and value != "" do
         System.put_env(env_var, value)
         key_atom = env_var_to_app_key(env_var)
@@ -312,9 +317,11 @@ defmodule Daemon.Onboarding do
       # Working directory — only apply if not already set via DAEMON_WORKING_DIR env var
       if System.get_env("DAEMON_WORKING_DIR") == nil do
         workspace = config["workspace"]
+
         case is_map(workspace) && workspace["default_dir"] do
           dir when is_binary(dir) and dir != "" ->
             Application.put_env(:daemon, :working_dir, Path.expand(dir))
+
           _ ->
             :ok
         end
@@ -322,7 +329,7 @@ defmodule Daemon.Onboarding do
 
       # Rebuild fallback chain from newly applied config
       # (runtime.exs ran before config.json existed on first run)
-      rebuild_fallback_chain()
+      rebuild_fallback_chain(config_api_keys)
 
       :ok
     else
@@ -330,30 +337,11 @@ defmodule Daemon.Onboarding do
     end
   end
 
-  defp rebuild_fallback_chain do
+  defp rebuild_fallback_chain(api_keys_source) do
     # Only rebuild if user hasn't set an explicit override
     if System.get_env("DAEMON_FALLBACK_CHAIN") == nil do
       default = Application.get_env(:daemon, :default_provider, :ollama)
-
-      # Check which providers now have API keys configured
-      candidates = [
-        {:anthropic, :anthropic_api_key},
-        {:openai, :openai_api_key},
-        {:groq, :groq_api_key},
-        {:openrouter, :openrouter_api_key},
-        {:deepseek, :deepseek_api_key},
-        {:together, :together_api_key},
-        {:fireworks, :fireworks_api_key},
-        {:mistral, :mistral_api_key},
-        {:google, :google_api_key},
-        {:cohere, :cohere_api_key}
-      ]
-
-      configured =
-        for {name, key} <- candidates,
-            val = Application.get_env(:daemon, key),
-            is_binary(val) and val != "",
-            do: name
+      configured = configured_fallback_providers(api_keys_source)
 
       # Only add Ollama if it's actually reachable (TCP probe, 1s timeout).
       # Prevents :econnrefused errors cascading through the fallback chain.
@@ -364,15 +352,20 @@ defmodule Daemon.Onboarding do
 
       ollama_reachable =
         case :gen_tcp.connect(ollama_host, ollama_port, [], 1_000) do
-          {:ok, sock} -> :gen_tcp.close(sock); true
-          {:error, _} -> false
+          {:ok, sock} ->
+            :gen_tcp.close(sock)
+            true
+
+          {:error, _} ->
+            false
         end
 
-      chain = if ollama_reachable do
-        (configured ++ [:ollama]) |> Enum.uniq()
-      else
-        configured
-      end
+      chain =
+        if ollama_reachable do
+          (configured ++ [:ollama]) |> Enum.uniq()
+        else
+          configured
+        end
 
       chain = Enum.reject(chain, &(&1 == default))
       Application.put_env(:daemon, :fallback_chain, chain)
@@ -380,6 +373,46 @@ defmodule Daemon.Onboarding do
       Logger.debug("[Onboarding] Fallback chain rebuilt: #{inspect(chain)} (default: #{default})")
     end
   end
+
+  defp configured_fallback_providers(:application) do
+    provider_api_key_bindings()
+    |> Enum.filter(fn {_provider, _env_var, app_key} ->
+      present?(Application.get_env(:daemon, app_key))
+    end)
+    |> Enum.map(&elem(&1, 0))
+  end
+
+  defp configured_fallback_providers(api_keys) when is_map(api_keys) do
+    configured_env_vars =
+      api_keys
+      |> Enum.filter(fn {_env_var, value} -> present?(value) end)
+      |> Enum.map(&elem(&1, 0))
+      |> MapSet.new()
+
+    provider_api_key_bindings()
+    |> Enum.filter(fn {_provider, env_var, _app_key} ->
+      MapSet.member?(configured_env_vars, env_var)
+    end)
+    |> Enum.map(&elem(&1, 0))
+  end
+
+  defp configured_fallback_providers(_), do: []
+
+  defp provider_api_key_bindings do
+    Enum.flat_map(@providers, fn
+      {_number, "ollama_cloud", _name, _model, env_var}
+      when is_binary(env_var) and env_var != "" ->
+        [{:ollama, env_var, env_var_to_app_key(env_var)}]
+
+      {_number, provider, _name, _model, env_var} when is_binary(env_var) and env_var != "" ->
+        [{String.to_atom(provider), env_var, env_var_to_app_key(env_var)}]
+
+      _ ->
+        []
+    end)
+  end
+
+  defp present?(value), do: is_binary(value) and value != ""
 
   @doc """
   Run post-setup diagnostic checks. Returns a list of check results.
@@ -595,7 +628,10 @@ defmodule Daemon.Onboarding do
 
       other ->
         # Unexpected selector return — log and fall back to Ollama
-        Logger.warning("[Onboarding] Unexpected selector result: #{inspect(other)}, defaulting to Ollama")
+        Logger.warning(
+          "[Onboarding] Unexpected selector result: #{inspect(other)}, defaulting to Ollama"
+        )
+
         {"ollama", "llama3.2:latest", nil, nil}
     end
   end
@@ -622,7 +658,10 @@ defmodule Daemon.Onboarding do
       end
 
     IO.puts("\n  #{@dim}Ollama Cloud requires a URL and API key from your provider.#{@reset}")
-    IO.puts("  #{@dim}(e.g. https://api.ollama.cloud, or any OpenAI-compatible Ollama host)#{@reset}\n")
+
+    IO.puts(
+      "  #{@dim}(e.g. https://api.ollama.cloud, or any OpenAI-compatible Ollama host)#{@reset}\n"
+    )
 
     url = prompt("Ollama Cloud URL", "https://ollama.lunivate.com")
     api_key = prompt("API key", "")
@@ -735,9 +774,24 @@ defmodule Daemon.Onboarding do
   @spec machines_list() :: [map()]
   def machines_list do
     [
-      %{key: "communication", name: "Communication", description: "Telegram, Discord, Slack messaging", tools: ["telegram_send", "discord_send", "slack_send"]},
-      %{key: "productivity", name: "Productivity", description: "Calendar, tasks, scheduling", tools: ["calendar_read", "calendar_create", "task_manager"]},
-      %{key: "research", name: "Research", description: "Deep web search, summarization, translation", tools: ["web_search_deep", "summarize", "translate"]}
+      %{
+        key: "communication",
+        name: "Communication",
+        description: "Telegram, Discord, Slack messaging",
+        tools: ["telegram_send", "discord_send", "slack_send"]
+      },
+      %{
+        key: "productivity",
+        name: "Productivity",
+        description: "Calendar, tasks, scheduling",
+        tools: ["calendar_read", "calendar_create", "task_manager"]
+      },
+      %{
+        key: "research",
+        name: "Research",
+        description: "Deep web search, summarization, translation",
+        tools: ["web_search_deep", "summarize", "translate"]
+      }
     ]
   end
 
@@ -745,10 +799,30 @@ defmodule Daemon.Onboarding do
   @spec channels_list() :: [map()]
   def channels_list do
     [
-      %{key: "telegram", name: "Telegram", description: "Bot via BotFather token", fields: ["token"]},
-      %{key: "whatsapp", name: "WhatsApp", description: "Meta Cloud API or Baileys Web", fields: ["mode", "token", "phone_number_id"]},
-      %{key: "discord", name: "Discord", description: "Bot via Discord Developer Portal", fields: ["token"]},
-      %{key: "slack", name: "Slack", description: "Bot via Slack App", fields: ["token", "signing_secret"]}
+      %{
+        key: "telegram",
+        name: "Telegram",
+        description: "Bot via BotFather token",
+        fields: ["token"]
+      },
+      %{
+        key: "whatsapp",
+        name: "WhatsApp",
+        description: "Meta Cloud API or Baileys Web",
+        fields: ["mode", "token", "phone_number_id"]
+      },
+      %{
+        key: "discord",
+        name: "Discord",
+        description: "Bot via Discord Developer Portal",
+        fields: ["token"]
+      },
+      %{
+        key: "slack",
+        name: "Slack",
+        description: "Bot via Slack App",
+        fields: ["token", "signing_secret"]
+      }
     ]
   end
 
@@ -778,7 +852,12 @@ defmodule Daemon.Onboarding do
       env_var: Map.get(state, :env_var),
       channels: Map.get(state, :channels, []),
       system_info: Map.get(state, :system_info, %{}),
-      machines: Map.get(state, :machines, %{"communication" => false, "productivity" => false, "research" => false}),
+      machines:
+        Map.get(state, :machines, %{
+          "communication" => false,
+          "productivity" => false,
+          "research" => false
+        }),
       channels_config: Map.get(state, :channels_config, %{}),
       os_template: Map.get(state, :os_template)
     }
@@ -848,9 +927,14 @@ defmodule Daemon.Onboarding do
 
     os_template_config =
       case Map.get(state, :os_template) do
-        nil -> %{}
-        t when is_map(t) -> %{"name" => t["name"] || Map.get(t, :name), "path" => t["path"] || Map.get(t, :path)}
-        _ -> %{}
+        nil ->
+          %{}
+
+        t when is_map(t) ->
+          %{"name" => t["name"] || Map.get(t, :name), "path" => t["path"] || Map.get(t, :path)}
+
+        _ ->
+          %{}
       end
 
     # Save Ollama Cloud URL if set (check state first, then Application env)
@@ -859,7 +943,8 @@ defmodule Daemon.Onboarding do
         Application.get_env(:daemon, :ollama_url, "http://localhost:11434")
 
     provider_config =
-      if state.provider == "ollama" and is_binary(ollama_url) and not String.contains?(ollama_url, "localhost") do
+      if state.provider == "ollama" and is_binary(ollama_url) and
+           not String.contains?(ollama_url, "localhost") do
         %{"default" => "ollama", "model" => state.model, "ollama_url" => ollama_url}
       else
         %{"default" => state.provider, "model" => state.model}
@@ -871,11 +956,12 @@ defmodule Daemon.Onboarding do
         "agent" => %{"name" => state.agent_name},
         "provider" => provider_config,
         "api_keys" => api_keys,
-        "machines" => Map.get(state, :machines, %{
-          "communication" => false,
-          "productivity" => false,
-          "research" => false
-        }),
+        "machines" =>
+          Map.get(state, :machines, %{
+            "communication" => false,
+            "productivity" => false,
+            "research" => false
+          }),
         "scheduler" => %{
           "heartbeat_interval_minutes" => 15,
           "cron_jobs" => []
@@ -1178,7 +1264,6 @@ defmodule Daemon.Onboarding do
   defp test_provider_connectivity(_provider, _model, ""), do: {:error, "No API key provided"}
   defp test_provider_connectivity(_provider, _model, _key), do: :ok
 
-
   # ── Profile-Aware Config Path ─────────────────────────────────
 
   defp config_dir do
@@ -1276,30 +1361,19 @@ defmodule Daemon.Onboarding do
     end
   end
 
-  defp provider_api_key("ollama") do
-    Application.get_env(:daemon, :ollama_api_key)
-  end
-
   defp provider_api_key(provider) do
-    key_atom =
+    provider =
       case provider do
-        "anthropic" -> :anthropic_api_key
-        "openai" -> :openai_api_key
-        "groq" -> :groq_api_key
-        "openrouter" -> :openrouter_api_key
-        "deepseek" -> :deepseek_api_key
-        "google" -> :google_api_key
-        "mistral" -> :mistral_api_key
-        "together" -> :together_api_key
-        "fireworks" -> :fireworks_api_key
-        "cohere" -> :cohere_api_key
-        "perplexity" -> :perplexity_api_key
-        "replicate" -> :replicate_api_key
-        "qwen" -> :qwen_api_key
-        _ -> nil
+        "ollama_cloud" -> "ollama"
+        other -> other
       end
 
-    if key_atom, do: Application.get_env(:daemon, key_atom), else: nil
+    case Enum.find(provider_api_key_bindings(), fn {name, _env_var, _app_key} ->
+           Atom.to_string(name) == provider
+         end) do
+      {_name, _env_var, app_key} -> Application.get_env(:daemon, app_key)
+      nil -> nil
+    end
   end
 
   # ── Formatting Helpers ──────────────────────────────────────────

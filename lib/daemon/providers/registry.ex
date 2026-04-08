@@ -45,45 +45,47 @@ defmodule Daemon.Providers.Registry do
   alias Daemon.Providers
   alias MiosaLLM.HealthChecker
 
+  @extra_providers_key {__MODULE__, :extra_providers}
+
   # Consolidated compat provider — one module handles 13 OpenAI-compatible APIs
   @compat Providers.OpenAICompatProvider
 
   # Canonical provider registry — maps atom → module | {:compat, atom}
   @providers Map.merge(
-    %{
-      # Local
-      ollama: Providers.Ollama,
+               %{
+                 # Local
+                 ollama: Providers.Ollama,
 
-      # OpenAI-compatible (consolidated through OpenAICompatProvider)
-      openai: {:compat, :openai},
-      groq: {:compat, :groq},
-      together: {:compat, :together},
-      fireworks: {:compat, :fireworks},
-      deepseek: {:compat, :deepseek},
-      perplexity: {:compat, :perplexity},
-      mistral: {:compat, :mistral},
-      openrouter: {:compat, :openrouter},
+                 # OpenAI-compatible (consolidated through OpenAICompatProvider)
+                 openai: {:compat, :openai},
+                 groq: {:compat, :groq},
+                 together: {:compat, :together},
+                 fireworks: {:compat, :fireworks},
+                 deepseek: {:compat, :deepseek},
+                 perplexity: {:compat, :perplexity},
+                 mistral: {:compat, :mistral},
+                 openrouter: {:compat, :openrouter},
 
-      # Native API providers (custom protocol, not OpenAI-compatible)
-      anthropic: Providers.Anthropic,
-      google: Providers.Google,
-      cohere: Providers.Cohere,
-      replicate: Providers.Replicate,
+                 # Native API providers (custom protocol, not OpenAI-compatible)
+                 anthropic: Providers.Anthropic,
+                 google: Providers.Google,
+                 cohere: Providers.Cohere,
+                 replicate: Providers.Replicate,
 
-      # Chinese providers (OpenAI-compatible, consolidated)
-      qwen: {:compat, :qwen},
-      moonshot: {:compat, :moonshot},
-      zhipu: {:compat, :zhipu},
-      volcengine: {:compat, :volcengine},
-      baichuan: {:compat, :baichuan}
-    },
-    # Mock provider only available in test environment
-    if Application.compile_env(:daemon, :env, :prod) == :test do
-      %{mock: Daemon.Test.MockProvider}
-    else
-      %{}
-    end
-  )
+                 # Chinese providers (OpenAI-compatible, consolidated)
+                 qwen: {:compat, :qwen},
+                 moonshot: {:compat, :moonshot},
+                 zhipu: {:compat, :zhipu},
+                 volcengine: {:compat, :volcengine},
+                 baichuan: {:compat, :baichuan}
+               },
+               # Mock provider only available in test environment
+               if Application.compile_env(:daemon, :env, :prod) == :test do
+                 %{mock: Daemon.Test.MockProvider}
+               else
+                 %{}
+               end
+             )
 
   # --- Public API ---
 
@@ -106,10 +108,11 @@ defmodule Daemon.Providers.Registry do
   def chat(messages, opts \\ []) do
     provider = Keyword.get(opts, :provider) || default_provider()
     opts_without_provider = Keyword.delete(opts, :provider)
+    providers = providers_map()
 
-    case Map.get(@providers, provider) do
+    case Map.get(providers, provider) do
       nil ->
-        {:error, "Unknown provider: #{provider}. Available: #{inspect(Map.keys(@providers))}"}
+        {:error, "Unknown provider: #{provider}. Available: #{inspect(Map.keys(providers))}"}
 
       module ->
         call_with_fallback(provider, module, messages, opts_without_provider)
@@ -120,7 +123,7 @@ defmodule Daemon.Providers.Registry do
   List all registered provider atoms.
   """
   @spec list_providers() :: list(atom())
-  def list_providers, do: Map.keys(@providers)
+  def list_providers, do: Map.keys(providers_map())
 
   @doc """
   Get information about a specific provider.
@@ -129,18 +132,19 @@ defmodule Daemon.Providers.Registry do
   """
   @spec provider_info(atom()) :: {:ok, map()} | {:error, String.t()}
   def provider_info(provider) do
-    case Map.get(@providers, provider) do
+    case Map.get(providers_map(), provider) do
       nil ->
         {:error, "Unknown provider: #{provider}"}
 
       {:compat, prov} ->
-        {:ok, %{
-          name: provider,
-          module: @compat,
-          default_model: @compat.default_model(prov),
-          available_models: @compat.available_models(prov),
-          configured?: provider_configured?(provider)
-        }}
+        {:ok,
+         %{
+           name: provider,
+           module: @compat,
+           default_model: @compat.default_model(prov),
+           available_models: @compat.available_models(prov),
+           configured?: provider_configured?(provider)
+         }}
 
       module when is_atom(module) ->
         models =
@@ -150,13 +154,14 @@ defmodule Daemon.Providers.Registry do
             [module.default_model()]
           end
 
-        {:ok, %{
-          name: provider,
-          module: module,
-          default_model: module.default_model(),
-          available_models: models,
-          configured?: provider_configured?(provider)
-        }}
+        {:ok,
+         %{
+           name: provider,
+           module: module,
+           default_model: module.default_model(),
+           available_models: models,
+           configured?: provider_configured?(provider)
+         }}
     end
   end
 
@@ -184,10 +189,11 @@ defmodule Daemon.Providers.Registry do
   def chat_stream(messages, callback, opts \\ []) do
     provider = Keyword.get(opts, :provider) || default_provider()
     opts_without_provider = Keyword.delete(opts, :provider)
+    providers = providers_map()
 
-    case Map.get(@providers, provider) do
+    case Map.get(providers, provider) do
       nil ->
-        {:error, "Unknown provider: #{provider}. Available: #{inspect(Map.keys(@providers))}"}
+        {:error, "Unknown provider: #{provider}. Available: #{inspect(Map.keys(providers))}"}
 
       module ->
         case stream_with_fallback(provider, module, messages, callback, opts_without_provider) do
@@ -218,14 +224,18 @@ defmodule Daemon.Providers.Registry do
   @spec chat_with_fallback(list(), list(atom()), keyword()) ::
           {:ok, map()} | {:error, String.t()}
   def chat_with_fallback(messages, chain, opts \\ []) do
-    available_chain = Enum.filter(chain, fn provider ->
-      if HealthChecker.is_available?(provider) do
-        true
-      else
-        Logger.warning("Provider #{provider} skipped in fallback chain (circuit open or rate-limited)")
-        false
-      end
-    end)
+    available_chain =
+      Enum.filter(chain, fn provider ->
+        if HealthChecker.is_available?(provider) do
+          true
+        else
+          Logger.warning(
+            "Provider #{provider} skipped in fallback chain (circuit open or rate-limited)"
+          )
+
+          false
+        end
+      end)
 
     Enum.reduce_while(available_chain, {:error, "No providers in chain"}, fn provider, _acc ->
       case chat(messages, Keyword.put(opts, :provider, provider)) do
@@ -251,6 +261,7 @@ defmodule Daemon.Providers.Registry do
   def init(:ok) do
     providers = @providers
     default = default_provider()
+    :persistent_term.put(@extra_providers_key, %{})
 
     Logger.info(
       "Provider registry initialized with #{map_size(providers)} providers (default: #{default})"
@@ -265,7 +276,9 @@ defmodule Daemon.Providers.Registry do
     ollama_reachable = ollama_reachable?()
 
     unless ollama_reachable do
-      Logger.info("[Providers.Registry] Ollama not reachable at boot — skipping in fallback chain")
+      Logger.info(
+        "[Providers.Registry] Ollama not reachable at boot — skipping in fallback chain"
+      )
     end
 
     # Stash the boot-time decision in the process dictionary so private
@@ -286,6 +299,7 @@ defmodule Daemon.Providers.Registry do
          function_exported?(module, :name, 0) and
          function_exported?(module, :default_model, 0) do
       new_state = put_in(state[:extra_providers][name], module)
+      :persistent_term.put(@extra_providers_key, new_state.extra_providers)
       Logger.info("Registered custom provider: #{name} -> #{module}")
       {:reply, :ok, new_state}
     else
@@ -295,10 +309,14 @@ defmodule Daemon.Providers.Registry do
 
   # --- Private ---
 
+  defp providers_map do
+    Map.merge(@providers, :persistent_term.get(@extra_providers_key, %{}))
+  end
+
   defp call_with_fallback(provider, module, messages, opts) do
     case Daemon.Providers.ConcurrencyLimiter.with_limit(fn ->
-      with_retry(fn -> apply_provider(module, messages, opts) end)
-    end) do
+           with_retry(fn -> apply_provider(module, messages, opts) end)
+         end) do
       {:ok, _} = result ->
         HealthChecker.record_success(provider)
         result
@@ -313,12 +331,7 @@ defmodule Daemon.Providers.Registry do
 
         remaining_chain =
           fallback_chain
-          |> Enum.drop_while(&(&1 == provider))
-          |> then(fn
-            chain when chain == fallback_chain -> chain
-            [_ | rest] -> rest
-            [] -> []
-          end)
+          |> remaining_fallback_chain(provider)
           |> filter_boot_excluded_providers()
           |> Enum.filter(&HealthChecker.is_available?/1)
 
@@ -330,7 +343,8 @@ defmodule Daemon.Providers.Registry do
             "Provider #{provider} failed: #{reason}. Trying fallback chain: #{inspect(remaining_chain)}"
           )
 
-          chat_with_fallback(messages, remaining_chain, opts)
+          fallback_opts = Keyword.delete(opts, :model)
+          chat_with_fallback(messages, remaining_chain, fallback_opts)
         end
     end
   end
@@ -340,12 +354,7 @@ defmodule Daemon.Providers.Registry do
 
     remaining_chain =
       fallback_chain
-      |> Enum.drop_while(&(&1 == failed_provider))
-      |> then(fn
-        chain when chain == fallback_chain -> chain
-        [_ | rest] -> rest
-        [] -> []
-      end)
+      |> remaining_fallback_chain(failed_provider)
       |> filter_boot_excluded_providers()
       |> Enum.filter(&HealthChecker.is_available?/1)
 
@@ -353,12 +362,15 @@ defmodule Daemon.Providers.Registry do
       Logger.error(
         "Provider #{failed_provider} #{reason}, no available fallback in chain: #{inspect(fallback_chain)}"
       )
+
       {:error, "Provider #{failed_provider} #{reason} and no fallback available"}
     else
       Logger.warning(
         "Provider #{failed_provider} #{reason}, trying next available: #{inspect(remaining_chain)}"
       )
-      chat_with_fallback(messages, remaining_chain, opts)
+
+      fallback_opts = Keyword.delete(opts, :model)
+      chat_with_fallback(messages, remaining_chain, fallback_opts)
     end
   end
 
@@ -374,6 +386,13 @@ defmodule Daemon.Providers.Registry do
     end
   end
 
+  defp remaining_fallback_chain(chain, failed_provider) do
+    case Enum.split_while(chain, &(&1 != failed_provider)) do
+      {_before, [_failed | rest]} -> rest
+      {_before, []} -> chain
+    end
+  end
+
   defp stream_with_fallback(provider, module, messages, callback, opts) do
     result = with_retry(fn -> try_stream_provider(module, messages, callback, opts) end)
 
@@ -386,12 +405,7 @@ defmodule Daemon.Providers.Registry do
 
         remaining_chain =
           fallback_chain
-          |> Enum.drop_while(&(&1 == provider))
-          |> then(fn
-            chain when chain == fallback_chain -> chain
-            [_ | rest] -> rest
-            [] -> []
-          end)
+          |> remaining_fallback_chain(provider)
 
         if remaining_chain == [] do
           Logger.error("Provider #{provider} stream failed, no fallback: #{reason}")
@@ -403,13 +417,15 @@ defmodule Daemon.Providers.Registry do
 
           # Try each fallback provider
           Enum.reduce_while(remaining_chain, {:error, reason}, fn fb_provider, _acc ->
-            case Map.get(@providers, fb_provider) do
+            case Map.get(providers_map(), fb_provider) do
               nil ->
                 {:cont, {:error, "Unknown fallback provider: #{fb_provider}"}}
 
               fb_module ->
                 case try_stream_provider(fb_module, messages, callback, opts) do
-                  :ok -> {:halt, :ok}
+                  :ok ->
+                    {:halt, :ok}
+
                   {:error, r} ->
                     Logger.warning("Fallback stream provider #{fb_provider} failed: #{r}")
                     {:cont, {:error, r}}
@@ -426,7 +442,10 @@ defmodule Daemon.Providers.Registry do
       @compat.chat_stream(provider, messages, callback, opts)
     rescue
       e ->
-        Logger.warning("Compat provider #{provider} streaming failed: #{Exception.message(e)}, falling back to sync")
+        Logger.warning(
+          "Compat provider #{provider} streaming failed: #{Exception.message(e)}, falling back to sync"
+        )
+
         fallback_sync_stream({:compat, provider}, messages, callback, opts)
     end
   end
@@ -435,10 +454,16 @@ defmodule Daemon.Providers.Registry do
     if function_exported?(module, :chat_stream, 3) do
       try do
         Logger.info("[Registry] Calling #{module}.chat_stream/3")
+
         case module.chat_stream(messages, callback, opts) do
-          :ok -> :ok
+          :ok ->
+            :ok
+
           {:error, reason} ->
-            Logger.warning("Provider #{module} chat_stream failed: #{inspect(reason)} — falling back to sync")
+            Logger.warning(
+              "Provider #{module} chat_stream failed: #{inspect(reason)} — falling back to sync"
+            )
+
             fallback_sync_stream(module, messages, callback, opts)
         end
       rescue
@@ -549,7 +574,7 @@ defmodule Daemon.Providers.Registry do
     "mistral-small-latest" => 128_000,
     # Cohere
     "command-r-plus" => 128_000,
-    "command-r" => 128_000,
+    "command-r" => 128_000
   }
 
   @spec context_window(String.t()) :: pos_integer()
@@ -563,7 +588,9 @@ defmodule Daemon.Providers.Registry do
           end)
 
         case matched do
-          {_key, size} -> size
+          {_key, size} ->
+            size
+
           nil ->
             # Check Ollama model info for num_ctx
             case get_ollama_context(model) do
@@ -582,7 +609,9 @@ defmodule Daemon.Providers.Registry do
   defp get_ollama_context(model) do
     # Check ETS cache first
     case :ets.whereis(:daemon_context_cache) do
-      :undefined -> :ok
+      :undefined ->
+        :ok
+
       _ ->
         case :ets.lookup(:daemon_context_cache, model) do
           [{^model, cached_ctx}] -> return_cached(cached_ctx)
@@ -608,7 +637,9 @@ defmodule Daemon.Providers.Registry do
           |> Enum.find_value(fn
             {k, v} when is_integer(v) and v > 0 ->
               if String.contains?(k, "context_length"), do: v
-            _ -> nil
+
+            _ ->
+              nil
           end)
 
         if ctx do
@@ -617,6 +648,7 @@ defmodule Daemon.Providers.Registry do
             :undefined -> :ok
             _ -> :ets.insert(:daemon_context_cache, {model, ctx})
           end
+
           {:ok, ctx}
         else
           :error

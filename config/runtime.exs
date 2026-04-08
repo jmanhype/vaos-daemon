@@ -65,24 +65,39 @@ end
 
 # Smart provider auto-detection: explicit override > API key presence > ollama fallback
 provider_map = %{
-  "ollama" => :ollama, "anthropic" => :anthropic, "openai" => :openai,
-  "groq" => :groq, "openrouter" => :openrouter, "together" => :together,
-  "fireworks" => :fireworks, "deepseek" => :deepseek, "mistral" => :mistral,
-  "cerebras" => :cerebras, "google" => :google, "cohere" => :cohere,
-  "perplexity" => :perplexity, "xai" => :xai, "sambanova" => :sambanova,
-  "hyperbolic" => :hyperbolic, "lmstudio" => :lmstudio, "llamacpp" => :llamacpp,
-  "zhipu" => :zhipu, "qwen" => :qwen, "moonshot" => :moonshot,
-  "baichuan" => :baichuan, "volcengine" => :volcengine
+  "ollama" => :ollama,
+  "anthropic" => :anthropic,
+  "openai" => :openai,
+  "groq" => :groq,
+  "openrouter" => :openrouter,
+  "together" => :together,
+  "fireworks" => :fireworks,
+  "deepseek" => :deepseek,
+  "mistral" => :mistral,
+  "cerebras" => :cerebras,
+  "google" => :google,
+  "cohere" => :cohere,
+  "perplexity" => :perplexity,
+  "xai" => :xai,
+  "sambanova" => :sambanova,
+  "hyperbolic" => :hyperbolic,
+  "lmstudio" => :lmstudio,
+  "llamacpp" => :llamacpp,
+  "zhipu" => :zhipu,
+  "qwen" => :qwen,
+  "moonshot" => :moonshot,
+  "baichuan" => :baichuan,
+  "volcengine" => :volcengine
 }
 
 default_provider =
   cond do
     env = System.get_env("DAEMON_DEFAULT_PROVIDER") -> Map.get(provider_map, env, :ollama)
     System.get_env("ANTHROPIC_API_KEY") -> :anthropic
+    System.get_env("ZHIPU_API_KEY") -> :zhipu
     System.get_env("OPENAI_API_KEY") -> :openai
     System.get_env("GROQ_API_KEY") -> :groq
     System.get_env("OPENROUTER_API_KEY") -> :openrouter
-    System.get_env("ZHIPU_API_KEY") -> :zhipu
     true -> :ollama
   end
 
@@ -140,11 +155,12 @@ config :daemon,
   ollama_api_key: System.get_env("OLLAMA_API_KEY"),
   # OLLAMA_THINK: set to "true" to enable extended reasoning (kimi-k2, qwen3-thinking, etc.)
   # Default nil → ollama.ex disables thinking for known reasoning models to prevent timeouts.
-  ollama_think: (case System.get_env("OLLAMA_THINK") do
-    "true" -> true
-    "false" -> false
-    _ -> nil
-  end),
+  ollama_think:
+    (case System.get_env("OLLAMA_THINK") do
+       "true" -> true
+       "false" -> false
+       _ -> nil
+     end),
 
   # Channel tokens
   telegram_bot_token: System.get_env("TELEGRAM_BOT_TOKEN"),
@@ -160,27 +176,26 @@ config :daemon,
   default_provider: default_provider,
   # Default model — resolved from DAEMON_MODEL env, or provider-specific env var.
   # Falls back to OLLAMA_MODEL only when the active provider is actually ollama.
-  default_model: (
+  default_model:
     System.get_env("DAEMON_MODEL") ||
-      case default_provider do
-        :ollama -> System.get_env("OLLAMA_MODEL") || "qwen2.5:7b"
-        :groq -> System.get_env("GROQ_MODEL")
-        :anthropic -> System.get_env("ANTHROPIC_MODEL")
-        :openai -> System.get_env("OPENAI_MODEL")
-        :openrouter -> System.get_env("OPENROUTER_MODEL")
-        :deepseek -> System.get_env("DEEPSEEK_MODEL")
-        :together -> System.get_env("TOGETHER_MODEL")
-        :fireworks -> System.get_env("FIREWORKS_MODEL")
-        :mistral -> System.get_env("MISTRAL_MODEL")
-        :google -> System.get_env("GOOGLE_MODEL")
-        :cohere -> System.get_env("COHERE_MODEL")
-        :xai -> System.get_env("XAI_MODEL")
-        :cerebras -> System.get_env("CEREBRAS_MODEL")
-        :lmstudio -> System.get_env("LMSTUDIO_MODEL")
-        :llamacpp -> System.get_env("LLAMACPP_MODEL")
-        _ -> nil
-      end
-  ),
+      (case default_provider do
+         :ollama -> System.get_env("OLLAMA_MODEL") || "qwen2.5:7b"
+         :groq -> System.get_env("GROQ_MODEL")
+         :anthropic -> System.get_env("ANTHROPIC_MODEL")
+         :openai -> System.get_env("OPENAI_MODEL")
+         :openrouter -> System.get_env("OPENROUTER_MODEL")
+         :deepseek -> System.get_env("DEEPSEEK_MODEL")
+         :together -> System.get_env("TOGETHER_MODEL")
+         :fireworks -> System.get_env("FIREWORKS_MODEL")
+         :mistral -> System.get_env("MISTRAL_MODEL")
+         :google -> System.get_env("GOOGLE_MODEL")
+         :cohere -> System.get_env("COHERE_MODEL")
+         :xai -> System.get_env("XAI_MODEL")
+         :cerebras -> System.get_env("CEREBRAS_MODEL")
+         :lmstudio -> System.get_env("LMSTUDIO_MODEL")
+         :llamacpp -> System.get_env("LLAMACPP_MODEL")
+         _ -> nil
+       end),
 
   # HTTP channel
   shared_secret:
@@ -229,65 +244,74 @@ config :daemon,
 
   # Provider failover chain — auto-detected from configured API keys.
   # Override with comma-separated list: DAEMON_FALLBACK_CHAIN=anthropic,openai,ollama
-  fallback_chain: (
-    case System.get_env("DAEMON_FALLBACK_CHAIN") do
-      nil ->
-        candidates = [
-          {:anthropic, System.get_env("ANTHROPIC_API_KEY")},
-          {:openai, System.get_env("OPENAI_API_KEY")},
-          {:groq, System.get_env("GROQ_API_KEY")},
-          {:openrouter, System.get_env("OPENROUTER_API_KEY")},
-          {:deepseek, System.get_env("DEEPSEEK_API_KEY")},
-          {:together, System.get_env("TOGETHER_API_KEY")},
-          {:fireworks, System.get_env("FIREWORKS_API_KEY")},
-          {:mistral, System.get_env("MISTRAL_API_KEY")},
-          {:google, System.get_env("GOOGLE_API_KEY")},
-          {:cohere, System.get_env("COHERE_API_KEY")}
-        ]
+  fallback_chain:
+    (case System.get_env("DAEMON_FALLBACK_CHAIN") do
+       nil ->
+         candidates = [
+           {:anthropic, System.get_env("ANTHROPIC_API_KEY")},
+           {:zhipu, System.get_env("ZHIPU_API_KEY")},
+           {:openai, System.get_env("OPENAI_API_KEY")},
+           {:groq, System.get_env("GROQ_API_KEY")},
+           {:openrouter, System.get_env("OPENROUTER_API_KEY")},
+           {:deepseek, System.get_env("DEEPSEEK_API_KEY")},
+           {:together, System.get_env("TOGETHER_API_KEY")},
+           {:fireworks, System.get_env("FIREWORKS_API_KEY")},
+           {:mistral, System.get_env("MISTRAL_API_KEY")},
+           {:google, System.get_env("GOOGLE_API_KEY")},
+           {:cohere, System.get_env("COHERE_API_KEY")},
+           {:qwen, System.get_env("QWEN_API_KEY")},
+           {:moonshot, System.get_env("MOONSHOT_API_KEY")},
+           {:volcengine, System.get_env("VOLCENGINE_API_KEY")},
+           {:baichuan, System.get_env("BAICHUAN_API_KEY")}
+         ]
 
-        configured = for {name, key} <- candidates, key != nil and key != "", do: name
+         configured = for {name, key} <- candidates, key != nil and key != "", do: name
 
-        # Only add Ollama if it's actually reachable (TCP check, 1s timeout).
-        # Prevents Req.TransportError{reason: :econnrefused} on every provider failure.
-        ollama_url = System.get_env("OLLAMA_URL") || "http://localhost:11434"
-        ollama_uri = URI.parse(ollama_url)
-        ollama_host = String.to_charlist(ollama_uri.host || "localhost")
-        ollama_port = ollama_uri.port || 11434
+         # Only add Ollama if it's actually reachable (TCP check, 1s timeout).
+         # Prevents Req.TransportError{reason: :econnrefused} on every provider failure.
+         ollama_url = System.get_env("OLLAMA_URL") || "http://localhost:11434"
+         ollama_uri = URI.parse(ollama_url)
+         ollama_host = String.to_charlist(ollama_uri.host || "localhost")
+         ollama_port = ollama_uri.port || 11434
 
-        # If OLLAMA_API_KEY is set, assume Ollama Cloud is reachable (skip TCP check).
-        # Otherwise, TCP-check local Ollama.
-        ollama_reachable =
-          if System.get_env("OLLAMA_API_KEY") do
-            true
-          else
-            case :gen_tcp.connect(ollama_host, ollama_port, [], 1_000) do
-              {:ok, sock} -> :gen_tcp.close(sock); true
-              {:error, _} -> false
-            end
-          end
+         # If OLLAMA_API_KEY is set, assume Ollama Cloud is reachable (skip TCP check).
+         # Otherwise, TCP-check local Ollama.
+         ollama_reachable =
+           if System.get_env("OLLAMA_API_KEY") do
+             true
+           else
+             case :gen_tcp.connect(ollama_host, ollama_port, [], 1_000) do
+               {:ok, sock} ->
+                 :gen_tcp.close(sock)
+                 true
 
-        chain = if ollama_reachable do
-          (configured ++ [:ollama]) |> Enum.uniq()
-        else
-          configured
-        end
+               {:error, _} ->
+                 false
+             end
+           end
 
-        Enum.reject(chain, &(&1 == default_provider))
+         chain =
+           if ollama_reachable do
+             (configured ++ [:ollama]) |> Enum.uniq()
+           else
+             configured
+           end
 
-      csv ->
-        csv
-        |> String.split(",", trim: true)
-        |> Enum.map(&String.trim/1)
-        |> Enum.map(fn name ->
-          try do
-            String.to_existing_atom(name)
-          rescue
-            ArgumentError -> nil
-          end
-        end)
-        |> Enum.reject(&is_nil/1)
-    end
-  ),
+         Enum.reject(chain, &(&1 == default_provider))
+
+       csv ->
+         csv
+         |> String.split(",", trim: true)
+         |> Enum.map(&String.trim/1)
+         |> Enum.map(fn name ->
+           try do
+             String.to_existing_atom(name)
+           rescue
+             ArgumentError -> nil
+           end
+         end)
+         |> Enum.reject(&is_nil/1)
+     end),
 
   # Plan mode (opt-in via DAEMON_PLAN_MODE=true)
   plan_mode_enabled: System.get_env("DAEMON_PLAN_MODE") == "true",
@@ -301,10 +325,11 @@ config :daemon,
 
   # Default working directory for the agent (e.g. a project you want OSA to work on).
   # Set DAEMON_WORKING_DIR=~/Desktop/BOS to point OSA at the BOS codebase by default.
-  working_dir: (case System.get_env("DAEMON_WORKING_DIR") do
-    nil -> nil
-    path -> Path.expand(path)
-  end)
+  working_dir:
+    (case System.get_env("DAEMON_WORKING_DIR") do
+       nil -> nil
+       path -> Path.expand(path)
+     end)
 
 # ── Platform (multi-tenant PostgreSQL + AMQP) ────────────────────────
 # These are optional — OSA works standalone without them.
