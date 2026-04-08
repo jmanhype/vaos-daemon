@@ -41,7 +41,15 @@ defmodule Daemon.Tools.Builtins.Investigate do
   alias Vaos.Ledger.Epistemic.Policy
   alias Vaos.Ledger.Research.Pipeline
   alias Vaos.Ledger.ML.CrashLearner
-  alias Daemon.Investigation.{Strategy, StrategyStore, SourceScoring, PromptConfig, PromptFeedback, PromptSelector}
+
+  alias Daemon.Investigation.{
+    Strategy,
+    StrategyStore,
+    SourceScoring,
+    PromptConfig,
+    PromptFeedback,
+    PromptSelector
+  }
 
   @ledger_path Path.join(System.user_home!(), ".openclaw/investigate_ledger.json")
   @ledger_name :investigate_ledger
@@ -63,8 +71,10 @@ defmodule Daemon.Tools.Builtins.Investigate do
   # Per-source adaptive circuit breaker prevents wasting 30s on consistently-broken APIs.
   # States: :closed (normal) → :open (tripped, skip) → :half_open (probe one request)
   @circuit_table :investigate_source_health
-  @circuit_failure_threshold 3        # Consecutive failures to trip
-  @circuit_cooldown_ms 600_000        # 10 min cooldown before half-open probe
+  # Consecutive failures to trip
+  @circuit_failure_threshold 3
+  # 10 min cooldown before half-open probe
+  @circuit_cooldown_ms 600_000
   @circuit_sources [:openalex, :semantic_scholar, :alphaxiv, :huggingface]
 
   # OpenAlex polite pool — requests with mailto get routed to faster servers
@@ -98,15 +108,18 @@ defmodule Daemon.Tools.Builtins.Investigate do
         "depth" => %{
           "type" => "string",
           "enum" => ["standard", "deep"],
-          "description" => "standard = adversarial debate + citation verification; deep = standard + research pipeline (hypotheses, testing, report)"
+          "description" =>
+            "standard = adversarial debate + citation verification; deep = standard + research pipeline (hypotheses, testing, report)"
         },
         "steering" => %{
           "type" => "string",
-          "description" => "Optional steering context injected into advocate system prompts (from ActiveLearner bottleneck diagnosis)"
+          "description" =>
+            "Optional steering context injected into advocate system prompts (from ActiveLearner bottleneck diagnosis)"
         },
         "metadata" => %{
           "type" => "object",
-          "description" => "Optional metadata merged into :investigation_complete event payload (e.g. source_module, anomaly_type)"
+          "description" =>
+            "Optional metadata merged into :investigation_complete event payload (e.g. source_module, anomaly_type)"
         }
       },
       "required" => ["topic"]
@@ -134,21 +147,39 @@ defmodule Daemon.Tools.Builtins.Investigate do
   defp run_investigation(topic, depth, steering, caller_metadata) do
     # DecisionJournal dedup — check if this investigation conflicts with in-flight work
     source = Map.get(caller_metadata, :source_module, :investigation)
-    case Daemon.Intelligence.DecisionJournal.propose(source, :investigate, %{topic: topic, branch: "n/a"}) do
+    branch = investigation_branch(topic)
+
+    case Daemon.Intelligence.DecisionJournal.propose(source, :investigate, %{
+           topic: topic,
+           branch: branch
+         }) do
       {:conflict, reason} ->
         Logger.info("[investigate] DecisionJournal conflict: #{reason}")
         {:ok, "Investigation skipped — conflict: #{reason}"}
 
       _ ->
-        result = do_run_investigation(topic, depth, steering, caller_metadata)
+        result =
+          try do
+            do_run_investigation(topic, depth, steering, caller_metadata)
+          rescue
+            e ->
+              Logger.error("[investigate] Investigation raised: #{Exception.message(e)}")
+              {:error, Exception.message(e)}
+          catch
+            kind, reason ->
+              Logger.error("[investigate] Investigation #{kind}: #{inspect(reason)}")
+              {:error, "#{kind}: #{inspect(reason)}"}
+          end
 
         # Always clear in-flight status so future investigations aren't blocked
-        outcome = case result do
-          {:ok, _} -> :success
-          {:error, _} -> :failed
-          _ -> :success
-        end
-        Daemon.Intelligence.DecisionJournal.record_outcome("n/a", outcome, %{topic: topic})
+        outcome =
+          case result do
+            {:ok, _} -> :success
+            {:error, _} -> :failed
+            _ -> :success
+          end
+
+        Daemon.Intelligence.DecisionJournal.record_outcome(branch, outcome, %{topic: topic})
 
         result
     end
@@ -163,6 +194,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
     # on auth failure (401) and sends EXIT to linked callers, killing the pipeline.
     # Trap exits for the duration of the start, then restore.
     old_trap = Process.flag(:trap_exit, true)
+
     try do
       Daemon.Tools.Builtins.AlphaXivClient.start_link()
       # Drain any immediate EXIT from the MCP client crashing during handshake
@@ -191,37 +223,50 @@ defmodule Daemon.Tools.Builtins.Investigate do
     end
 
     # 1b. Load prompt templates via Thompson Sampling selector
-    {prompts, variant_id} = try do
-      PromptSelector.select()
-    rescue
-      _ -> {PromptConfig.load(), "default"}
-    end
+    {prompts, variant_id} =
+      try do
+        PromptSelector.select()
+      rescue
+        _ -> {PromptConfig.load(), "default"}
+      end
 
     # 2. Extract keywords for prior knowledge search
     keywords = extract_keywords(topic)
 
     # 2a. Load prior winning strategy for search/LLM params (scoring params tuned later by optimizer)
     #     Fallback chain: topic-specific → _global (Retrospector-optimized) → defaults
-    prior_strategy = case StrategyStore.load_best(topic) do
-      {:ok, strategy} ->
-        Logger.info("[investigate] Loaded prior strategy (gen #{strategy.generation}) for search params")
-        strategy
-      :error ->
-        case StrategyStore.load_best("_global") do
-          {:ok, strategy} ->
-            Logger.info("[investigate] Loaded _global strategy (gen #{strategy.generation}) from Retrospector")
-            strategy
-          :error ->
-            Strategy.default()
-        end
-    end
+    prior_strategy =
+      case StrategyStore.load_best(topic) do
+        {:ok, strategy} ->
+          Logger.info(
+            "[investigate] Loaded prior strategy (gen #{strategy.generation}) for search params"
+          )
+
+          strategy
+
+        :error ->
+          case StrategyStore.load_best("_global") do
+            {:ok, strategy} ->
+              Logger.info(
+                "[investigate] Loaded _global strategy (gen #{strategy.generation}) from Retrospector"
+              )
+
+              strategy
+
+            :error ->
+              Strategy.default()
+          end
+      end
 
     # 3. Prior knowledge search — fetch prior EVIDENCE, not conclusions
     case ensure_store_started() do
-      :ok -> :ok
+      :ok ->
+        :ok
+
       {:error, reason} ->
         Logger.warning("[investigate] Knowledge store unavailable: #{inspect(reason)}")
     end
+
     store = store_ref()
     prior_evidence = fetch_prior_evidence_by_keywords(store, keywords)
 
@@ -235,64 +280,70 @@ defmodule Daemon.Tools.Builtins.Investigate do
     papers_context = format_papers(all_papers, prompts)
 
     # 6. Prior evidence context (evidence only, no conclusions)
-    prior_text = if prior_evidence == [] do
-      ""
-    else
-      "\n\nPreviously investigated evidence on related topics:\n" <>
-        Enum.join(prior_evidence, "\n") <> "\n"
-    end
+    prior_text =
+      if prior_evidence == [] do
+        ""
+      else
+        "\n\nPreviously investigated evidence on related topics:\n" <>
+          Enum.join(prior_evidence, "\n") <> "\n"
+      end
 
     # 6a. Fetch known failure pitfalls from CrashLearner
-    pitfalls = try do
-      {:ok, plist} = CrashLearner.get_pitfalls(:daemon_crash_learner)
-      plist
-    rescue
-      _ -> []
-    end
+    pitfalls =
+      try do
+        {:ok, plist} = CrashLearner.get_pitfalls(:daemon_crash_learner)
+        plist
+      rescue
+        _ -> []
+      end
 
-    pitfall_context = if pitfalls != [] do
-      text = Enum.map(pitfalls, fn p -> "- #{p.summary}" end) |> Enum.join("
+    pitfall_context =
+      if pitfalls != [] do
+        text = Enum.map(pitfalls, fn p -> "- #{p.summary}" end) |> Enum.join("
 ")
-      "
+        "
 
 Known failure patterns to avoid:
 #{text}
 "
-    else
-      ""
-    end
+      else
+        ""
+      end
 
     # 6b. Steering context from ActiveLearner bottleneck diagnosis
-    steering_context = if is_binary(steering) and steering != "" do
-      "\n\n" <> steering
-    else
-      ""
-    end
+    steering_context =
+      if is_binary(steering) and steering != "" do
+        "\n\n" <> steering
+      else
+        ""
+      end
 
     # 7. TWO ADVERSARIAL LLM CALLS (sequential for rate-limit safety)
     example_format = prompts["example_format"]
 
-    for_prompt = PromptConfig.render(prompts["advocate_user_template"],
-      position: "TRUE",
-      direction: "",
-      claim: topic,
-      papers_context: papers_context,
-      prior_text: prior_text,
-      arg_type: "arguments",
-      example_format: example_format,
-      arg_word: "argument"
-    )
+    for_prompt =
+      PromptConfig.render(prompts["advocate_user_template"],
+        position: "TRUE",
+        direction: "",
+        claim: topic,
+        papers_context: papers_context,
+        prior_text: prior_text,
+        arg_type: "arguments",
+        example_format: example_format,
+        arg_word: "argument"
+      )
 
-    against_prompt = PromptConfig.render(prompts["advocate_user_template"],
-      position: "FALSE",
-      direction: " AGAINST it",
-      claim: topic,
-      papers_context: papers_context,
-      prior_text: prior_text,
-      arg_type: "counterarguments",
-      example_format: example_format,
-      arg_word: "counterargument"
-    )
+    against_prompt =
+      PromptConfig.render(prompts["advocate_user_template"],
+        position: "FALSE",
+        direction: " AGAINST it",
+        claim: topic,
+        papers_context: papers_context,
+        prior_text: prior_text,
+        arg_type: "counterarguments",
+        example_format: example_format,
+        arg_word: "counterargument"
+      )
 
     for_messages = [
       %{role: "system", content: prompts["for_system"] <> pitfall_context <> steering_context},
@@ -300,7 +351,10 @@ Known failure patterns to avoid:
     ]
 
     against_messages = [
-      %{role: "system", content: prompts["against_system"] <> pitfall_context <> steering_context},
+      %{
+        role: "system",
+        content: prompts["against_system"] <> pitfall_context <> steering_context
+      },
       %{role: "user", content: against_prompt}
     ]
 
@@ -314,50 +368,87 @@ Known failure patterns to avoid:
     against_result = Providers.chat(against_messages, llm_opts)
 
     # 8. Parse both sides
-    supporting = case for_result do
-      {:ok, %{content: response}} when is_binary(response) and response != "" ->
-        parse_adversarial_evidence(response)
-      {:ok, %{content: ""}} ->
-        Logger.warning("[investigate] FOR-side LLM returned empty content (reasoning model token exhaustion?)")
-        []
-      {:error, reason} ->
-        Logger.warning("[investigate] FOR-side LLM call failed: #{inspect(reason)}")
-        try do
-          unless String.starts_with?(topic, Daemon.Investigation.SelfDiagnosis.self_diagnosis_prefix()) do
-            CrashLearner.report_crash(:daemon_crash_learner, "investigate_for_#{short_hash(topic)}", inspect(reason), nil, %{topic: topic, side: "for", papers_count: length(all_papers)})
-          end
-        rescue
-          _ -> :ok
-        end
-        []
-      _ ->
-        Logger.warning("[investigate] FOR-side LLM call failed")
-        []
-    end
+    supporting =
+      case for_result do
+        {:ok, %{content: response}} when is_binary(response) and response != "" ->
+          parse_adversarial_evidence(response)
 
-    opposing = case against_result do
-      {:ok, %{content: response}} when is_binary(response) and response != "" ->
-        parse_adversarial_evidence(response)
-      {:ok, %{content: ""}} ->
-        Logger.warning("[investigate] AGAINST-side LLM returned empty content (reasoning model token exhaustion?)")
-        []
-      {:error, reason} ->
-        Logger.warning("[investigate] AGAINST-side LLM call failed: #{inspect(reason)}")
-        try do
-          unless String.starts_with?(topic, Daemon.Investigation.SelfDiagnosis.self_diagnosis_prefix()) do
-            CrashLearner.report_crash(:daemon_crash_learner, "investigate_against_#{short_hash(topic)}", inspect(reason), nil, %{topic: topic, side: "against", papers_count: length(all_papers)})
+        {:ok, %{content: ""}} ->
+          Logger.warning(
+            "[investigate] FOR-side LLM returned empty content (reasoning model token exhaustion?)"
+          )
+
+          []
+
+        {:error, reason} ->
+          Logger.warning("[investigate] FOR-side LLM call failed: #{inspect(reason)}")
+
+          try do
+            unless String.starts_with?(
+                     topic,
+                     Daemon.Investigation.SelfDiagnosis.self_diagnosis_prefix()
+                   ) do
+              CrashLearner.report_crash(
+                :daemon_crash_learner,
+                "investigate_for_#{short_hash(topic)}",
+                inspect(reason),
+                nil,
+                %{topic: topic, side: "for", papers_count: length(all_papers)}
+              )
+            end
+          rescue
+            _ -> :ok
           end
-        rescue
-          _ -> :ok
-        end
-        []
-      _ ->
-        Logger.warning("[investigate] AGAINST-side LLM call failed")
-        []
-    end
+
+          []
+
+        _ ->
+          Logger.warning("[investigate] FOR-side LLM call failed")
+          []
+      end
+
+    opposing =
+      case against_result do
+        {:ok, %{content: response}} when is_binary(response) and response != "" ->
+          parse_adversarial_evidence(response)
+
+        {:ok, %{content: ""}} ->
+          Logger.warning(
+            "[investigate] AGAINST-side LLM returned empty content (reasoning model token exhaustion?)"
+          )
+
+          []
+
+        {:error, reason} ->
+          Logger.warning("[investigate] AGAINST-side LLM call failed: #{inspect(reason)}")
+
+          try do
+            unless String.starts_with?(
+                     topic,
+                     Daemon.Investigation.SelfDiagnosis.self_diagnosis_prefix()
+                   ) do
+              CrashLearner.report_crash(
+                :daemon_crash_learner,
+                "investigate_against_#{short_hash(topic)}",
+                inspect(reason),
+                nil,
+                %{topic: topic, side: "against", papers_count: length(all_papers)}
+              )
+            end
+          rescue
+            _ -> :ok
+          end
+
+          []
+
+        _ ->
+          Logger.warning("[investigate] AGAINST-side LLM call failed")
+          []
+      end
 
     # 8a. Build paper map for citation verification
-    paper_map = all_papers
+    paper_map =
+      all_papers
       |> Enum.with_index(1)
       |> Map.new(fn {p, i} -> {i, p} end)
 
@@ -369,38 +460,75 @@ Known failure patterns to avoid:
       supporting == [] ->
         # Only AGAINST succeeded — verify what we have
         verified_opposing = verify_citations(opposing, paper_map, prompts)
-        result = "## Investigation: #{topic}\n\n" <>
-          "**Status: PARTIAL** -- Only the case AGAINST was analyzed (FOR advocate failed)\n" <>
-          "**Cannot determine direction from one-sided analysis**\n\n" <>
-          format_verified_evidence(verified_opposing, "Case Against") <>
-          "\n\n### Papers Consulted\n" <> format_paper_list(all_papers)
+
+        result =
+          "## Investigation: #{topic}\n\n" <>
+            "**Status: PARTIAL** -- Only the case AGAINST was analyzed (FOR advocate failed)\n" <>
+            "**Cannot determine direction from one-sided analysis**\n\n" <>
+            format_verified_evidence(verified_opposing, "Case Against") <>
+            "\n\n### Papers Consulted\n" <> format_paper_list(all_papers)
+
         {:ok, result}
 
       opposing == [] ->
         # Only FOR succeeded — verify what we have
         verified_supporting = verify_citations(supporting, paper_map, prompts)
-        result = "## Investigation: #{topic}\n\n" <>
-          "**Status: PARTIAL** -- Only the case FOR was analyzed (AGAINST advocate failed)\n" <>
-          "**Cannot determine direction from one-sided analysis**\n\n" <>
-          format_verified_evidence(verified_supporting, "Case For") <>
-          "\n\n### Papers Consulted\n" <> format_paper_list(all_papers)
+
+        result =
+          "## Investigation: #{topic}\n\n" <>
+            "**Status: PARTIAL** -- Only the case FOR was analyzed (AGAINST advocate failed)\n" <>
+            "**Cannot determine direction from one-sided analysis**\n\n" <>
+            format_verified_evidence(verified_supporting, "Case For") <>
+            "\n\n### Papers Consulted\n" <> format_paper_list(all_papers)
+
         {:ok, result}
 
       true ->
         # Both succeeded — full analysis with citation verification
-        run_full_analysis(topic, supporting, opposing, all_papers, paper_map,
-                          source_counts, keywords, prior_evidence, store, depth, prior_strategy, prompts, variant_id, caller_metadata)
+        run_full_analysis(
+          topic,
+          supporting,
+          opposing,
+          all_papers,
+          paper_map,
+          source_counts,
+          keywords,
+          prior_evidence,
+          store,
+          depth,
+          prior_strategy,
+          prompts,
+          variant_id,
+          caller_metadata
+        )
     end
   rescue
     e ->
-      Logger.error("[investigate] Investigation failed: #{Exception.message(e)}\n#{Exception.format_stacktrace(__STACKTRACE__)}")
+      Logger.error(
+        "[investigate] Investigation failed: #{Exception.message(e)}\n#{Exception.format_stacktrace(__STACKTRACE__)}"
+      )
+
       {:error, "Investigation failed: " <> Exception.message(e)}
   end
 
   # -- Full analysis (both sides succeeded) ------------------------------
 
-  defp run_full_analysis(topic, supporting_raw, opposing_raw, all_papers, paper_map,
-                         source_counts, keywords, prior_evidence, store, depth, strategy, prompts, variant_id, caller_metadata) do
+  defp run_full_analysis(
+         topic,
+         supporting_raw,
+         opposing_raw,
+         all_papers,
+         paper_map,
+         source_counts,
+         keywords,
+         prior_evidence,
+         store,
+         depth,
+         strategy,
+         prompts,
+         variant_id,
+         caller_metadata
+       ) do
     # 9. CITATION VERIFICATION + PAPER TYPE CLASSIFICATION — the evidence quality step
     verified_supporting = verify_citations(supporting_raw, paper_map, prompts)
     verified_opposing = verify_citations(opposing_raw, paper_map, prompts)
@@ -415,8 +543,8 @@ Known failure patterns to avoid:
     classified_supporting = classify_evidence_store(verified_supporting, paper_map, strategy)
     classified_opposing = classify_evidence_store(verified_opposing, paper_map, strategy)
 
-    grounded_for = Enum.filter(classified_supporting, & &1.evidence_store == :grounded)
-    grounded_against = Enum.filter(classified_opposing, & &1.evidence_store == :grounded)
+    grounded_for = Enum.filter(classified_supporting, &(&1.evidence_store == :grounded))
+    grounded_against = Enum.filter(classified_opposing, &(&1.evidence_store == :grounded))
 
     grounded_for_count = length(grounded_for)
     grounded_against_count = length(grounded_against)
@@ -439,57 +567,79 @@ Known failure patterns to avoid:
     # Direction uses grounded scores first (AEC commitment gating).
     # When grounded store is empty, falls back to belief-store consensus
     # (prefixed with "belief_") to avoid always returning "insufficient".
-    direction = cond do
-      # Both stores have grounded evidence — use grounded scores
-      grounded_for_score > 0 and grounded_against_score > 0 ->
-        cond do
-          grounded_for_score > grounded_against_score * strategy.direction_ratio -> "supporting"
-          grounded_against_score > grounded_for_score * strategy.direction_ratio -> "opposing"
-          true -> "genuinely_contested"
-        end
+    direction =
+      cond do
+        # Both stores have grounded evidence — use grounded scores
+        grounded_for_score > 0 and grounded_against_score > 0 ->
+          cond do
+            grounded_for_score > grounded_against_score * strategy.direction_ratio -> "supporting"
+            grounded_against_score > grounded_for_score * strategy.direction_ratio -> "opposing"
+            true -> "genuinely_contested"
+          end
 
-      # Asymmetric grounded evidence
-      grounded_against_score == 0 and grounded_for_score > 0 ->
-        "asymmetric_evidence_for"
-      grounded_for_score == 0 and grounded_against_score > 0 ->
-        "asymmetric_evidence_against"
+        # Asymmetric grounded evidence
+        grounded_against_score == 0 and grounded_for_score > 0 ->
+          "asymmetric_evidence_for"
 
-      # No grounded evidence at all — fall back to belief store
-      # This prevents the system from being permanently stuck on "insufficient"
-      # when source quality thresholds filter out all papers
-      for_total == 0 and against_total == 0 ->
-        "insufficient_evidence"
-      against_total > for_total * strategy.belief_fallback_ratio ->
-        "belief_consensus_against"
-      for_total > against_total * strategy.belief_fallback_ratio ->
-        "belief_consensus_for"
-      true ->
-        "belief_contested"
-    end
+        grounded_for_score == 0 and grounded_against_score > 0 ->
+          "asymmetric_evidence_against"
+
+        # No grounded evidence at all — fall back to belief store
+        # This prevents the system from being permanently stuck on "insufficient"
+        # when source quality thresholds filter out all papers
+        for_total == 0 and against_total == 0 ->
+          "insufficient_evidence"
+
+        against_total > for_total * strategy.belief_fallback_ratio ->
+          "belief_consensus_against"
+
+        for_total > against_total * strategy.belief_fallback_ratio ->
+          "belief_consensus_for"
+
+        true ->
+          "belief_contested"
+      end
 
     # Rebind for downstream compatibility (classified versions are supersets)
     verified_supporting = classified_supporting
     verified_opposing = classified_opposing
 
     # Count fraudulent citations
-    fraudulent_count = Enum.count(verified_supporting ++ verified_opposing,
-      fn ev -> ev.verification == "unverified" end)
+    fraudulent_count =
+      Enum.count(
+        verified_supporting ++ verified_opposing,
+        fn ev -> ev.verification == "unverified" end
+      )
 
-    reasoning_for = Enum.count(verified_supporting,
-      fn ev -> ev.verification == "no_citation" end)
-    reasoning_against = Enum.count(verified_opposing,
-      fn ev -> ev.verification == "no_citation" end)
+    reasoning_for =
+      Enum.count(
+        verified_supporting,
+        fn ev -> ev.verification == "no_citation" end
+      )
+
+    reasoning_against =
+      Enum.count(
+        verified_opposing,
+        fn ev -> ev.verification == "no_citation" end
+      )
 
     # Record prompt feedback for the GEPA flywheel
-    sourced_evidence = Enum.filter(verified_supporting ++ verified_opposing,
-      fn ev -> ev.source_type == :sourced end)
+    sourced_evidence =
+      Enum.filter(
+        verified_supporting ++ verified_opposing,
+        fn ev -> ev.source_type == :sourced end
+      )
+
     total_sourced = length(sourced_evidence)
     count_verified = Enum.count(sourced_evidence, fn ev -> ev.verification == "verified" end)
     count_partial = Enum.count(sourced_evidence, fn ev -> ev.verification == "partial" end)
-    count_unverified_sourced = Enum.count(sourced_evidence, fn ev -> ev.verification == "unverified" end)
+
+    count_unverified_sourced =
+      Enum.count(sourced_evidence, fn ev -> ev.verification == "unverified" end)
 
     try do
       prompt_hash = PromptConfig.prompt_hash(prompts)
+
       PromptFeedback.record(prompt_hash, topic, %{
         total_sourced: total_sourced,
         verified: count_verified,
@@ -501,7 +651,8 @@ Known failure patterns to avoid:
       # Update Thompson Sampling posterior for the selected prompt variant
       PromptSelector.update(variant_id, count_verified, count_unverified_sourced)
     rescue
-      e -> Logger.warning("[investigate] Failed to record prompt feedback: #{Exception.message(e)}")
+      e ->
+        Logger.warning("[investigate] Failed to record prompt feedback: #{Exception.message(e)}")
     end
 
     # Count paper types across all evidence
@@ -511,10 +662,15 @@ Known failure patterns to avoid:
     study_count = Enum.count(all_evidence, fn ev -> ev.paper_type == :study end)
 
     # 11. Create claim and add evidence to ledger
-    claim = EpistemicLedger.add_claim(
-      [title: String.slice(topic, 0, 100), statement: topic, tags: ["investigate", "auto", "adversarial"]],
-      @ledger_name
-    )
+    claim =
+      EpistemicLedger.add_claim(
+        [
+          title: String.slice(topic, 0, 100),
+          statement: topic,
+          tags: ["investigate", "auto", "adversarial"]
+        ],
+        @ledger_name
+      )
 
     # Add FOR arguments as supporting evidence (using hierarchy-weighted score)
     supporting_records = add_evidence_to_ledger(verified_supporting, claim, :support)
@@ -535,7 +691,14 @@ Known failure patterns to avoid:
     EpistemicLedger.save(@ledger_name)
 
     # 12b. Emergent question synthesis — extract novel research questions from evidence tension
-    emergent_questions = extract_emergent_questions(topic, direction, verified_supporting, verified_opposing, uncertainty)
+    emergent_questions =
+      extract_emergent_questions(
+        topic,
+        direction,
+        verified_supporting,
+        verified_opposing,
+        uncertainty
+      )
 
     # 13. Store in knowledge graph
     topic_id = "investigate:" <> short_hash(topic)
@@ -567,45 +730,69 @@ Known failure patterns to avoid:
         trials: trial_count,
         studies: study_count
       },
-      supporting: Enum.map(verified_supporting, fn ev ->
-        %{summary: ev.summary, score: ev.score, verified: ev.verified,
-          verification: ev.verification, paper_type: Atom.to_string(ev.paper_type),
-          citation_count: ev.citation_count, strength_display: ev.strength,
-          source_quality: Map.get(ev, :source_quality, 0),
-          source_type: ev.source_type,
-          evidence_store: Atom.to_string(Map.get(ev, :evidence_store, :unknown))}
-      end),
-      opposing: Enum.map(verified_opposing, fn ev ->
-        %{summary: ev.summary, score: ev.score, verified: ev.verified,
-          verification: ev.verification, paper_type: Atom.to_string(ev.paper_type),
-          citation_count: ev.citation_count, strength_display: ev.strength,
-          source_quality: Map.get(ev, :source_quality, 0),
-          source_type: ev.source_type,
-          evidence_store: Atom.to_string(Map.get(ev, :evidence_store, :unknown))}
-      end),
+      supporting:
+        Enum.map(verified_supporting, fn ev ->
+          %{
+            summary: ev.summary,
+            score: ev.score,
+            verified: ev.verified,
+            verification: ev.verification,
+            paper_type: Atom.to_string(ev.paper_type),
+            citation_count: ev.citation_count,
+            strength_display: ev.strength,
+            source_quality: Map.get(ev, :source_quality, 0),
+            source_type: ev.source_type,
+            evidence_store: Atom.to_string(Map.get(ev, :evidence_store, :unknown))
+          }
+        end),
+      opposing:
+        Enum.map(verified_opposing, fn ev ->
+          %{
+            summary: ev.summary,
+            score: ev.score,
+            verified: ev.verified,
+            verification: ev.verification,
+            paper_type: Atom.to_string(ev.paper_type),
+            citation_count: ev.citation_count,
+            strength_display: ev.strength,
+            source_quality: Map.get(ev, :source_quality, 0),
+            source_type: ev.source_type,
+            evidence_store: Atom.to_string(Map.get(ev, :evidence_store, :unknown))
+          }
+        end),
       papers_found: length(all_papers),
       source_counts: source_counts,
-      papers_detail: Enum.map(all_papers, fn p ->
-        %{title: p["title"], year: p["year"],
-          citations: p["citation_count"] || p["citationCount"] || 0,
-          source: p["source"] || "unknown",
-          abstract: String.slice(to_string(p["abstract"] || ""), 0, 500)}
-      end),
+      papers_detail:
+        Enum.map(all_papers, fn p ->
+          %{
+            title: p["title"],
+            year: p["year"],
+            citations: p["citation_count"] || p["citationCount"] || 0,
+            source: p["source"] || "unknown",
+            abstract: String.slice(to_string(p["abstract"] || ""), 0, 500)
+          }
+        end),
       investigation_id: topic_id,
       optimization: nil,
-      suggested_next: try do
-        Policy.rank_actions(@ledger_name, limit: 3)
-        |> Enum.map(fn a ->
-          %{action_type: a.action_type, claim_title: a.claim_title,
-            information_gain: a.expected_information_gain, claim_id: a.claim_id,
-            reason: a.reason}
-        end)
-      rescue
-        _ -> []
-      end,
+      suggested_next:
+        try do
+          Policy.rank_actions(@ledger_name, limit: 3)
+          |> Enum.map(fn a ->
+            %{
+              action_type: a.action_type,
+              claim_title: a.claim_title,
+              information_gain: a.expected_information_gain,
+              claim_id: a.claim_id,
+              reason: a.reason
+            }
+          end)
+        rescue
+          _ -> []
+        end,
       emergent_questions: emergent_questions,
       variant_id: variant_id
     }
+
     json_result = Jason.encode!(json_metadata)
 
     # Emit audit receipt to kernel (fire-and-forget, never crashes investigation)
@@ -628,9 +815,10 @@ Known failure patterns to avoid:
       {topic_id, "vaos:timestamp", DateTime.utc_now() |> DateTime.to_iso8601()}
     ]
 
-    keyword_triples = Enum.map(keywords, fn kw ->
-      {topic_id, "vaos:keyword", kw}
-    end)
+    keyword_triples =
+      Enum.map(keywords, fn kw ->
+        {topic_id, "vaos:keyword", kw}
+      end)
 
     for triple <- triples ++ keyword_triples do
       MiosaKnowledge.assert(store, triple)
@@ -667,25 +855,41 @@ Known failure patterns to avoid:
     end
 
     # Increment helpful counters for prior evidence that was independently regenerated
-    increment_helpful_for_reused_evidence(store, prior_evidence, verified_supporting ++ verified_opposing)
+    increment_helpful_for_reused_evidence(
+      store,
+      prior_evidence,
+      verified_supporting ++ verified_opposing
+    )
 
     # 13a. OWL Reasoner bridge — materialize inferred triples and check for contradictions
     try do
       case MiosaKnowledge.Reasoner.materialize(store) do
         {:ok, rounds} when rounds > 0 ->
-          Logger.info("[investigate] OWL reasoner ran #{rounds} fixpoint round(s), inferred new triples")
+          Logger.info(
+            "[investigate] OWL reasoner ran #{rounds} fixpoint round(s), inferred new triples"
+          )
+
           # Check if any inferred contradictions relate to our investigation
-          case MiosaKnowledge.sparql(store,
-            "SELECT ?s ?p ?o WHERE { ?s vaos:contradicts ?o }") do
+          case MiosaKnowledge.sparql(
+                 store,
+                 "SELECT ?s ?p ?o WHERE { ?s vaos:contradicts ?o }"
+               ) do
             {:ok, results} when is_list(results) and results != [] ->
               for r <- results do
-                Logger.info("[investigate] OWL-visible contradiction: #{r["s"]} contradicts #{r["o"]}")
+                Logger.info(
+                  "[investigate] OWL-visible contradiction: #{r["s"]} contradicts #{r["o"]}"
+                )
               end
-            _ -> :ok
+
+            _ ->
+              :ok
           end
+
         {:ok, 0} ->
           Logger.debug("[investigate] OWL reasoner: no new inferences")
-        _ -> :ok
+
+        _ ->
+          :ok
       end
     rescue
       e -> Logger.warning("[investigate] OWL reasoner failed: #{Exception.message(e)}")
@@ -693,14 +897,18 @@ Known failure patterns to avoid:
 
     # 14. Cross-investigation contradiction detection
     conflicts = detect_contradictions(store, topic_id, direction, keywords)
-    conflict_note = if conflicts == [] do
-      ""
-    else
-      conflict_lines = Enum.map(conflicts, fn c ->
-        "  - #{c.prior_topic} (#{c.prior_id}): #{c.prior_direction} vs current #{direction}"
-      end)
-      "\n### Cross-Investigation Conflicts\n" <> Enum.join(conflict_lines, "\n") <> "\n"
-    end
+
+    conflict_note =
+      if conflicts == [] do
+        ""
+      else
+        conflict_lines =
+          Enum.map(conflicts, fn c ->
+            "  - #{c.prior_topic} (#{c.prior_id}): #{c.prior_direction} vs current #{direction}"
+          end)
+
+        "\n### Cross-Investigation Conflicts\n" <> Enum.join(conflict_lines, "\n") <> "\n"
+      end
 
     # 15. Assess advocacy quality (flag unreliable advocates)
     quality_note = assess_advocacy_quality(verified_supporting, verified_opposing)
@@ -709,68 +917,88 @@ Known failure patterns to avoid:
     iteration_note = maybe_suggest_iteration(claim, @ledger_name)
 
     # 15b. Deep mode: run research pipeline if requested
-    deep_note = if depth == "deep" do
-      deep_research_note(topic, claim, all_papers, store)
-    else
-      ""
-    end
+    deep_note =
+      if depth == "deep" do
+        deep_research_note(topic, claim, all_papers, store)
+      else
+        ""
+      end
 
     # 16. Format result with verification status and evidence quality
-    for_arguments = format_verified_evidence(verified_supporting, "Case For (grounded: #{Float.round(grounded_for_score * 1.0, 2)}, total: #{Float.round(for_total * 1.0, 2)})")
-    against_arguments = format_verified_evidence(verified_opposing, "Case Against (grounded: #{Float.round(grounded_against_score * 1.0, 2)}, total: #{Float.round(against_total * 1.0, 2)})")
+    for_arguments =
+      format_verified_evidence(
+        verified_supporting,
+        "Case For (grounded: #{Float.round(grounded_for_score * 1.0, 2)}, total: #{Float.round(for_total * 1.0, 2)})"
+      )
+
+    against_arguments =
+      format_verified_evidence(
+        verified_opposing,
+        "Case Against (grounded: #{Float.round(grounded_against_score * 1.0, 2)}, total: #{Float.round(against_total * 1.0, 2)})"
+      )
 
     paper_list = format_paper_list(all_papers)
 
     result =
       "## Investigation: #{topic}\n\n" <>
-      "**Direction: #{direction}** (AEC grounded-only verdict)\n" <>
-      "**Grounded score: #{Float.round(grounded_for_score * 1.0, 2)} for vs #{Float.round(grounded_against_score * 1.0, 2)} against**\n" <>
-      "**Total score (incl. belief): #{Float.round(for_total * 1.0, 2)} for vs #{Float.round(against_total * 1.0, 2)} against**\n" <>
-      "**Evidence stores: #{grounded_for_count + grounded_against_count} grounded, #{belief_for_count + belief_against_count} belief**\n" <>
-      "**Verified citations for: #{verified_for} | Verified citations against: #{verified_against}**\n" <>
-      "**Fraudulent citations detected: #{fraudulent_count}**\n" <>
-      "**Evidence quality: #{review_count} reviews, #{trial_count} trials, #{study_count} studies**\n" <>
-
-      "**Ledger belief: #{Float.round(belief * 1.0, 3)}, uncertainty: #{Float.round(uncertainty * 1.0, 3)}**\n" <>
-      "**Papers found:** #{length(all_papers)} (#{format_source_counts(source_counts)})\n\n" <>
-      (if quality_note != "", do: quality_note <> "\n\n", else: "") <>
-      "### #{for_arguments}\n\n" <>
-      "### #{against_arguments}\n\n" <>
-      "### Papers Consulted\n#{paper_list}\n" <>
-      conflict_note <>
-      (if prior_evidence != [], do: "\n### Prior Evidence (related topics)\n" <> Enum.join(prior_evidence, "\n") <> "\n", else: "") <>
-      deep_note <>
-      iteration_note <>
-      "\n### Keywords\n  " <> Enum.join(keywords, ", ") <> "\n\n" <>
-      "*Claim ID: #{claim_id} -- stored in knowledge graph as #{topic_id}*" <>
-      "\n\n<!-- VAOS_JSON:#{json_result} -->"
+        "**Direction: #{direction}** (AEC grounded-only verdict)\n" <>
+        "**Grounded score: #{Float.round(grounded_for_score * 1.0, 2)} for vs #{Float.round(grounded_against_score * 1.0, 2)} against**\n" <>
+        "**Total score (incl. belief): #{Float.round(for_total * 1.0, 2)} for vs #{Float.round(against_total * 1.0, 2)} against**\n" <>
+        "**Evidence stores: #{grounded_for_count + grounded_against_count} grounded, #{belief_for_count + belief_against_count} belief**\n" <>
+        "**Verified citations for: #{verified_for} | Verified citations against: #{verified_against}**\n" <>
+        "**Fraudulent citations detected: #{fraudulent_count}**\n" <>
+        "**Evidence quality: #{review_count} reviews, #{trial_count} trials, #{study_count} studies**\n" <>
+        "**Ledger belief: #{Float.round(belief * 1.0, 3)}, uncertainty: #{Float.round(uncertainty * 1.0, 3)}**\n" <>
+        "**Papers found:** #{length(all_papers)} (#{format_source_counts(source_counts)})\n\n" <>
+        if(quality_note != "", do: quality_note <> "\n\n", else: "") <>
+        "### #{for_arguments}\n\n" <>
+        "### #{against_arguments}\n\n" <>
+        "### Papers Consulted\n#{paper_list}\n" <>
+        conflict_note <>
+        if(prior_evidence != [],
+          do:
+            "\n### Prior Evidence (related topics)\n" <> Enum.join(prior_evidence, "\n") <> "\n",
+          else: ""
+        ) <>
+        deep_note <>
+        iteration_note <>
+        "\n### Keywords\n  " <>
+        Enum.join(keywords, ", ") <>
+        "\n\n" <>
+        "*Claim ID: #{claim_id} -- stored in knowledge graph as #{topic_id}*" <>
+        "\n\n<!-- VAOS_JSON:#{json_result} -->"
 
     # 16. Policy — suggest next investigations based on information gain
-    next_actions_text = try do
-      next_actions = Policy.rank_actions(Process.whereis(@ledger_name), limit: 5)
-      if next_actions != [] do
-        suggestions = next_actions
-          |> Enum.with_index(1)
-          |> Enum.map(fn {action, i} ->
-            gain_str = Float.round(action.expected_information_gain, 2) |> to_string()
-            "  #{i}. #{action.action_type}: \"#{action.claim_title}\" (gain: #{gain_str}) — #{action.reason}"
-          end)
-          |> Enum.join("
+    next_actions_text =
+      try do
+        next_actions = Policy.rank_actions(Process.whereis(@ledger_name), limit: 5)
+
+        if next_actions != [] do
+          suggestions =
+            next_actions
+            |> Enum.with_index(1)
+            |> Enum.map(fn {action, i} ->
+              gain_str = Float.round(action.expected_information_gain, 2) |> to_string()
+
+              "  #{i}. #{action.action_type}: \"#{action.claim_title}\" (gain: #{gain_str}) — #{action.reason}"
+            end)
+            |> Enum.join("
 ")
-        "
+
+          "
 
 ### Suggested Next Investigations
 " <>
-          "Based on where uncertainty is highest in the knowledge graph:
+            "Based on where uncertainty is highest in the knowledge graph:
 " <> suggestions
-      else
-        ""
+        else
+          ""
+        end
+      rescue
+        e ->
+          Logger.warning("[investigate] Policy.rank_actions failed: #{Exception.message(e)}")
+          ""
       end
-    rescue
-      e ->
-        Logger.warning("[investigate] Policy.rank_actions failed: #{Exception.message(e)}")
-        ""
-    end
 
     result = result <> next_actions_text
 
@@ -781,41 +1009,70 @@ Known failure patterns to avoid:
 
   defp verify_citations(evidence_list, paper_map, prompts) do
     # Split into items that need LLM verification and those that don't
-    {need_llm, no_llm} = Enum.split_with(evidence_list, fn ev ->
-      case extract_paper_ref(ev.summary) do
-        nil -> false
-        n -> Map.has_key?(paper_map, n)
-      end
-    end)
+    {need_llm, no_llm} =
+      Enum.split_with(evidence_list, fn ev ->
+        case extract_paper_ref(ev.summary) do
+          nil -> false
+          n -> Map.has_key?(paper_map, n)
+        end
+      end)
 
     # Handle non-LLM items immediately
-    no_llm_verified = Enum.map(no_llm, fn ev ->
-      case extract_paper_ref(ev.summary) do
-        nil -> %{ev | verified: false, verification: "no_citation", paper_type: :reasoning, citation_count: 0, score: 0.15}
-        _n -> %{ev | verified: false, verification: "invalid_ref", paper_type: :other, citation_count: 0, score: 0.0}
-      end
-    end)
+    no_llm_verified =
+      Enum.map(no_llm, fn ev ->
+        case extract_paper_ref(ev.summary) do
+          nil ->
+            %{
+              ev
+              | verified: false,
+                verification: "no_citation",
+                paper_type: :reasoning,
+                citation_count: 0,
+                score: 0.15
+            }
+
+          _n ->
+            %{
+              ev
+              | verified: false,
+                verification: "invalid_ref",
+                paper_type: :other,
+                citation_count: 0,
+                score: 0.0
+            }
+        end
+      end)
 
     # Run LLM verification sequentially — reasoning models (GLM-4.7) are slow
     # and rate-limited, concurrent calls all fail or timeout
-    llm_verified = Enum.map(need_llm, fn ev ->
-      paper_num = extract_paper_ref(ev.summary)
-      paper = Map.get(paper_map, paper_num)
-      citation_count = paper["citation_count"] || paper["citationCount"] || 0
+    llm_verified =
+      Enum.map(need_llm, fn ev ->
+        paper_num = extract_paper_ref(ev.summary)
+        paper = Map.get(paper_map, paper_num)
+        citation_count = paper["citation_count"] || paper["citationCount"] || 0
 
-      case cached_verify(ev, paper, prompts) do
-        {verification, paper_type} ->
-          score = compute_evidence_score(verification, paper_type, citation_count)
-          verified = verification in [:verified, :partial]
-          verification_str = Atom.to_string(verification)
-          %{ev | verified: verified, verification: verification_str, paper_type: paper_type, citation_count: citation_count, score: score}
-      end
-    end)
+        case cached_verify(ev, paper, prompts) do
+          {verification, paper_type} ->
+            score = compute_evidence_score(verification, paper_type, citation_count)
+            verified = verification in [:verified, :partial]
+            verification_str = Atom.to_string(verification)
+
+            %{
+              ev
+              | verified: verified,
+                verification: verification_str,
+                paper_type: paper_type,
+                citation_count: citation_count,
+                score: score
+            }
+        end
+      end)
 
     # Recombine in original order by matching on summary
-    original_order = Enum.map(evidence_list, fn ev ->
-      Enum.find(llm_verified ++ no_llm_verified, fn v -> v.summary == ev.summary end) || ev
-    end)
+    original_order =
+      Enum.map(evidence_list, fn ev ->
+        Enum.find(llm_verified ++ no_llm_verified, fn v -> v.summary == ev.summary end) || ev
+      end)
 
     original_order
   end
@@ -831,29 +1088,30 @@ Known failure patterns to avoid:
     abstract = Map.get(paper, "abstract", "") || ""
     title = Map.get(paper, "title", "") || ""
 
-    prompt = case prompts["verify_prompt"] do
-      template when is_binary(template) ->
-        PromptConfig.render(template,
-          paper_title: title,
-          paper_abstract: String.slice(to_string(abstract), 0, 2000),
-          claim: evidence.summary
-        )
+    prompt =
+      case prompts["verify_prompt"] do
+        template when is_binary(template) ->
+          PromptConfig.render(template,
+            paper_title: title,
+            paper_abstract: String.slice(to_string(abstract), 0, 2000),
+            claim: evidence.summary
+          )
 
-      _ ->
-        # Fallback to inline (should not happen with proper config)
-        """
-        Paper title: #{title}
-        Paper abstract: #{String.slice(to_string(abstract), 0, 2000)}
+        _ ->
+          # Fallback to inline (should not happen with proper config)
+          """
+          Paper title: #{title}
+          Paper abstract: #{String.slice(to_string(abstract), 0, 2000)}
 
-        Claim: #{evidence.summary}
+          Claim: #{evidence.summary}
 
-        Two questions:
-        1. Does this paper's abstract support the specific claim? VERIFIED / PARTIAL / UNVERIFIED
-        2. Paper type? REVIEW (systematic review/meta-analysis), TRIAL (RCT/experiment), STUDY (observational/single study), OTHER
+          Two questions:
+          1. Does this paper's abstract support the specific claim? VERIFIED / PARTIAL / UNVERIFIED
+          2. Paper type? REVIEW (systematic review/meta-analysis), TRIAL (RCT/experiment), STUDY (observational/single study), OTHER
 
-        Answer format: WORD WORD (e.g., VERIFIED REVIEW or UNVERIFIED STUDY)
-        """
-    end
+          Answer format: WORD WORD (e.g., VERIFIED REVIEW or UNVERIFIED STUDY)
+          """
+      end
 
     messages = [%{role: "user", content: prompt}]
 
@@ -865,29 +1123,40 @@ Known failure patterns to avoid:
       {:ok, %{content: response}} when is_binary(response) and response != "" ->
         response_clean = String.trim(response) |> String.upcase()
 
-        verification = cond do
-          String.contains?(response_clean, "UNVERIFIED") -> :unverified
-          String.contains?(response_clean, "PARTIAL") -> :partial
-          String.contains?(response_clean, "VERIFIED") -> :verified
-          true -> :unverified
-        end
+        verification =
+          cond do
+            String.contains?(response_clean, "UNVERIFIED") -> :unverified
+            String.contains?(response_clean, "PARTIAL") -> :partial
+            String.contains?(response_clean, "VERIFIED") -> :verified
+            true -> :unverified
+          end
 
-        paper_type = cond do
-          String.contains?(response_clean, "REVIEW") -> :review
-          String.contains?(response_clean, "TRIAL") -> :trial
-          String.contains?(response_clean, "STUDY") -> :study
-          true -> :other
-        end
+        paper_type =
+          cond do
+            String.contains?(response_clean, "REVIEW") -> :review
+            String.contains?(response_clean, "TRIAL") -> :trial
+            String.contains?(response_clean, "STUDY") -> :study
+            true -> :other
+          end
 
         {verification, paper_type}
+
       {:ok, %{content: ""}} ->
-        Logger.warning("[investigate] verify_citation: empty content (reasoning model token exhaustion)")
+        Logger.warning(
+          "[investigate] verify_citation: empty content (reasoning model token exhaustion)"
+        )
+
         {:unverified, :other}
+
       {:error, reason} ->
         Logger.warning("[investigate] verify_citation failed: #{inspect(reason)}")
         {:unverified, :other}
+
       other ->
-        Logger.warning("[investigate] verify_citation unexpected: #{inspect(other) |> String.slice(0, 200)}")
+        Logger.warning(
+          "[investigate] verify_citation unexpected: #{inspect(other) |> String.slice(0, 200)}"
+        )
+
         {:unverified, :other}
     end
   end
@@ -900,19 +1169,21 @@ Known failure patterns to avoid:
 
   defp compute_evidence_score(verification, paper_type, citation_count, %Strategy{} = strategy) do
     # Base score from verification
-    base = case verification do
-      :verified -> 1.0
-      :partial -> 0.5
-      :unverified -> 0.0
-    end
+    base =
+      case verification do
+        :verified -> 1.0
+        :partial -> 0.5
+        :unverified -> 0.0
+      end
 
     # Evidence hierarchy weight (from strategy)
-    type_weight = case paper_type do
-      :review -> strategy.review_weight
-      :trial -> strategy.trial_weight
-      :study -> strategy.study_weight
-      _ -> 1.0
-    end
+    type_weight =
+      case paper_type do
+        :review -> strategy.review_weight
+        :trial -> strategy.trial_weight
+        :study -> strategy.study_weight
+        _ -> 1.0
+      end
 
     # Citation count bonus (log scale, base from strategy)
     citation_bonus = :math.log10(max(citation_count, strategy.citation_bonus_base))
@@ -930,14 +1201,17 @@ Known failure patterns to avoid:
 
   defp classify_evidence_store(verified_evidence, paper_map, %Strategy{} = strategy) do
     Enum.map(verified_evidence, fn ev ->
-      source_quality = case ev.paper_ref do
-        nil -> 0.15
-        n ->
-          case Map.get(paper_map, n) do
-            nil -> 0.1
-            paper -> SourceScoring.score(paper, strategy)
-          end
-      end
+      source_quality =
+        case ev.paper_ref do
+          nil ->
+            0.15
+
+          n ->
+            case Map.get(paper_map, n) do
+              nil -> 0.1
+              paper -> SourceScoring.score(paper, strategy)
+            end
+        end
 
       store = SourceScoring.classify(ev.verification, source_quality, strategy)
       Map.merge(ev, %{source_quality: source_quality, evidence_store: store})
@@ -968,22 +1242,26 @@ Known failure patterns to avoid:
     prompts["no_papers_fallback"] ||
       "No relevant papers found. Base your arguments on your training knowledge, but mark everything as [REASONING]."
   end
+
   defp format_papers(papers, prompts) do
-    papers_text = papers
+    papers_text =
+      papers
       |> Enum.with_index(1)
       |> Enum.map(fn {p, i} ->
         citations = p["citation_count"] || p["citationCount"] || 0
         source = p["source"] || "unknown"
         abstract = String.slice(to_string(p["abstract"] || ""), 0, 2000)
+
         "[Paper #{i}] #{p["title"]} (#{p["year"]}, #{citations} citations, via #{source})\nAbstract: #{abstract}"
       end)
       |> Enum.join("\n\n")
 
-    citation_instructions = prompts["citation_instructions"] ||
-      "\n\nPapers are sorted by relevance. Citation counts are shown for each paper." <>
-      "\nWhen citing papers, only claim what the abstract actually states. Do NOT infer findings beyond what is written." <>
-      "\nIf a paper's abstract doesn't explicitly support your claim, use [REASONING] instead of citing it." <>
-      "\nYou MUST cite specific papers by number [Paper N] when your arguments are based on them."
+    citation_instructions =
+      prompts["citation_instructions"] ||
+        "\n\nPapers are sorted by relevance. Citation counts are shown for each paper." <>
+          "\nWhen citing papers, only claim what the abstract actually states. Do NOT infer findings beyond what is written." <>
+          "\nIf a paper's abstract doesn't explicitly support your claim, use [REASONING] instead of citing it." <>
+          "\nYou MUST cite specific papers by number [Paper N] when your arguments are based on them."
 
     "RELEVANT PAPERS FOUND:\n" <> papers_text <> citation_instructions
   end
@@ -994,22 +1272,33 @@ Known failure patterns to avoid:
     ~r/\d+\.\s*\[(SOURCED|REASONING)\]\s*\(strength:\s*(\d+)\)\s*(.+)/i
     |> Regex.scan(text)
     |> Enum.map(fn [_, type, strength_str, summary] ->
-      source_type = case String.upcase(type) do
-        "SOURCED" -> :sourced
-        _ -> :reasoning
-      end
-      strength = case Integer.parse(strength_str) do
-        {n, _} when n >= 1 and n <= 10 -> n
-        {n, _} when n > 10 -> 10
-        {n, _} when n < 1 -> 1
-        _ -> 5
-      end
+      source_type =
+        case String.upcase(type) do
+          "SOURCED" -> :sourced
+          _ -> :reasoning
+        end
+
+      strength =
+        case Integer.parse(strength_str) do
+          {n, _} when n >= 1 and n <= 10 -> n
+          {n, _} when n > 10 -> 10
+          {n, _} when n < 1 -> 1
+          _ -> 5
+        end
+
       # Keep LLM-assigned strength for DISPLAY only.
       # Score, verified, paper_type, citation_count filled by verify_citations.
-      %{summary: String.trim(summary), source_type: source_type, strength: strength,
+      %{
+        summary: String.trim(summary),
+        source_type: source_type,
+        strength: strength,
         paper_ref: extract_paper_ref(String.trim(summary)),
-        verified: false, verification: "pending", paper_type: :other,
-        citation_count: 0, score: 0.0}
+        verified: false,
+        verification: "pending",
+        paper_type: :other,
+        citation_count: 0,
+        score: 0.0
+      }
     end)
   end
 
@@ -1019,18 +1308,21 @@ Known failure patterns to avoid:
     Enum.flat_map(evidence_list, fn ev ->
       # Use hierarchy-weighted VERIFICATION score, not LLM strength
       ledger_strength = ev.score
+
       case EpistemicLedger.add_evidence(
-        [
-          claim_id: claim.id,
-          summary: ev.summary,
-          direction: direction,
-          strength: ledger_strength,
-          confidence: ledger_strength,
-          source_type: Atom.to_string(ev.source_type)
-        ],
-        @ledger_name
-      ) do
-        %Models.Evidence{} = record -> [record]
+             [
+               claim_id: claim.id,
+               summary: ev.summary,
+               direction: direction,
+               strength: ledger_strength,
+               confidence: ledger_strength,
+               source_type: Atom.to_string(ev.source_type)
+             ],
+             @ledger_name
+           ) do
+        %Models.Evidence{} = record ->
+          [record]
+
         {:error, reason} ->
           Logger.warning("[investigate] Failed to add evidence: #{inspect(reason)}")
           []
@@ -1045,28 +1337,31 @@ Known failure patterns to avoid:
       # Use hierarchy-weighted VERIFICATION score, not LLM strength
       ledger_severity = ev.score
       source = if ev.source_type == :sourced, do: "paper", else: "llm_reasoning"
+
       case EpistemicLedger.add_attack(
-        [
-          claim_id: claim.id,
-          description: ev.summary,
-          target_kind: "claim",
-          target_id: claim.id,
-          severity: ledger_severity,
-          status: :open,
-          metadata: %{
-            "source" => source,
-            "source_type" => Atom.to_string(ev.source_type),
-            "raw_strength" => ev.strength,
-            "verified" => ev.verified,
-            "verification" => ev.verification,
-            "paper_type" => Atom.to_string(ev.paper_type),
-            "citation_count" => ev.citation_count,
-            "score" => ev.score
-          }
-        ],
-        @ledger_name
-      ) do
-        %Models.Attack{} = record -> [record]
+             [
+               claim_id: claim.id,
+               description: ev.summary,
+               target_kind: "claim",
+               target_id: claim.id,
+               severity: ledger_severity,
+               status: :open,
+               metadata: %{
+                 "source" => source,
+                 "source_type" => Atom.to_string(ev.source_type),
+                 "raw_strength" => ev.strength,
+                 "verified" => ev.verified,
+                 "verification" => ev.verification,
+                 "paper_type" => Atom.to_string(ev.paper_type),
+                 "citation_count" => ev.citation_count,
+                 "score" => ev.score
+               }
+             ],
+             @ledger_name
+           ) do
+        %Models.Attack{} = record ->
+          [record]
+
         {:error, reason} ->
           Logger.warning("[investigate] Failed to add attack: #{inspect(reason)}")
           []
@@ -1077,49 +1372,66 @@ Known failure patterns to avoid:
   # -- Format verified evidence for display -----------------------------
 
   defp format_verified_evidence([], _heading), do: "(none)"
+
   defp format_verified_evidence(evidence, heading) do
-    lines = evidence
+    lines =
+      evidence
       |> Enum.with_index(1)
       |> Enum.map(fn {ev, i} ->
         type_tag = ev.paper_type |> Atom.to_string() |> String.upcase()
         cite_count = ev.citation_count
         score_str = Float.round(ev.score * 1.0, 1) |> to_string()
 
-        store_label = case Map.get(ev, :evidence_store) do
-          :grounded -> "GROUNDED"
-          :belief -> "BELIEF"
-          _ -> ""
-        end
+        store_label =
+          case Map.get(ev, :evidence_store) do
+            :grounded -> "GROUNDED"
+            :belief -> "BELIEF"
+            _ -> ""
+          end
 
-        {status_icon, detail} = case ev.verification do
-          "verified" ->
-            paper_info = case ev.paper_ref do
-              nil -> ""
-              n -> "Paper #{n}, "
-            end
-            cite_str = format_citation_count(cite_count)
-            {"VERIFIED \u2713 #{type_tag}", "(#{paper_info}#{cite_str}, score: #{score_str})"}
-          "partial" ->
-            paper_info = case ev.paper_ref do
-              nil -> ""
-              n -> "Paper #{n}, "
-            end
-            cite_str = format_citation_count(cite_count)
-            {"PARTIAL ~ #{type_tag}", "(#{paper_info}#{cite_str}, score: #{score_str})"}
-          "unverified" ->
-            paper_info = case ev.paper_ref do
-              nil -> ""
-              n -> "Paper #{n}, "
-            end
-            cite_str = format_citation_count(cite_count)
-            {"UNVERIFIED \u2717", "(#{paper_info}#{cite_str}, score: #{score_str}) -- FRAUDULENT CITATION"}
-          "no_citation" ->
-            {"NO CITATION", "(reasoning only, score: #{score_str})"}
-          "invalid_ref" ->
-            {"INVALID REF", "(score: 0.0 -- cited paper doesn't exist)"}
-          _ ->
-            {"PENDING", "(score: #{score_str})"}
-        end
+        {status_icon, detail} =
+          case ev.verification do
+            "verified" ->
+              paper_info =
+                case ev.paper_ref do
+                  nil -> ""
+                  n -> "Paper #{n}, "
+                end
+
+              cite_str = format_citation_count(cite_count)
+              {"VERIFIED \u2713 #{type_tag}", "(#{paper_info}#{cite_str}, score: #{score_str})"}
+
+            "partial" ->
+              paper_info =
+                case ev.paper_ref do
+                  nil -> ""
+                  n -> "Paper #{n}, "
+                end
+
+              cite_str = format_citation_count(cite_count)
+              {"PARTIAL ~ #{type_tag}", "(#{paper_info}#{cite_str}, score: #{score_str})"}
+
+            "unverified" ->
+              paper_info =
+                case ev.paper_ref do
+                  nil -> ""
+                  n -> "Paper #{n}, "
+                end
+
+              cite_str = format_citation_count(cite_count)
+
+              {"UNVERIFIED \u2717",
+               "(#{paper_info}#{cite_str}, score: #{score_str}) -- FRAUDULENT CITATION"}
+
+            "no_citation" ->
+              {"NO CITATION", "(reasoning only, score: #{score_str})"}
+
+            "invalid_ref" ->
+              {"INVALID REF", "(score: 0.0 -- cited paper doesn't exist)"}
+
+            _ ->
+              {"PENDING", "(score: #{score_str})"}
+          end
 
         store_tag = if store_label != "", do: " [#{store_label}]", else: ""
         "  #{i}. [#{status_icon}]#{store_tag} #{detail} #{ev.summary}"
@@ -1132,6 +1444,7 @@ Known failure patterns to avoid:
   defp format_citation_count(count) when count >= 1000 do
     "#{Float.round(count / 1000.0, 1)}k citations"
   end
+
   defp format_citation_count(count), do: "#{count} citations"
 
   # -- Code execution callback (Crucible or local fallback) ----------------
@@ -1147,23 +1460,30 @@ Known failure patterns to avoid:
 
         # Get JWT for sandbox auth
         agent_id = "osa"
-        intent_hash = :crypto.hash(:sha256, code) |> Base.encode16(case: :lower) |> binary_part(0, 16)
 
-        jwt = case Daemon.Kernel.Client.request_token(agent_id, intent_hash, "execute") do
-          {:ok, token} -> token
-          _ -> nil
-        end
+        intent_hash =
+          :crypto.hash(:sha256, code) |> Base.encode16(case: :lower) |> binary_part(0, 16)
+
+        jwt =
+          case Daemon.Kernel.Client.request_token(agent_id, intent_hash, "execute") do
+            {:ok, token} -> token
+            _ -> nil
+          end
 
         if jwt do
           body = Jason.encode!(%{code: code, language: language, jwt: jwt})
+
           case Req.post("#{crucible_url}/execute",
                  body: body,
                  headers: [{"content-type", "application/json"}],
-                 receive_timeout: 30_000) do
+                 receive_timeout: 30_000
+               ) do
             {:ok, %{status: 200, body: resp}} ->
               {:ok, %{stdout: resp["stdout"] || "", stderr: resp["stderr"] || ""}}
+
             {:ok, %{status: status, body: body}} ->
               {:error, "Crucible returned #{status}: #{inspect(body)}"}
+
             {:error, reason} ->
               {:error, "Crucible unreachable: #{inspect(reason)}"}
           end
@@ -1175,20 +1495,23 @@ Known failure patterns to avoid:
       # Local fallback: run Python in a restricted tmpdir (dev mode only)
       fn code, opts ->
         language = Keyword.get(opts, :language, "python")
+
         if language != "python" do
           {:error, "Local fallback only supports Python"}
         else
-          work_dir = System.tmp_dir!() |> Path.join("crucible_#{:rand.uniform(999999)}")
+          work_dir = System.tmp_dir!() |> Path.join("crucible_#{:rand.uniform(999_999)}")
           File.mkdir_p!(work_dir)
           script_path = Path.join(work_dir, "script.py")
           File.write!(script_path, code)
 
           try do
-            {output, exit_code} = System.cmd("python3", [script_path],
-              cd: work_dir,
-              stderr_to_stdout: true,
-              env: [{"PYTHONDONTWRITEBYTECODE", "1"}]
-            )
+            {output, exit_code} =
+              System.cmd("python3", [script_path],
+                cd: work_dir,
+                stderr_to_stdout: true,
+                env: [{"PYTHONDONTWRITEBYTECODE", "1"}]
+              )
+
             if exit_code == 0 do
               {:ok, %{stdout: output, stderr: ""}}
             else
@@ -1212,10 +1535,13 @@ Known failure patterns to avoid:
     |> Enum.map(fn {p, i} ->
       citations = p["citation_count"] || p["citationCount"] || 0
       source = p["source"] || "unknown"
-      doi_suffix = case p["doi"] do
-        doi when is_binary(doi) and doi != "" -> " | https://doi.org/#{doi}"
-        _ -> ""
-      end
+
+      doi_suffix =
+        case p["doi"] do
+          doi when is_binary(doi) and doi != "" -> " | https://doi.org/#{doi}"
+          _ -> ""
+        end
+
       "  [Paper #{i}] #{p["title"]} (#{p["year"]}, #{citations} citations, via #{source})#{doi_suffix}"
     end)
     |> Enum.join("\n")
@@ -1227,36 +1553,53 @@ Known failure patterns to avoid:
     # Only increment helpful counter when prior evidence is independently regenerated
     Enum.each(prior_evidence_texts, fn prior_text ->
       # Check if any current evidence covers the same ground
-      was_reused = Enum.any?(current_evidence, fn ev ->
-        prior_words = significant_words(prior_text)
-        ev_words = significant_words(ev.summary)
-        set1 = MapSet.new(prior_words)
-        set2 = MapSet.new(ev_words)
-        intersection = MapSet.intersection(set1, set2) |> MapSet.size()
-        union_size = MapSet.union(set1, set2) |> MapSet.size()
-        union_size > 0 and (intersection * 1.0 / union_size) >= 0.3
-      end)
+      was_reused =
+        Enum.any?(current_evidence, fn ev ->
+          prior_words = significant_words(prior_text)
+          ev_words = significant_words(ev.summary)
+          set1 = MapSet.new(prior_words)
+          set2 = MapSet.new(ev_words)
+          intersection = MapSet.intersection(set1, set2) |> MapSet.size()
+          union_size = MapSet.union(set1, set2) |> MapSet.size()
+          union_size > 0 and intersection * 1.0 / union_size >= 0.3
+        end)
 
       if was_reused do
         case Regex.run(~r/\(id:\s*(investigate:[a-f0-9]+)\)/, prior_text) do
           [_, prior_id] ->
-            query = "SELECT ?ev ?count WHERE { <#{prior_id}> vaos:has_evidence ?ev . ?ev vaos:helpful_count ?count }"
+            query =
+              "SELECT ?ev ?count WHERE { <#{prior_id}> vaos:has_evidence ?ev . ?ev vaos:helpful_count ?count }"
+
             case MiosaKnowledge.sparql(store, query) do
               {:ok, results} when is_list(results) ->
                 for r <- results do
                   ev_id = Map.get(r, "ev", "")
                   old_count_str = Map.get(r, "count", "0")
-                  old_count = case Integer.parse(old_count_str) do
-                    {n, _} -> n
-                    :error -> 0
-                  end
+
+                  old_count =
+                    case Integer.parse(old_count_str) do
+                      {n, _} -> n
+                      :error -> 0
+                    end
+
                   MiosaKnowledge.retract(store, {ev_id, "vaos:helpful_count", old_count_str})
-                  MiosaKnowledge.assert(store, {ev_id, "vaos:helpful_count", Integer.to_string(old_count + 1)})
-                  Logger.debug("[investigate] Incremented helpful count for #{ev_id} to #{old_count + 1}")
+
+                  MiosaKnowledge.assert(
+                    store,
+                    {ev_id, "vaos:helpful_count", Integer.to_string(old_count + 1)}
+                  )
+
+                  Logger.debug(
+                    "[investigate] Incremented helpful count for #{ev_id} to #{old_count + 1}"
+                  )
                 end
-              _ -> :ok
+
+              _ ->
+                :ok
             end
-          _ -> :ok
+
+          _ ->
+            :ok
         end
       end
     end)
@@ -1273,8 +1616,6 @@ Known failure patterns to avoid:
     |> Enum.take(10)
   end
 
-
-
   # -- Keyword extraction ----------------------------------------------
 
   defp extract_keywords(topic) do
@@ -1285,7 +1626,8 @@ Known failure patterns to avoid:
     |> Enum.reject(&(&1 in @stop_words))
     |> Enum.reject(&(String.length(&1) < 3))
     |> Enum.flat_map(fn word ->
-      stem = word
+      stem =
+        word
         |> String.replace(~r/ing$/, "")
         |> String.replace(~r/tion$/, "t")
         |> String.replace(~r/ness$/, "")
@@ -1297,6 +1639,7 @@ Known failure patterns to avoid:
         |> String.replace(~r/er$/, "")
         |> String.replace(~r/es$/, "")
         |> String.replace(~r/s$/, "")
+
       if stem != word and String.length(stem) >= 3, do: [word, stem], else: [word]
     end)
     |> Enum.uniq()
@@ -1307,29 +1650,37 @@ Known failure patterns to avoid:
 
   defp fetch_prior_evidence_by_keywords(store, keywords) do
     # Find prior investigations that match keywords
-    topic_query = "SELECT ?s ?topic WHERE { ?s vaos:topic ?topic . ?s rdf:type vaos:Investigation }"
+    topic_query =
+      "SELECT ?s ?topic WHERE { ?s vaos:topic ?topic . ?s rdf:type vaos:Investigation }"
+
     kw_query = "SELECT ?s ?kw WHERE { ?s vaos:keyword ?kw . ?s rdf:type vaos:Investigation }"
 
-    topic_results = case MiosaKnowledge.sparql(store, topic_query) do
-      {:ok, results} when is_list(results) -> results
-      _ -> []
-    end
+    topic_results =
+      case MiosaKnowledge.sparql(store, topic_query) do
+        {:ok, results} when is_list(results) -> results
+        _ -> []
+      end
 
-    kw_results = case MiosaKnowledge.sparql(store, kw_query) do
-      {:ok, results} when is_list(results) -> results
-      _ -> []
-    end
+    kw_results =
+      case MiosaKnowledge.sparql(store, kw_query) do
+        {:ok, results} when is_list(results) -> results
+        _ -> []
+      end
 
     kw_matched_ids =
       kw_results
       |> Enum.filter(fn bindings ->
         stored_kw = Map.get(bindings, "kw", "") |> to_string() |> String.downcase()
-        Enum.any?(keywords, fn kw -> kw == stored_kw or String.contains?(stored_kw, kw) or String.contains?(kw, stored_kw) end)
+
+        Enum.any?(keywords, fn kw ->
+          kw == stored_kw or String.contains?(stored_kw, kw) or String.contains?(kw, stored_kw)
+        end)
       end)
       |> Enum.map(fn bindings -> Map.get(bindings, "s", "") |> to_string() end)
       |> MapSet.new()
 
-    matched_ids = topic_results
+    matched_ids =
+      topic_results
       |> Enum.filter(fn bindings ->
         s = Map.get(bindings, "s", "") |> to_string()
         topic_val = Map.get(bindings, "topic", Map.get(bindings, :topic, ""))
@@ -1342,50 +1693,66 @@ Known failure patterns to avoid:
 
     # For each matched investigation, fetch the EVIDENCE summaries (not conclusions)
     Enum.flat_map(matched_ids, fn inv_id ->
-      ev_query = "SELECT ?ev ?summary WHERE { <#{inv_id}> vaos:has_evidence ?ev . ?ev vaos:summary ?summary }"
+      ev_query =
+        "SELECT ?ev ?summary WHERE { <#{inv_id}> vaos:has_evidence ?ev . ?ev vaos:summary ?summary }"
+
       case MiosaKnowledge.sparql(store, ev_query) do
         {:ok, results} when is_list(results) ->
           Enum.map(results, fn r ->
             summary = Map.get(r, "summary", "")
             "  - #{summary} (id: #{inv_id})"
           end)
-        _ -> []
+
+        _ ->
+          []
       end
     end)
-    |> Enum.take(10)  # Limit keyword-matched to 10
+    # Limit keyword-matched to 10
+    |> Enum.take(10)
     |> then(fn keyword_results ->
       # Widen: also search ALL evidence summaries for term overlap with topic
       broad_results = fetch_broad_evidence(store, keywords)
       # Merge, deduplicate by summary text
       seen = MapSet.new(Enum.map(keyword_results, fn line -> String.trim(line) end))
-      additional = Enum.reject(broad_results, fn line -> MapSet.member?(seen, String.trim(line)) end)
-      (keyword_results ++ Enum.take(additional, 10))
+
+      additional =
+        Enum.reject(broad_results, fn line -> MapSet.member?(seen, String.trim(line)) end)
+
+      keyword_results ++ Enum.take(additional, 10)
     end)
   rescue
     e ->
-      Logger.warning("[investigate] fetch_prior_evidence_by_keywords failed: #{Exception.message(e)}")
+      Logger.warning(
+        "[investigate] fetch_prior_evidence_by_keywords failed: #{Exception.message(e)}"
+      )
+
       []
   end
 
   defp fetch_broad_evidence(store, keywords) do
     # Search ALL evidence summaries across ALL investigations for term overlap
     all_ev_query = "SELECT ?ev ?summary WHERE { ?ev vaos:summary ?summary }"
+
     case MiosaKnowledge.sparql(store, all_ev_query) do
       {:ok, results} when is_list(results) ->
         kw_set = MapSet.new(keywords)
+
         results
         |> Enum.filter(fn r ->
           summary = Map.get(r, "summary", "") |> to_string() |> String.downcase()
           summary_words = String.split(summary, ~r/\s+/, trim: true) |> MapSet.new()
           overlap = MapSet.intersection(kw_set, summary_words) |> MapSet.size()
-          overlap >= 2  # At least 2 keyword matches
+          # At least 2 keyword matches
+          overlap >= 2
         end)
         |> Enum.map(fn r ->
           summary = Map.get(r, "summary", "")
           ev_id = Map.get(r, "ev", "")
           "  - #{summary} (id: #{ev_id})"
         end)
-      _ -> []
+
+      _ ->
+        []
     end
   rescue
     _ -> []
@@ -1399,7 +1766,9 @@ Known failure patterns to avoid:
     case :ets.whereis(@circuit_table) do
       :undefined ->
         :ets.new(@circuit_table, [:named_table, :public, :set])
-      _ -> :ok
+
+      _ ->
+        :ok
     end
   rescue
     ArgumentError -> :ok
@@ -1408,17 +1777,27 @@ Known failure patterns to avoid:
   @doc false
   def circuit_check(source) when source in @circuit_sources do
     ensure_circuit_table()
+
     case :ets.lookup(@circuit_table, source) do
       [{^source, %{state: :open, tripped_at: tripped_at}}] ->
         elapsed = System.monotonic_time(:millisecond) - tripped_at
+
         if elapsed >= @circuit_cooldown_ms do
           # Cooldown expired → half-open: allow one probe request
-          :ets.insert(@circuit_table, {source, %{state: :half_open, consecutive_failures: 0, tripped_at: tripped_at}})
+          :ets.insert(
+            @circuit_table,
+            {source, %{state: :half_open, consecutive_failures: 0, tripped_at: tripped_at}}
+          )
+
           Logger.info("[investigate] Circuit half-open for #{source} — probing")
           :ok
         else
           remaining = div(@circuit_cooldown_ms - elapsed, 1_000)
-          Logger.debug("[investigate] Circuit OPEN for #{source} — skipping (#{remaining}s remaining)")
+
+          Logger.debug(
+            "[investigate] Circuit OPEN for #{source} — skipping (#{remaining}s remaining)"
+          )
+
           :skip
         end
 
@@ -1435,12 +1814,17 @@ Known failure patterns to avoid:
 
   defp circuit_record_success(source) do
     ensure_circuit_table()
-    prev_state = case :ets.lookup(@circuit_table, source) do
-      [{^source, %{state: s}}] -> s
-      _ -> :closed
-    end
 
-    :ets.insert(@circuit_table, {source, %{state: :closed, consecutive_failures: 0, tripped_at: nil}})
+    prev_state =
+      case :ets.lookup(@circuit_table, source) do
+        [{^source, %{state: s}}] -> s
+        _ -> :closed
+      end
+
+    :ets.insert(
+      @circuit_table,
+      {source, %{state: :closed, consecutive_failures: 0, tripped_at: nil}}
+    )
 
     if prev_state in [:half_open, :open] do
       Logger.info("[investigate] Circuit CLOSED for #{source} — recovered")
@@ -1451,24 +1835,39 @@ Known failure patterns to avoid:
 
   defp circuit_record_failure(source) do
     ensure_circuit_table()
-    entry = case :ets.lookup(@circuit_table, source) do
-      [{^source, %{state: :half_open}}] ->
-        # Half-open probe failed → back to open with fresh cooldown
-        Logger.info("[investigate] Circuit re-OPENED for #{source} — probe failed")
-        %{state: :open, consecutive_failures: @circuit_failure_threshold, tripped_at: System.monotonic_time(:millisecond)}
 
-      [{^source, %{consecutive_failures: n} = entry}] ->
-        new_count = n + 1
-        if new_count >= @circuit_failure_threshold and entry.state != :open do
-          Logger.warning("[investigate] Circuit OPENED for #{source} — #{new_count} consecutive failures")
-          %{state: :open, consecutive_failures: new_count, tripped_at: System.monotonic_time(:millisecond)}
-        else
-          %{entry | consecutive_failures: new_count}
-        end
+    entry =
+      case :ets.lookup(@circuit_table, source) do
+        [{^source, %{state: :half_open}}] ->
+          # Half-open probe failed → back to open with fresh cooldown
+          Logger.info("[investigate] Circuit re-OPENED for #{source} — probe failed")
 
-      _ ->
-        %{state: :closed, consecutive_failures: 1, tripped_at: nil}
-    end
+          %{
+            state: :open,
+            consecutive_failures: @circuit_failure_threshold,
+            tripped_at: System.monotonic_time(:millisecond)
+          }
+
+        [{^source, %{consecutive_failures: n} = entry}] ->
+          new_count = n + 1
+
+          if new_count >= @circuit_failure_threshold and entry.state != :open do
+            Logger.warning(
+              "[investigate] Circuit OPENED for #{source} — #{new_count} consecutive failures"
+            )
+
+            %{
+              state: :open,
+              consecutive_failures: new_count,
+              tripped_at: System.monotonic_time(:millisecond)
+            }
+          else
+            %{entry | consecutive_failures: new_count}
+          end
+
+        _ ->
+          %{state: :closed, consecutive_failures: 1, tripped_at: nil}
+      end
 
     :ets.insert(@circuit_table, {source, entry})
   rescue
@@ -1478,6 +1877,7 @@ Known failure patterns to avoid:
   @doc "Get circuit breaker status for all sources"
   def circuit_status do
     ensure_circuit_table()
+
     Enum.map(@circuit_sources, fn source ->
       case :ets.lookup(@circuit_table, source) do
         [{^source, entry}] -> {source, entry}
@@ -1498,15 +1898,20 @@ Known failure patterns to avoid:
 
     # Log circuit breaker state for observability (read-only peek, no state transitions)
     ensure_circuit_table()
-    open_circuits = @circuit_sources
-    |> Enum.filter(fn s ->
-      case :ets.lookup(@circuit_table, s) do
-        [{^s, %{state: :open}}] -> true
-        _ -> false
-      end
-    end)
+
+    open_circuits =
+      @circuit_sources
+      |> Enum.filter(fn s ->
+        case :ets.lookup(@circuit_table, s) do
+          [{^s, %{state: :open}}] -> true
+          _ -> false
+        end
+      end)
+
     if open_circuits != [] do
-      Logger.info("[investigate] Circuit breakers OPEN: #{Enum.join(open_circuits, ", ")} — skipping")
+      Logger.info(
+        "[investigate] Circuit breakers OPEN: #{Enum.join(open_circuits, ", ")} — skipping"
+      )
     end
 
     # -- Circuit breaker gated source dispatch --
@@ -1515,71 +1920,90 @@ Known failure patterns to avoid:
 
     # SS: sequential with 1.5s delay — unauthenticated rate limit is ~1 req/s.
     ss_api_key = Application.get_env(:daemon, :semantic_scholar_api_key)
-    ss_results = if circuit_check(:semantic_scholar) == :ok do
-      results = Enum.flat_map(Enum.with_index(ss_queries), fn {{label, query, opts}, idx} ->
-        if idx > 0 and is_nil(ss_api_key), do: Process.sleep(1_500)
-        search_opts = Keyword.merge([limit: per_query], opts)
-        search_opts = if ss_api_key, do: Keyword.put(search_opts, :api_key, ss_api_key), else: search_opts
-        case Literature.search_semantic_scholar(query, http_fn, search_opts) do
-          {:ok, papers} -> [{:"ss_#{label}", papers}]
-          _ -> [{:"ss_#{label}", []}]
-        end
-      end)
-      any_papers = Enum.any?(results, fn {_label, papers} -> papers != [] end)
-      if any_papers, do: circuit_record_success(:semantic_scholar), else: circuit_record_failure(:semantic_scholar)
-      results
-    else
-      []
-    end
+
+    ss_results =
+      if circuit_check(:semantic_scholar) == :ok do
+        results =
+          Enum.flat_map(Enum.with_index(ss_queries), fn {{label, query, opts}, idx} ->
+            if idx > 0 and is_nil(ss_api_key), do: Process.sleep(1_500)
+            search_opts = Keyword.merge([limit: per_query], opts)
+
+            search_opts =
+              if ss_api_key, do: Keyword.put(search_opts, :api_key, ss_api_key), else: search_opts
+
+            case Literature.search_semantic_scholar(query, http_fn, search_opts) do
+              {:ok, papers} -> [{:"ss_#{label}", papers}]
+              _ -> [{:"ss_#{label}", []}]
+            end
+          end)
+
+        any_papers = Enum.any?(results, fn {_label, papers} -> papers != [] end)
+
+        if any_papers,
+          do: circuit_record_success(:semantic_scholar),
+          else: circuit_record_failure(:semantic_scholar)
+
+        results
+      else
+        []
+      end
 
     # OA: parallel queries — circuit breaker gates the entire batch
-    oa_tasks = if circuit_check(:openalex) == :ok do
-      Enum.map(oa_queries, fn {label, query, opts} ->
-        search_opts = Keyword.merge([limit: per_query], opts)
-        Task.async(fn ->
-          case Literature.search_openalex(query, http_fn, search_opts) do
-            {:ok, papers} -> {:"oa_#{label}", papers}
-            _ -> {:"oa_#{label}", []}
-          end
+    oa_tasks =
+      if circuit_check(:openalex) == :ok do
+        Enum.map(oa_queries, fn {label, query, opts} ->
+          search_opts = Keyword.merge([limit: per_query], opts)
+
+          Task.async(fn ->
+            case Literature.search_openalex(query, http_fn, search_opts) do
+              {:ok, papers} -> {:"oa_#{label}", papers}
+              _ -> {:"oa_#{label}", []}
+            end
+          end)
         end)
-      end)
-    else
-      []
-    end
+      else
+        []
+      end
 
     # alphaXiv embedding search
-    alphaxiv_task = if circuit_check(:alphaxiv) == :ok do
-      Task.async(fn ->
-        alias Daemon.Tools.Builtins.AlphaXivClient
-        case AlphaXivClient.embedding_search(topic) do
-          {:ok, papers} when papers != [] ->
-            Logger.debug("[investigate] alphaXiv returned #{length(papers)} papers")
-            {:alphaxiv, papers}
-          _ ->
-            Logger.debug("[investigate] alphaXiv unavailable")
-            {:alphaxiv, []}
-        end
-      end)
-    else
-      nil
-    end
+    alphaxiv_task =
+      if circuit_check(:alphaxiv) == :ok do
+        Task.async(fn ->
+          alias Daemon.Tools.Builtins.AlphaXivClient
+
+          case AlphaXivClient.embedding_search(topic) do
+            {:ok, papers} when papers != [] ->
+              Logger.debug("[investigate] alphaXiv returned #{length(papers)} papers")
+              {:alphaxiv, papers}
+
+            _ ->
+              Logger.debug("[investigate] alphaXiv unavailable")
+              {:alphaxiv, []}
+          end
+        end)
+      else
+        nil
+      end
 
     # HuggingFace Papers search (ML/AI papers from arXiv via HF Hub API)
-    hf_task = if circuit_check(:huggingface) == :ok do
-      Task.async(fn ->
-        alias Daemon.Tools.Builtins.HFPapersClient
-        case HFPapersClient.search(topic, limit: 10) do
-          {:ok, papers} when papers != [] ->
-            Logger.debug("[investigate] HuggingFace returned #{length(papers)} papers")
-            {:huggingface, papers}
-          _ ->
-            Logger.debug("[investigate] HuggingFace Papers unavailable")
-            {:huggingface, []}
-        end
-      end)
-    else
-      nil
-    end
+    hf_task =
+      if circuit_check(:huggingface) == :ok do
+        Task.async(fn ->
+          alias Daemon.Tools.Builtins.HFPapersClient
+
+          case HFPapersClient.search(topic, limit: 10) do
+            {:ok, papers} when papers != [] ->
+              Logger.debug("[investigate] HuggingFace returned #{length(papers)} papers")
+              {:huggingface, papers}
+
+            _ ->
+              Logger.debug("[investigate] HuggingFace Papers unavailable")
+              {:huggingface, []}
+          end
+        end)
+      else
+        nil
+      end
 
     # yield_many — gracefully handle timeouts, then record circuit results
     all_tasks = (oa_tasks ++ [alphaxiv_task, hf_task]) |> Enum.reject(&is_nil/1)
@@ -1588,48 +2012,62 @@ Known failure patterns to avoid:
     # Track per-source success/failure for circuit breaker
     oa_task_set = MapSet.new(oa_tasks)
 
-    async_results = Enum.flat_map(yielded, fn
-      {task, {:ok, result}} ->
-        # Record circuit success based on source
-        case result do
-          {:alphaxiv, papers} ->
-            if papers != [], do: circuit_record_success(:alphaxiv), else: circuit_record_failure(:alphaxiv)
-          {:huggingface, papers} ->
-            if papers != [], do: circuit_record_success(:huggingface), else: circuit_record_failure(:huggingface)
-          {oa_label, _papers} when is_atom(oa_label) ->
-            # OA success tracked after all OA tasks complete (below)
+    async_results =
+      Enum.flat_map(yielded, fn
+        {task, {:ok, result}} ->
+          # Record circuit success based on source
+          case result do
+            {:alphaxiv, papers} ->
+              if papers != [],
+                do: circuit_record_success(:alphaxiv),
+                else: circuit_record_failure(:alphaxiv)
+
+            {:huggingface, papers} ->
+              if papers != [],
+                do: circuit_record_success(:huggingface),
+                else: circuit_record_failure(:huggingface)
+
+            {oa_label, _papers} when is_atom(oa_label) ->
+              # OA success tracked after all OA tasks complete (below)
+              :ok
+
+            _ ->
+              :ok
+          end
+
+          [result]
+
+        {_task, {:exit, reason}} ->
+          Logger.warning("[investigate] Paper search task crashed: #{inspect(reason)}")
+          []
+
+        {task, nil} ->
+          Logger.warning("[investigate] Paper search task timed out — proceeding without")
+          # Record timeout as failure for the source
+          if MapSet.member?(oa_task_set, task) do
+            # Don't record per-task — we'll batch record OA below
             :ok
-          _ -> :ok
-        end
-        [result]
+          else
+            # Must be alphaxiv or huggingface
+            # Can't easily determine which without extra tracking, but timeouts are rare for these
+            :ok
+          end
 
-      {_task, {:exit, reason}} ->
-        Logger.warning("[investigate] Paper search task crashed: #{inspect(reason)}")
-        []
-
-      {task, nil} ->
-        Logger.warning("[investigate] Paper search task timed out — proceeding without")
-        # Record timeout as failure for the source
-        if MapSet.member?(oa_task_set, task) do
-          # Don't record per-task — we'll batch record OA below
-          :ok
-        else
-          # Must be alphaxiv or huggingface
-          # Can't easily determine which without extra tracking, but timeouts are rare for these
-          :ok
-        end
-        Task.shutdown(task, :brutal_kill)
-        []
-    end)
+          Task.shutdown(task, :brutal_kill)
+          []
+      end)
 
     # Batch-record OA circuit result: success if ANY OA query returned papers
     if oa_tasks != [] do
-      oa_results = Enum.filter(async_results, fn
-        {label, _} when is_atom(label) -> String.starts_with?(Atom.to_string(label), "oa_")
-        _ -> false
-      end)
+      oa_results =
+        Enum.filter(async_results, fn
+          {label, _} when is_atom(label) -> String.starts_with?(Atom.to_string(label), "oa_")
+          _ -> false
+        end)
+
       oa_any_papers = Enum.any?(oa_results, fn {_label, papers} -> papers != [] end)
       oa_all_timed_out = length(oa_results) == 0 and length(oa_tasks) > 0
+
       cond do
         oa_any_papers -> circuit_record_success(:openalex)
         oa_all_timed_out -> circuit_record_failure(:openalex)
@@ -1640,15 +2078,17 @@ Known failure patterns to avoid:
     results = ss_results ++ async_results
 
     # Collect source counts
-    source_counts = Enum.reduce(results, %{}, fn {source, papers}, acc ->
-      source_key = source |> Atom.to_string() |> source_category()
-      Map.update(acc, source_key, length(papers), &(&1 + length(papers)))
-    end)
+    source_counts =
+      Enum.reduce(results, %{}, fn {source, papers}, acc ->
+        source_key = source |> Atom.to_string() |> source_category()
+        Map.update(acc, source_key, length(papers), &(&1 + length(papers)))
+      end)
 
     # Collect raw papers and ensure atom keys for rank_papers compatibility
-    all_raw = Enum.flat_map(results, fn {_source, papers} ->
-      Enum.map(papers, &ensure_atom_keys/1)
-    end)
+    all_raw =
+      Enum.flat_map(results, fn {_source, papers} ->
+        Enum.map(papers, &ensure_atom_keys/1)
+      end)
 
     # Dedup by title similarity (works on both atom and string keys)
     deduped = merge_papers_raw(all_raw)
@@ -1658,14 +2098,16 @@ Known failure patterns to avoid:
 
     # Filter out irrelevant papers (zero topic-term overlap)
     {relevant, dropped} = filter_relevant(ranked, topic, keywords)
+
     if dropped > 0 do
       Logger.info("[investigate] Filtered out #{dropped} irrelevant papers")
     end
 
     # Normalize to string-key format and take top N (tuned by strategy)
-    sorted = relevant
-    |> Enum.map(&normalize_paper_format/1)
-    |> Enum.take(strategy.top_n_papers)
+    sorted =
+      relevant
+      |> Enum.map(&normalize_paper_format/1)
+      |> Enum.take(strategy.top_n_papers)
 
     {sorted, source_counts}
   end
@@ -1674,7 +2116,9 @@ Known failure patterns to avoid:
   # OA gets all 7+ (generous rate limits). Returns {ss_queries, oa_queries}.
   defp build_search_queries(topic, keywords) do
     topic_words = topic |> String.downcase() |> String.split(~r/\s+/, trim: true) |> MapSet.new()
-    novel_keywords = Enum.reject(keywords, fn kw -> MapSet.member?(topic_words, kw) end) |> Enum.take(3)
+
+    novel_keywords =
+      Enum.reject(keywords, fn kw -> MapSet.member?(topic_words, kw) end) |> Enum.take(3)
 
     # Opts for review-specific queries: filter at API level for reviews/meta-analyses
     review_opts = [publication_types: "Review,MetaAnalysis", type: "review"]
@@ -1698,11 +2142,12 @@ Known failure patterns to avoid:
     ]
 
     # Add keyword-augmented query to OA only if novel keywords exist
-    oa_queries = if novel_keywords != [] do
-      oa_queries ++ [{:keywords, "#{topic} #{Enum.join(novel_keywords, " ")}", []}]
-    else
-      oa_queries
-    end
+    oa_queries =
+      if novel_keywords != [] do
+        oa_queries ++ [{:keywords, "#{topic} #{Enum.join(novel_keywords, " ")}", []}]
+      else
+        oa_queries
+      end
 
     {ss_queries, oa_queries}
   end
@@ -1717,11 +2162,12 @@ Known failure patterns to avoid:
   # Dedup raw papers (handles both atom-key and string-key formats)
   defp merge_papers_raw(papers) when is_list(papers) do
     Enum.uniq_by(papers, fn p ->
-      title = case p do
-        %{title: t} -> t
-        %{"title" => t} -> t
-        _ -> ""
-      end
+      title =
+        case p do
+          %{title: t} -> t
+          %{"title" => t} -> t
+          _ -> ""
+        end
 
       title
       |> to_string()
@@ -1741,38 +2187,44 @@ Known failure patterns to avoid:
   # (e.g. "Effectiveness of treatments for firework fears in dogs").
   defp filter_relevant(papers, topic, _keywords) do
     # Extract distinctive terms from topic — skip short/generic words
-    distinctive_terms = topic
-    |> String.downcase()
-    |> String.replace(~r/[^a-z0-9\s\-]/, " ")
-    |> String.split(~r/\s+/, trim: true)
-    |> Enum.reject(&(&1 in @stop_words))
-    |> Enum.reject(&(String.length(&1) < 4))
+    distinctive_terms =
+      topic
+      |> String.downcase()
+      |> String.replace(~r/[^a-z0-9\s\-]/, " ")
+      |> String.split(~r/\s+/, trim: true)
+      |> Enum.reject(&(&1 in @stop_words))
+      |> Enum.reject(&(String.length(&1) < 4))
 
     # Generic modifiers that appear across many domains — never use as primary filter term
-    generic_modifiers = ~w(effectiveness effective efficacy efficient analysis review evidence impact treatment treatments outcomes study studies comparison)
+    generic_modifiers =
+      ~w(effectiveness effective efficacy efficient analysis review evidence impact treatment treatments outcomes study studies comparison)
 
     # Primary term: first non-generic term, or longest term as fallback
-    primary_term = Enum.find(distinctive_terms, fn t -> t not in generic_modifiers end) ||
-      Enum.max_by(distinctive_terms, &String.length/1, fn -> nil end)
+    primary_term =
+      Enum.find(distinctive_terms, fn t -> t not in generic_modifiers end) ||
+        Enum.max_by(distinctive_terms, &String.length/1, fn -> nil end)
 
     # If no distinctive terms found, skip filtering entirely
     if primary_term == nil do
       {papers, 0}
     else
-      {relevant, dropped} = Enum.split_with(papers, fn paper ->
-        {title, abstract} = case paper do
-          %{title: t, abstract: a} -> {t, a}
-          %{"title" => t, "abstract" => a} -> {t, a}
-          _ -> {"", ""}
-        end
+      {relevant, dropped} =
+        Enum.split_with(papers, fn paper ->
+          {title, abstract} =
+            case paper do
+              %{title: t, abstract: a} -> {t, a}
+              %{"title" => t, "abstract" => a} -> {t, a}
+              _ -> {"", ""}
+            end
 
-        paper_text = "#{title} #{abstract}"
-        |> String.downcase()
-        |> String.replace(~r/[^a-z0-9\s\-]/, " ")
+          paper_text =
+            "#{title} #{abstract}"
+            |> String.downcase()
+            |> String.replace(~r/[^a-z0-9\s\-]/, " ")
 
-        # Primary (most specific) term MUST appear in title or abstract
-        String.contains?(paper_text, primary_term)
-      end)
+          # Primary (most specific) term MUST appear in title or abstract
+          String.contains?(paper_text, primary_term)
+        end)
 
       {relevant, length(dropped)}
     end
@@ -1788,11 +2240,12 @@ Known failure patterns to avoid:
       "citation_count" => paper[:citation_count] || 0,
       "citationCount" => paper[:citation_count] || 0,
       "source" => to_string(src),
-      "authors" => (case paper[:authors] do
-        list when is_list(list) -> Enum.join(list, ", ")
-        str when is_binary(str) -> str
-        _ -> ""
-      end),
+      "authors" =>
+        case paper[:authors] do
+          list when is_list(list) -> Enum.join(list, ", ")
+          str when is_binary(str) -> str
+          _ -> ""
+        end,
       "paper_id" => to_string(paper[:paper_id] || ""),
       "url" => to_string(paper[:url] || ""),
       "doi" => to_string(paper[:doi] || ""),
@@ -1802,27 +2255,40 @@ Known failure patterns to avoid:
 
   # Already string-keyed (from alphaXiv, HuggingFace, or legacy formats)
   defp normalize_paper_format(%{"title" => _} = paper) do
-    Map.merge(%{
-      "citation_count" => 0,
-      "citationCount" => 0,
-      "source" => "unknown",
-      "authors" => "",
-      "abstract" => "",
-      "year" => "unknown",
-      "publicationTypes" => []
-    }, paper)
+    Map.merge(
+      %{
+        "citation_count" => 0,
+        "citationCount" => 0,
+        "source" => "unknown",
+        "authors" => "",
+        "abstract" => "",
+        "year" => "unknown",
+        "publicationTypes" => []
+      },
+      paper
+    )
     |> Map.update("citation_count", 0, fn v -> v || 0 end)
     |> Map.update("citationCount", 0, fn v -> v || 0 end)
   end
 
   defp normalize_paper_format(other) do
-    Logger.warning("[investigate] Unknown paper format: #{inspect(other) |> String.slice(0, 200)}")
-    %{"title" => "Unknown", "abstract" => "", "year" => "unknown",
-      "citation_count" => 0, "citationCount" => 0, "source" => "unknown"}
+    Logger.warning(
+      "[investigate] Unknown paper format: #{inspect(other) |> String.slice(0, 200)}"
+    )
+
+    %{
+      "title" => "Unknown",
+      "abstract" => "",
+      "year" => "unknown",
+      "citation_count" => 0,
+      "citationCount" => 0,
+      "source" => "unknown"
+    }
   end
 
   # Convert string-keyed papers (e.g. from alphaXiv) to atom keys for rank_papers compatibility
   defp ensure_atom_keys(%{title: _} = paper), do: paper
+
   defp ensure_atom_keys(%{"title" => _} = paper) do
     %{
       title: paper["title"] || "",
@@ -1837,6 +2303,7 @@ Known failure patterns to avoid:
       publication_types: paper["publicationTypes"] || []
     }
   end
+
   defp ensure_atom_keys(other), do: other
 
   # Safe atom conversion for known source values
@@ -1849,12 +2316,14 @@ Known failure patterns to avoid:
 
   defp parse_year(nil), do: nil
   defp parse_year(y) when is_integer(y), do: y
+
   defp parse_year(y) when is_binary(y) do
     case Integer.parse(y) do
       {n, _} -> n
       :error -> nil
     end
   end
+
   defp parse_year(_), do: nil
 
   # HTTP adapter for vaos-ledger Literature module — uses Req
@@ -1868,31 +2337,48 @@ Known failure patterns to avoid:
 
       # Inject mailto for OpenAlex polite pool — routed to faster servers
       # See: https://docs.openalex.org/how-to-use-the-api/rate-limits-and-authentication
-      params = if String.contains?(url, "openalex.org") do
-        params ++ [{"mailto", @openalex_mailto}]
-      else
-        params
-      end
+      params =
+        if String.contains?(url, "openalex.org") do
+          params ++ [{"mailto", @openalex_mailto}]
+        else
+          params
+        end
 
       # Build query string from params
-      query_string = case params do
-        [] -> ""
-        kv_list ->
-          kv_list
-          |> Enum.map(fn
-            {k, v} -> "#{URI.encode_www_form(to_string(k))}=#{URI.encode_www_form(to_string(v))}"
-            other -> to_string(other)
-          end)
-          |> Enum.join("&")
-      end
+      query_string =
+        case params do
+          [] ->
+            ""
+
+          kv_list ->
+            kv_list
+            |> Enum.map(fn
+              {k, v} ->
+                "#{URI.encode_www_form(to_string(k))}=#{URI.encode_www_form(to_string(v))}"
+
+              other ->
+                to_string(other)
+            end)
+            |> Enum.join("&")
+        end
 
       full_url = if query_string == "", do: url, else: "#{url}?#{query_string}"
-      req_headers = [{"user-agent", "VAOS-Daemon/1.0 (#{@openalex_mailto})"} | Enum.map(headers, fn {k, v} -> {to_string(k), to_string(v)} end)]
+
+      req_headers = [
+        {"user-agent", "VAOS-Daemon/1.0 (#{@openalex_mailto})"}
+        | Enum.map(headers, fn {k, v} -> {to_string(k), to_string(v)} end)
+      ]
 
       # retry: false — investigation pipeline handles failures via circuit breaker;
       # Req's default transient retry adds 15-20s per attempt, pushing past yield_many timeout.
       # pool_timeout: 5s — prevent Finch connection pool queuing when pool is saturated.
-      case Req.get(full_url, headers: req_headers, receive_timeout: 15_000, connect_options: [timeout: 5_000], pool_timeout: 5_000, retry: false) do
+      case Req.get(full_url,
+             headers: req_headers,
+             receive_timeout: 15_000,
+             connect_options: [timeout: 5_000],
+             pool_timeout: 5_000,
+             retry: false
+           ) do
         {:ok, %{status: 200, body: body}} when is_map(body) ->
           {:ok, body}
 
@@ -1903,7 +2389,10 @@ Known failure patterns to avoid:
           end
 
         {:ok, %{status: status, body: body}} ->
-          Logger.warning("[investigate] HTTP #{status} from #{url}: #{inspect(body) |> String.slice(0, 200)}")
+          Logger.warning(
+            "[investigate] HTTP #{status} from #{url}: #{inspect(body) |> String.slice(0, 200)}"
+          )
+
           {:error, "HTTP #{status}"}
 
         {:error, reason} ->
@@ -1922,7 +2411,10 @@ Known failure patterns to avoid:
   # -- Cross-investigation contradiction detection ---------------------
 
   defp detect_contradictions(store, current_id, current_direction, current_keywords) do
-    case MiosaKnowledge.sparql(store, "SELECT ?s ?topic WHERE { ?s vaos:topic ?topic . ?s rdf:type vaos:Investigation }") do
+    case MiosaKnowledge.sparql(
+           store,
+           "SELECT ?s ?topic WHERE { ?s vaos:topic ?topic . ?s rdf:type vaos:Investigation }"
+         ) do
       {:ok, results} when is_list(results) ->
         results
         |> Enum.reject(fn r -> Map.get(r, "s") == current_id end)
@@ -1934,27 +2426,48 @@ Known failure patterns to avoid:
           prior_id = Map.get(r, "s", "")
           prior_topic = Map.get(r, "topic", "")
 
-          case MiosaKnowledge.sparql(store, "SELECT ?dir WHERE { <#{prior_id}> vaos:direction ?dir }") do
+          case MiosaKnowledge.sparql(
+                 store,
+                 "SELECT ?dir WHERE { <#{prior_id}> vaos:direction ?dir }"
+               ) do
             {:ok, [prior | _]} ->
               prior_direction = Map.get(prior, "dir", "unknown")
 
               is_conflict =
-                (current_direction == "supporting" and prior_direction in ["opposing", "genuinely_contested"]) or
-                (current_direction == "opposing" and prior_direction in ["supporting", "genuinely_contested"]) or
-                (current_direction != prior_direction and current_direction != "genuinely_contested" and prior_direction != "genuinely_contested")
+                (current_direction == "supporting" and
+                   prior_direction in ["opposing", "genuinely_contested"]) or
+                  (current_direction == "opposing" and
+                     prior_direction in ["supporting", "genuinely_contested"]) or
+                  (current_direction != prior_direction and
+                     current_direction != "genuinely_contested" and
+                     prior_direction != "genuinely_contested")
 
               if is_conflict do
                 MiosaKnowledge.assert(store, {current_id, "vaos:contradicts", prior_id})
                 MiosaKnowledge.assert(store, {prior_id, "vaos:contradictedBy", current_id})
-                Logger.warning("[investigate] Epistemic tension: #{current_id} contradicts #{prior_id}")
-                [%{prior_id: prior_id, prior_topic: prior_topic, prior_direction: prior_direction}]
+
+                Logger.warning(
+                  "[investigate] Epistemic tension: #{current_id} contradicts #{prior_id}"
+                )
+
+                [
+                  %{
+                    prior_id: prior_id,
+                    prior_topic: prior_topic,
+                    prior_direction: prior_direction
+                  }
+                ]
               else
                 []
               end
-            _ -> []
+
+            _ ->
+              []
           end
         end)
-      _ -> []
+
+      _ ->
+        []
     end
   end
 
@@ -1982,7 +2495,8 @@ Known failure patterns to avoid:
       try do
         :ets.new(:scorer_cache, [:set, :public, :named_table])
       rescue
-        ArgumentError -> :ok  # Another process created it between whereis and new
+        # Another process created it between whereis and new
+        ArgumentError -> :ok
       end
     end
 
@@ -2105,12 +2619,17 @@ Known failure patterns to avoid:
                   method_summary = String.slice(research.methodology || "", 0, 200)
 
                   # Determine direction from hypothesis/summary content
-                  research_direction = cond do
-                    Regex.match?(~r/\b(refut|contra|disprove|against|fail|negat|not\s+support)\b/i, hypothesis <> " " <> summary) ->
-                      :oppose
-                    true ->
-                      :support
-                  end
+                  research_direction =
+                    cond do
+                      Regex.match?(
+                        ~r/\b(refut|contra|disprove|against|fail|negat|not\s+support)\b/i,
+                        hypothesis <> " " <> summary
+                      ) ->
+                        :oppose
+
+                      true ->
+                        :support
+                    end
 
                   # Add finding as new evidence to the ledger
                   EpistemicLedger.add_evidence(
@@ -2216,6 +2735,10 @@ Known failure patterns to avoid:
 
   # -- Helpers ---------------------------------------------------------
 
+  defp investigation_branch(topic) do
+    "investigate:" <> short_hash(topic)
+  end
+
   defp short_hash(topic) do
     Base.encode16(:crypto.hash(:sha256, topic), case: :lower) |> String.slice(0, 16)
   end
@@ -2225,8 +2748,10 @@ Known failure patterns to avoid:
       nil ->
         case EpistemicLedger.start_link(path: @ledger_path, name: @ledger_name) do
           {:ok, _pid} -> :ok
-          {:error, {:already_started, _pid}} -> :ok  # Another process started it between whereis and start_link
+          # Another process started it between whereis and start_link
+          {:error, {:already_started, _pid}} -> :ok
         end
+
       _pid ->
         :ok
     end
@@ -2241,12 +2766,14 @@ Known failure patterns to avoid:
     if supporting == [] and opposing == [] do
       []
     else
-      for_summaries = supporting
+      for_summaries =
+        supporting
         |> Enum.take(3)
         |> Enum.map(fn ev -> "- FOR: #{ev.summary}" end)
         |> Enum.join("\n")
 
-      against_summaries = opposing
+      against_summaries =
+        opposing
         |> Enum.take(3)
         |> Enum.map(fn ev -> "- AGAINST: #{ev.summary}" end)
         |> Enum.join("\n")
@@ -2273,7 +2800,10 @@ Known failure patterns to avoid:
       """
 
       messages = [
-        %{role: "system", content: "You are a research question generator. Output ONLY valid JSON."},
+        %{
+          role: "system",
+          content: "You are a research question generator. Output ONLY valid JSON."
+        },
         %{role: "user", content: prompt}
       ]
 
@@ -2300,7 +2830,8 @@ Known failure patterns to avoid:
 
   defp parse_emergent_questions(response) do
     # Strip markdown code fences if present
-    cleaned = response
+    cleaned =
+      response
       |> String.replace(~r/^```json?\s*/m, "")
       |> String.replace(~r/```\s*$/m, "")
       |> String.trim()
@@ -2319,7 +2850,10 @@ Known failure patterns to avoid:
         |> Enum.reject(fn q -> q.title == "" end)
 
       _ ->
-        Logger.debug("[investigate] Failed to parse emergent questions JSON: #{String.slice(cleaned, 0, 200)}")
+        Logger.debug(
+          "[investigate] Failed to parse emergent questions JSON: #{String.slice(cleaned, 0, 200)}"
+        )
+
         []
     end
   rescue
@@ -2330,8 +2864,12 @@ Known failure patterns to avoid:
 
   defp ensure_store_started do
     case Vaos.Knowledge.open("osa_default") do
-      {:ok, _} -> :ok
-      {:error, {:already_started, _}} -> :ok
+      {:ok, _} ->
+        :ok
+
+      {:error, {:already_started, _}} ->
+        :ok
+
       {:error, reason} ->
         Logger.error("[investigate] Failed to start knowledge store: #{inspect(reason)}")
         {:error, reason}

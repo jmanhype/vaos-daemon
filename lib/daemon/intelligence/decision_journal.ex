@@ -98,8 +98,10 @@ defmodule Daemon.Intelligence.DecisionJournal do
   @impl true
   def init(_opts) do
     state = %{
-      decisions: [],        # [{branch, source_module, action_type, topic, status, timestamps, claim_id}]
-      in_flight: %{},       # %{normalized_topic => %{branch, source_module, started_at}}
+      # [{branch, source_module, action_type, topic, status, timestamps, claim_id}]
+      decisions: [],
+      # %{normalized_topic => %{branch, source_module, started_at}}
+      in_flight: %{},
       total_proposed: 0,
       total_approved: 0,
       total_conflicts: 0,
@@ -111,7 +113,10 @@ defmodule Daemon.Intelligence.DecisionJournal do
 
     Process.send_after(self(), :poll_pr_outcomes, @pr_poll_interval_ms)
 
-    Logger.info("[DecisionJournal] Started (#{length(state.decisions)} persisted decisions, #{map_size(state.in_flight)} in-flight)")
+    Logger.info(
+      "[DecisionJournal] Started (#{length(state.decisions)} persisted decisions, #{map_size(state.in_flight)} in-flight)"
+    )
+
     {:ok, state}
   end
 
@@ -126,7 +131,11 @@ defmodule Daemon.Intelligence.DecisionJournal do
     case check_conflicts(normalized, branch, state) do
       {:conflict, reason} ->
         state = %{state | total_conflicts: state.total_conflicts + 1}
-        Logger.info("[DecisionJournal] CONFLICT: #{source_module}/#{action_type} on '#{String.slice(topic, 0, 50)}' — #{reason}")
+
+        Logger.info(
+          "[DecisionJournal] CONFLICT: #{source_module}/#{action_type} on '#{String.slice(topic, 0, 50)}' — #{reason}"
+        )
+
         {:reply, {:conflict, reason}, state}
 
       :clear ->
@@ -147,14 +156,21 @@ defmodule Daemon.Intelligence.DecisionJournal do
           metadata: Map.drop(context, [:topic, :branch])
         }
 
-        in_flight = Map.put(state.in_flight, normalized, %{
-          branch: branch,
-          source_module: source_module,
-          started_at: DateTime.utc_now()
-        })
+        in_flight =
+          Map.put(state.in_flight, normalized, %{
+            branch: branch,
+            source_module: source_module,
+            started_at: DateTime.utc_now()
+          })
 
         decisions = [decision | state.decisions] |> Enum.take(@max_decisions)
-        state = %{state | decisions: decisions, in_flight: in_flight, total_approved: state.total_approved + 1}
+
+        state = %{
+          state
+          | decisions: decisions,
+            in_flight: in_flight,
+            total_approved: state.total_approved + 1
+        }
 
         # Emit event
         emit_decision_event(:decision_proposed, %{
@@ -172,17 +188,20 @@ defmodule Daemon.Intelligence.DecisionJournal do
   end
 
   def handle_call(:decisions, _from, state) do
-    recent = Enum.take(state.decisions, 50) |> Enum.map(fn d ->
-      %{
-        branch: d.branch,
-        source: d.source_module,
-        action: d.action_type,
-        topic: String.slice(d.topic, 0, 60),
-        status: d.status,
-        proposed_at: d.proposed_at,
-        outcome: d.outcome
-      }
-    end)
+    recent =
+      Enum.take(state.decisions, 50)
+      |> Enum.map(fn d ->
+        %{
+          branch: d.branch,
+          source: d.source_module,
+          action: d.action_type,
+          topic: String.slice(d.topic, 0, 60),
+          status: d.status,
+          proposed_at: d.proposed_at,
+          outcome: d.outcome
+        }
+      end)
+
     {:reply, recent, state}
   end
 
@@ -195,11 +214,13 @@ defmodule Daemon.Intelligence.DecisionJournal do
       total_merged: state.total_merged,
       total_rejected: state.total_rejected,
       in_flight_count: map_size(state.in_flight),
-      in_flight: Enum.map(state.in_flight, fn {topic, info} ->
-        %{topic: String.slice(topic, 0, 40), branch: info.branch, source: info.source_module}
-      end),
+      in_flight:
+        Enum.map(state.in_flight, fn {topic, info} ->
+          %{topic: String.slice(topic, 0, 40), branch: info.branch, source: info.source_module}
+        end),
       decision_count: length(state.decisions)
     }
+
     {:reply, stats, state}
   end
 
@@ -208,13 +229,14 @@ defmodule Daemon.Intelligence.DecisionJournal do
     count = map_size(state.in_flight)
     Logger.info("[DecisionJournal] Clearing #{count} in-flight entries")
 
-    decisions = Enum.map(state.decisions, fn d ->
-      if d.status == :in_flight do
-        %{d | status: :cleared, completed_at: DateTime.utc_now(), outcome: :cleared}
-      else
-        d
-      end
-    end)
+    decisions =
+      Enum.map(state.decisions, fn d ->
+        if d.status == :in_flight do
+          %{d | status: :cleared, completed_at: DateTime.utc_now(), outcome: :cleared}
+        else
+          d
+        end
+      end)
 
     state = %{state | decisions: decisions, in_flight: %{}}
     persist_state(state)
@@ -252,9 +274,10 @@ defmodule Daemon.Intelligence.DecisionJournal do
 
       nil ->
         # Check 2: Same branch name already in flight
-        branch_conflict = Enum.find(state.in_flight, fn {_topic, info} ->
-          info.branch == branch
-        end)
+        branch_conflict =
+          Enum.find(state.in_flight, fn {_topic, info} ->
+            info.branch == branch
+          end)
 
         case branch_conflict do
           {_topic, %{source_module: existing_source}} ->
@@ -262,16 +285,18 @@ defmodule Daemon.Intelligence.DecisionJournal do
 
           nil ->
             # Check 3: Recently completed/failed same topic (within 4 hours)
-            recent_match = Enum.find(state.decisions, fn d ->
-              d.normalized_topic == normalized_topic and
-                d.status in [:completed, :failed] and
-                d.completed_at != nil and
-                DateTime.diff(DateTime.utc_now(), d.completed_at, :minute) < 30
-            end)
+            recent_match =
+              Enum.find(state.decisions, fn d ->
+                d.normalized_topic == normalized_topic and
+                  d.status in [:completed, :failed] and
+                  d.completed_at != nil and
+                  DateTime.diff(DateTime.utc_now(), d.completed_at, :minute) < 30
+              end)
 
             case recent_match do
               %{branch: prev_branch, outcome: prev_outcome} ->
                 {:conflict, "topic recently #{prev_outcome} on #{prev_branch} (4h cooldown)"}
+
               nil ->
                 :clear
             end
@@ -283,21 +308,24 @@ defmodule Daemon.Intelligence.DecisionJournal do
 
   defp do_record_outcome(state, branch, outcome, metadata) do
     # Update decision record
-    decisions = Enum.map(state.decisions, fn d ->
-      if d.branch == branch and d.status == :in_flight do
-        %{d |
-          status: outcome_to_status(outcome),
-          completed_at: DateTime.utc_now(),
-          outcome: outcome,
-          metadata: Map.merge(d.metadata, metadata)
-        }
-      else
-        d
-      end
-    end)
+    decisions =
+      Enum.map(state.decisions, fn d ->
+        if d.branch == branch and d.status == :in_flight do
+          %{
+            d
+            | status: outcome_to_status(outcome),
+              completed_at: DateTime.utc_now(),
+              outcome: outcome,
+              metadata: Map.merge(d.metadata, metadata)
+          }
+        else
+          d
+        end
+      end)
 
     # Remove from in-flight
-    in_flight = state.in_flight
+    in_flight =
+      state.in_flight
       |> Enum.reject(fn {_topic, info} -> info.branch == branch end)
       |> Map.new()
 
@@ -328,13 +356,22 @@ defmodule Daemon.Intelligence.DecisionJournal do
 
   defp poll_all_pr_outcomes(state) do
     # Single gh pr list for ALL autonomous branches
-    case System.cmd("gh", [
-           "pr", "list",
-           "--repo", @daemon_repo,
-           "--json", "headRefName,state,mergedAt",
-           "--limit", "50",
-           "--state", "all"
-         ], stderr_to_stdout: true) do
+    case System.cmd(
+           "gh",
+           [
+             "pr",
+             "list",
+             "--repo",
+             @daemon_repo,
+             "--json",
+             "headRefName,state,mergedAt",
+             "--limit",
+             "50",
+             "--state",
+             "all"
+           ],
+           stderr_to_stdout: true
+         ) do
       {output, 0} ->
         case Jason.decode(output) do
           {:ok, prs} -> process_unified_pr_outcomes(state, prs)
@@ -355,9 +392,10 @@ defmodule Daemon.Intelligence.DecisionJournal do
       # Only process branches from our autonomous modules
       if autonomous_branch?(branch) do
         # Find matching decision
-        decision = Enum.find(acc.decisions, fn d ->
-          d.branch == branch and d.status == :in_flight
-        end)
+        decision =
+          Enum.find(acc.decisions, fn d ->
+            d.branch == branch and d.status == :in_flight
+          end)
 
         if decision do
           cond do
@@ -407,22 +445,29 @@ defmodule Daemon.Intelligence.DecisionJournal do
     :ok
   end
 
-
   # ── ALCOA Provenance ──────────────────────────────────────
 
   @ledger_path Path.join(System.user_home!(), ".openclaw/investigate_ledger.json")
 
   defp ensure_ledger_started do
     case Process.whereis(@ledger_name) do
-      pid when is_pid(pid) -> :ok
+      pid when is_pid(pid) ->
+        :ok
+
       nil ->
         case EpistemicLedger.start_link(path: @ledger_path, name: @ledger_name) do
           {:ok, _pid} ->
             Logger.info("[DecisionJournal] Started EpistemicLedger (#{@ledger_name})")
             :ok
-          {:error, {:already_started, _pid}} -> :ok
+
+          {:error, {:already_started, _pid}} ->
+            :ok
+
           {:error, reason} ->
-            Logger.warning("[DecisionJournal] Failed to start EpistemicLedger: #{inspect(reason)}")
+            Logger.warning(
+              "[DecisionJournal] Failed to start EpistemicLedger: #{inspect(reason)}"
+            )
+
             {:error, reason}
         end
     end
@@ -440,8 +485,14 @@ defmodule Daemon.Intelligence.DecisionJournal do
       EpistemicLedger.add_claim(
         [
           title: "Autonomous decision: #{source_module}/#{action_type}",
-          statement: "#{source_module} proposed #{action_type} for '#{String.slice(topic, 0, 80)}' on branch #{branch}",
-          tags: ["decision_journal", "autonomous_decision", to_string(source_module), to_string(action_type)]
+          statement:
+            "#{source_module} proposed #{action_type} for '#{String.slice(topic, 0, 80)}' on branch #{branch}",
+          tags: [
+            "decision_journal",
+            "autonomous_decision",
+            to_string(source_module),
+            to_string(action_type)
+          ]
         ],
         @ledger_name
       )
@@ -452,8 +503,9 @@ defmodule Daemon.Intelligence.DecisionJournal do
         EpistemicLedger.add_evidence(
           [
             claim_id: id,
-            summary: "Decision proposed at #{DateTime.utc_now() |> DateTime.to_iso8601()}. " <>
-                     "Source: #{source_module}, Action: #{action_type}, Branch: #{branch}",
+            summary:
+              "Decision proposed at #{DateTime.utc_now() |> DateTime.to_iso8601()}. " <>
+                "Source: #{source_module}, Action: #{action_type}, Branch: #{branch}",
             direction: :support,
             strength: 0.5,
             confidence: 0.8,
@@ -464,7 +516,8 @@ defmodule Daemon.Intelligence.DecisionJournal do
 
         id
 
-      _ -> nil
+      _ ->
+        nil
     end
   rescue
     _ -> nil
@@ -475,20 +528,22 @@ defmodule Daemon.Intelligence.DecisionJournal do
   defp add_outcome_evidence(claim_id, outcome, metadata) do
     ensure_ledger_started()
 
-    {direction, strength} = case outcome do
-      :merged -> {:support, 1.0}
-      :success -> {:support, 0.7}
-      :rejected -> {:contradict, 0.6}
-      :failure -> {:contradict, 0.8}
-      _ -> {:support, 0.3}
-    end
+    {direction, strength} =
+      case outcome do
+        :merged -> {:support, 1.0}
+        :success -> {:support, 0.7}
+        :rejected -> {:contradict, 0.6}
+        :failure -> {:contradict, 0.8}
+        _ -> {:support, 0.3}
+      end
 
     pr_state = Map.get(metadata, :pr_state, to_string(outcome))
 
     EpistemicLedger.add_evidence(
       [
         claim_id: claim_id,
-        summary: "Decision outcome: #{pr_state} at #{DateTime.utc_now() |> DateTime.to_iso8601()}",
+        summary:
+          "Decision outcome: #{pr_state} at #{DateTime.utc_now() |> DateTime.to_iso8601()}",
         direction: direction,
         strength: strength,
         confidence: 0.9,
@@ -509,21 +564,24 @@ defmodule Daemon.Intelligence.DecisionJournal do
     store_via = {:via, Registry, {Vaos.Knowledge.Registry, @knowledge_store}}
 
     case GenServer.whereis(store_via) do
-      nil -> :ok
-      _pid ->
-        triples = Enum.flat_map(Enum.take(decisions, 20), fn d ->
-          subject = "decision:#{d.branch}"
-          now = DateTime.utc_now() |> DateTime.to_iso8601()
+      nil ->
+        :ok
 
-          [
-            {subject, "rdf:type", "vaos:AutonomousDecision"},
-            {subject, "vaos:sourceModule", to_string(d.source_module)},
-            {subject, "vaos:actionType", to_string(d.action_type)},
-            {subject, "vaos:status", to_string(d.status)},
-            {subject, "vaos:branch", d.branch},
-            {subject, "vaos:timestamp", now}
-          ]
-        end)
+      _pid ->
+        triples =
+          Enum.flat_map(Enum.take(decisions, 20), fn d ->
+            subject = "decision:#{d.branch}"
+            now = DateTime.utc_now() |> DateTime.to_iso8601()
+
+            [
+              {subject, "rdf:type", "vaos:AutonomousDecision"},
+              {subject, "vaos:sourceModule", to_string(d.source_module)},
+              {subject, "vaos:actionType", to_string(d.action_type)},
+              {subject, "vaos:status", to_string(d.status)},
+              {subject, "vaos:branch", d.branch},
+              {subject, "vaos:timestamp", now}
+            ]
+          end)
 
         if triples != [], do: MiosaKnowledge.assert_many(store_ref, triples)
         :ok
@@ -575,37 +633,54 @@ defmodule Daemon.Intelligence.DecisionJournal do
       {:ok, json} ->
         case Jason.decode(json) do
           {:ok, %{"version" => 1, "decisions" => raw, "stats" => stats}} ->
-            decisions = Enum.map(raw, &deserialize_decision/1) |> Enum.reject(&is_nil/1)
+            now = DateTime.utc_now()
+
+            {decisions, recovered_count} =
+              raw
+              |> Enum.map(&deserialize_decision/1)
+              |> Enum.reject(&is_nil/1)
+              |> recover_stale_in_flight(now)
 
             # Rebuild in_flight from decisions that are still :in_flight
-            in_flight = decisions
+            in_flight =
+              decisions
               |> Enum.filter(fn d -> d.status == :in_flight end)
-              |> Map.new(fn d -> {d.normalized_topic, %{
-                branch: d.branch,
-                source_module: d.source_module,
-                started_at: d.proposed_at
-              }} end)
+              |> Map.new(fn d ->
+                {d.normalized_topic,
+                 %{
+                   branch: d.branch,
+                   source_module: d.source_module,
+                   started_at: d.proposed_at
+                 }}
+              end)
 
-            # Expire stale in-flight (>24h old)
-            cutoff = DateTime.add(DateTime.utc_now(), -24, :hour)
-            in_flight = Map.filter(in_flight, fn {_topic, info} ->
-              DateTime.compare(info.started_at, cutoff) == :gt
-            end)
-
-            %{state |
-              decisions: decisions,
-              in_flight: in_flight,
-              total_proposed: Map.get(stats, "total_proposed", 0),
-              total_approved: Map.get(stats, "total_approved", 0),
-              total_conflicts: Map.get(stats, "total_conflicts", 0),
-              total_merged: Map.get(stats, "total_merged", 0),
-              total_rejected: Map.get(stats, "total_rejected", 0)
+            state = %{
+              state
+              | decisions: decisions,
+                in_flight: in_flight,
+                total_proposed: Map.get(stats, "total_proposed", 0),
+                total_approved: Map.get(stats, "total_approved", 0),
+                total_conflicts: Map.get(stats, "total_conflicts", 0),
+                total_merged: Map.get(stats, "total_merged", 0),
+                total_rejected: Map.get(stats, "total_rejected", 0)
             }
 
-          _ -> state
+            if recovered_count > 0 do
+              Logger.warning(
+                "[DecisionJournal] Recovered #{recovered_count} stale in-flight decision(s) from persistence"
+              )
+
+              persist_state(state)
+            end
+
+            state
+
+          _ ->
+            state
         end
 
-      {:error, _} -> state
+      {:error, _} ->
+        state
     end
   rescue
     _ -> state
@@ -649,6 +724,7 @@ defmodule Daemon.Intelligence.DecisionJournal do
   defp deserialize_decision(_), do: nil
 
   defp parse_datetime(nil), do: nil
+
   defp parse_datetime(str) when is_binary(str) do
     case DateTime.from_iso8601(str) do
       {:ok, dt, _} -> dt
@@ -657,6 +733,42 @@ defmodule Daemon.Intelligence.DecisionJournal do
   end
 
   # ── Helpers ───────────────────────────────────────────────
+
+  defp recover_stale_in_flight(decisions, now) do
+    Enum.map_reduce(decisions, 0, fn decision, recovered_count ->
+      if decision.status == :in_flight and stale_in_flight?(decision, now) do
+        {
+          %{
+            decision
+            | status: :cleared,
+              completed_at: now,
+              outcome: :cleared
+          },
+          recovered_count + 1
+        }
+      else
+        {decision, recovered_count}
+      end
+    end)
+  end
+
+  defp stale_in_flight?(%{action_type: :investigate, branch: "n/a"}, _now), do: true
+
+  defp stale_in_flight?(
+         %{status: :in_flight, proposed_at: %DateTime{} = proposed_at} = decision,
+         now
+       ) do
+    max_age_hours =
+      case decision.action_type do
+        :investigate -> 1
+        _ -> 24
+      end
+
+    cutoff = DateTime.add(now, -max_age_hours, :hour)
+    DateTime.compare(proposed_at, cutoff) != :gt
+  end
+
+  defp stale_in_flight?(_decision, _now), do: true
 
   defp normalize_topic(text) do
     text
