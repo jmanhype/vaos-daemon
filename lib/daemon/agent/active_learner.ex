@@ -39,6 +39,7 @@ defmodule Daemon.Agent.ActiveLearner do
   alias Daemon.Investigation.PromptConfig
   alias Daemon.Agent.Scheduler
   alias Daemon.Agent.Scheduler.Heartbeat
+  alias Daemon.Intelligence.AdaptationTrials
 
   # Absolute minimum — below this, investigation is useless
   @quality_floor 0.08
@@ -230,6 +231,7 @@ defmodule Daemon.Agent.ActiveLearner do
 
   defp process_event(data, state) do
     quality = Retrospector.compute_quality(data)
+    :ok = AdaptationTrials.observe_investigation(data)
 
     # Mark that an investigation just completed — enforces cooldown before chaining
     state = %{state | last_chain_at: System.monotonic_time(:millisecond)}
@@ -600,7 +602,10 @@ defmodule Daemon.Agent.ActiveLearner do
         state
 
       true ->
-        steering = build_steering_context(state)
+        steering =
+          state
+          |> build_steering_context()
+          |> merge_trial_steering(consume_trial_steering(topic))
 
         if steering != "" do
           Logger.info(
@@ -691,6 +696,18 @@ defmodule Daemon.Agent.ActiveLearner do
   rescue
     _ -> ""
   end
+
+  defp consume_trial_steering(topic) do
+    case AdaptationTrials.consume_trial(topic) do
+      {:ok, %{steering: steering}} when is_binary(steering) -> steering
+      _ -> ""
+    end
+  end
+
+  defp merge_trial_steering("", ""), do: ""
+  defp merge_trial_steering(base, "") when is_binary(base), do: base
+  defp merge_trial_steering("", trial) when is_binary(trial), do: trial
+  defp merge_trial_steering(base, trial), do: base <> "\n\n" <> trial
 
   defp build_steering_from_diagnosis(nil), do: ""
 

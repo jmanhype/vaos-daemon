@@ -6,6 +6,7 @@ defmodule Daemon.Commands.Info do
   Formatting helpers used only by these commands are also defined here.
   """
 
+  alias Daemon.Intelligence.AdaptationTrials
   alias Daemon.Intelligence.DecisionJournal
 
   @doc "Handle the `/help` and `/commands` command."
@@ -131,7 +132,8 @@ defmodule Daemon.Commands.Info do
         stats = DecisionJournal.stats()
         meta_state = Map.get(stats, :meta_state, DecisionJournal.meta_state())
         recent_events = DecisionJournal.adaptation_events(5)
-        {:command, format_adaptation_status(meta_state, recent_events, stats)}
+        active_trial = AdaptationTrials.current_trial()
+        {:command, format_adaptation_status(meta_state, recent_events, stats, active_trial)}
 
       _ ->
         {:command, format_system_status()}
@@ -139,7 +141,7 @@ defmodule Daemon.Commands.Info do
   end
 
   @doc false
-  def format_adaptation_status(meta_state, recent_events, stats \\ %{}) do
+  def format_adaptation_status(meta_state, recent_events, stats \\ %{}, active_trial \\ nil) do
     journal_status =
       case Map.get(stats, :status) do
         :running -> "running"
@@ -178,24 +180,41 @@ defmodule Daemon.Commands.Info do
         events -> Enum.map_join(events, "\n", &format_adaptation_event/1)
       end
 
-    """
-    Adaptation Status:
-      journal:             #{journal_status}
-      authority:           #{format_presence(meta_state[:authority_domain])}
-      bottleneck:          #{format_presence(meta_state[:active_bottleneck])}
-      pivot reason:        #{format_presence(meta_state[:pivot_reason])}
-      steering hypothesis: #{format_presence(meta_state[:active_steering_hypothesis])}
-      last updated:        #{format_presence(format_optional_timestamp(meta_state[:last_updated_at]))}
-      last experiment:     #{last_experiment}
-      failed adaptations:  #{recent_failed}
-      signals stored:      #{signals_stored}
-      decisions in flight: #{in_flight}
+    lines =
+      [
+        "Adaptation Status:",
+        "  journal:             #{journal_status}",
+        "  authority:           #{format_presence(meta_state[:authority_domain])}",
+        "  bottleneck:          #{format_presence(meta_state[:active_bottleneck])}",
+        "  pivot reason:        #{format_presence(meta_state[:pivot_reason])}",
+        "  steering hypothesis: #{format_presence(meta_state[:active_steering_hypothesis])}"
+      ] ++
+        maybe_trial_line(active_trial) ++
+        [
+          "  last updated:        #{format_presence(format_optional_timestamp(meta_state[:last_updated_at]))}",
+          "  last experiment:     #{last_experiment}",
+          "  failed adaptations:  #{recent_failed}",
+          "  signals stored:      #{signals_stored}",
+          "  decisions in flight: #{in_flight}",
+          "",
+          "Recent signals:",
+          recent_signals
+        ]
 
-    Recent signals:
-    #{recent_signals}
-    """
-    |> String.trim()
+    Enum.join(lines, "\n")
   end
+
+  defp format_adaptation_trial(trial) do
+    trial_type = Map.get(trial, :trial_type) || Map.get(trial, "trial_type") || "trial"
+    trigger_event = Map.get(trial, :trigger_event) || Map.get(trial, "trigger_event") || "-"
+    status = Map.get(trial, :status) || Map.get(trial, "status") || :pending
+    remaining_uses = Map.get(trial, :remaining_uses) || Map.get(trial, "remaining_uses") || 0
+    use_label = if remaining_uses == 1, do: "use", else: "uses"
+    "#{trial_type} via #{trigger_event} (#{status}, #{remaining_uses} #{use_label} left)"
+  end
+
+  defp maybe_trial_line(nil), do: []
+  defp maybe_trial_line(trial), do: ["  active trial:        #{format_adaptation_trial(trial)}"]
 
   defp format_system_status do
     providers = MiosaProviders.Registry.list_providers()
@@ -258,19 +277,28 @@ defmodule Daemon.Commands.Info do
         end
 
       "enable " <> name ->
-        case Daemon.Tools.Builtins.SkillManager.execute(%{"action" => "enable", "name" => String.trim(name)}) do
+        case Daemon.Tools.Builtins.SkillManager.execute(%{
+               "action" => "enable",
+               "name" => String.trim(name)
+             }) do
           {:ok, result} -> {:command, result}
           {:error, reason} -> {:command, "Error: #{reason}"}
         end
 
       "disable " <> name ->
-        case Daemon.Tools.Builtins.SkillManager.execute(%{"action" => "disable", "name" => String.trim(name)}) do
+        case Daemon.Tools.Builtins.SkillManager.execute(%{
+               "action" => "disable",
+               "name" => String.trim(name)
+             }) do
           {:ok, result} -> {:command, result}
           {:error, reason} -> {:command, "Error: #{reason}"}
         end
 
       "delete " <> name ->
-        case Daemon.Tools.Builtins.SkillManager.execute(%{"action" => "delete", "name" => String.trim(name)}) do
+        case Daemon.Tools.Builtins.SkillManager.execute(%{
+               "action" => "delete",
+               "name" => String.trim(name)
+             }) do
           {:ok, result} -> {:command, result}
           {:error, reason} -> {:command, "Error: #{reason}"}
         end
