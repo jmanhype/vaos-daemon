@@ -13,6 +13,7 @@ defmodule Daemon.Intelligence.AdaptationTrials do
   alias Daemon.Investigation.Retrospector
 
   @default_trial_ttl_ms :timer.minutes(15)
+  @default_subscribe_retry_ms 1_000
   @supported_intents MapSet.new([
                        "meta_reflect_requested",
                        "meta_consolidate_requested",
@@ -24,6 +25,7 @@ defmodule Daemon.Intelligence.AdaptationTrials do
             scorer: &Retrospector.compute_quality/1,
             subscribe?: true,
             subscription_ref: nil,
+            subscribe_retry_ms: @default_subscribe_retry_ms,
             trial_ttl_ms: @default_trial_ttl_ms,
             current_trial: nil,
             expiry_ref: nil
@@ -64,6 +66,13 @@ defmodule Daemon.Intelligence.AdaptationTrials do
     :exit, _ -> :ok
   end
 
+  @doc "Observe a blocked investigation so the active trial gets an explicit terminal state."
+  def observe_failure(topic, reason, server \\ __MODULE__) when is_binary(topic) do
+    GenServer.call(server, {:observe_failure, topic, reason})
+  catch
+    :exit, _ -> :ok
+  end
+
   @impl true
   def init(opts) do
     state = %__MODULE__{
@@ -71,6 +80,7 @@ defmodule Daemon.Intelligence.AdaptationTrials do
       bus: Keyword.get(opts, :bus, Bus),
       scorer: Keyword.get(opts, :scorer, &Retrospector.compute_quality/1),
       subscribe?: Keyword.get(opts, :subscribe?, true),
+      subscribe_retry_ms: Keyword.get(opts, :subscribe_retry_ms, @default_subscribe_retry_ms),
       trial_ttl_ms:
         Keyword.get(
           opts,
@@ -102,6 +112,10 @@ defmodule Daemon.Intelligence.AdaptationTrials do
 
   def handle_call({:observe_investigation, meta}, _from, state) do
     {:reply, :ok, do_observe_investigation(normalize_context(meta), state)}
+  end
+
+  def handle_call({:observe_failure, topic, reason}, _from, state) do
+    {:reply, :ok, do_observe_failure(topic, normalize_name(reason), state)}
   end
 
   @impl true
@@ -144,7 +158,7 @@ defmodule Daemon.Intelligence.AdaptationTrials do
   defp maybe_subscribe(state) do
     case Process.whereis(state.bus) do
       nil ->
-        state
+        schedule_subscribe_retry(state)
 
       _pid ->
         owner = self()
@@ -157,7 +171,7 @@ defmodule Daemon.Intelligence.AdaptationTrials do
         %{state | subscription_ref: ref}
     end
   catch
-    :exit, _ -> state
+    :exit, _ -> schedule_subscribe_retry(state)
   end
 
   defp maybe_handle_system_event(payload, state) do
@@ -270,6 +284,31 @@ defmodule Daemon.Intelligence.AdaptationTrials do
 
   defp do_observe_investigation(_meta, state), do: state
 
+  defp do_observe_failure(_topic, _reason, %{current_trial: nil} = state), do: state
+
+  defp do_observe_failure(
+         topic,
+         reason,
+         %{current_trial: %{status: :awaiting_outcome} = trial} = state
+       ) do
+    if normalize_topic(topic) == Map.get(trial, :applied_topic_key) do
+      state
+      |> record_trial_event(
+        "trial_blocked",
+        trial_context(trial, %{
+          topic: topic,
+          outcome: "blocked",
+          reason: reason
+        })
+      )
+      |> clear_trial()
+    else
+      state
+    end
+  end
+
+  defp do_observe_failure(_topic, _reason, state), do: state
+
   defp build_trial(event_type, context, authority_domain, trial_ttl_ms) do
     now = DateTime.utc_now()
     bottleneck = context_value(context, "bottleneck")
@@ -341,6 +380,11 @@ defmodule Daemon.Intelligence.AdaptationTrials do
     if state.expiry_ref, do: Process.cancel_timer(state.expiry_ref)
     expiry_ref = Process.send_after(self(), {:expire_trial, trial_id}, state.trial_ttl_ms)
     %{state | expiry_ref: expiry_ref}
+  end
+
+  defp schedule_subscribe_retry(state) do
+    Process.send_after(self(), :subscribe, state.subscribe_retry_ms)
+    state
   end
 
   defp clear_trial(state) do

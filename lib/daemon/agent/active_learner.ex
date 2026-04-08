@@ -165,6 +165,26 @@ defmodule Daemon.Agent.ActiveLearner do
     {:noreply, state}
   end
 
+  def handle_info({:chain_complete, topic, {:error, reason}}, state) do
+    :ok = AdaptationTrials.observe_failure(topic, reason)
+    {:noreply, %{state | chain_in_flight: false}}
+  end
+
+  def handle_info({:chain_complete, topic, {:ok, result}}, state) when is_binary(result) do
+    case detect_chain_blocked_reason(result) do
+      nil ->
+        {:noreply, %{state | chain_in_flight: false}}
+
+      reason ->
+        :ok = AdaptationTrials.observe_failure(topic, reason)
+        {:noreply, %{state | chain_in_flight: false}}
+    end
+  end
+
+  def handle_info({:chain_complete, _topic, _result}, state) do
+    {:noreply, %{state | chain_in_flight: false}}
+  end
+
   def handle_info({:chain_complete, _ref}, state) do
     {:noreply, %{state | chain_in_flight: false}}
   end
@@ -637,24 +657,29 @@ defmodule Daemon.Agent.ActiveLearner do
 
   defp spawn_investigation(topic, steering) do
     parent = self()
-    ref = make_ref()
 
     args = %{"topic" => topic}
     args = if steering != "", do: Map.put(args, "steering", steering), else: args
 
     {_pid, monitor_ref} =
       spawn_monitor(fn ->
-        try do
-          Daemon.Tools.Builtins.Investigate.execute(args)
-        rescue
-          e ->
-            Logger.warning("[ActiveLearner] Chain investigation failed: #{Exception.message(e)}")
-        catch
-          :exit, reason ->
-            Logger.warning("[ActiveLearner] Chain investigation exited: #{inspect(reason)}")
-        after
-          send(parent, {:chain_complete, ref})
-        end
+        result =
+          try do
+            Daemon.Tools.Builtins.Investigate.execute(args)
+          rescue
+            e ->
+              Logger.warning(
+                "[ActiveLearner] Chain investigation failed: #{Exception.message(e)}"
+              )
+
+              {:error, Exception.message(e)}
+          catch
+            :exit, reason ->
+              Logger.warning("[ActiveLearner] Chain investigation exited: #{inspect(reason)}")
+              {:error, inspect(reason)}
+          end
+
+        send(parent, {:chain_complete, topic, result})
       end)
 
     monitor_ref
@@ -708,6 +733,16 @@ defmodule Daemon.Agent.ActiveLearner do
   defp merge_trial_steering(base, "") when is_binary(base), do: base
   defp merge_trial_steering("", trial) when is_binary(trial), do: trial
   defp merge_trial_steering(base, trial), do: base <> "\n\n" <> trial
+
+  defp detect_chain_blocked_reason(message) when is_binary(message) do
+    trimmed = String.trim(message)
+
+    cond do
+      String.starts_with?(trimmed, "Investigation skipped") -> trimmed
+      String.contains?(trimmed, "conflict:") -> trimmed
+      true -> nil
+    end
+  end
 
   defp build_steering_from_diagnosis(nil), do: ""
 

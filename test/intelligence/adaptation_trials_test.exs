@@ -42,6 +42,41 @@ defmodule Daemon.Intelligence.AdaptationTrialsTest do
     end
   end
 
+  defmodule BusStub do
+    use Agent
+
+    def start_link(_opts \\ []) do
+      Agent.start_link(fn -> %{handlers: %{}} end, name: __MODULE__)
+    end
+
+    def register_handler(event_type, handler_fn) do
+      ref = make_ref()
+
+      Agent.update(__MODULE__, fn state ->
+        put_in(state, [:handlers, ref], {event_type, handler_fn})
+      end)
+
+      ref
+    end
+
+    def unregister_handler(_event_type, ref) do
+      Agent.update(__MODULE__, fn state ->
+        update_in(state, [:handlers], &Map.delete(&1, ref))
+      end)
+    end
+
+    def emit_system_event(payload) do
+      handlers =
+        Agent.get(__MODULE__, fn state ->
+          state.handlers
+          |> Map.values()
+          |> Enum.filter(fn {event_type, _handler_fn} -> event_type == :system_event end)
+        end)
+
+      Enum.each(handlers, fn {_event_type, handler_fn} -> handler_fn.(payload) end)
+    end
+  end
+
   setup do
     case Process.whereis(JournalStub) do
       nil -> start_supervised!(JournalStub)
@@ -141,5 +176,75 @@ defmodule Daemon.Intelligence.AdaptationTrialsTest do
 
     assert AdaptationTrials.current_trial(name) == nil
     assert JournalStub.recorded() == []
+  end
+
+  test "blocked investigation closes the active trial explicitly" do
+    name = :"adaptation-trials-blocked-#{System.unique_integer([:positive])}"
+
+    start_supervised!(
+      {AdaptationTrials,
+       name: name,
+       journal: JournalStub,
+       scorer: fn _ -> 0.0 end,
+       subscribe?: false,
+       trial_ttl_ms: :timer.minutes(10)}
+    )
+
+    assert {:started, _trial} =
+             AdaptationTrials.consider_intent(
+               :meta_pivot_requested,
+               %{authority_domain: "research", bottleneck: "low_verification"},
+               name
+             )
+
+    assert {:ok, _consumed} = AdaptationTrials.consume_trial("sleep latency topic", name)
+
+    :ok =
+      AdaptationTrials.observe_failure(
+        "sleep latency topic",
+        "HTTP 429 from provider",
+        name
+      )
+
+    assert AdaptationTrials.current_trial(name) == nil
+
+    blocked =
+      JournalStub.recorded()
+      |> Enum.find(&(&1.event_type == "trial_blocked"))
+
+    assert blocked.context["outcome"] == "blocked"
+    assert blocked.context["reason"] == "HTTP 429 from provider"
+  end
+
+  test "retries bus subscription until heartbeat intents can be observed" do
+    name = :"adaptation-trials-retry-#{System.unique_integer([:positive])}"
+
+    start_supervised!(
+      {AdaptationTrials,
+       name: name,
+       journal: JournalStub,
+       bus: BusStub,
+       scorer: fn _ -> 0.0 end,
+       subscribe?: true,
+       subscribe_retry_ms: 10,
+       trial_ttl_ms: :timer.minutes(10)}
+    )
+
+    assert AdaptationTrials.current_trial(name) == nil
+
+    start_supervised!(BusStub)
+    Process.sleep(30)
+
+    BusStub.emit_system_event(%{
+      event: :adaptation_signal,
+      domain: :coordination,
+      event_type: :meta_pivot_requested,
+      context: %{authority_domain: "research", bottleneck: "low_verification"}
+    })
+
+    Process.sleep(30)
+
+    assert %{trigger_event: "meta_pivot_requested", status: :pending} =
+             AdaptationTrials.current_trial(name)
   end
 end
