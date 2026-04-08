@@ -1259,6 +1259,11 @@ defmodule Daemon.Intelligence.DecisionJournal do
 
   defp sanitize_value(value) when is_atom(value), do: Atom.to_string(value)
 
+  defp sanitize_value(%DateTime{} = value), do: DateTime.to_iso8601(value)
+  defp sanitize_value(%NaiveDateTime{} = value), do: NaiveDateTime.to_iso8601(value)
+  defp sanitize_value(%Date{} = value), do: Date.to_iso8601(value)
+  defp sanitize_value(%Time{} = value), do: Time.to_iso8601(value)
+
   defp sanitize_value(value) when is_number(value) or is_boolean(value) or is_nil(value),
     do: value
 

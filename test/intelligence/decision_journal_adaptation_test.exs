@@ -322,4 +322,31 @@ defmodule Daemon.Intelligence.DecisionJournalAdaptationTest do
              | _
            ] = review.noisy_signatures
   end
+
+  test "recording adaptation entries sanitizes datetime fields in context" do
+    File.rm(@journal_path)
+
+    assert {:ok, state} = DecisionJournal.init([])
+    expires_at = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    {:noreply, state} =
+      DecisionJournal.handle_cast(
+        {:record_adaptation, :coordination, :trial_suppression_started,
+         %{
+           trigger_event: :meta_reflect_requested,
+           bottleneck: :low_verification,
+           negative_streak: 2,
+           reason: "repeated_not_helpful",
+           expires_at: expires_at
+         }},
+        state
+      )
+
+    {:reply, [entry], _state} =
+      DecisionJournal.handle_call({:adaptation_events, 5}, self(), state)
+
+    assert entry.event_type == "trial_suppression_started"
+    assert entry.context["expires_at"] == DateTime.to_iso8601(expires_at)
+    assert entry.context["trigger_event"] == "meta_reflect_requested"
+  end
 end
