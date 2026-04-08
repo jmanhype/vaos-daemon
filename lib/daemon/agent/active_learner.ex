@@ -622,9 +622,12 @@ defmodule Daemon.Agent.ActiveLearner do
         state
 
       true ->
+        bottleneck = current_bottleneck()
+
         steering =
           state
           |> build_steering_context()
+          |> merge_trial_steering(promoted_steering(bottleneck))
           |> merge_trial_steering(consume_trial_steering(topic))
 
         if steering != "" do
@@ -635,7 +638,7 @@ defmodule Daemon.Agent.ActiveLearner do
           record_adaptation(:steering_applied, %{
             topic: topic,
             steering_hypothesis: String.slice(steering, 0, 200),
-            bottleneck: current_bottleneck(),
+            bottleneck: bottleneck,
             authority_domain: :research
           })
         end
@@ -725,6 +728,15 @@ defmodule Daemon.Agent.ActiveLearner do
   defp consume_trial_steering(topic) do
     case AdaptationTrials.consume_trial(topic) do
       {:ok, %{steering: steering}} when is_binary(steering) -> steering
+      _ -> ""
+    end
+  end
+
+  defp promoted_steering(nil), do: ""
+
+  defp promoted_steering(bottleneck) do
+    case AdaptationTrials.promoted_steering(bottleneck) do
+      steering when is_binary(steering) -> steering
       _ -> ""
     end
   end

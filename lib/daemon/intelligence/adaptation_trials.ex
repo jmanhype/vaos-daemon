@@ -14,6 +14,10 @@ defmodule Daemon.Intelligence.AdaptationTrials do
 
   @default_trial_ttl_ms :timer.minutes(15)
   @default_subscribe_retry_ms 1_000
+  @default_promotion_threshold 2
+  @default_suppression_threshold 2
+  @default_promotion_ttl_ms :timer.minutes(30)
+  @default_suppression_ttl_ms :timer.minutes(30)
   @supported_intents MapSet.new([
                        "meta_reflect_requested",
                        "meta_consolidate_requested",
@@ -26,6 +30,13 @@ defmodule Daemon.Intelligence.AdaptationTrials do
             subscribe?: true,
             subscription_ref: nil,
             subscribe_retry_ms: @default_subscribe_retry_ms,
+            evidence: %{},
+            promotions: %{},
+            suppressions: %{},
+            promotion_threshold: @default_promotion_threshold,
+            suppression_threshold: @default_suppression_threshold,
+            promotion_ttl_ms: @default_promotion_ttl_ms,
+            suppression_ttl_ms: @default_suppression_ttl_ms,
             trial_ttl_ms: @default_trial_ttl_ms,
             current_trial: nil,
             expiry_ref: nil
@@ -41,6 +52,20 @@ defmodule Daemon.Intelligence.AdaptationTrials do
   @doc "Return the active bounded adaptation trial, if one exists."
   def current_trial(server \\ __MODULE__) do
     GenServer.call(server, :current_trial)
+  catch
+    :exit, _ -> nil
+  end
+
+  @doc "Return the current trial, promotions, and suppressions."
+  def snapshot(server \\ __MODULE__) do
+    GenServer.call(server, :snapshot)
+  catch
+    :exit, _ -> %{current_trial: nil, active_promotions: [], active_suppressions: []}
+  end
+
+  @doc "Return promoted steering for the given bottleneck, if active."
+  def promoted_steering(bottleneck, server \\ __MODULE__) do
+    GenServer.call(server, {:promoted_steering, bottleneck})
   catch
     :exit, _ -> nil
   end
@@ -81,6 +106,11 @@ defmodule Daemon.Intelligence.AdaptationTrials do
       scorer: Keyword.get(opts, :scorer, &Retrospector.compute_quality/1),
       subscribe?: Keyword.get(opts, :subscribe?, true),
       subscribe_retry_ms: Keyword.get(opts, :subscribe_retry_ms, @default_subscribe_retry_ms),
+      promotion_threshold: Keyword.get(opts, :promotion_threshold, @default_promotion_threshold),
+      suppression_threshold:
+        Keyword.get(opts, :suppression_threshold, @default_suppression_threshold),
+      promotion_ttl_ms: Keyword.get(opts, :promotion_ttl_ms, @default_promotion_ttl_ms),
+      suppression_ttl_ms: Keyword.get(opts, :suppression_ttl_ms, @default_suppression_ttl_ms),
       trial_ttl_ms:
         Keyword.get(
           opts,
@@ -95,10 +125,23 @@ defmodule Daemon.Intelligence.AdaptationTrials do
 
   @impl true
   def handle_call(:current_trial, _from, state) do
+    state = sweep_transients(state)
     {:reply, state.current_trial, state}
   end
 
+  def handle_call(:snapshot, _from, state) do
+    state = sweep_transients(state)
+    {:reply, snapshot_from_state(state), state}
+  end
+
+  def handle_call({:promoted_steering, bottleneck}, _from, state) do
+    state = sweep_transients(state)
+    {:reply, promoted_steering_for_bottleneck(state, bottleneck), state}
+  end
+
   def handle_call({:consider_intent, event_type, context}, _from, state) do
+    state = sweep_transients(state)
+
     {result, next_state} =
       do_consider_intent(normalize_name(event_type), normalize_context(context), state)
 
@@ -106,15 +149,18 @@ defmodule Daemon.Intelligence.AdaptationTrials do
   end
 
   def handle_call({:consume_trial, topic}, _from, state) do
+    state = sweep_transients(state)
     {result, next_state} = do_consume_trial(topic, state)
     {:reply, result, next_state}
   end
 
   def handle_call({:observe_investigation, meta}, _from, state) do
+    state = sweep_transients(state)
     {:reply, :ok, do_observe_investigation(normalize_context(meta), state)}
   end
 
   def handle_call({:observe_failure, topic, reason}, _from, state) do
+    state = sweep_transients(state)
     {:reply, :ok, do_observe_failure(topic, normalize_name(reason), state)}
   end
 
@@ -206,6 +252,7 @@ defmodule Daemon.Intelligence.AdaptationTrials do
 
   defp do_consider_intent(event_type, context, state) do
     authority_domain = authority_domain(context)
+    signature = trial_signature(event_type, context)
 
     cond do
       not MapSet.member?(@supported_intents, event_type) ->
@@ -213,6 +260,22 @@ defmodule Daemon.Intelligence.AdaptationTrials do
 
       authority_domain not in ["research", nil] ->
         {:ignored, state}
+
+      suppression = Map.get(state.suppressions, signature) ->
+        state =
+          record_trial_event(
+            state,
+            "trial_suppressed",
+            Map.take(suppression, [
+              :trigger_event,
+              :bottleneck,
+              :negative_streak,
+              :reason,
+              :expires_at
+            ])
+          )
+
+        {:suppressed, state}
 
       true ->
         trial = build_trial(event_type, context, authority_domain, state.trial_ttl_ms)
@@ -275,6 +338,7 @@ defmodule Daemon.Intelligence.AdaptationTrials do
           })
         )
         |> clear_trial()
+        |> register_trial_outcome(trial, outcome)
 
       state
     else
@@ -308,6 +372,128 @@ defmodule Daemon.Intelligence.AdaptationTrials do
   end
 
   defp do_observe_failure(_topic, _reason, state), do: state
+
+  defp register_trial_outcome(state, trial, outcome) do
+    signature = trial_signature(trial)
+    evidence = trial_evidence(state, signature, trial)
+
+    case outcome do
+      "helpful" ->
+        evidence =
+          evidence
+          |> Map.put(:helpful_streak, evidence.helpful_streak + 1)
+          |> Map.put(:negative_streak, 0)
+          |> Map.put(:last_outcome, outcome)
+
+        state = put_in(state.evidence[signature], evidence)
+        maybe_promote_trial(state, signature, evidence)
+
+      "inconclusive" ->
+        state
+        |> clear_promotion(signature, trial, outcome)
+        |> record_negative_outcome(signature, evidence, outcome)
+
+      "not_helpful" ->
+        state
+        |> clear_promotion(signature, trial, outcome)
+        |> record_negative_outcome(signature, evidence, outcome)
+
+      _ ->
+        state
+    end
+  end
+
+  defp record_negative_outcome(state, signature, evidence, outcome) do
+    evidence =
+      evidence
+      |> Map.put(:helpful_streak, 0)
+      |> Map.put(:negative_streak, evidence.negative_streak + 1)
+      |> Map.put(:last_outcome, outcome)
+
+    state = put_in(state.evidence[signature], evidence)
+
+    if evidence.negative_streak >= state.suppression_threshold do
+      suppression = %{
+        signature: signature,
+        trigger_event: evidence.trigger_event,
+        bottleneck: evidence.bottleneck,
+        negative_streak: evidence.negative_streak,
+        reason: "repeated_#{outcome}",
+        suppressed_at: DateTime.utc_now(),
+        expires_at: DateTime.add(DateTime.utc_now(), state.suppression_ttl_ms, :millisecond)
+      }
+
+      state
+      |> put_in([Access.key(:suppressions), signature], suppression)
+      |> record_trial_event(
+        "trial_suppression_started",
+        Map.take(suppression, [
+          :trigger_event,
+          :bottleneck,
+          :negative_streak,
+          :reason,
+          :expires_at
+        ])
+      )
+    else
+      state
+    end
+  end
+
+  defp maybe_promote_trial(state, signature, evidence) do
+    if evidence.helpful_streak >= state.promotion_threshold and
+         not Map.has_key?(state.promotions, signature) do
+      promotion = %{
+        signature: signature,
+        trigger_event: evidence.trigger_event,
+        bottleneck: evidence.bottleneck,
+        helpful_streak: evidence.helpful_streak,
+        steering: evidence.steering,
+        promoted_at: DateTime.utc_now(),
+        expires_at: DateTime.add(DateTime.utc_now(), state.promotion_ttl_ms, :millisecond)
+      }
+
+      state
+      |> put_in([Access.key(:promotions), signature], promotion)
+      |> record_trial_event(
+        "trial_promoted",
+        Map.take(promotion, [:trigger_event, :bottleneck, :helpful_streak, :expires_at, :steering])
+      )
+    else
+      state
+    end
+  end
+
+  defp clear_promotion(state, signature, trial, outcome) do
+    case Map.pop(state.promotions, signature) do
+      {nil, _promotions} ->
+        state
+
+      {promotion, promotions} ->
+        state
+        |> Map.put(:promotions, promotions)
+        |> record_trial_event(
+          "trial_promotion_cleared",
+          %{
+            trigger_event: trial.trigger_event,
+            bottleneck: trial.bottleneck,
+            prior_helpful_streak: promotion.helpful_streak,
+            outcome: outcome
+          }
+        )
+    end
+  end
+
+  defp trial_evidence(state, signature, trial) do
+    Map.get(state.evidence, signature, %{
+      trigger_event: trial.trigger_event,
+      bottleneck: trial.bottleneck,
+      steering: trial.steering,
+      helpful_streak: 0,
+      negative_streak: 0,
+      last_outcome: nil
+    })
+  end
 
   defp build_trial(event_type, context, authority_domain, trial_ttl_ms) do
     now = DateTime.utc_now()
@@ -387,6 +573,24 @@ defmodule Daemon.Intelligence.AdaptationTrials do
     state
   end
 
+  defp sweep_transients(state) do
+    now = DateTime.utc_now()
+
+    promotions =
+      state.promotions
+      |> Enum.filter(fn {_signature, promotion} -> not expired?(promotion.expires_at, now) end)
+      |> Map.new()
+
+    suppressions =
+      state.suppressions
+      |> Enum.filter(fn {_signature, suppression} ->
+        not expired?(suppression.expires_at, now)
+      end)
+      |> Map.new()
+
+    %{state | promotions: promotions, suppressions: suppressions}
+  end
+
   defp clear_trial(state) do
     if state.expiry_ref, do: Process.cancel_timer(state.expiry_ref)
     %{state | current_trial: nil, expiry_ref: nil}
@@ -415,6 +619,47 @@ defmodule Daemon.Intelligence.AdaptationTrials do
   defp authority_domain(context) do
     context_value(context, "authority_domain") || "research"
   end
+
+  defp snapshot_from_state(state) do
+    %{
+      current_trial: state.current_trial,
+      active_promotions:
+        state.promotions
+        |> Map.values()
+        |> Enum.sort_by(& &1.promoted_at, {:desc, DateTime}),
+      active_suppressions:
+        state.suppressions
+        |> Map.values()
+        |> Enum.sort_by(& &1.suppressed_at, {:desc, DateTime})
+    }
+  end
+
+  defp promoted_steering_for_bottleneck(state, bottleneck) do
+    normalized_bottleneck = normalize_name(bottleneck)
+
+    state.promotions
+    |> Map.values()
+    |> Enum.filter(fn promotion -> promotion.bottleneck == normalized_bottleneck end)
+    |> Enum.sort_by(& &1.promoted_at, {:desc, DateTime})
+    |> List.first()
+    |> then(fn
+      %{steering: steering} -> steering
+      _ -> nil
+    end)
+  end
+
+  defp trial_signature(trial_or_event_type, context \\ %{})
+
+  defp trial_signature(%{trigger_event: trigger_event, bottleneck: bottleneck}, _context),
+    do: "#{trigger_event}|#{bottleneck || "-"}"
+
+  defp trial_signature(event_type, context),
+    do: "#{event_type}|#{context_value(context, "bottleneck") || "-"}"
+
+  defp expired?(nil, _now), do: false
+
+  defp expired?(%DateTime{} = expires_at, %DateTime{} = now),
+    do: DateTime.compare(expires_at, now) == :lt
 
   defp payload_value(payload, key) when is_map(payload) do
     Map.get(payload, key) || Map.get(payload, Atom.to_string(key))

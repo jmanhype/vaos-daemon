@@ -113,6 +113,49 @@ defmodule Daemon.CommandsInfoTest do
              "active trial:        steering via meta_pivot_requested (pending, 1 use left)"
   end
 
+  test "format_adaptation_status includes promotion and suppression details when present" do
+    now = ~U[2026-04-08 09:01:11Z]
+
+    output =
+      Info.format_adaptation_status(
+        %{
+          authority_domain: "research",
+          active_bottleneck: "low_verification",
+          pivot_reason: nil,
+          active_steering_hypothesis: nil,
+          last_updated_at: now,
+          last_experiment: nil,
+          recent_failed_adaptations: []
+        },
+        [],
+        %{status: :running, adaptation_event_count: 3, in_flight_count: 0},
+        nil,
+        %{
+          active_promotions: [
+            %{
+              trigger_event: "meta_pivot_requested",
+              bottleneck: "low_verification",
+              helpful_streak: 2,
+              expires_at: now
+            }
+          ],
+          active_suppressions: [
+            %{
+              trigger_event: "meta_reflect_requested",
+              bottleneck: "low_verification",
+              negative_streak: 2,
+              expires_at: now
+            }
+          ]
+        }
+      )
+
+    assert output =~ "promoted steering:   meta_pivot_requested / low_verification (2 helpful)"
+
+    assert output =~
+             "trial suppression:   meta_reflect_requested / low_verification (2 negatives)"
+  end
+
   test "/status adaptation returns adaptation snapshot" do
     assert {:command, output} = Commands.execute("status adaptation", "test-session")
     assert output =~ "Adaptation Status:"

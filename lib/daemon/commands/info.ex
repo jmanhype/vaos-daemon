@@ -132,8 +132,11 @@ defmodule Daemon.Commands.Info do
         stats = DecisionJournal.stats()
         meta_state = Map.get(stats, :meta_state, DecisionJournal.meta_state())
         recent_events = DecisionJournal.adaptation_events(5)
-        active_trial = AdaptationTrials.current_trial()
-        {:command, format_adaptation_status(meta_state, recent_events, stats, active_trial)}
+        trial_snapshot = AdaptationTrials.snapshot()
+        active_trial = Map.get(trial_snapshot, :current_trial)
+
+        {:command,
+         format_adaptation_status(meta_state, recent_events, stats, active_trial, trial_snapshot)}
 
       _ ->
         {:command, format_system_status()}
@@ -141,7 +144,13 @@ defmodule Daemon.Commands.Info do
   end
 
   @doc false
-  def format_adaptation_status(meta_state, recent_events, stats \\ %{}, active_trial \\ nil) do
+  def format_adaptation_status(
+        meta_state,
+        recent_events,
+        stats \\ %{},
+        active_trial \\ nil,
+        trial_snapshot \\ %{}
+      ) do
     journal_status =
       case Map.get(stats, :status) do
         :running -> "running"
@@ -190,6 +199,8 @@ defmodule Daemon.Commands.Info do
         "  steering hypothesis: #{format_presence(meta_state[:active_steering_hypothesis])}"
       ] ++
         maybe_trial_line(active_trial) ++
+        maybe_promotion_line(trial_snapshot) ++
+        maybe_suppression_line(trial_snapshot) ++
         [
           "  last updated:        #{format_presence(format_optional_timestamp(meta_state[:last_updated_at]))}",
           "  last experiment:     #{last_experiment}",
@@ -215,6 +226,46 @@ defmodule Daemon.Commands.Info do
 
   defp maybe_trial_line(nil), do: []
   defp maybe_trial_line(trial), do: ["  active trial:        #{format_adaptation_trial(trial)}"]
+
+  defp maybe_promotion_line(%{active_promotions: [promotion | _]}) do
+    ["  promoted steering:   #{format_trial_promotion(promotion)}"]
+  end
+
+  defp maybe_promotion_line(_), do: []
+
+  defp maybe_suppression_line(%{active_suppressions: [suppression | _]}) do
+    ["  trial suppression:   #{format_trial_suppression(suppression)}"]
+  end
+
+  defp maybe_suppression_line(_), do: []
+
+  defp format_trial_promotion(promotion) do
+    trigger_event =
+      Map.get(promotion, :trigger_event) || Map.get(promotion, "trigger_event") || "-"
+
+    bottleneck = Map.get(promotion, :bottleneck) || Map.get(promotion, "bottleneck") || "-"
+
+    helpful_streak =
+      Map.get(promotion, :helpful_streak) || Map.get(promotion, "helpful_streak") || 0
+
+    expires_at = Map.get(promotion, :expires_at) || Map.get(promotion, "expires_at")
+
+    "#{trigger_event} / #{bottleneck} (#{helpful_streak} helpful) until #{format_presence(format_optional_timestamp(expires_at))}"
+  end
+
+  defp format_trial_suppression(suppression) do
+    trigger_event =
+      Map.get(suppression, :trigger_event) || Map.get(suppression, "trigger_event") || "-"
+
+    bottleneck = Map.get(suppression, :bottleneck) || Map.get(suppression, "bottleneck") || "-"
+
+    negative_streak =
+      Map.get(suppression, :negative_streak) || Map.get(suppression, "negative_streak") || 0
+
+    expires_at = Map.get(suppression, :expires_at) || Map.get(suppression, "expires_at")
+
+    "#{trigger_event} / #{bottleneck} (#{negative_streak} negatives) until #{format_presence(format_optional_timestamp(expires_at))}"
+  end
 
   defp format_system_status do
     providers = MiosaProviders.Registry.list_providers()

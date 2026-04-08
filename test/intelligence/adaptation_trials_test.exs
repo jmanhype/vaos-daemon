@@ -86,6 +86,23 @@ defmodule Daemon.Intelligence.AdaptationTrialsTest do
     :ok
   end
 
+  defp complete_trial(server, topic, strategy_hash) do
+    assert {:started, _trial} =
+             AdaptationTrials.consider_intent(
+               :meta_pivot_requested,
+               %{authority_domain: "research", bottleneck: "low_verification"},
+               server
+             )
+
+    assert {:ok, _consumed} = AdaptationTrials.consume_trial(topic, server)
+
+    :ok =
+      AdaptationTrials.observe_investigation(
+        %{"topic" => topic, "strategy_hash" => strategy_hash},
+        server
+      )
+  end
+
   test "starts a bounded steering trial from trusted research meta intent" do
     name = :"adaptation-trials-test-#{System.unique_integer([:positive])}"
 
@@ -246,5 +263,81 @@ defmodule Daemon.Intelligence.AdaptationTrialsTest do
 
     assert %{trigger_event: "meta_pivot_requested", status: :pending} =
              AdaptationTrials.current_trial(name)
+  end
+
+  test "promotes repeated helpful trials into a temporary default" do
+    name = :"adaptation-trials-promotion-#{System.unique_integer([:positive])}"
+
+    start_supervised!(
+      {AdaptationTrials,
+       name: name,
+       journal: JournalStub,
+       scorer: fn _ -> 0.82 end,
+       subscribe?: false,
+       promotion_threshold: 2,
+       promotion_ttl_ms: :timer.minutes(20)}
+    )
+
+    complete_trial(name, "topic one", "keep-1")
+    complete_trial(name, "topic two", "keep-2")
+
+    snapshot = AdaptationTrials.snapshot(name)
+    assert snapshot.current_trial == nil
+
+    assert [
+             %{
+               trigger_event: "meta_pivot_requested",
+               bottleneck: "low_verification",
+               helpful_streak: 2
+             }
+           ] = snapshot.active_promotions
+
+    assert AdaptationTrials.promoted_steering("low_verification", name) =~ "TRIAL STEERING"
+
+    recorded_types = Enum.map(JournalStub.recorded(), & &1.event_type)
+    assert "trial_promoted" in recorded_types
+  end
+
+  test "suppresses repeated negative trials and ignores blocked trials as evidence" do
+    name = :"adaptation-trials-suppression-#{System.unique_integer([:positive])}"
+
+    start_supervised!(
+      {AdaptationTrials,
+       name: name,
+       journal: JournalStub,
+       scorer: fn _ -> 0.12 end,
+       subscribe?: false,
+       suppression_threshold: 2,
+       suppression_ttl_ms: :timer.minutes(20)}
+    )
+
+    assert {:started, _trial} =
+             AdaptationTrials.consider_intent(
+               :meta_pivot_requested,
+               %{authority_domain: "research", bottleneck: "low_verification"},
+               name
+             )
+
+    assert {:ok, _consumed} = AdaptationTrials.consume_trial("blocked topic", name)
+    :ok = AdaptationTrials.observe_failure("blocked topic", "HTTP 429", name)
+
+    complete_trial(name, "negative one", "drop-1")
+    complete_trial(name, "negative two", "drop-2")
+
+    snapshot = AdaptationTrials.snapshot(name)
+    assert snapshot.current_trial == nil
+    assert length(snapshot.active_suppressions) == 1
+
+    assert :suppressed =
+             AdaptationTrials.consider_intent(
+               :meta_pivot_requested,
+               %{authority_domain: "research", bottleneck: "low_verification"},
+               name
+             )
+
+    recorded_types = Enum.map(JournalStub.recorded(), & &1.event_type)
+    assert "trial_suppression_started" in recorded_types
+    assert "trial_suppressed" in recorded_types
+    refute "trial_promoted" in recorded_types
   end
 end
