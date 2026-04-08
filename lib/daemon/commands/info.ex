@@ -6,6 +6,8 @@ defmodule Daemon.Commands.Info do
   Formatting helpers used only by these commands are also defined here.
   """
 
+  alias Daemon.Intelligence.DecisionJournal
+
   @doc "Handle the `/help` and `/commands` command."
   def cmd_help(_arg, _session_id) do
     custom_cmds =
@@ -32,6 +34,7 @@ defmodule Daemon.Commands.Info do
       """
       Info:
         /status             System status
+        /status adaptation  Adaptation journal + meta-state
         /skills             List available skills
         /memory             Memory statistics
         /soul               Show personality config
@@ -122,25 +125,94 @@ defmodule Daemon.Commands.Info do
   end
 
   @doc "Handle the `/status` command."
-  def cmd_status(_arg, _session_id) do
+  def cmd_status(arg, _session_id) do
+    case String.trim(arg) do
+      "adaptation" ->
+        stats = DecisionJournal.stats()
+        meta_state = Map.get(stats, :meta_state, DecisionJournal.meta_state())
+        recent_events = DecisionJournal.adaptation_events(5)
+        {:command, format_adaptation_status(meta_state, recent_events, stats)}
+
+      _ ->
+        {:command, format_system_status()}
+    end
+  end
+
+  @doc false
+  def format_adaptation_status(meta_state, recent_events, stats \\ %{}) do
+    journal_status =
+      case Map.get(stats, :status) do
+        :running -> "running"
+        _ -> "inactive"
+      end
+
+    last_experiment =
+      case Map.get(meta_state, :last_experiment) do
+        %{domain: domain, event_type: event_type, timestamp: timestamp} ->
+          "#{domain} / #{event_type} @ #{format_timestamp(timestamp)}"
+
+        _ ->
+          "-"
+      end
+
+    recent_failed =
+      meta_state
+      |> Map.get(:recent_failed_adaptations, [])
+      |> length()
+
+    signals_stored =
+      case Map.get(stats, :adaptation_event_count) do
+        count when is_integer(count) -> count
+        _ -> length(recent_events)
+      end
+
+    in_flight =
+      case Map.get(stats, :in_flight_count) do
+        count when is_integer(count) -> count
+        _ -> 0
+      end
+
+    recent_signals =
+      case recent_events do
+        [] -> "  - none"
+        events -> Enum.map_join(events, "\n", &format_adaptation_event/1)
+      end
+
+    """
+    Adaptation Status:
+      journal:             #{journal_status}
+      authority:           #{format_presence(meta_state[:authority_domain])}
+      bottleneck:          #{format_presence(meta_state[:active_bottleneck])}
+      pivot reason:        #{format_presence(meta_state[:pivot_reason])}
+      steering hypothesis: #{format_presence(meta_state[:active_steering_hypothesis])}
+      last updated:        #{format_presence(format_optional_timestamp(meta_state[:last_updated_at]))}
+      last experiment:     #{last_experiment}
+      failed adaptations:  #{recent_failed}
+      signals stored:      #{signals_stored}
+      decisions in flight: #{in_flight}
+
+    Recent signals:
+    #{recent_signals}
+    """
+    |> String.trim()
+  end
+
+  defp format_system_status do
     providers = MiosaProviders.Registry.list_providers()
     skills = Daemon.Tools.Registry.list_tools_direct()
     memory_stats = Daemon.Agent.Memory.memory_stats()
     soul_loaded = if Daemon.Soul.identity(), do: "yes", else: "defaults"
 
-    output =
-      """
-      System Status:
-        providers:  #{length(providers)} loaded
-        tools:      #{length(skills)} available
-        sessions:   #{memory_stats[:session_count] || 0} stored
-        memory:     #{memory_stats[:long_term_size] || 0} bytes
-        soul:       #{soul_loaded}
-        http:       port #{Application.get_env(:daemon, :http_port, 8089)}
-      """
-      |> String.trim()
-
-    {:command, output}
+    """
+    System Status:
+      providers:  #{length(providers)} loaded
+      tools:      #{length(skills)} available
+      sessions:   #{memory_stats[:session_count] || 0} stored
+      memory:     #{memory_stats[:long_term_size] || 0} bytes
+      soul:       #{soul_loaded}
+      http:       port #{Application.get_env(:daemon, :http_port, 8089)}
+    """
+    |> String.trim()
   end
 
   @doc "Handle the `/skills` command."
@@ -377,4 +449,44 @@ defmodule Daemon.Commands.Info do
     |> String.split("\n")
     |> Enum.map_join("\n", fn line -> pad <> line end)
   end
+
+  defp format_adaptation_event(event) do
+    summary =
+      event
+      |> Map.get(:context, %{})
+      |> summarize_event_context()
+
+    prefix =
+      "  - #{format_timestamp(Map.get(event, :timestamp))} #{Map.get(event, :domain, "-")} / #{Map.get(event, :event_type, "-")}"
+
+    case summary do
+      "" -> prefix
+      _ -> "#{prefix} — #{summary}"
+    end
+  end
+
+  defp summarize_event_context(context) when is_map(context) do
+    ~w(reason bottleneck authority_domain steering_hypothesis pattern_key session_rate historical_rate outcome)
+    |> Enum.reduce([], fn key, acc ->
+      case Map.get(context, key) do
+        value when value in [nil, "", "nil"] -> acc
+        value -> ["#{key}=#{format_context_value(value)}" | acc]
+      end
+    end)
+    |> Enum.reverse()
+    |> Enum.take(3)
+    |> Enum.join(", ")
+  end
+
+  defp summarize_event_context(_), do: ""
+
+  defp format_context_value(value) when is_binary(value), do: value
+  defp format_context_value(value), do: inspect(value)
+
+  defp format_presence(nil), do: "-"
+  defp format_presence(""), do: "-"
+  defp format_presence(value), do: to_string(value)
+
+  defp format_optional_timestamp(nil), do: nil
+  defp format_optional_timestamp(value), do: format_timestamp(value)
 end
