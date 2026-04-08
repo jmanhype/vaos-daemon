@@ -14,6 +14,7 @@ defmodule Daemon.OnboardingTest do
     original_app_env =
       for key <- [
             :default_provider,
+            :default_model,
             :fallback_chain,
             :zhipu_api_key,
             :openai_api_key,
@@ -58,6 +59,7 @@ defmodule Daemon.OnboardingTest do
 
     assert :ok = Onboarding.apply_config()
     assert Application.get_env(:daemon, :default_provider) == :zhipu
+    assert Application.get_env(:daemon, :default_model) == "glm-5.1"
     assert Application.get_env(:daemon, :zhipu_model) == "glm-5.1"
 
     chain = Application.get_env(:daemon, :fallback_chain, [])

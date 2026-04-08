@@ -304,6 +304,7 @@ defmodule Daemon.Onboarding do
         model = if is_binary(model) and model != "", do: model, else: "llama3.2:latest"
         model_key = :"#{provider}_model"
         Application.put_env(:daemon, model_key, model)
+        Application.put_env(:daemon, :default_model, model)
       end
 
       # API keys → both System env and Application env
