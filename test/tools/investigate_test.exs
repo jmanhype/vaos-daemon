@@ -1,6 +1,7 @@
 defmodule Daemon.Tools.Builtins.InvestigateTest do
   use ExUnit.Case, async: false
 
+  alias Daemon.Investigation.Strategy
   alias Daemon.Tools.Builtins.Investigate
 
   setup do
@@ -90,5 +91,101 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert merged.average_llm_ms == 60
     assert merged.slowest_llm_ms == 80
     assert merged.model == "glm-4.5-flash"
+  end
+
+  test "partial_completion_metadata preserves classified evidence for one-sided successes" do
+    supporting = [
+      %{
+        summary: "Creatine improved task performance [Paper 1]",
+        score: 2.4,
+        verified: true,
+        verification: "verified",
+        paper_type: :review,
+        citation_count: 24,
+        strength: "strong",
+        source_quality: 0.9,
+        source_type: :sourced,
+        evidence_store: :grounded
+      },
+      %{
+        summary: "Mechanistic rationale without direct sourcing",
+        score: 0.3,
+        verified: false,
+        verification: "no_citation",
+        paper_type: :other,
+        citation_count: 0,
+        strength: "weak",
+        source_quality: 0.1,
+        source_type: :belief,
+        evidence_store: :belief
+      }
+    ]
+
+    timings = %{
+      preflight_ms: 10,
+      paper_search_ms: 20,
+      citation_verification_ms: 30,
+      post_processing_ms: 40,
+      total_ms: 100
+    }
+
+    verification_stats = %{
+      total_items: 2,
+      llm_items: 1,
+      no_llm_items: 1,
+      unique_llm_items: 1,
+      deduped_llm_items: 0,
+      cache_hits: 0,
+      cache_misses: 1,
+      cache_lookup_ms: 2,
+      llm_ms_total: 30,
+      average_llm_ms: 30,
+      slowest_llm_ms: 30,
+      model: "glm-4.5-flash"
+    }
+
+    metadata =
+      Investigate.partial_completion_metadata(
+        "creatine helps cognition",
+        supporting,
+        [],
+        [%{"title" => "Creatine Review", "year" => 2024, "citation_count" => 24}],
+        %{semantic_scholar: 1},
+        Strategy.default(),
+        "variant-123",
+        timings,
+        verification_stats
+      )
+
+    assert metadata.partial == true
+    assert metadata.direction == "partial_supporting_only"
+    assert metadata.verified_for == 1
+    assert metadata.reasoning_for == 1
+    assert metadata.grounded_for_count == 1
+    assert metadata.belief_for_count == 1
+    assert metadata.investigation_id =~ "investigate:"
+    assert metadata.phase_timings_ms == timings
+    assert metadata.verification_stats == verification_stats
+    assert metadata.evidence_quality.reviews == 1
+    assert metadata.variant_id == "variant-123"
+
+    assert [
+             %{
+               source_type: "sourced",
+               evidence_store: "grounded",
+               paper_type: "review"
+             },
+             %{
+               source_type: "belief",
+               evidence_store: "belief",
+               paper_type: "other"
+             }
+           ] =
+             Enum.map(
+               metadata.supporting,
+               &Map.take(&1, [:source_type, :evidence_store, :paper_type])
+             )
+
+    assert metadata.opposing == []
   end
 end

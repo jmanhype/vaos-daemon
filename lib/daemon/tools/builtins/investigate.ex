@@ -42,6 +42,8 @@ defmodule Daemon.Tools.Builtins.Investigate do
   alias Vaos.Ledger.Research.Pipeline
   alias Vaos.Ledger.ML.CrashLearner
 
+  alias Daemon.Intelligence.AdaptationTrials
+
   alias Daemon.Investigation.{
     AdversarialParser,
     Strategy,
@@ -156,7 +158,9 @@ defmodule Daemon.Tools.Builtins.Investigate do
          }) do
       {:conflict, reason} ->
         Logger.info("[investigate] DecisionJournal conflict: #{reason}")
-        {:ok, "Investigation skipped — conflict: #{reason}"}
+        blocked_reason = "conflict: #{reason}"
+        observe_trial_failure(topic, blocked_reason)
+        {:ok, "Investigation skipped — #{blocked_reason}"}
 
       _ ->
         result =
@@ -171,6 +175,11 @@ defmodule Daemon.Tools.Builtins.Investigate do
               Logger.error("[investigate] Investigation #{kind}: #{inspect(reason)}")
               {:error, "#{kind}: #{inspect(reason)}"}
           end
+
+        case result do
+          {:error, reason} -> observe_trial_failure(topic, reason)
+          _ -> :ok
+        end
 
         # Always clear in-flight status so future investigations aren't blocked
         outcome =
@@ -481,6 +490,9 @@ Known failure patterns to avoid:
         timings = Map.put(timings, :citation_verification_ms, citation_verification_ms)
         post_processing_started_ms = monotonic_ms()
 
+        classified_opposing =
+          classify_evidence_store(verified_opposing, paper_map, prior_strategy)
+
         result =
           "## Investigation: #{topic}\n\n" <>
             "**Status: PARTIAL** -- Only the case AGAINST was analyzed (FOR advocate failed)\n" <>
@@ -490,6 +502,23 @@ Known failure patterns to avoid:
 
         timings =
           complete_phase_timings(timings, investigation_started_ms, post_processing_started_ms)
+
+        result =
+          result_with_completion_artifacts(
+            result,
+            partial_completion_metadata(
+              topic,
+              [],
+              classified_opposing,
+              all_papers,
+              source_counts,
+              prior_strategy,
+              variant_id,
+              timings,
+              verification_stats
+            ),
+            caller_metadata
+          )
 
         log_phase_timings(topic, timings)
         log_verification_stats(topic, verification_stats)
@@ -503,6 +532,9 @@ Known failure patterns to avoid:
         timings = Map.put(timings, :citation_verification_ms, citation_verification_ms)
         post_processing_started_ms = monotonic_ms()
 
+        classified_supporting =
+          classify_evidence_store(verified_supporting, paper_map, prior_strategy)
+
         result =
           "## Investigation: #{topic}\n\n" <>
             "**Status: PARTIAL** -- Only the case FOR was analyzed (AGAINST advocate failed)\n" <>
@@ -512,6 +544,23 @@ Known failure patterns to avoid:
 
         timings =
           complete_phase_timings(timings, investigation_started_ms, post_processing_started_ms)
+
+        result =
+          result_with_completion_artifacts(
+            result,
+            partial_completion_metadata(
+              topic,
+              classified_supporting,
+              [],
+              all_papers,
+              source_counts,
+              prior_strategy,
+              variant_id,
+              timings,
+              verification_stats
+            ),
+            caller_metadata
+          )
 
         log_phase_timings(topic, timings)
         log_verification_stats(topic, verification_stats)
@@ -1038,29 +1087,7 @@ Known failure patterns to avoid:
       variant_id: variant_id
     }
 
-    json_result = Jason.encode!(json_metadata)
-
-    # Emit audit receipt to kernel (fire-and-forget, never crashes investigation)
-    try do
-      bundle = Daemon.Receipt.Bundle.from_investigation(json_metadata)
-      Daemon.Receipt.Emitter.emit_async(bundle)
-    catch
-      _, _ -> :ok
-    end
-
-    MiosaKnowledge.assert(store, {topic_id, "vaos:json_result", json_result})
-
-    # Merge caller metadata into event payload
-    json_metadata = Map.merge(json_metadata, caller_metadata)
-
-    # Emit investigation_complete event for Retrospector strategy optimization
-    try do
-      Daemon.Events.Bus.emit(:investigation_complete, json_metadata)
-    rescue
-      _ -> :ok
-    catch
-      :exit, _ -> :ok
-    end
+    json_result = emit_successful_investigation(json_metadata, caller_metadata, store: store)
 
     result = result <> next_actions_text <> "\n\n<!-- VAOS_JSON:#{json_result} -->"
     log_phase_timings(topic, timings)
@@ -1074,6 +1101,77 @@ Known failure patterns to avoid:
     %{
       duration_ms: Map.get(timings, :total_ms, 0),
       phase_timings_ms: timings
+    }
+  end
+
+  @doc false
+  def partial_completion_metadata(
+        topic,
+        verified_supporting,
+        verified_opposing,
+        all_papers,
+        source_counts,
+        %Strategy{} = strategy,
+        variant_id,
+        timings,
+        verification_stats
+      ) do
+    metadata_timings = timing_metadata(timings)
+    grounded_for = Enum.filter(verified_supporting, &(&1.source_type == :sourced))
+    grounded_against = Enum.filter(verified_opposing, &(&1.source_type == :sourced))
+    all_evidence = verified_supporting ++ verified_opposing
+    for_total = Enum.sum(Enum.map(verified_supporting, &Map.get(&1, :score, 0.0)))
+    against_total = Enum.sum(Enum.map(verified_opposing, &Map.get(&1, :score, 0.0)))
+    grounded_for_score = Enum.sum(Enum.map(grounded_for, &Map.get(&1, :score, 0.0)))
+    grounded_against_score = Enum.sum(Enum.map(grounded_against, &Map.get(&1, :score, 0.0)))
+
+    direction =
+      cond do
+        verified_supporting != [] and verified_opposing == [] -> "partial_supporting_only"
+        verified_opposing != [] and verified_supporting == [] -> "partial_opposing_only"
+        true -> "partial"
+      end
+
+    %{
+      topic: topic,
+      claim_id: nil,
+      direction: direction,
+      strategy_hash: Strategy.param_hash(strategy),
+      verified_for: Enum.count(verified_supporting, &Map.get(&1, :verified, false)),
+      verified_against: Enum.count(verified_opposing, &Map.get(&1, :verified, false)),
+      reasoning_for: Enum.count(verified_supporting, &(&1.verification == "no_citation")),
+      reasoning_against: Enum.count(verified_opposing, &(&1.verification == "no_citation")),
+      for_score: Float.round(for_total * 1.0, 3),
+      against_score: Float.round(against_total * 1.0, 3),
+      grounded_for_score: Float.round(grounded_for_score * 1.0, 3),
+      grounded_against_score: Float.round(grounded_against_score * 1.0, 3),
+      grounded_for_count: length(grounded_for),
+      grounded_against_count: length(grounded_against),
+      belief_for_count: length(verified_supporting) - length(grounded_for),
+      belief_against_count: length(verified_opposing) - length(grounded_against),
+      aec_methodology: "arxiv.org/abs/2602.03974",
+      fraudulent_citations: Enum.count(all_evidence, &(&1.verification == "unverified")),
+      belief: nil,
+      uncertainty: 1.0,
+      duration_ms: metadata_timings.duration_ms,
+      phase_timings_ms: metadata_timings.phase_timings_ms,
+      verification_stats: verification_stats,
+      evidence_quality: %{
+        reviews: Enum.count(all_evidence, &(&1.paper_type == :review)),
+        trials: Enum.count(all_evidence, &(&1.paper_type == :trial)),
+        studies: Enum.count(all_evidence, &(&1.paper_type == :study))
+      },
+      supporting: evidence_metadata(verified_supporting),
+      opposing: evidence_metadata(verified_opposing),
+      papers_found: length(all_papers),
+      source_counts: source_counts,
+      papers_detail: paper_details(all_papers),
+      investigation_id: "investigate:" <> short_hash(topic),
+      optimization: nil,
+      suggested_next: [],
+      emergent_questions: [],
+      variant_id: variant_id,
+      partial: true
     }
   end
 
@@ -2954,6 +3052,94 @@ Known failure patterns to avoid:
   end
 
   # -- Helpers ---------------------------------------------------------
+
+  defp result_with_completion_artifacts(result, json_metadata, caller_metadata) do
+    json_result = emit_successful_investigation(json_metadata, caller_metadata)
+    result <> "\n\n<!-- VAOS_JSON:#{json_result} -->"
+  end
+
+  defp emit_successful_investigation(json_metadata, caller_metadata, opts \\ []) do
+    json_result = Jason.encode!(json_metadata)
+
+    try do
+      bundle = Daemon.Receipt.Bundle.from_investigation(json_metadata)
+      Daemon.Receipt.Emitter.emit_async(bundle)
+    catch
+      _, _ -> :ok
+    end
+
+    case {Keyword.get(opts, :store), payload_value(json_metadata, :investigation_id)} do
+      {store, investigation_id} when not is_nil(store) and is_binary(investigation_id) ->
+        MiosaKnowledge.assert(store, {investigation_id, "vaos:json_result", json_result})
+
+      _ ->
+        :ok
+    end
+
+    json_metadata = Map.merge(json_metadata, caller_metadata)
+
+    try do
+      Daemon.Events.Bus.emit(:investigation_complete, json_metadata)
+    rescue
+      _ -> :ok
+    catch
+      :exit, _ -> :ok
+    end
+
+    json_result
+  end
+
+  defp observe_trial_failure(topic, reason) when is_binary(topic) do
+    reason =
+      case reason do
+        value when is_binary(value) -> value
+        value -> inspect(value)
+      end
+
+    AdaptationTrials.observe_failure(topic, reason)
+  rescue
+    _ -> :ok
+  catch
+    :exit, _ -> :ok
+  end
+
+  defp evidence_metadata(evidence) do
+    Enum.map(evidence, fn ev ->
+      %{
+        summary: ev.summary,
+        score: ev.score,
+        verified: ev.verified,
+        verification: ev.verification,
+        paper_type: stringify_term(ev.paper_type),
+        citation_count: ev.citation_count,
+        strength_display: ev.strength,
+        source_quality: Map.get(ev, :source_quality, 0),
+        source_type: stringify_term(Map.get(ev, :source_type)),
+        evidence_store: stringify_term(Map.get(ev, :evidence_store, :unknown))
+      }
+      |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+      |> Map.new()
+    end)
+  end
+
+  defp paper_details(all_papers) do
+    Enum.map(all_papers, fn p ->
+      %{
+        title: p["title"],
+        year: p["year"],
+        citations: p["citation_count"] || p["citationCount"] || 0,
+        source: p["source"] || "unknown",
+        abstract: String.slice(to_string(p["abstract"] || ""), 0, 500)
+      }
+    end)
+  end
+
+  defp payload_value(payload, key) when is_map(payload) do
+    Map.get(payload, key) || Map.get(payload, Atom.to_string(key))
+  end
+
+  defp stringify_term(value) when is_atom(value), do: Atom.to_string(value)
+  defp stringify_term(value), do: value
 
   defp investigation_branch(topic) do
     "investigate:" <> short_hash(topic)
