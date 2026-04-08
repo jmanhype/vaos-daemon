@@ -37,6 +37,7 @@ defmodule Daemon.Agent.ActiveLearner do
   alias Daemon.Investigation.Retrospector
   alias Daemon.Investigation.PromptSelector
   alias Daemon.Investigation.PromptConfig
+  alias Daemon.Investigation.Steering
   alias Daemon.Agent.Scheduler
   alias Daemon.Agent.Scheduler.Heartbeat
   alias Daemon.Intelligence.AdaptationTrials
@@ -768,48 +769,7 @@ defmodule Daemon.Agent.ActiveLearner do
     end
   end
 
-  defp build_steering_from_diagnosis(nil), do: ""
-
-  defp build_steering_from_diagnosis(%{
-         bottleneck: :low_verification,
-         avg_verification_rate: avg_v
-       }) do
-    """
-    QUALITY STEERING (from #{Float.round(avg_v * 100, 0)}% verification rate across recent investigations):
-    1. For EVERY claim you attribute to a paper, quote the EXACT sentence from the abstract that supports it
-    2. If the abstract does not EXPLICITLY state your claim, do NOT attribute it to that paper — instead present it as analytical inference
-    3. Use the format: "According to [Author et al.], '[exact quote from abstract]', which suggests [your claim]"
-    4. Fewer well-verified claims are worth MORE than many unverified ones
-    5. When a paper is only tangentially related, say "While [paper] addresses [related topic], this specific claim is our analytical assessment"
-    """
-  end
-
-  defp build_steering_from_diagnosis(%{bottleneck: :high_fraud, avg_fraud_penalty: avg_f}) do
-    """
-    QUALITY STEERING (#{Float.round(avg_f * 100, 0)}% fraudulent citations detected recently):
-    1. ONLY reference papers that appear in the provided search results above
-    2. NEVER fabricate paper titles, authors, DOIs, or publication years
-    3. If no paper supports a claim, state it as expert analysis without citation
-    4. Double-check every author name and title against the papers context
-    """
-  end
-
-  defp build_steering_from_diagnosis(%{bottleneck: :low_grounded, avg_grounded_ratio: avg_g}) do
-    """
-    QUALITY STEERING (only #{Float.round(avg_g * 100, 0)}% of evidence grounded in papers):
-    1. Base EVERY argument primarily on findings from the provided papers
-    2. Each claim needs at least one paper citation from the search results
-    3. Prefer fewer, well-sourced arguments over many unsourced ones
-    4. If you make a claim without paper support, explicitly mark it as [UNSOURCED ANALYSIS]
-    """
-  end
-
-  defp build_steering_from_diagnosis(%{bottleneck: :low_certainty}) do
-    # Certainty is driven by topic difficulty — steering has limited impact
-    ""
-  end
-
-  defp build_steering_from_diagnosis(_), do: ""
+  defp build_steering_from_diagnosis(diagnosis), do: Steering.quality(diagnosis)
 
   # Compare steered outcome's targeted component against the pre-steering baseline.
   # This lets us measure whether steering actually helps.

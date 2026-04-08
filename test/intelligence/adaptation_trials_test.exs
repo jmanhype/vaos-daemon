@@ -128,6 +128,7 @@ defmodule Daemon.Intelligence.AdaptationTrialsTest do
     assert trial.remaining_uses == 1
     assert trial.trigger_event == "meta_reflect_requested"
     assert trial.steering =~ "TRIAL STEERING"
+    assert trial.steering =~ "quote the EXACT sentence from the abstract"
 
     recorded_types = Enum.map(JournalStub.recorded(), & &1.event_type)
     assert "trial_started" in recorded_types

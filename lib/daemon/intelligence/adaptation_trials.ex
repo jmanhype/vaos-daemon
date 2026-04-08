@@ -10,7 +10,7 @@ defmodule Daemon.Intelligence.AdaptationTrials do
 
   alias Daemon.Events.Bus
   alias Daemon.Intelligence.DecisionJournal
-  alias Daemon.Investigation.Retrospector
+  alias Daemon.Investigation.{Retrospector, Steering}
 
   @default_trial_ttl_ms :timer.minutes(15)
   @default_subscribe_retry_ms 1_000
@@ -514,43 +514,11 @@ defmodule Daemon.Intelligence.AdaptationTrials do
       status: :pending,
       remaining_uses: 1,
       bottleneck: bottleneck,
-      steering: build_steering(event_type, bottleneck),
+      steering: Steering.trial(event_type, bottleneck),
       created_at: now,
       expires_at: DateTime.add(now, trial_ttl_ms, :millisecond)
     }
   end
-
-  defp build_steering("meta_reflect_requested", bottleneck) do
-    """
-    TRIAL STEERING: Treat this investigation as a reflection pass. Slow down, verify independently, and repair the current bottleneck#{format_bottleneck_suffix(bottleneck)}.
-    """
-    |> String.trim()
-  end
-
-  defp build_steering("meta_consolidate_requested", bottleneck) do
-    """
-    TRIAL STEERING: Treat this investigation as a consolidation pass. Prefer verified synthesis, connect corroborating evidence, and reduce open-loop sprawl#{format_bottleneck_suffix(bottleneck)}.
-    """
-    |> String.trim()
-  end
-
-  defp build_steering("meta_pivot_requested", bottleneck) do
-    """
-    TRIAL STEERING: Treat this investigation as a pivot pass. Challenge the default angle, test alternative evidence paths, and explicitly target the current bottleneck#{format_bottleneck_suffix(bottleneck)}.
-    """
-    |> String.trim()
-  end
-
-  defp build_steering(_event_type, bottleneck) do
-    """
-    TRIAL STEERING: Run a bounded corrective investigation and target the current bottleneck#{format_bottleneck_suffix(bottleneck)}.
-    """
-    |> String.trim()
-  end
-
-  defp format_bottleneck_suffix(nil), do: ""
-  defp format_bottleneck_suffix(""), do: ""
-  defp format_bottleneck_suffix(bottleneck), do: " (#{bottleneck})"
 
   defp score_trial(meta, scorer) when is_function(scorer, 1) do
     scorer.(meta)
