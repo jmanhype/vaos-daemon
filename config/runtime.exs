@@ -23,6 +23,21 @@ parse_int = fn
     end
 end
 
+parse_bool = fn
+  nil, default ->
+    default
+
+  value, _default when is_boolean(value) ->
+    value
+
+  str, default ->
+    case String.downcase(String.trim(str)) do
+      value when value in ["1", "true", "yes", "on"] -> true
+      value when value in ["0", "false", "no", "off"] -> false
+      _ -> default
+    end
+end
+
 # ── .env file loading ──────────────────────────────────────────────────
 # Load .env from project root OR ~/.osa/.env (project root takes priority).
 # Only sets vars that aren't already in the environment (explicit env wins).
@@ -101,6 +116,14 @@ default_provider =
     true -> :ollama
   end
 
+eval_mode = parse_bool.(System.get_env("DAEMON_EVAL_MODE"), false)
+
+active_learner_chain_enabled =
+  case System.get_env("ACTIVE_LEARNER_CHAIN_ENABLED") do
+    nil -> not eval_mode
+    value -> parse_bool.(value, not eval_mode)
+  end
+
 config :daemon,
   # LLM Providers — API keys
   anthropic_api_key: System.get_env("ANTHROPIC_API_KEY"),
@@ -174,6 +197,8 @@ config :daemon,
 
   # Provider selection
   default_provider: default_provider,
+  eval_mode: eval_mode,
+  active_learner_chain_enabled: active_learner_chain_enabled,
   # Default model — resolved from DAEMON_MODEL env, or provider-specific env var.
   # Falls back to OLLAMA_MODEL only when the active provider is actually ollama.
   default_model:

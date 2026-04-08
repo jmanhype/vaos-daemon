@@ -32,26 +32,25 @@ defmodule Daemon.Agent.Scheduler.Heartbeat do
   reads pending tasks, executes them, and marks completions. Returns updated state.
   """
   def run(state) do
-    quiet =
-      try do
-        HeartbeatState.in_quiet_hours?()
-      catch
-        :exit, _ -> false
-      end
+    cond do
+      eval_mode?() ->
+        Logger.info("[Scheduler] Heartbeat suppressed — eval mode active")
+        %{state | last_run: DateTime.utc_now()}
 
-    if quiet do
-      Logger.debug("[Scheduler] Heartbeat suppressed — quiet hours active")
-      return = %{state | last_run: DateTime.utc_now()}
+      quiet_hours?() ->
+        Logger.debug("[Scheduler] Heartbeat suppressed — quiet hours active")
+        return = %{state | last_run: DateTime.utc_now()}
 
-      try do
-        HeartbeatState.record_check(:heartbeat, :suppressed_quiet_hours)
-      catch
-        :exit, _ -> :ok
-      end
+        try do
+          HeartbeatState.record_check(:heartbeat, :suppressed_quiet_hours)
+        catch
+          :exit, _ -> :ok
+        end
 
-      return
-    else
-      run_heartbeat_tasks(state)
+        return
+
+      true ->
+        run_heartbeat_tasks(state)
     end
   end
 
@@ -144,6 +143,16 @@ defmodule Daemon.Agent.Scheduler.Heartbeat do
       end
     else
       %{state | last_run: DateTime.utc_now()}
+    end
+  end
+
+  defp eval_mode?, do: Application.get_env(:daemon, :eval_mode, false)
+
+  defp quiet_hours? do
+    try do
+      HeartbeatState.in_quiet_hours?()
+    catch
+      :exit, _ -> false
     end
   end
 

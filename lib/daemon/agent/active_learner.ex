@@ -65,7 +65,6 @@ defmodule Daemon.Agent.ActiveLearner do
   @max_topic_length 120
 
   # Direct investigation chaining — bypasses heartbeat polling + agent loop overhead
-  @chain_enabled true
   # 60s between chained investigations (respects API rate limits)
   @chain_cooldown_ms 60_000
   # Hard cap per daemon lifetime
@@ -110,6 +109,11 @@ defmodule Daemon.Agent.ActiveLearner do
     end
   end
 
+  @doc false
+  def chain_enabled? do
+    Application.get_env(:daemon, :active_learner_chain_enabled, true)
+  end
+
   # ── GenServer Callbacks ─────────────────────────────────────────────
 
   @impl true
@@ -128,6 +132,10 @@ defmodule Daemon.Agent.ActiveLearner do
     Logger.info(
       "[ActiveLearner] Started (arms: emergent=#{format_arm(arms.emergent)}, policy=#{format_arm(arms.policy)}, synthesis=#{format_arm(arms.synthesis)})"
     )
+
+    if not chain_enabled?() do
+      Logger.info("[ActiveLearner] Eval mode: direct investigation chaining disabled")
+    end
 
     {:ok,
      %{
@@ -600,7 +608,11 @@ defmodule Daemon.Agent.ActiveLearner do
 
   defp maybe_chain_investigation(topic, state) do
     cond do
-      not @chain_enabled ->
+      not chain_enabled?() ->
+        Logger.debug(
+          "[ActiveLearner] Chain: disabled, skipping '#{String.slice(topic, 0, 60)}...'"
+        )
+
         state
 
       state.chain_in_flight ->

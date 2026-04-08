@@ -49,7 +49,8 @@ defmodule Daemon.Receipt.Bundle do
       session_id: session_id,
       intent_hash: intent_hash,
       duration_ms: post_payload[:duration_ms] || post_payload["duration_ms"] || 0,
-      result_summary: String.slice(to_string(post_payload[:result] || post_payload["result"] || ""), 0, 500),
+      result_summary:
+        String.slice(to_string(post_payload[:result] || post_payload["result"] || ""), 0, 500),
       evidence: args,
       sandbox_mode: if(sandbox.enabled, do: Atom.to_string(sandbox.mode)),
       sandbox_image: if(sandbox.enabled, do: sandbox.image)
@@ -76,19 +77,24 @@ defmodule Daemon.Receipt.Bundle do
       action_id: claim_id,
       session_id: session_id,
       intent_hash: intent_hash,
+      duration_ms: json_metadata[:duration_ms] || json_metadata["duration_ms"] || 0,
       evidence: %{
         topic: topic,
         claim_id: claim_id,
         direction: json_metadata[:direction] || json_metadata["direction"],
         for_score: json_metadata[:for_score] || json_metadata["for_score"],
         against_score: json_metadata[:against_score] || json_metadata["against_score"],
-        grounded_for_score: json_metadata[:grounded_for_score] || json_metadata["grounded_for_score"],
-        grounded_against_score: json_metadata[:grounded_against_score] || json_metadata["grounded_against_score"],
+        grounded_for_score:
+          json_metadata[:grounded_for_score] || json_metadata["grounded_for_score"],
+        grounded_against_score:
+          json_metadata[:grounded_against_score] || json_metadata["grounded_against_score"],
         papers_found: json_metadata[:papers_found] || json_metadata["papers_found"],
         source_counts: json_metadata[:source_counts] || json_metadata["source_counts"],
         uncertainty: json_metadata[:uncertainty] || json_metadata["uncertainty"],
         belief: json_metadata[:belief] || json_metadata["belief"],
-        fraudulent_citations: json_metadata[:fraudulent_citations] || json_metadata["fraudulent_citations"]
+        fraudulent_citations:
+          json_metadata[:fraudulent_citations] || json_metadata["fraudulent_citations"],
+        phase_timings_ms: json_metadata[:phase_timings_ms] || json_metadata["phase_timings_ms"]
       }
     }
   end

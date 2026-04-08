@@ -187,6 +187,8 @@ defmodule Daemon.Tools.Builtins.Investigate do
   end
 
   defp do_run_investigation(topic, depth, steering, caller_metadata) do
+    investigation_started_ms = monotonic_ms()
+
     :inets.start()
     :ssl.start()
     ensure_circuit_table()
@@ -273,7 +275,8 @@ defmodule Daemon.Tools.Builtins.Investigate do
 
     # 4. MULTI-SOURCE PAPER SEARCH: Semantic Scholar + OpenAlex + alphaXiv (parallel)
     #    Uses prior strategy's top_n_papers and per_query_limit for tuned search breadth
-    {all_papers, source_counts} = search_all_papers(topic, keywords, prior_strategy)
+    {{all_papers, source_counts}, paper_search_ms} =
+      timed(fn -> search_all_papers(topic, keywords, prior_strategy) end)
 
     Logger.info("[investigate] Papers: #{length(all_papers)} total (#{inspect(source_counts)})")
 
@@ -359,14 +362,24 @@ Known failure patterns to avoid:
       %{role: "user", content: against_prompt}
     ]
 
+    timings = %{
+      preflight_ms: max(0, elapsed_ms(investigation_started_ms) - paper_search_ms),
+      paper_search_ms: paper_search_ms
+    }
+
     model = preferred_utility_model()
     llm_opts = [temperature: prior_strategy.adversarial_temperature, max_tokens: 8192]
     llm_opts = if model, do: Keyword.put(llm_opts, :model, model), else: llm_opts
 
     # Run advocates sequentially — concurrent calls trigger rate limits on some
     # providers (Zhipu/GLM), and reasoning models need generous timeouts.
-    for_result = Providers.chat(for_messages, llm_opts)
-    against_result = Providers.chat(against_messages, llm_opts)
+    {for_result, for_llm_ms} = timed(fn -> Providers.chat(for_messages, llm_opts) end)
+    timings = Map.put(timings, :for_llm_ms, for_llm_ms)
+
+    {against_result, against_llm_ms} =
+      timed(fn -> Providers.chat(against_messages, llm_opts) end)
+
+    timings = Map.put(timings, :against_llm_ms, against_llm_ms)
 
     # 8. Parse both sides
     supporting =
@@ -456,11 +469,17 @@ Known failure patterns to avoid:
     # 8b. Handle partial results honestly
     cond do
       supporting == [] and opposing == [] ->
+        timings = complete_phase_timings(timings, investigation_started_ms)
+        log_phase_timings(topic, timings)
         {:error, "Both adversarial LLM calls failed"}
 
       supporting == [] ->
         # Only AGAINST succeeded — verify what we have
-        verified_opposing = verify_citations(opposing, paper_map, prompts)
+        {verified_opposing, citation_verification_ms} =
+          timed(fn -> verify_citations(opposing, paper_map, prompts) end)
+
+        timings = Map.put(timings, :citation_verification_ms, citation_verification_ms)
+        post_processing_started_ms = monotonic_ms()
 
         result =
           "## Investigation: #{topic}\n\n" <>
@@ -469,11 +488,19 @@ Known failure patterns to avoid:
             format_verified_evidence(verified_opposing, "Case Against") <>
             "\n\n### Papers Consulted\n" <> format_paper_list(all_papers)
 
+        timings =
+          complete_phase_timings(timings, investigation_started_ms, post_processing_started_ms)
+
+        log_phase_timings(topic, timings)
         {:ok, result}
 
       opposing == [] ->
         # Only FOR succeeded — verify what we have
-        verified_supporting = verify_citations(supporting, paper_map, prompts)
+        {verified_supporting, citation_verification_ms} =
+          timed(fn -> verify_citations(supporting, paper_map, prompts) end)
+
+        timings = Map.put(timings, :citation_verification_ms, citation_verification_ms)
+        post_processing_started_ms = monotonic_ms()
 
         result =
           "## Investigation: #{topic}\n\n" <>
@@ -482,6 +509,10 @@ Known failure patterns to avoid:
             format_verified_evidence(verified_supporting, "Case For") <>
             "\n\n### Papers Consulted\n" <> format_paper_list(all_papers)
 
+        timings =
+          complete_phase_timings(timings, investigation_started_ms, post_processing_started_ms)
+
+        log_phase_timings(topic, timings)
         {:ok, result}
 
       true ->
@@ -500,7 +531,9 @@ Known failure patterns to avoid:
           prior_strategy,
           prompts,
           variant_id,
-          caller_metadata
+          caller_metadata,
+          timings,
+          investigation_started_ms
         )
     end
   rescue
@@ -528,11 +561,21 @@ Known failure patterns to avoid:
          strategy,
          prompts,
          variant_id,
-         caller_metadata
+         caller_metadata,
+         timings,
+         investigation_started_ms
        ) do
     # 9. CITATION VERIFICATION + PAPER TYPE CLASSIFICATION — the evidence quality step
-    verified_supporting = verify_citations(supporting_raw, paper_map, prompts)
-    verified_opposing = verify_citations(opposing_raw, paper_map, prompts)
+    {{verified_supporting, verified_opposing}, citation_verification_ms} =
+      timed(fn ->
+        {
+          verify_citations(supporting_raw, paper_map, prompts),
+          verify_citations(opposing_raw, paper_map, prompts)
+        }
+      end)
+
+    timings = Map.put(timings, :citation_verification_ms, citation_verification_ms)
+    post_processing_started_ms = monotonic_ms()
 
     # 9.7 Re-score evidence with winning strategy's hierarchy weights
     verified_supporting = rescore_evidence(verified_supporting, strategy)
@@ -705,105 +748,6 @@ Known failure patterns to avoid:
     topic_id = "investigate:" <> short_hash(topic)
     claim_id = claim.id
 
-    json_metadata = %{
-      topic: topic,
-      claim_id: claim_id,
-      direction: direction,
-      strategy_hash: Strategy.param_hash(strategy),
-      verified_for: verified_for,
-      verified_against: verified_against,
-      reasoning_for: reasoning_for,
-      reasoning_against: reasoning_against,
-      for_score: Float.round(for_total * 1.0, 3),
-      against_score: Float.round(against_total * 1.0, 3),
-      grounded_for_score: Float.round(grounded_for_score * 1.0, 3),
-      grounded_against_score: Float.round(grounded_against_score * 1.0, 3),
-      grounded_for_count: grounded_for_count,
-      grounded_against_count: grounded_against_count,
-      belief_for_count: belief_for_count,
-      belief_against_count: belief_against_count,
-      aec_methodology: "arxiv.org/abs/2602.03974",
-      fraudulent_citations: fraudulent_count,
-      belief: Float.round(belief * 1.0, 3),
-      uncertainty: Float.round(uncertainty * 1.0, 3),
-      evidence_quality: %{
-        reviews: review_count,
-        trials: trial_count,
-        studies: study_count
-      },
-      supporting:
-        Enum.map(verified_supporting, fn ev ->
-          %{
-            summary: ev.summary,
-            score: ev.score,
-            verified: ev.verified,
-            verification: ev.verification,
-            paper_type: Atom.to_string(ev.paper_type),
-            citation_count: ev.citation_count,
-            strength_display: ev.strength,
-            source_quality: Map.get(ev, :source_quality, 0),
-            source_type: ev.source_type,
-            evidence_store: Atom.to_string(Map.get(ev, :evidence_store, :unknown))
-          }
-        end),
-      opposing:
-        Enum.map(verified_opposing, fn ev ->
-          %{
-            summary: ev.summary,
-            score: ev.score,
-            verified: ev.verified,
-            verification: ev.verification,
-            paper_type: Atom.to_string(ev.paper_type),
-            citation_count: ev.citation_count,
-            strength_display: ev.strength,
-            source_quality: Map.get(ev, :source_quality, 0),
-            source_type: ev.source_type,
-            evidence_store: Atom.to_string(Map.get(ev, :evidence_store, :unknown))
-          }
-        end),
-      papers_found: length(all_papers),
-      source_counts: source_counts,
-      papers_detail:
-        Enum.map(all_papers, fn p ->
-          %{
-            title: p["title"],
-            year: p["year"],
-            citations: p["citation_count"] || p["citationCount"] || 0,
-            source: p["source"] || "unknown",
-            abstract: String.slice(to_string(p["abstract"] || ""), 0, 500)
-          }
-        end),
-      investigation_id: topic_id,
-      optimization: nil,
-      suggested_next:
-        try do
-          Policy.rank_actions(@ledger_name, limit: 3)
-          |> Enum.map(fn a ->
-            %{
-              action_type: a.action_type,
-              claim_title: a.claim_title,
-              information_gain: a.expected_information_gain,
-              claim_id: a.claim_id,
-              reason: a.reason
-            }
-          end)
-        rescue
-          _ -> []
-        end,
-      emergent_questions: emergent_questions,
-      variant_id: variant_id
-    }
-
-    json_result = Jason.encode!(json_metadata)
-
-    # Emit audit receipt to kernel (fire-and-forget, never crashes investigation)
-    try do
-      bundle = Daemon.Receipt.Bundle.from_investigation(json_metadata)
-      Daemon.Receipt.Emitter.emit_async(bundle)
-    catch
-      _, _ -> :ok
-    end
-
     triples = [
       {topic_id, "rdf:type", "vaos:Investigation"},
       {topic_id, "vaos:topic", topic},
@@ -811,7 +755,6 @@ Known failure patterns to avoid:
       {topic_id, "vaos:verified_for", Integer.to_string(verified_for)},
       {topic_id, "vaos:verified_against", Integer.to_string(verified_against)},
       {topic_id, "vaos:fraudulent_citations", Integer.to_string(fraudulent_count)},
-      {topic_id, "vaos:json_result", json_result},
       {topic_id, "vaos:claim_id", claim_id},
       {topic_id, "vaos:timestamp", DateTime.utc_now() |> DateTime.to_iso8601()}
     ]
@@ -842,18 +785,6 @@ Known failure patterns to avoid:
       MiosaKnowledge.assert(store, {atk_id, "vaos:harmful_count", "0"})
       MiosaKnowledge.assert(store, {atk_id, "vaos:summary", atk.description})
     end)
-
-    # Merge caller metadata into event payload
-    json_metadata = Map.merge(json_metadata, caller_metadata)
-
-    # Emit investigation_complete event for Retrospector strategy optimization
-    try do
-      Daemon.Events.Bus.emit(:investigation_complete, json_metadata)
-    rescue
-      _ -> :ok
-    catch
-      :exit, _ -> :ok
-    end
 
     # Increment helpful counters for prior evidence that was independently regenerated
     increment_helpful_for_reused_evidence(
@@ -966,8 +897,7 @@ Known failure patterns to avoid:
         "\n### Keywords\n  " <>
         Enum.join(keywords, ", ") <>
         "\n\n" <>
-        "*Claim ID: #{claim_id} -- stored in knowledge graph as #{topic_id}*" <>
-        "\n\n<!-- VAOS_JSON:#{json_result} -->"
+        "*Claim ID: #{claim_id} -- stored in knowledge graph as #{topic_id}*"
 
     # 16. Policy — suggest next investigations based on information gain
     next_actions_text =
@@ -1001,10 +931,175 @@ Known failure patterns to avoid:
           ""
       end
 
-    result = result <> next_actions_text
+    timings =
+      complete_phase_timings(timings, investigation_started_ms, post_processing_started_ms)
+
+    metadata_timings = timing_metadata(timings)
+
+    json_metadata = %{
+      topic: topic,
+      claim_id: claim_id,
+      direction: direction,
+      strategy_hash: Strategy.param_hash(strategy),
+      verified_for: verified_for,
+      verified_against: verified_against,
+      reasoning_for: reasoning_for,
+      reasoning_against: reasoning_against,
+      for_score: Float.round(for_total * 1.0, 3),
+      against_score: Float.round(against_total * 1.0, 3),
+      grounded_for_score: Float.round(grounded_for_score * 1.0, 3),
+      grounded_against_score: Float.round(grounded_against_score * 1.0, 3),
+      grounded_for_count: grounded_for_count,
+      grounded_against_count: grounded_against_count,
+      belief_for_count: belief_for_count,
+      belief_against_count: belief_against_count,
+      aec_methodology: "arxiv.org/abs/2602.03974",
+      fraudulent_citations: fraudulent_count,
+      belief: Float.round(belief * 1.0, 3),
+      uncertainty: Float.round(uncertainty * 1.0, 3),
+      duration_ms: metadata_timings.duration_ms,
+      phase_timings_ms: metadata_timings.phase_timings_ms,
+      evidence_quality: %{
+        reviews: review_count,
+        trials: trial_count,
+        studies: study_count
+      },
+      supporting:
+        Enum.map(verified_supporting, fn ev ->
+          %{
+            summary: ev.summary,
+            score: ev.score,
+            verified: ev.verified,
+            verification: ev.verification,
+            paper_type: Atom.to_string(ev.paper_type),
+            citation_count: ev.citation_count,
+            strength_display: ev.strength,
+            source_quality: Map.get(ev, :source_quality, 0),
+            source_type: ev.source_type,
+            evidence_store: Atom.to_string(Map.get(ev, :evidence_store, :unknown))
+          }
+        end),
+      opposing:
+        Enum.map(verified_opposing, fn ev ->
+          %{
+            summary: ev.summary,
+            score: ev.score,
+            verified: ev.verified,
+            verification: ev.verification,
+            paper_type: Atom.to_string(ev.paper_type),
+            citation_count: ev.citation_count,
+            strength_display: ev.strength,
+            source_quality: Map.get(ev, :source_quality, 0),
+            source_type: ev.source_type,
+            evidence_store: Atom.to_string(Map.get(ev, :evidence_store, :unknown))
+          }
+        end),
+      papers_found: length(all_papers),
+      source_counts: source_counts,
+      papers_detail:
+        Enum.map(all_papers, fn p ->
+          %{
+            title: p["title"],
+            year: p["year"],
+            citations: p["citation_count"] || p["citationCount"] || 0,
+            source: p["source"] || "unknown",
+            abstract: String.slice(to_string(p["abstract"] || ""), 0, 500)
+          }
+        end),
+      investigation_id: topic_id,
+      optimization: nil,
+      suggested_next:
+        try do
+          Policy.rank_actions(@ledger_name, limit: 3)
+          |> Enum.map(fn a ->
+            %{
+              action_type: a.action_type,
+              claim_title: a.claim_title,
+              information_gain: a.expected_information_gain,
+              claim_id: a.claim_id,
+              reason: a.reason
+            }
+          end)
+        rescue
+          _ -> []
+        end,
+      emergent_questions: emergent_questions,
+      variant_id: variant_id
+    }
+
+    json_result = Jason.encode!(json_metadata)
+
+    # Emit audit receipt to kernel (fire-and-forget, never crashes investigation)
+    try do
+      bundle = Daemon.Receipt.Bundle.from_investigation(json_metadata)
+      Daemon.Receipt.Emitter.emit_async(bundle)
+    catch
+      _, _ -> :ok
+    end
+
+    MiosaKnowledge.assert(store, {topic_id, "vaos:json_result", json_result})
+
+    # Merge caller metadata into event payload
+    json_metadata = Map.merge(json_metadata, caller_metadata)
+
+    # Emit investigation_complete event for Retrospector strategy optimization
+    try do
+      Daemon.Events.Bus.emit(:investigation_complete, json_metadata)
+    rescue
+      _ -> :ok
+    catch
+      :exit, _ -> :ok
+    end
+
+    result = result <> next_actions_text <> "\n\n<!-- VAOS_JSON:#{json_result} -->"
+    log_phase_timings(topic, timings)
 
     {:ok, result}
   end
+
+  @doc false
+  def timing_metadata(timings) when is_map(timings) do
+    %{
+      duration_ms: Map.get(timings, :total_ms, 0),
+      phase_timings_ms: timings
+    }
+  end
+
+  defp timed(fun) when is_function(fun, 0) do
+    started_ms = monotonic_ms()
+    {fun.(), elapsed_ms(started_ms)}
+  end
+
+  defp complete_phase_timings(
+         timings,
+         investigation_started_ms,
+         post_processing_started_ms \\ nil
+       ) do
+    timings =
+      if is_integer(post_processing_started_ms) do
+        Map.put(timings, :post_processing_ms, elapsed_ms(post_processing_started_ms))
+      else
+        timings
+      end
+
+    Map.put(timings, :total_ms, elapsed_ms(investigation_started_ms))
+  end
+
+  defp log_phase_timings(topic, timings) do
+    Logger.info(
+      "[investigate] Timings topic=#{String.slice(topic, 0, 80)} " <>
+        "preflight=#{Map.get(timings, :preflight_ms, 0)}ms " <>
+        "search=#{Map.get(timings, :paper_search_ms, 0)}ms " <>
+        "for_llm=#{Map.get(timings, :for_llm_ms, 0)}ms " <>
+        "against_llm=#{Map.get(timings, :against_llm_ms, 0)}ms " <>
+        "verify=#{Map.get(timings, :citation_verification_ms, 0)}ms " <>
+        "post=#{Map.get(timings, :post_processing_ms, 0)}ms " <>
+        "total=#{Map.get(timings, :total_ms, 0)}ms"
+    )
+  end
+
+  defp monotonic_ms, do: System.monotonic_time(:millisecond)
+  defp elapsed_ms(started_ms), do: max(monotonic_ms() - started_ms, 0)
 
   # -- Citation Verification + Paper Type Classification ------------------
 

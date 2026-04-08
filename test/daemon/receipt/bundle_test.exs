@@ -56,7 +56,17 @@ defmodule Daemon.Receipt.BundleTest do
         source_counts: %{"semantic_scholar" => 8, "openalex" => 4},
         uncertainty: 0.45,
         belief: 0.62,
-        fraudulent_citations: 1
+        fraudulent_citations: 1,
+        duration_ms: 321,
+        phase_timings_ms: %{
+          preflight_ms: 14,
+          paper_search_ms: 120,
+          for_llm_ms: 80,
+          against_llm_ms: 74,
+          citation_verification_ms: 22,
+          post_processing_ms: 11,
+          total_ms: 321
+        }
       }
 
       bundle = Bundle.from_investigation(metadata)
@@ -64,9 +74,11 @@ defmodule Daemon.Receipt.BundleTest do
       assert bundle.action_type == "investigation"
       assert bundle.action_name == "investigate"
       assert bundle.action_id == "claim-001"
+      assert bundle.duration_ms == 321
       assert bundle.evidence.topic == "Does coffee cause cancer?"
       assert bundle.evidence.papers_found == 12
       assert bundle.evidence.fraudulent_citations == 1
+      assert bundle.evidence.phase_timings_ms.paper_search_ms == 120
       assert bundle.intent_hash != nil
     end
   end
