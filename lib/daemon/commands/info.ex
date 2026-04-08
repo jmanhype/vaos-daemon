@@ -36,6 +36,7 @@ defmodule Daemon.Commands.Info do
       Info:
         /status             System status
         /status adaptation  Adaptation journal + meta-state
+        /status adaptation review  Longitudinal adaptation review
         /skills             List available skills
         /memory             Memory statistics
         /soul               Show personality config
@@ -128,6 +129,9 @@ defmodule Daemon.Commands.Info do
   @doc "Handle the `/status` command."
   def cmd_status(arg, _session_id) do
     case String.trim(arg) do
+      "adaptation review" ->
+        {:command, format_adaptation_review(DecisionJournal.adaptation_review())}
+
       "adaptation" ->
         stats = DecisionJournal.stats()
         meta_state = Map.get(stats, :meta_state, DecisionJournal.meta_state())
@@ -141,6 +145,31 @@ defmodule Daemon.Commands.Info do
       _ ->
         {:command, format_system_status()}
     end
+  end
+
+  @doc false
+  def format_adaptation_review(review) do
+    trials = Map.get(review, :trials, %{})
+    promotions = Map.get(review, :promotions, %{})
+    suppressions = Map.get(review, :suppressions, %{})
+
+    [
+      "Adaptation Review:",
+      "  window:              #{format_review_window(review)}",
+      "  trial hit rate:      #{format_rate_with_counts(Map.get(trials, :helpful_rate), Map.get(trials, :helpful, 0), Map.get(trials, :completed, 0), "helpful")}",
+      "  blocked rate:        #{format_rate_with_ratio(Map.get(trials, :blocked_rate), Map.get(trials, :blocked, 0), Map.get(trials, :started, 0))}",
+      "  expiry rate:         #{format_rate_with_ratio(Map.get(trials, :expiry_rate), Map.get(trials, :expired, 0), Map.get(trials, :started, 0))}",
+      "  promotion keep rate: #{format_promotion_keep_rate(promotions)}",
+      "  suppression hit rate: #{format_rate_with_ratio(Map.get(suppressions, :hit_rate), Map.get(suppressions, :hits, 0), Map.get(suppressions, :started, 0))}",
+      "  domain skew:         #{format_domain_skew(Map.get(review, :domain_skew, []))}",
+      "",
+      "Positive signatures:",
+      format_signature_section(Map.get(review, :positive_signatures, []), :positive),
+      "",
+      "Noisy signatures:",
+      format_signature_section(Map.get(review, :noisy_signatures, []), :noisy)
+    ]
+    |> Enum.join("\n")
   end
 
   @doc false
@@ -561,6 +590,83 @@ defmodule Daemon.Commands.Info do
 
   defp format_context_value(value) when is_binary(value), do: value
   defp format_context_value(value), do: inspect(value)
+
+  defp format_review_window(review) do
+    count = Map.get(review, :window_event_count, 0)
+    started_at = Map.get(review, :window_started_at)
+    ended_at = Map.get(review, :window_ended_at)
+
+    case {started_at, ended_at} do
+      {nil, _} ->
+        "#{count} signals"
+
+      {from, to} ->
+        "#{count} signals from #{format_timestamp(from)} to #{format_timestamp(to)}"
+    end
+  end
+
+  defp format_rate_with_counts(nil, numerator, denominator, label),
+    do: "- (#{numerator}/#{denominator} #{label})"
+
+  defp format_rate_with_counts(rate, numerator, denominator, label),
+    do: "#{format_percentage(rate)} (#{numerator}/#{denominator} #{label})"
+
+  defp format_rate_with_ratio(nil, numerator, denominator), do: "- (#{numerator}/#{denominator})"
+
+  defp format_rate_with_ratio(rate, numerator, denominator),
+    do: "#{format_percentage(rate)} (#{numerator}/#{denominator})"
+
+  defp format_promotion_keep_rate(promotions) do
+    started = Map.get(promotions, :started, 0)
+    cleared = Map.get(promotions, :cleared, 0)
+    keep_rate = Map.get(promotions, :keep_rate)
+
+    case keep_rate do
+      nil -> "- (#{started} started, #{cleared} cleared)"
+      _ -> "#{format_percentage(keep_rate)} (#{started} started, #{cleared} cleared)"
+    end
+  end
+
+  defp format_domain_skew([]), do: "-"
+
+  defp format_domain_skew(domain_skew) do
+    domain_skew
+    |> Enum.take(3)
+    |> Enum.map_join(", ", fn %{domain: domain, share: share} ->
+      "#{domain} #{format_percentage(share)}"
+    end)
+  end
+
+  defp format_signature_section([], _kind), do: "  - none"
+
+  defp format_signature_section(signatures, :positive) do
+    Enum.map_join(signatures, "\n", fn signature ->
+      "  - #{format_signature_label(signature)} net #{format_signed_integer(Map.get(signature, :net_score, 0))} (#{Map.get(signature, :helpful, 0)} helpful, #{Map.get(signature, :promotions, 0)} promotions)"
+    end)
+  end
+
+  defp format_signature_section(signatures, :noisy) do
+    Enum.map_join(signatures, "\n", fn signature ->
+      "  - #{format_signature_label(signature)} net #{format_signed_integer(Map.get(signature, :net_score, 0))} (#{Map.get(signature, :not_helpful, 0)} not_helpful, #{Map.get(signature, :suppression_hits, 0)} suppression hits)"
+    end)
+  end
+
+  defp format_signature_label(signature) do
+    trigger_event =
+      Map.get(signature, :trigger_event) || Map.get(signature, "trigger_event") || "-"
+
+    bottleneck = Map.get(signature, :bottleneck) || Map.get(signature, "bottleneck") || "-"
+    "#{trigger_event} / #{bottleneck}"
+  end
+
+  defp format_percentage(nil), do: "-"
+
+  defp format_percentage(value) when is_number(value) do
+    :erlang.float_to_binary(value * 100, decimals: 1) <> "%"
+  end
+
+  defp format_signed_integer(value) when is_integer(value) and value > 0, do: "+#{value}"
+  defp format_signed_integer(value), do: to_string(value)
 
   defp format_presence(nil), do: "-"
   defp format_presence(""), do: "-"

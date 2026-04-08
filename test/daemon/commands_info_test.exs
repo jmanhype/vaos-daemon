@@ -156,6 +156,73 @@ defmodule Daemon.CommandsInfoTest do
              "trial suppression:   meta_reflect_requested / low_verification (2 negatives)"
   end
 
+  test "format_adaptation_review summarizes longitudinal trial quality" do
+    now = ~U[2026-04-08 10:11:30Z]
+
+    output =
+      Info.format_adaptation_review(%{
+        window_event_count: 12,
+        window_started_at: DateTime.add(now, -10, :minute),
+        window_ended_at: now,
+        trials: %{
+          started: 4,
+          completed: 2,
+          helpful: 1,
+          inconclusive: 0,
+          not_helpful: 1,
+          blocked: 1,
+          expired: 1,
+          helpful_rate: 0.5,
+          blocked_rate: 0.25,
+          expiry_rate: 0.25
+        },
+        promotions: %{started: 1, cleared: 0, keep_rate: 1.0},
+        suppressions: %{started: 1, hits: 1, hit_rate: 1.0},
+        domain_skew: [
+          %{domain: "coordination", count: 11, share: 0.9167},
+          %{domain: "research", count: 1, share: 0.0833}
+        ],
+        positive_signatures: [
+          %{
+            signature: "meta_pivot_requested|low_verification",
+            trigger_event: "meta_pivot_requested",
+            bottleneck: "low_verification",
+            helpful: 1,
+            promotions: 1,
+            net_score: 1
+          }
+        ],
+        noisy_signatures: [
+          %{
+            signature: "meta_reflect_requested|source_exploration",
+            trigger_event: "meta_reflect_requested",
+            bottleneck: "source_exploration",
+            not_helpful: 1,
+            suppression_hits: 1,
+            net_score: -1
+          }
+        ]
+      })
+
+    assert output =~ "Adaptation Review:"
+    assert output =~ "window:              12 signals"
+    assert output =~ "trial hit rate:      50.0% (1/2 helpful)"
+    assert output =~ "blocked rate:        25.0% (1/4)"
+    assert output =~ "expiry rate:         25.0% (1/4)"
+    assert output =~ "promotion keep rate: 100.0% (1 started, 0 cleared)"
+    assert output =~ "suppression hit rate: 100.0% (1/1)"
+    assert output =~ "domain skew:         coordination 91.7%, research 8.3%"
+    assert output =~ "Positive signatures:"
+    assert output =~ "meta_pivot_requested / low_verification"
+    assert output =~ "Noisy signatures:"
+    assert output =~ "meta_reflect_requested / source_exploration"
+  end
+
+  test "/status adaptation review returns longitudinal summary" do
+    assert {:command, output} = Commands.execute("status adaptation review", "test-session")
+    assert output =~ "Adaptation Review:"
+  end
+
   test "/status adaptation returns adaptation snapshot" do
     assert {:command, output} = Commands.execute("status adaptation", "test-session")
     assert output =~ "Adaptation Status:"
@@ -171,5 +238,6 @@ defmodule Daemon.CommandsInfoTest do
   test "/help advertises status adaptation" do
     assert {:command, output} = Commands.execute("help", "test-session")
     assert output =~ "/status adaptation"
+    assert output =~ "/status adaptation review"
   end
 end

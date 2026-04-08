@@ -150,4 +150,172 @@ defmodule Daemon.Intelligence.DecisionJournalAdaptationTest do
     assert meta.recent_failed_adaptations == []
     assert meta.last_updated_at == now
   end
+
+  test "adaptation review summarizes trial outcomes, domain skew, and signature quality" do
+    File.rm(@journal_path)
+
+    assert {:ok, state} = DecisionJournal.init([])
+
+    now = DateTime.utc_now()
+
+    entries = [
+      %{
+        domain: "coordination",
+        event_type: "trial_suppressed",
+        timestamp: DateTime.add(now, -10, :second),
+        context: %{
+          "trigger_event" => "meta_reflect_requested",
+          "bottleneck" => "source_exploration"
+        }
+      },
+      %{
+        domain: "coordination",
+        event_type: "trial_suppression_started",
+        timestamp: DateTime.add(now, -20, :second),
+        context: %{
+          "trigger_event" => "meta_reflect_requested",
+          "bottleneck" => "source_exploration"
+        }
+      },
+      %{
+        domain: "coordination",
+        event_type: "trial_completed",
+        timestamp: DateTime.add(now, -30, :second),
+        context: %{
+          "trigger_event" => "meta_reflect_requested",
+          "bottleneck" => "source_exploration",
+          "outcome" => "not_helpful"
+        }
+      },
+      %{
+        domain: "coordination",
+        event_type: "trial_started",
+        timestamp: DateTime.add(now, -40, :second),
+        context: %{
+          "trigger_event" => "meta_reflect_requested",
+          "bottleneck" => "source_exploration"
+        }
+      },
+      %{
+        domain: "coordination",
+        event_type: "trial_expired",
+        timestamp: DateTime.add(now, -50, :second),
+        context: %{
+          "trigger_event" => "meta_consolidate_requested",
+          "bottleneck" => "synthesis_drift"
+        }
+      },
+      %{
+        domain: "coordination",
+        event_type: "trial_started",
+        timestamp: DateTime.add(now, -60, :second),
+        context: %{
+          "trigger_event" => "meta_consolidate_requested",
+          "bottleneck" => "synthesis_drift"
+        }
+      },
+      %{
+        domain: "coordination",
+        event_type: "trial_blocked",
+        timestamp: DateTime.add(now, -70, :second),
+        context: %{
+          "trigger_event" => "meta_pivot_requested",
+          "bottleneck" => "low_verification"
+        }
+      },
+      %{
+        domain: "coordination",
+        event_type: "trial_started",
+        timestamp: DateTime.add(now, -80, :second),
+        context: %{
+          "trigger_event" => "meta_pivot_requested",
+          "bottleneck" => "low_verification"
+        }
+      },
+      %{
+        domain: "coordination",
+        event_type: "trial_promoted",
+        timestamp: DateTime.add(now, -90, :second),
+        context: %{
+          "trigger_event" => "meta_pivot_requested",
+          "bottleneck" => "low_verification"
+        }
+      },
+      %{
+        domain: "coordination",
+        event_type: "trial_completed",
+        timestamp: DateTime.add(now, -100, :second),
+        context: %{
+          "trigger_event" => "meta_pivot_requested",
+          "bottleneck" => "low_verification",
+          "outcome" => "helpful"
+        }
+      },
+      %{
+        domain: "coordination",
+        event_type: "trial_started",
+        timestamp: DateTime.add(now, -110, :second),
+        context: %{
+          "trigger_event" => "meta_pivot_requested",
+          "bottleneck" => "low_verification"
+        }
+      },
+      %{
+        domain: "research",
+        event_type: "steering_applied",
+        timestamp: DateTime.add(now, -120, :second),
+        context: %{
+          "bottleneck" => "low_verification",
+          "steering_hypothesis" => "Prefer verified sources"
+        }
+      }
+    ]
+
+    state = %{state | adaptation_entries: entries}
+
+    {:reply, review, _state} =
+      DecisionJournal.handle_call({:adaptation_review, 50}, self(), state)
+
+    assert review.window_event_count == 12
+    assert review.trials.started == 4
+    assert review.trials.completed == 2
+    assert review.trials.helpful == 1
+    assert review.trials.not_helpful == 1
+    assert review.trials.blocked == 1
+    assert review.trials.expired == 1
+    assert review.trials.helpful_rate == 0.5
+    assert review.trials.blocked_rate == 0.25
+    assert review.trials.expiry_rate == 0.25
+
+    assert review.promotions.started == 1
+    assert review.promotions.cleared == 0
+    assert review.promotions.keep_rate == 1.0
+
+    assert review.suppressions.started == 1
+    assert review.suppressions.hits == 1
+    assert review.suppressions.hit_rate == 1.0
+
+    assert [%{domain: "coordination", count: 11}, %{domain: "research", count: 1}] =
+             review.domain_skew
+
+    assert [
+             %{
+               signature: "meta_pivot_requested|low_verification",
+               net_score: 1,
+               helpful: 1,
+               promotions: 1
+             }
+             | _
+           ] = review.positive_signatures
+
+    assert [
+             %{
+               signature: "meta_reflect_requested|source_exploration",
+               net_score: -1,
+               not_helpful: 1,
+               suppression_hits: 1
+             }
+             | _
+           ] = review.noisy_signatures
+  end
 end

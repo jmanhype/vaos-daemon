@@ -112,6 +112,18 @@ defmodule Daemon.Intelligence.DecisionJournal do
     end
   end
 
+  @doc "Return a longitudinal review summary over recent adaptation entries."
+  @spec adaptation_review(pos_integer()) :: map()
+  def adaptation_review(limit \\ 200) when is_integer(limit) and limit > 0 do
+    try do
+      GenServer.call(__MODULE__, {:adaptation_review, limit})
+    rescue
+      _ -> empty_adaptation_review()
+    catch
+      :exit, _ -> empty_adaptation_review()
+    end
+  end
+
   @doc "Return the derived adaptation meta-state snapshot."
   @spec meta_state() :: map()
   def meta_state do
@@ -279,6 +291,10 @@ defmodule Daemon.Intelligence.DecisionJournal do
 
   def handle_call({:adaptation_events, limit}, _from, state) do
     {:reply, Enum.take(state.adaptation_entries, limit), state}
+  end
+
+  def handle_call({:adaptation_review, limit}, _from, state) do
+    {:reply, derive_adaptation_review(state, limit), state}
   end
 
   def handle_call(:meta_state, _from, state) do
@@ -951,6 +967,71 @@ defmodule Daemon.Intelligence.DecisionJournal do
     }
   end
 
+  defp derive_adaptation_review(state, limit) do
+    entries = Enum.take(state.adaptation_entries, limit)
+    total_events = length(entries)
+
+    started_at =
+      entries
+      |> List.last()
+      |> then(fn entry -> entry && entry.timestamp end)
+
+    ended_at =
+      entries
+      |> List.first()
+      |> then(fn entry -> entry && entry.timestamp end)
+
+    domain_skew =
+      entries
+      |> Enum.frequencies_by(& &1.domain)
+      |> Enum.map(fn {domain, count} ->
+        %{domain: domain, count: count, share: safe_rate(count, total_events)}
+      end)
+      |> Enum.sort_by(fn %{count: count, domain: domain} -> {-count, domain} end)
+
+    signature_reviews =
+      entries
+      |> Enum.reduce(%{}, &accumulate_signature_review/2)
+      |> Map.values()
+      |> Enum.map(&finalize_signature_review/1)
+
+    positive_signatures =
+      signature_reviews
+      |> Enum.filter(fn review -> review.net_score > 0 or review.promotions > 0 end)
+      |> Enum.sort_by(fn review ->
+        {-review.net_score, -review.helpful, -review.promotions, review.signature}
+      end)
+      |> Enum.take(3)
+
+    noisy_signatures =
+      signature_reviews
+      |> Enum.filter(fn review ->
+        review.net_score < 0 or review.suppression_hits > 0 or review.blocked > 0 or
+          review.expired > 0
+      end)
+      |> Enum.sort_by(fn review ->
+        {review.net_score, -review.suppression_hits, -review.not_helpful, -review.blocked,
+         -review.expired, review.signature}
+      end)
+      |> Enum.take(3)
+
+    trials = summarize_trials(entries)
+    promotions = summarize_promotions(entries)
+    suppressions = summarize_suppressions(entries)
+
+    %{
+      window_event_count: total_events,
+      window_started_at: started_at,
+      window_ended_at: ended_at,
+      trials: trials,
+      promotions: promotions,
+      suppressions: suppressions,
+      domain_skew: domain_skew,
+      positive_signatures: positive_signatures,
+      noisy_signatures: noisy_signatures
+    }
+  end
+
   defp fresh_adaptation_entries(entries, now \\ DateTime.utc_now()) do
     freshness_ms = adaptation_freshness_ms()
 
@@ -993,6 +1074,158 @@ defmodule Daemon.Intelligence.DecisionJournal do
       bottleneck: context_value(entry.context, "bottleneck"),
       outcome: context_value(entry.context, "outcome")
     }
+  end
+
+  defp summarize_trials(entries) do
+    started = count_events(entries, "trial_started")
+    completed = count_events(entries, "trial_completed")
+    helpful = count_trial_outcomes(entries, "helpful")
+    inconclusive = count_trial_outcomes(entries, "inconclusive")
+    not_helpful = count_trial_outcomes(entries, "not_helpful")
+    blocked = count_events(entries, "trial_blocked")
+    expired = count_events(entries, "trial_expired")
+
+    %{
+      started: started,
+      completed: completed,
+      helpful: helpful,
+      inconclusive: inconclusive,
+      not_helpful: not_helpful,
+      blocked: blocked,
+      expired: expired,
+      helpful_rate: safe_rate(helpful, completed),
+      blocked_rate: safe_rate(blocked, started),
+      expiry_rate: safe_rate(expired, started)
+    }
+  end
+
+  defp summarize_promotions(entries) do
+    started = count_events(entries, "trial_promoted")
+    cleared = count_events(entries, "trial_promotion_cleared")
+    kept = max(started - cleared, 0)
+
+    %{
+      started: started,
+      cleared: cleared,
+      keep_rate: safe_rate(kept, started)
+    }
+  end
+
+  defp summarize_suppressions(entries) do
+    started = count_events(entries, "trial_suppression_started")
+    hits = count_events(entries, "trial_suppressed")
+
+    %{
+      started: started,
+      hits: hits,
+      hit_rate: safe_rate(hits, started)
+    }
+  end
+
+  defp count_events(entries, event_type) do
+    Enum.count(entries, &(&1.event_type == event_type))
+  end
+
+  defp count_trial_outcomes(entries, outcome) do
+    Enum.count(entries, fn entry ->
+      entry.event_type == "trial_completed" and context_value(entry.context, "outcome") == outcome
+    end)
+  end
+
+  defp accumulate_signature_review(entry, acc) do
+    case signature_parts(entry) do
+      {trigger_event, bottleneck} ->
+        signature = signature_for(trigger_event, bottleneck)
+
+        review =
+          Map.get(acc, signature, %{
+            signature: signature,
+            trigger_event: trigger_event,
+            bottleneck: bottleneck,
+            started: 0,
+            helpful: 0,
+            inconclusive: 0,
+            not_helpful: 0,
+            blocked: 0,
+            expired: 0,
+            promotions: 0,
+            promotion_clears: 0,
+            suppressions: 0,
+            suppression_hits: 0,
+            net_score: 0
+          })
+
+        Map.put(acc, signature, update_signature_review(review, entry))
+
+      nil ->
+        acc
+    end
+  end
+
+  defp update_signature_review(review, %{event_type: "trial_started"}) do
+    %{review | started: review.started + 1}
+  end
+
+  defp update_signature_review(review, %{event_type: "trial_completed", context: context}) do
+    case context_value(context, "outcome") do
+      "helpful" ->
+        %{review | helpful: review.helpful + 1}
+
+      "inconclusive" ->
+        %{review | inconclusive: review.inconclusive + 1}
+
+      "not_helpful" ->
+        %{review | not_helpful: review.not_helpful + 1}
+
+      _ ->
+        review
+    end
+  end
+
+  defp update_signature_review(review, %{event_type: "trial_blocked"}) do
+    %{review | blocked: review.blocked + 1}
+  end
+
+  defp update_signature_review(review, %{event_type: "trial_expired"}) do
+    %{review | expired: review.expired + 1}
+  end
+
+  defp update_signature_review(review, %{event_type: "trial_promoted"}) do
+    %{review | promotions: review.promotions + 1}
+  end
+
+  defp update_signature_review(review, %{event_type: "trial_promotion_cleared"}) do
+    %{review | promotion_clears: review.promotion_clears + 1}
+  end
+
+  defp update_signature_review(review, %{event_type: "trial_suppression_started"}) do
+    %{review | suppressions: review.suppressions + 1}
+  end
+
+  defp update_signature_review(review, %{event_type: "trial_suppressed"}) do
+    %{review | suppression_hits: review.suppression_hits + 1}
+  end
+
+  defp update_signature_review(review, _entry), do: review
+
+  defp finalize_signature_review(review) do
+    net_score = review.helpful - review.not_helpful - review.inconclusive
+    %{review | net_score: net_score}
+  end
+
+  defp signature_parts(entry) do
+    trigger_event = context_value(entry.context, "trigger_event")
+    bottleneck = context_value(entry.context, "bottleneck")
+
+    if is_binary(trigger_event) and trigger_event != "" do
+      {trigger_event, bottleneck || "-"}
+    else
+      nil
+    end
+  end
+
+  defp signature_for(trigger_event, bottleneck) do
+    "#{trigger_event}|#{bottleneck || "-"}"
   end
 
   defp latest_context_value(entries, keys) do
@@ -1074,6 +1307,35 @@ defmodule Daemon.Intelligence.DecisionJournal do
       last_updated_at: nil
     }
   end
+
+  defp empty_adaptation_review do
+    %{
+      window_event_count: 0,
+      window_started_at: nil,
+      window_ended_at: nil,
+      trials: %{
+        started: 0,
+        completed: 0,
+        helpful: 0,
+        inconclusive: 0,
+        not_helpful: 0,
+        blocked: 0,
+        expired: 0,
+        helpful_rate: nil,
+        blocked_rate: nil,
+        expiry_rate: nil
+      },
+      promotions: %{started: 0, cleared: 0, keep_rate: nil},
+      suppressions: %{started: 0, hits: 0, hit_rate: nil},
+      domain_skew: [],
+      positive_signatures: [],
+      noisy_signatures: []
+    }
+  end
+
+  defp safe_rate(_numerator, 0), do: nil
+  defp safe_rate(_numerator, nil), do: nil
+  defp safe_rate(numerator, denominator), do: numerator / denominator
 
   defp adaptation_freshness_ms do
     Application.get_env(:daemon, :adaptation_meta_freshness_ms, @default_adaptation_freshness_ms)
