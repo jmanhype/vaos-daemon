@@ -2,9 +2,10 @@ defmodule Daemon.Supervisors.Extensions do
   @moduledoc """
   Subsystem supervisor for optional/extension processes.
 
-  Manages conditionally-started subsystems: treasury, Signal Theory intelligence,
-  swarm coordination, fleet management, sidecars (Go/Python), sandbox, wallet,
-  OTA updater, and AMQP publisher.
+  Manages conditionally-started subsystems plus communication-facing extension
+  services: treasury, communication intelligence, swarm coordination, fleet
+  management, sidecars (Go/Python), sandbox, wallet, OTA updater, and AMQP
+  publisher.
 
   All children here are either opt-in (via config flags) or entirely self-contained.
   Uses `:one_for_one` — extensions are independent; a fleet crash should not
@@ -22,17 +23,17 @@ defmodule Daemon.Supervisors.Extensions do
   def init(_init_arg) do
     children =
       treasury_children() ++
-      cost_tracker_children() ++
-      intelligence_children() ++
-      swarm_children() ++
-      fleet_children() ++
-      sidecar_children() ++
-      sandbox_children() ++
-      wallet_children() ++
-      updater_children() ++
-      amqp_children() ++
-      production_children() ++
-      receipt_children()
+        cost_tracker_children() ++
+        intelligence_children() ++
+        swarm_children() ++
+        fleet_children() ++
+        sidecar_children() ++
+        sandbox_children() ++
+        wallet_children() ++
+        updater_children() ++
+        amqp_children() ++
+        production_children() ++
+        receipt_children()
 
     Supervisor.init(children, strategy: :one_for_one)
   end
@@ -53,9 +54,10 @@ defmodule Daemon.Supervisors.Extensions do
     []
   end
 
-  # Communication intelligence (Signal Theory unique) — always started when present.
-  # ConversationTracker, ContactDetector, ProactiveMonitor are dormant until wired;
-  # starting the supervisor is cheap and keeps them ready for future integration.
+  # Communication intelligence — always started when present.
+  # ConversationTracker and related communication-facing modules remain in the
+  # extensions lane; proactive runtime monitoring now lives under the adaptive
+  # control plane in AgentServices.
   defp intelligence_children do
     [Daemon.Intelligence.Supervisor]
   end
@@ -196,5 +198,4 @@ defmodule Daemon.Supervisors.Extensions do
       []
     end
   end
-
 end

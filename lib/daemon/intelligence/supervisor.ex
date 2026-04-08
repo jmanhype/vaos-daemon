@@ -1,17 +1,21 @@
 defmodule Daemon.Intelligence.Supervisor do
   @moduledoc """
   Supervises communication intelligence processes.
-  These are what make OSA unique — no other agent framework has them.
+  These are the communication-facing intelligence services that remain outside
+  the core adaptive control plane.
 
   GenServer children:
   - CommProfiler: Learns communication patterns per contact
   - CommCoach: Scores outbound message quality
   - ConversationTracker: Tracks conversation depth (casual→working→deep→strategic)
-  - ProactiveMonitor: Scans for silence, drift, engagement drops
 
   Pure modules (no supervision needed):
   - ContactDetector: Pure pattern matching for contact identification (< 1ms),
     called from Agent.Loop after each inbound user message.
+
+  `ProactiveMonitor` now lives under `Daemon.Supervisors.Adaptation` because it
+  participates in VAOS's always-on adaptive control plane rather than optional
+  communication intelligence.
   """
   use Supervisor
 
@@ -24,8 +28,7 @@ defmodule Daemon.Intelligence.Supervisor do
     children = [
       Daemon.Intelligence.CommProfiler,
       Daemon.Intelligence.CommCoach,
-      Daemon.Intelligence.ConversationTracker,
-      Daemon.Intelligence.ProactiveMonitor
+      Daemon.Intelligence.ConversationTracker
     ]
 
     Supervisor.init(children, strategy: :one_for_one)

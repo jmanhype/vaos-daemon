@@ -197,7 +197,7 @@ docs/
 │
 ├── foundation-core/           Architecture & principles
 │   ├── overview/              Purpose, principles, boundaries, glossary (5 docs)
-│   ├── architecture/          System design, components, flows (7 docs)
+│   ├── architecture/          System design, components, flows (8 docs)
 │   ├── core-components/       Runtime, config, events, errors, logging (14 docs)
 │   ├── interfaces/            APIs, contracts, integration points (4 docs)
 │   ├── security/              Security model, threats, access control (4 docs)
