@@ -94,7 +94,9 @@ defmodule Daemon.Receipt.Bundle do
         belief: json_metadata[:belief] || json_metadata["belief"],
         fraudulent_citations:
           json_metadata[:fraudulent_citations] || json_metadata["fraudulent_citations"],
-        phase_timings_ms: json_metadata[:phase_timings_ms] || json_metadata["phase_timings_ms"]
+        phase_timings_ms: json_metadata[:phase_timings_ms] || json_metadata["phase_timings_ms"],
+        verification_stats:
+          json_metadata[:verification_stats] || json_metadata["verification_stats"]
       }
     }
   end

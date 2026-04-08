@@ -475,7 +475,7 @@ Known failure patterns to avoid:
 
       supporting == [] ->
         # Only AGAINST succeeded — verify what we have
-        {verified_opposing, citation_verification_ms} =
+        {{verified_opposing, verification_stats}, citation_verification_ms} =
           timed(fn -> verify_citations(opposing, paper_map, prompts) end)
 
         timings = Map.put(timings, :citation_verification_ms, citation_verification_ms)
@@ -492,11 +492,12 @@ Known failure patterns to avoid:
           complete_phase_timings(timings, investigation_started_ms, post_processing_started_ms)
 
         log_phase_timings(topic, timings)
+        log_verification_stats(topic, verification_stats)
         {:ok, result}
 
       opposing == [] ->
         # Only FOR succeeded — verify what we have
-        {verified_supporting, citation_verification_ms} =
+        {{verified_supporting, verification_stats}, citation_verification_ms} =
           timed(fn -> verify_citations(supporting, paper_map, prompts) end)
 
         timings = Map.put(timings, :citation_verification_ms, citation_verification_ms)
@@ -513,6 +514,7 @@ Known failure patterns to avoid:
           complete_phase_timings(timings, investigation_started_ms, post_processing_started_ms)
 
         log_phase_timings(topic, timings)
+        log_verification_stats(topic, verification_stats)
         {:ok, result}
 
       true ->
@@ -566,7 +568,9 @@ Known failure patterns to avoid:
          investigation_started_ms
        ) do
     # 9. CITATION VERIFICATION + PAPER TYPE CLASSIFICATION — the evidence quality step
-    {{verified_supporting, verified_opposing}, citation_verification_ms} =
+    {{{verified_supporting, supporting_verification_stats},
+      {verified_opposing, opposing_verification_stats}},
+     citation_verification_ms} =
       timed(fn ->
         {
           verify_citations(supporting_raw, paper_map, prompts),
@@ -576,6 +580,12 @@ Known failure patterns to avoid:
 
     timings = Map.put(timings, :citation_verification_ms, citation_verification_ms)
     post_processing_started_ms = monotonic_ms()
+
+    verification_stats =
+      merge_verification_stats([
+        supporting_verification_stats,
+        opposing_verification_stats
+      ])
 
     # 9.7 Re-score evidence with winning strategy's hierarchy weights
     verified_supporting = rescore_evidence(verified_supporting, strategy)
@@ -959,6 +969,7 @@ Known failure patterns to avoid:
       uncertainty: Float.round(uncertainty * 1.0, 3),
       duration_ms: metadata_timings.duration_ms,
       phase_timings_ms: metadata_timings.phase_timings_ms,
+      verification_stats: verification_stats,
       evidence_quality: %{
         reviews: review_count,
         trials: trial_count,
@@ -1053,6 +1064,7 @@ Known failure patterns to avoid:
 
     result = result <> next_actions_text <> "\n\n<!-- VAOS_JSON:#{json_result} -->"
     log_phase_timings(topic, timings)
+    log_verification_stats(topic, verification_stats)
 
     {:ok, result}
   end
@@ -1063,6 +1075,58 @@ Known failure patterns to avoid:
       duration_ms: Map.get(timings, :total_ms, 0),
       phase_timings_ms: timings
     }
+  end
+
+  @doc false
+  def merge_verification_stats(stats_list) when is_list(stats_list) do
+    base = %{
+      total_items: 0,
+      llm_items: 0,
+      no_llm_items: 0,
+      unique_llm_items: 0,
+      deduped_llm_items: 0,
+      cache_hits: 0,
+      cache_misses: 0,
+      cache_lookup_ms: 0,
+      llm_ms_total: 0,
+      average_llm_ms: 0,
+      slowest_llm_ms: 0,
+      model: nil
+    }
+
+    models =
+      stats_list
+      |> Enum.map(&Map.get(&1, :model))
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+
+    merged =
+      Enum.reduce(stats_list, base, fn stats, acc ->
+        %{
+          acc
+          | total_items: acc.total_items + Map.get(stats, :total_items, 0),
+            llm_items: acc.llm_items + Map.get(stats, :llm_items, 0),
+            no_llm_items: acc.no_llm_items + Map.get(stats, :no_llm_items, 0),
+            unique_llm_items: acc.unique_llm_items + Map.get(stats, :unique_llm_items, 0),
+            deduped_llm_items: acc.deduped_llm_items + Map.get(stats, :deduped_llm_items, 0),
+            cache_hits: acc.cache_hits + Map.get(stats, :cache_hits, 0),
+            cache_misses: acc.cache_misses + Map.get(stats, :cache_misses, 0),
+            cache_lookup_ms: acc.cache_lookup_ms + Map.get(stats, :cache_lookup_ms, 0),
+            llm_ms_total: acc.llm_ms_total + Map.get(stats, :llm_ms_total, 0),
+            slowest_llm_ms: max(acc.slowest_llm_ms, Map.get(stats, :slowest_llm_ms, 0))
+        }
+      end)
+
+    model =
+      case models do
+        [single] -> single
+        [] -> nil
+        list -> Enum.join(list, ",")
+      end
+
+    merged
+    |> Map.put(:model, model)
+    |> finalize_verification_stats()
   end
 
   defp timed(fun) when is_function(fun, 0) do
@@ -1098,6 +1162,22 @@ Known failure patterns to avoid:
     )
   end
 
+  defp log_verification_stats(topic, stats) do
+    Logger.info(
+      "[investigate] Verification topic=#{String.slice(topic, 0, 80)} " <>
+        "model=#{Map.get(stats, :model, "unknown")} " <>
+        "items=#{Map.get(stats, :total_items, 0)} " <>
+        "llm=#{Map.get(stats, :llm_items, 0)} " <>
+        "unique=#{Map.get(stats, :unique_llm_items, 0)} " <>
+        "deduped=#{Map.get(stats, :deduped_llm_items, 0)} " <>
+        "hits=#{Map.get(stats, :cache_hits, 0)} " <>
+        "misses=#{Map.get(stats, :cache_misses, 0)} " <>
+        "llm_total=#{Map.get(stats, :llm_ms_total, 0)}ms " <>
+        "avg_llm=#{Map.get(stats, :average_llm_ms, 0)}ms " <>
+        "slowest_llm=#{Map.get(stats, :slowest_llm_ms, 0)}ms"
+    )
+  end
+
   defp monotonic_ms, do: System.monotonic_time(:millisecond)
   defp elapsed_ms(started_ms), do: max(monotonic_ms() - started_ms, 0)
 
@@ -1118,59 +1198,76 @@ Known failure patterns to avoid:
       Enum.map(no_llm, fn ev ->
         case extract_paper_ref(ev.summary) do
           nil ->
-            %{
-              ev
-              | verified: false,
-                verification: "no_citation",
-                paper_type: :reasoning,
-                citation_count: 0,
-                score: 0.15
-            }
+            build_verified_evidence(ev, :no_citation, :reasoning, 0)
 
           _n ->
-            %{
-              ev
-              | verified: false,
-                verification: "invalid_ref",
-                paper_type: :other,
-                citation_count: 0,
-                score: 0.0
-            }
+            build_verified_evidence(ev, :invalid_ref, :other, 0)
         end
       end)
 
-    # Run LLM verification sequentially — reasoning models (GLM-4.7) are slow
-    # and rate-limited, concurrent calls all fail or timeout
-    llm_verified =
+    verification_inputs =
       Enum.map(need_llm, fn ev ->
         paper_num = extract_paper_ref(ev.summary)
-        paper = Map.get(paper_map, paper_num)
-        citation_count = paper["citation_count"] || paper["citationCount"] || 0
+        paper = Map.fetch!(paper_map, paper_num)
 
-        case cached_verify(ev, paper, prompts) do
-          {verification, paper_type} ->
-            score = compute_evidence_score(verification, paper_type, citation_count)
-            verified = verification in [:verified, :partial]
-            verification_str = Atom.to_string(verification)
+        %{
+          key: verification_key(ev),
+          evidence: ev,
+          paper: paper,
+          citation_count: paper["citation_count"] || paper["citationCount"] || 0
+        }
+      end)
 
-            %{
-              ev
-              | verified: verified,
-                verification: verification_str,
-                paper_type: paper_type,
-                citation_count: citation_count,
-                score: score
-            }
-        end
+    unique_inputs = Enum.uniq_by(verification_inputs, & &1.key)
+
+    verification_stats = %{
+      total_items: length(evidence_list),
+      llm_items: length(need_llm),
+      no_llm_items: length(no_llm),
+      unique_llm_items: length(unique_inputs),
+      deduped_llm_items: length(verification_inputs) - length(unique_inputs),
+      cache_hits: 0,
+      cache_misses: 0,
+      cache_lookup_ms: 0,
+      llm_ms_total: 0,
+      average_llm_ms: 0,
+      slowest_llm_ms: 0,
+      model: preferred_verification_model()
+    }
+
+    # Run LLM verification sequentially — even with a faster utility-tier model,
+    # OpenAI-compatible providers can rate limit aggressively under concurrency.
+    {llm_lookup, verification_stats} =
+      Enum.reduce(unique_inputs, {%{}, verification_stats}, fn input, {lookup, stats} ->
+        {{cache_status, {verification, paper_type}}, duration_ms} =
+          timed(fn -> cached_verify(input.evidence, input.paper, prompts) end)
+
+        stats = update_verification_stats(stats, cache_status, duration_ms)
+
+        verified_evidence =
+          build_verified_evidence(
+            input.evidence,
+            verification,
+            paper_type,
+            input.citation_count
+          )
+
+        {Map.put(lookup, input.key, verified_evidence), stats}
       end)
 
     # Recombine in original order by matching on summary
-    original_order =
+    verified_lookup =
+      Map.merge(
+        Map.new(no_llm_verified, fn ev -> {verification_key(ev), ev} end),
+        llm_lookup
+      )
+
+    verified =
       Enum.map(evidence_list, fn ev ->
-        Enum.find(llm_verified ++ no_llm_verified, fn v -> v.summary == ev.summary end) || ev
+        Map.get(verified_lookup, verification_key(ev), ev)
       end)
 
-    original_order
+    {verified, finalize_verification_stats(verification_stats)}
   end
 
   defp extract_paper_ref(summary) do
@@ -1211,8 +1308,9 @@ Known failure patterns to avoid:
 
     messages = [%{role: "user", content: prompt}]
 
-    model = preferred_utility_model()
-    verify_opts = [temperature: 0.0, max_tokens: 4096]
+    model = preferred_verification_model()
+    verify_max_tokens = Application.get_env(:daemon, :investigate_verify_max_tokens, 64)
+    verify_opts = [temperature: 0.0, max_tokens: verify_max_tokens]
     verify_opts = if model, do: Keyword.put(verify_opts, :model, model), else: verify_opts
 
     case Providers.chat(messages, verify_opts) do
@@ -1255,6 +1353,64 @@ Known failure patterns to avoid:
 
         {:unverified, :other}
     end
+  end
+
+  defp build_verified_evidence(ev, verification, paper_type, citation_count) do
+    verification_atom =
+      case verification do
+        value when value in [:verified, :partial, :unverified] -> value
+        :no_citation -> :unverified
+        :invalid_ref -> :unverified
+        _ -> :unverified
+      end
+
+    score =
+      case verification do
+        :no_citation -> 0.15
+        :invalid_ref -> 0.0
+        _ -> compute_evidence_score(verification_atom, paper_type, citation_count)
+      end
+
+    verified = verification_atom in [:verified, :partial]
+
+    %{
+      ev
+      | verified: verified,
+        verification: Atom.to_string(verification),
+        paper_type: paper_type,
+        citation_count: citation_count,
+        score: score
+    }
+  end
+
+  defp verification_key(ev), do: {extract_paper_ref(ev.summary), ev.summary}
+
+  defp update_verification_stats(stats, :hit, duration_ms) do
+    %{
+      stats
+      | cache_hits: stats.cache_hits + 1,
+        cache_lookup_ms: stats.cache_lookup_ms + duration_ms
+    }
+  end
+
+  defp update_verification_stats(stats, :miss, duration_ms) do
+    %{
+      stats
+      | cache_misses: stats.cache_misses + 1,
+        llm_ms_total: stats.llm_ms_total + duration_ms,
+        slowest_llm_ms: max(stats.slowest_llm_ms, duration_ms)
+    }
+  end
+
+  defp finalize_verification_stats(stats) do
+    average_llm_ms =
+      if stats.cache_misses > 0 do
+        round(stats.llm_ms_total / stats.cache_misses)
+      else
+        0
+      end
+
+    Map.put(stats, :average_llm_ms, average_llm_ms)
   end
 
   # -- Evidence hierarchy scoring -----------------------------------------
@@ -2545,12 +2701,12 @@ Known failure patterns to avoid:
     case :ets.lookup(:scorer_cache, {:verify, cache_key}) do
       [{{:verify, ^cache_key}, result}] ->
         Logger.debug("[investigate] Cache hit for citation verification")
-        result
+        {:hit, result}
 
       [] ->
         result = verify_single_citation(evidence, paper, prompts)
         :ets.insert(:scorer_cache, {{:verify, cache_key}, result})
-        result
+        {:miss, result}
     end
   end
 
@@ -2810,6 +2966,18 @@ Known failure patterns to avoid:
       Application.get_env(:daemon, :default_model) ||
       active_provider_model(provider) ||
       utility_tier_model(provider) ||
+      default_model_for(provider)
+  end
+
+  @doc false
+  def preferred_verification_model do
+    provider = Application.get_env(:daemon, :default_provider)
+
+    Application.get_env(:daemon, :investigate_verification_model) ||
+      Application.get_env(:daemon, :utility_model) ||
+      utility_tier_model(provider) ||
+      Application.get_env(:daemon, :default_model) ||
+      active_provider_model(provider) ||
       default_model_for(provider)
   end
 

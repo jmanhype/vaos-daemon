@@ -199,6 +199,9 @@ config :daemon,
   default_provider: default_provider,
   eval_mode: eval_mode,
   active_learner_chain_enabled: active_learner_chain_enabled,
+  investigate_verification_model: System.get_env("DAEMON_INVESTIGATE_VERIFY_MODEL"),
+  investigate_verify_max_tokens:
+    parse_int.(System.get_env("DAEMON_INVESTIGATE_VERIFY_MAX_TOKENS"), 64),
   # Default model — resolved from DAEMON_MODEL env, or provider-specific env var.
   # Falls back to OLLAMA_MODEL only when the active provider is actually ollama.
   default_model:

@@ -66,6 +66,19 @@ defmodule Daemon.Receipt.BundleTest do
           citation_verification_ms: 22,
           post_processing_ms: 11,
           total_ms: 321
+        },
+        verification_stats: %{
+          total_items: 6,
+          llm_items: 4,
+          no_llm_items: 2,
+          unique_llm_items: 3,
+          deduped_llm_items: 1,
+          cache_hits: 1,
+          cache_misses: 2,
+          llm_ms_total: 58,
+          average_llm_ms: 29,
+          slowest_llm_ms: 33,
+          model: "glm-4.5-flash"
         }
       }
 
@@ -79,6 +92,7 @@ defmodule Daemon.Receipt.BundleTest do
       assert bundle.evidence.papers_found == 12
       assert bundle.evidence.fraudulent_citations == 1
       assert bundle.evidence.phase_timings_ms.paper_search_ms == 120
+      assert bundle.evidence.verification_stats.model == "glm-4.5-flash"
       assert bundle.intent_hash != nil
     end
   end
