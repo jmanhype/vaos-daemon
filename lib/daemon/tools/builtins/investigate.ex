@@ -43,6 +43,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
   alias Vaos.Ledger.ML.CrashLearner
 
   alias Daemon.Investigation.{
+    AdversarialParser,
     Strategy,
     StrategyStore,
     SourceScoring,
@@ -358,7 +359,7 @@ Known failure patterns to avoid:
       %{role: "user", content: against_prompt}
     ]
 
-    model = Application.get_env(:daemon, :utility_model)
+    model = preferred_utility_model()
     llm_opts = [temperature: prior_strategy.adversarial_temperature, max_tokens: 8192]
     llm_opts = if model, do: Keyword.put(llm_opts, :model, model), else: llm_opts
 
@@ -371,7 +372,7 @@ Known failure patterns to avoid:
     supporting =
       case for_result do
         {:ok, %{content: response}} when is_binary(response) and response != "" ->
-          parse_adversarial_evidence(response)
+          parse_adversarial_response(response, "FOR")
 
         {:ok, %{content: ""}} ->
           Logger.warning(
@@ -410,7 +411,7 @@ Known failure patterns to avoid:
     opposing =
       case against_result do
         {:ok, %{content: response}} when is_binary(response) and response != "" ->
-          parse_adversarial_evidence(response)
+          parse_adversarial_response(response, "AGAINST")
 
         {:ok, %{content: ""}} ->
           Logger.warning(
@@ -1115,7 +1116,7 @@ Known failure patterns to avoid:
 
     messages = [%{role: "user", content: prompt}]
 
-    model = Application.get_env(:daemon, :utility_model)
+    model = preferred_utility_model()
     verify_opts = [temperature: 0.0, max_tokens: 4096]
     verify_opts = if model, do: Keyword.put(verify_opts, :model, model), else: verify_opts
 
@@ -1268,39 +1269,7 @@ Known failure patterns to avoid:
 
   # -- Adversarial evidence parsing ------------------------------------
 
-  defp parse_adversarial_evidence(text) do
-    ~r/\d+\.\s*\[(SOURCED|REASONING)\]\s*\(strength:\s*(\d+)\)\s*(.+)/i
-    |> Regex.scan(text)
-    |> Enum.map(fn [_, type, strength_str, summary] ->
-      source_type =
-        case String.upcase(type) do
-          "SOURCED" -> :sourced
-          _ -> :reasoning
-        end
-
-      strength =
-        case Integer.parse(strength_str) do
-          {n, _} when n >= 1 and n <= 10 -> n
-          {n, _} when n > 10 -> 10
-          {n, _} when n < 1 -> 1
-          _ -> 5
-        end
-
-      # Keep LLM-assigned strength for DISPLAY only.
-      # Score, verified, paper_type, citation_count filled by verify_citations.
-      %{
-        summary: String.trim(summary),
-        source_type: source_type,
-        strength: strength,
-        paper_ref: extract_paper_ref(String.trim(summary)),
-        verified: false,
-        verification: "pending",
-        paper_type: :other,
-        citation_count: 0,
-        score: 0.0
-      }
-    end)
-  end
+  defp parse_adversarial_evidence(text), do: AdversarialParser.parse(text)
 
   # -- Add evidence to ledger ------------------------------------------
 
@@ -2576,7 +2545,7 @@ Known failure patterns to avoid:
 
       # Build an LLM callback compatible with Pipeline
       llm_fn = fn prompt ->
-        model = Application.get_env(:daemon, :utility_model)
+        model = preferred_utility_model()
         llm_opts = [temperature: 0.3, max_tokens: 8192]
         llm_opts = if model, do: Keyword.put(llm_opts, :model, model), else: llm_opts
         messages = [%{role: "user", content: prompt}]
@@ -2739,6 +2708,58 @@ Known failure patterns to avoid:
     "investigate:" <> short_hash(topic)
   end
 
+  defp preferred_utility_model do
+    provider = Application.get_env(:daemon, :default_provider)
+
+    Application.get_env(:daemon, :utility_model) ||
+      Application.get_env(:daemon, :default_model) ||
+      active_provider_model(provider) ||
+      utility_tier_model(provider) ||
+      default_model_for(provider)
+  end
+
+  defp active_provider_model(provider) when is_atom(provider) do
+    Application.get_env(:daemon, :"#{provider}_model")
+  end
+
+  defp active_provider_model(_), do: nil
+
+  defp utility_tier_model(provider) when is_atom(provider) do
+    try do
+      Daemon.Agent.Tier.model_for(:utility, provider)
+    rescue
+      _ -> nil
+    end
+  end
+
+  defp utility_tier_model(_), do: nil
+
+  defp default_model_for(nil), do: nil
+
+  defp default_model_for(provider) do
+    case Providers.provider_info(provider) do
+      {:ok, info} -> info.default_model
+      _ -> nil
+    end
+  end
+
+  defp parse_adversarial_response(response, side) do
+    evidence = parse_adversarial_evidence(response)
+
+    if evidence == [] do
+      preview =
+        response
+        |> String.replace(~r/\s+/, " ")
+        |> String.slice(0, 240)
+
+      Logger.warning(
+        "[investigate] #{side}-side adversarial response was unparseable: #{preview}"
+      )
+    end
+
+    evidence
+  end
+
   defp short_hash(topic) do
     Base.encode16(:crypto.hash(:sha256, topic), case: :lower) |> String.slice(0, 16)
   end
@@ -2807,7 +2828,7 @@ Known failure patterns to avoid:
         %{role: "user", content: prompt}
       ]
 
-      model = Application.get_env(:daemon, :utility_model)
+      model = preferred_utility_model()
       opts = [temperature: 0.7, max_tokens: 1024]
       opts = if model, do: Keyword.put(opts, :model, model), else: opts
 

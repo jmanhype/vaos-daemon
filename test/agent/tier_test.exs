@@ -83,4 +83,10 @@ defmodule Daemon.Agent.TierTest do
       assert info.max_agents == 10
     end
   end
+
+  describe "model_for/2" do
+    test "uses a supported flash model for zhipu utility tier" do
+      assert Tier.model_for(:utility, :zhipu) == "glm-4.5-flash"
+    end
+  end
 end

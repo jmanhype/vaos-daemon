@@ -97,7 +97,7 @@ defmodule Daemon.Agent.Tier do
     zhipu: %{
       elite: "glm-4-plus",
       specialist: "glm-4",
-      utility: "glm-4-flash"
+      utility: "glm-4.5-flash"
     },
     moonshot: %{
       elite: "moonshot-v1-128k",
