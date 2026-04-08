@@ -20,6 +20,7 @@ defmodule Daemon.Intelligence.AdaptationHeartbeat do
 
   @default_recent_limit 50
   @default_interval_ms :timer.minutes(5)
+  @default_signal_freshness_ms :timer.minutes(30)
   @intent_cooldown_events 8
   @reflect_failure_threshold 2
   @pivot_failure_threshold 2
@@ -65,14 +66,15 @@ defmodule Daemon.Intelligence.AdaptationHeartbeat do
   @doc false
   def detect_intents(meta_state, recent_events, journal_stats) do
     journal_status = Map.get(journal_stats, :status, :running)
+    fresh_events = fresh_recent_events(recent_events)
 
     if journal_status != :running do
       []
     else
       []
-      |> maybe_add_reflect(meta_state, recent_events, journal_stats)
-      |> maybe_add_consolidate(meta_state, recent_events, journal_stats)
-      |> maybe_add_pivot(meta_state, recent_events, journal_stats)
+      |> maybe_add_reflect(meta_state, fresh_events, journal_stats)
+      |> maybe_add_consolidate(meta_state, fresh_events, journal_stats)
+      |> maybe_add_pivot(meta_state, fresh_events, journal_stats)
     end
   end
 
@@ -206,6 +208,20 @@ defmodule Daemon.Intelligence.AdaptationHeartbeat do
     |> Enum.any?(fn event -> event_value(event, :event_type) == event_type end)
   end
 
+  defp fresh_recent_events(recent_events, now \\ DateTime.utc_now()) do
+    freshness_ms = signal_freshness_ms()
+
+    Enum.filter(recent_events, fn event ->
+      case event_timestamp(event) do
+        %DateTime{} = timestamp ->
+          DateTime.diff(now, timestamp, :millisecond) <= freshness_ms
+
+        _ ->
+          false
+      end
+    end)
+  end
+
   defp research_progress_event?(event) do
     event_value(event, :domain) == "research" and
       MapSet.member?(@consolidation_event_types, event_value(event, :event_type))
@@ -225,6 +241,10 @@ defmodule Daemon.Intelligence.AdaptationHeartbeat do
 
   defp event_value(event, key) do
     Map.get(event, key) || Map.get(event, to_string(key), default_event_value(key))
+  end
+
+  defp event_timestamp(event) do
+    Map.get(event, :timestamp) || Map.get(event, "timestamp")
   end
 
   defp default_event_value(:context), do: %{}
@@ -247,6 +267,10 @@ defmodule Daemon.Intelligence.AdaptationHeartbeat do
 
   defp schedule_tick(interval_ms) do
     Process.send_after(self(), :tick, interval_ms)
+  end
+
+  defp signal_freshness_ms do
+    Application.get_env(:daemon, :adaptation_meta_freshness_ms, @default_signal_freshness_ms)
   end
 
   defp safe_call(module, function, args, fallback) do

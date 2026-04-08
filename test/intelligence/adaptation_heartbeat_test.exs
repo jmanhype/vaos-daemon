@@ -153,6 +153,32 @@ defmodule Daemon.Intelligence.AdaptationHeartbeatTest do
     assert intents == []
   end
 
+  test "detect_intents ignores stale research events outside the freshness window" do
+    meta_state = %{
+      authority_domain: "research",
+      active_bottleneck: "low_verification",
+      recent_failed_adaptations: [],
+      last_experiment: nil
+    }
+
+    stale_time = DateTime.add(DateTime.utc_now(), -2, :hour)
+
+    recent_events = [
+      event("research", "topic_selected", %{}, stale_time),
+      event("research", "steering_applied", %{}, stale_time),
+      event("research", "prompt_evolution_triggered", %{}, stale_time),
+      event("research", "prompt_variant_registered", %{}, stale_time),
+      event("research", "strategy_experiment_keep", %{}, stale_time),
+      event("research", "synthesis_completed", %{}, stale_time),
+      event("research", "strategy_experiment_revert", %{}, stale_time),
+      event("research", "quality_gate_skip", %{}, stale_time)
+    ]
+
+    intents = AdaptationHeartbeat.detect_intents(meta_state, recent_events, %{status: :running})
+
+    assert intents == []
+  end
+
   test "tick_now records coordination intents into the journal" do
     JournalStub.seed(
       %{
@@ -198,11 +224,11 @@ defmodule Daemon.Intelligence.AdaptationHeartbeatTest do
     assert stats.intents_emitted.pivot == 1
   end
 
-  defp event(domain, event_type, context \\ %{}) do
+  defp event(domain, event_type, context \\ %{}, timestamp \\ DateTime.utc_now()) do
     %{
       domain: domain,
       event_type: event_type,
-      timestamp: DateTime.utc_now(),
+      timestamp: timestamp,
       context: context
     }
   end

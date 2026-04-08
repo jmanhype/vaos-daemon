@@ -109,4 +109,45 @@ defmodule Daemon.Intelligence.DecisionJournalAdaptationTest do
     assert meta.active_bottleneck == "low_verification"
     assert meta.active_steering_hypothesis == "Prefer verified sources"
   end
+
+  test "meta state ignores stale adaptation history for current fields" do
+    File.rm(@journal_path)
+
+    assert {:ok, state} = DecisionJournal.init([])
+
+    now = DateTime.utc_now()
+
+    stale_entry = %{
+      domain: "reliability",
+      event_type: "strategy_experiment_revert",
+      timestamp: DateTime.add(now, -2, :hour),
+      context: %{
+        "authority_domain" => "reliability",
+        "bottleneck" => "low_verification",
+        "reason" => "stale failure",
+        "outcome" => "reverted"
+      }
+    }
+
+    fresh_entry = %{
+      domain: "research",
+      event_type: "topic_selected",
+      timestamp: now,
+      context: %{
+        "authority_domain" => "research",
+        "bottleneck" => "source_exploration"
+      }
+    }
+
+    state = %{state | adaptation_entries: [fresh_entry, stale_entry]}
+
+    {:reply, meta, _state} = DecisionJournal.handle_call(:meta_state, self(), state)
+
+    assert meta.authority_domain == "research"
+    assert meta.active_bottleneck == "source_exploration"
+    assert meta.pivot_reason == nil
+    assert meta.last_experiment == nil
+    assert meta.recent_failed_adaptations == []
+    assert meta.last_updated_at == now
+  end
 end

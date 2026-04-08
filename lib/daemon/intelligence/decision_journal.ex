@@ -25,6 +25,7 @@ defmodule Daemon.Intelligence.DecisionJournal do
   @max_decisions 200
   @max_adaptation_entries 500
   @max_failed_adaptations 5
+  @default_adaptation_freshness_ms :timer.minutes(30)
   @persistence_dir Path.expand("~/.daemon/intelligence")
   @persistence_file "decision_journal.json"
   @ledger_name :investigate_ledger
@@ -930,23 +931,36 @@ defmodule Daemon.Intelligence.DecisionJournal do
 
   defp derive_meta_state(state) do
     entries = state.adaptation_entries
+    current_entries = fresh_adaptation_entries(entries)
 
     %{
       authority_domain:
-        latest_context_value(entries, ~w(authority_domain authority)) ||
-          (List.first(entries) && List.first(entries).domain),
-      active_bottleneck: latest_context_value(entries, ~w(bottleneck)),
-      pivot_reason: latest_context_value(entries, ~w(pivot_reason reason)),
+        latest_context_value(current_entries, ~w(authority_domain authority)) ||
+          (List.first(current_entries) && List.first(current_entries).domain),
+      active_bottleneck: latest_context_value(current_entries, ~w(bottleneck)),
+      pivot_reason: latest_context_value(current_entries, ~w(pivot_reason reason)),
       active_steering_hypothesis:
-        latest_context_value(entries, ~w(steering_hypothesis steering hypothesis)),
-      last_experiment: latest_experiment(entries),
+        latest_context_value(current_entries, ~w(steering_hypothesis steering hypothesis)),
+      last_experiment: latest_experiment(current_entries),
       recent_failed_adaptations:
-        entries
+        current_entries
         |> Enum.filter(&failed_adaptation?/1)
         |> Enum.take(@max_failed_adaptations)
         |> Enum.map(&summarize_adaptation_entry/1),
       last_updated_at: entries |> List.first() |> then(fn e -> e && e.timestamp end)
     }
+  end
+
+  defp fresh_adaptation_entries(entries, now \\ DateTime.utc_now()) do
+    freshness_ms = adaptation_freshness_ms()
+
+    Enum.filter(entries, fn
+      %{timestamp: %DateTime{} = timestamp} ->
+        DateTime.diff(now, timestamp, :millisecond) <= freshness_ms
+
+      _ ->
+        false
+    end)
   end
 
   defp latest_experiment(entries) do
@@ -1059,6 +1073,10 @@ defmodule Daemon.Intelligence.DecisionJournal do
       recent_failed_adaptations: [],
       last_updated_at: nil
     }
+  end
+
+  defp adaptation_freshness_ms do
+    Application.get_env(:daemon, :adaptation_meta_freshness_ms, @default_adaptation_freshness_ms)
   end
 
   defp normalize_topic(text) do
