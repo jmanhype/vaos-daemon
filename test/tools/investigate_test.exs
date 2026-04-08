@@ -4,6 +4,42 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
   alias Daemon.Investigation.Strategy
   alias Daemon.Tools.Builtins.Investigate
 
+  defmodule TrialStub do
+    use Agent
+
+    def start_link(_opts \\ []) do
+      Agent.start_link(fn -> %{responses: %{}, calls: []} end, name: __MODULE__)
+    end
+
+    def reset do
+      Agent.update(__MODULE__, fn _ -> %{responses: %{}, calls: []} end)
+    end
+
+    def expect(topic, response) do
+      Agent.update(__MODULE__, fn state ->
+        put_in(state, [:responses, topic], response)
+      end)
+    end
+
+    def consume_trial(topic) do
+      Agent.get_and_update(__MODULE__, fn state ->
+        response = Map.get(state.responses, topic, :none)
+
+        next_state = %{
+          state
+          | responses: Map.delete(state.responses, topic),
+            calls: [topic | state.calls]
+        }
+
+        {response, next_state}
+      end)
+    end
+
+    def calls do
+      Agent.get(__MODULE__, &Enum.reverse(&1.calls))
+    end
+  end
+
   setup do
     keys = [
       :default_provider,
@@ -24,6 +60,11 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
         {key, value} -> Application.put_env(:daemon, key, value)
       end)
     end)
+
+    case Process.whereis(TrialStub) do
+      nil -> start_supervised!(TrialStub)
+      _pid -> TrialStub.reset()
+    end
 
     :ok
   end
@@ -91,6 +132,47 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert merged.average_llm_ms == 60
     assert merged.slowest_llm_ms == 80
     assert merged.model == "glm-4.5-flash"
+  end
+
+  test "maybe_apply_pending_trial_steering consumes a pending trial when opted in" do
+    TrialStub.expect(
+      "manual pilot topic",
+      {:ok, %{steering: "TRIAL STEERING: Treat this investigation as a pivot pass."}}
+    )
+
+    args =
+      Investigate.maybe_apply_pending_trial_steering(
+        %{
+          "topic" => "manual pilot topic",
+          "steering" => "BASE STEERING",
+          "apply_pending_trial" => true
+        },
+        TrialStub
+      )
+
+    assert args["steering"] ==
+             "BASE STEERING\n\nTRIAL STEERING: Treat this investigation as a pivot pass."
+
+    assert TrialStub.calls() == ["manual pilot topic"]
+  end
+
+  test "maybe_apply_pending_trial_steering leaves args unchanged without opt-in" do
+    TrialStub.expect(
+      "manual pilot topic",
+      {:ok, %{steering: "TRIAL STEERING: Treat this investigation as a pivot pass."}}
+    )
+
+    args =
+      Investigate.maybe_apply_pending_trial_steering(
+        %{
+          "topic" => "manual pilot topic",
+          "steering" => "BASE STEERING"
+        },
+        TrialStub
+      )
+
+    assert args["steering"] == "BASE STEERING"
+    assert TrialStub.calls() == []
   end
 
   test "partial_completion_metadata preserves classified evidence for one-sided successes" do

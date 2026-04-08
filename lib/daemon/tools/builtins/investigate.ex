@@ -119,6 +119,11 @@ defmodule Daemon.Tools.Builtins.Investigate do
           "description" =>
             "Optional steering context injected into advocate system prompts (from ActiveLearner bottleneck diagnosis)"
         },
+        "apply_pending_trial" => %{
+          "type" => "boolean",
+          "description" =>
+            "Opt-in manual/eval path: consume one pending adaptation trial for this topic and merge its steering into the investigation"
+        },
         "metadata" => %{
           "type" => "object",
           "description" =>
@@ -131,10 +136,12 @@ defmodule Daemon.Tools.Builtins.Investigate do
 
   @impl true
   def execute(args) do
-    topic = Map.get(args, "topic") || ""
-    depth = Map.get(args, "depth") || "standard"
-    steering = Map.get(args, "steering") || ""
-    caller_metadata = Map.get(args, "metadata") || %{}
+    args = maybe_apply_pending_trial_steering(args)
+
+    topic = Map.get(args, "topic") || Map.get(args, :topic) || ""
+    depth = Map.get(args, "depth") || Map.get(args, :depth) || "standard"
+    steering = Map.get(args, "steering") || Map.get(args, :steering) || ""
+    caller_metadata = Map.get(args, "metadata") || Map.get(args, :metadata) || %{}
 
     topic = String.trim(to_string(topic))
 
@@ -145,7 +152,44 @@ defmodule Daemon.Tools.Builtins.Investigate do
     end
   end
 
+  @doc false
+  def maybe_apply_pending_trial_steering(args, trials_module \\ AdaptationTrials)
+      when is_map(args) do
+    topic = Map.get(args, "topic") || Map.get(args, :topic)
+    steering = Map.get(args, "steering") || Map.get(args, :steering) || ""
+
+    if apply_pending_trial?(args) and is_binary(topic) and String.trim(topic) != "" do
+      case trials_module.consume_trial(topic) do
+        {:ok, %{steering: trial_steering}} when is_binary(trial_steering) and trial_steering != "" ->
+          merged = merge_manual_steering(steering, trial_steering)
+
+          Logger.info(
+            "[investigate] Manual trial steering applied — #{String.slice(trial_steering, 0, 80)}..."
+          )
+
+          Map.put(args, "steering", merged)
+
+        _ ->
+          args
+      end
+    else
+      args
+    end
+  end
+
   # -- Main pipeline ---------------------------------------------------
+
+  defp apply_pending_trial?(args) when is_map(args) do
+    case Map.get(args, "apply_pending_trial") || Map.get(args, :apply_pending_trial) do
+      true -> true
+      "true" -> true
+      _ -> false
+    end
+  end
+
+  defp merge_manual_steering("", trial_steering), do: trial_steering
+  defp merge_manual_steering(existing, ""), do: existing
+  defp merge_manual_steering(existing, trial_steering), do: existing <> "\n\n" <> trial_steering
 
   defp run_investigation(topic, depth, steering, caller_metadata) do
     # DecisionJournal dedup — check if this investigation conflicts with in-flight work
