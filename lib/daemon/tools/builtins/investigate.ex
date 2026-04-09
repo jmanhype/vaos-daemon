@@ -3896,6 +3896,7 @@ Known failure patterns to avoid:
     |> prefer_reported_subclause()
     |> prefer_definition_quote()
     |> prefer_subject_plus_quoted_predicate()
+    |> prefer_ought_shape_quote()
     |> String.trim()
   end
 
@@ -4368,6 +4369,20 @@ Known failure patterns to avoid:
       String.trim(subject)
     ) and
       Regex.match?(~r/^(?:of|to|for|from|that|how|why|whether|where|when|which)\b/iu, quoted)
+  end
+
+  defp prefer_ought_shape_quote(summary) when is_binary(summary) do
+    case Regex.run(
+           ~r/(?:^|["“])(?:the\s+[^"”]{0,80}?\s+)?ought\s+to\s+be\s+of\s+the\s+form\s+of\s+an?\s+([^"”]+)(?:["”]|$)/iu,
+           summary,
+           capture: :all_but_first
+         ) do
+      [core] ->
+        ~s("#{String.trim(core)}")
+
+      _ ->
+        summary
+    end
   end
 
   defp adversarial_output_contract do

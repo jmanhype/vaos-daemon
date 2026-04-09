@@ -732,7 +732,7 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     normalized = Investigate.verification_claim_text(summary)
 
     assert normalized ==
-             "the Earth's surface ought to be of the form of an oblate spheroid of small ellipticity."
+             "\"oblate spheroid of small ellipticity.\""
 
     refute normalized =~ "(strength: 7/10)"
     refute String.starts_with?(normalized, "1.")
@@ -776,7 +776,7 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     normalized = Investigate.verification_claim_text(summary)
 
     assert normalized ==
-             "the Earth's surface ought to be of the form of an oblate spheroid of small ellipticity, having its axis of figure coincident with the axis of rotation,"
+             "\"oblate spheroid of small ellipticity, having its axis of figure coincident with the axis of rotation,\""
 
     refute normalized =~ "under the theory of universal gravitation"
     refute normalized =~ "gravity ought to vary along the surface according to a simple law"
@@ -790,7 +790,7 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     normalized = Investigate.verification_claim_text(summary)
 
     assert normalized ==
-             "the Earth's surface ought to be of the form of an oblate spheroid of small ellipticity, having its axis of figure coincident with the axis of rotation,"
+             "\"oblate spheroid of small ellipticity, having its axis of figure coincident with the axis of rotation,\""
 
     refute normalized =~ "under gravitational theory"
     refute String.starts_with?(normalized, "explicitly states that")
@@ -838,7 +838,7 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     normalized = Investigate.verification_claim_text(summary)
 
     assert normalized ==
-             "the Earth's surface ought to be of the form of an oblate spheroid of small ellipticity, having its axis of figure coincident with the axis of rotation,"
+             "\"oblate spheroid of small ellipticity, having its axis of figure coincident with the axis of rotation,\""
 
     refute normalized =~ "under gravitational theory"
     refute String.starts_with?(normalized, "explicitly derives that")
