@@ -3802,6 +3802,7 @@ Known failure patterns to avoid:
     |> trim_after_other_paper_ref()
     |> trim_after_last_quote()
     |> strip_verification_markup()
+    |> strip_leading_attribution_clause()
     |> strip_leading_reporting_clause()
     |> String.trim()
   end
@@ -3883,11 +3884,11 @@ Known failure patterns to avoid:
   defp strip_evidence_prefix(summary) do
     summary
     |> String.replace(
-      ~r/^\s*[*_`#\s]*(?:#+\s*)?\d+[\.\)]?\s*\[(?:SOURCED|REASONING)\]\s*\((?:strength|score)\s*:\s*\d+\)\s*/iu,
+      ~r/^\s*[*_`#\s]*(?:#+\s*)?\d+[\.\)]?\s*\[(?:SOURCED|REASONING)\]\s*\((?:strength|score)\s*:\s*\d+(?:\/\d+)?\)\s*/iu,
       ""
     )
     |> String.replace(
-      ~r/^\s*[*_`]*(?:\d+[\.\)]\s*)?\[(?:SOURCED|REASONING)\]\s*\((?:strength|score)\s*:\s*\d+\)\s*/iu,
+      ~r/^\s*[*_`]*(?:\d+[\.\)]\s*)?\[(?:SOURCED|REASONING)\]\s*\((?:strength|score)\s*:\s*\d+(?:\/\d+)?\)\s*/iu,
       ""
     )
   end
@@ -3990,6 +3991,12 @@ Known failure patterns to avoid:
     |> String.replace(~r/\s+([,.;:!?])/, "\\1")
     |> String.replace(~r/\(\s+/, "(")
     |> String.replace(~r/\s+\)/, ")")
+    |> normalize_verification_whitespace()
+  end
+
+  defp strip_leading_attribution_clause(summary) do
+    summary
+    |> String.replace(~r/^\s*According to(?:\s+Paper\s+\d+)?\s*,?\s*/iu, "")
     |> normalize_verification_whitespace()
   end
 

@@ -501,13 +501,26 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     normalized = Investigate.verification_claim_text(google_earth_engine_summary)
 
     assert normalized =~
-             "According to Google Earth Engine facilitates \"processing big geo data over large areas and monitoring the environment for long periods of time,\""
+             "Google Earth Engine facilitates \"processing big geo data over large areas and monitoring the environment for long periods of time,\""
 
     refute normalized =~ "only possible around a spherical body"
     refute normalized =~ "requires seamless stitching"
+    refute String.starts_with?(normalized, "According to")
     refute normalized =~ "## 1."
     refute normalized =~ "[SOURCED]"
     refute normalized =~ "[Paper 2]"
+  end
+
+  test "verification_claim_text strips /10 strength prefixes before normalizing sourced claims" do
+    summary =
+      "1. [SOURCED] (strength: 7/10) [Paper 4] reports that under the theory of universal gravitation, the Earth's surface \"ought to be of the form of an oblate spheroid of small ellipticity.\""
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized =~ "under the theory of universal gravitation"
+    assert normalized =~ "\"ought to be of the form of an oblate spheroid"
+    refute normalized =~ "(strength: 7/10)"
+    refute String.starts_with?(normalized, "1.")
   end
 
   test "verification_claim_text drops trailing inference after the cited sentence" do
