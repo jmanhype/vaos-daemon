@@ -737,10 +737,7 @@ Known failure patterns to avoid:
       {verified_opposing, opposing_verification_stats}},
      citation_verification_ms} =
       timed(fn ->
-        {
-          verify_citations(supporting_raw, paper_map, prompts),
-          verify_citations(opposing_raw, paper_map, prompts)
-        }
+        verify_citation_pairs(supporting_raw, opposing_raw, paper_map, prompts)
       end)
 
     timings = Map.put(timings, :citation_verification_ms, citation_verification_ms)
@@ -4267,6 +4264,25 @@ Known failure patterns to avoid:
   # After each investigation, ask the LLM to identify 1-2 genuinely novel
   # research questions that emerge from the TENSION between evidence.
   # These questions don't exist in the ledger — they're forward-looking.
+
+  @doc false
+  def verify_citation_pairs(supporting_raw, opposing_raw, paper_map, prompts, verify_fun \\ nil)
+
+  def verify_citation_pairs(supporting_raw, opposing_raw, paper_map, prompts, nil) do
+    verify_citation_pairs(supporting_raw, opposing_raw, paper_map, prompts, &verify_citations/3)
+  end
+
+  def verify_citation_pairs(supporting_raw, opposing_raw, paper_map, prompts, verify_fun)
+      when is_function(verify_fun, 3) do
+    # Keep each side's verifier semantics unchanged, but overlap the two independent passes.
+    supporting_task = Task.async(fn -> verify_fun.(supporting_raw, paper_map, prompts) end)
+    opposing_task = Task.async(fn -> verify_fun.(opposing_raw, paper_map, prompts) end)
+
+    {
+      Task.await(supporting_task, :infinity),
+      Task.await(opposing_task, :infinity)
+    }
+  end
 
   @doc false
   def emergent_question_generation_enabled?(direction, supporting, opposing, uncertainty)

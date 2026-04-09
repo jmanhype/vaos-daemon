@@ -171,6 +171,37 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
            )
   end
 
+  test "verify_citation_pairs/5 runs both sides concurrently and preserves tuple order" do
+    parent = self()
+
+    verify_fun = fn evidence, _paper_map, _prompts ->
+      tag = hd(evidence)
+      send(parent, {:started, tag, self()})
+
+      receive do
+        {:release, ^tag} -> {[tag], %{tag: tag}}
+      after
+        1_000 -> flunk("timed out waiting to release #{inspect(tag)}")
+      end
+    end
+
+    pair_task =
+      Task.async(fn ->
+        Investigate.verify_citation_pairs([:supporting], [:opposing], %{}, %{}, verify_fun)
+      end)
+
+    assert_receive {:started, :supporting, supporting_pid}
+    assert_receive {:started, :opposing, opposing_pid}
+
+    send(opposing_pid, {:release, :opposing})
+    send(supporting_pid, {:release, :supporting})
+
+    assert {
+             {[:supporting], %{tag: :supporting}},
+             {[:opposing], %{tag: :opposing}}
+           } = Task.await(pair_task)
+  end
+
   test "run_semantic_scholar_queries stops after terminal 429 failure" do
     counter = :counters.new(1, [])
 
