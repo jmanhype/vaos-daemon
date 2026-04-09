@@ -94,9 +94,7 @@ defmodule Daemon.Production.FilmProducer do
                   true
 
                 %{state: current} ->
-                  Logger.warning(
-                    "[FilmProducer] #{platform} is #{current}, skipping"
-                  )
+                  Logger.warning("[FilmProducer] #{platform} is #{current}, skipping")
 
                   false
               end
@@ -199,7 +197,10 @@ defmodule Daemon.Production.FilmProducer do
               mod.abort()
               Logger.info("[FilmProducer] Aborted #{platform}")
             rescue
-              e -> Logger.warning("[FilmProducer] Error aborting #{platform}: #{Exception.message(e)}")
+              e ->
+                Logger.warning(
+                  "[FilmProducer] Error aborting #{platform}: #{Exception.message(e)}"
+                )
             end
           end
         end
@@ -243,6 +244,12 @@ defmodule Daemon.Production.FilmProducer do
   # Ignore other PubSub messages (scene_submitted, aborted, etc.)
   def handle_info({source, _event, _data}, state)
       when source in [:film_pipeline, :sora_pipeline, :kling_pipeline] do
+    {:noreply, state}
+  end
+
+  # Shared production topic publishers may emit unrelated tuples (for example
+  # ComfyUI scene runner progress). Ignore any other production event shape.
+  def handle_info({_source, _event, _data}, state) do
     {:noreply, state}
   end
 
@@ -291,10 +298,11 @@ defmodule Daemon.Production.FilmProducer do
   defp handle_platform_complete(platform, data, state) do
     Logger.info("[FilmProducer] #{platform_label(platform)} completed: #{inspect(data)}")
 
-    state = update_platform(state, platform, %{
-      status: :complete,
-      completed_at: DateTime.utc_now()
-    })
+    state =
+      update_platform(state, platform, %{
+        status: :complete,
+        completed_at: DateTime.utc_now()
+      })
 
     broadcast(:platform_complete, %{platform: platform, data: data})
 
@@ -309,11 +317,12 @@ defmodule Daemon.Production.FilmProducer do
     error = Map.get(data, :error, "unknown")
     Logger.error("[FilmProducer] #{platform_label(platform)} failed: #{error}")
 
-    state = update_platform(state, platform, %{
-      status: :failed,
-      completed_at: DateTime.utc_now(),
-      error: error
-    })
+    state =
+      update_platform(state, platform, %{
+        status: :failed,
+        completed_at: DateTime.utc_now(),
+        error: error
+      })
 
     broadcast(:platform_failed, %{platform: platform, error: error})
 
@@ -335,9 +344,7 @@ defmodule Daemon.Production.FilmProducer do
     succeeded = Enum.count(results, fn {_, r} -> r.status == :complete end)
     failed = Enum.count(results, fn {_, r} -> r.status == :failed end)
 
-    Logger.info(
-      "[FilmProducer] All platforms done — #{succeeded} complete, #{failed} failed"
-    )
+    Logger.info("[FilmProducer] All platforms done — #{succeeded} complete, #{failed} failed")
 
     broadcast(:all_complete, results)
 
@@ -362,7 +369,12 @@ defmodule Daemon.Production.FilmProducer do
 
           not process_alive?(mod) ->
             Logger.warning("[FilmProducer] #{platform} process died — marking failed")
-            update_platform(acc, platform, %{status: :failed, completed_at: DateTime.utc_now(), error: "process_died"})
+
+            update_platform(acc, platform, %{
+              status: :failed,
+              completed_at: DateTime.utc_now(),
+              error: "process_died"
+            })
 
           true ->
             live = safe_status(mod)
@@ -370,11 +382,20 @@ defmodule Daemon.Production.FilmProducer do
             case Map.get(live, :state) do
               :complete ->
                 Logger.info("[FilmProducer] #{platform} completed (detected via poll)")
-                update_platform(acc, platform, %{status: :complete, completed_at: DateTime.utc_now()})
+
+                update_platform(acc, platform, %{
+                  status: :complete,
+                  completed_at: DateTime.utc_now()
+                })
 
               :failed ->
                 Logger.warning("[FilmProducer] #{platform} failed (detected via poll)")
-                update_platform(acc, platform, %{status: :failed, completed_at: DateTime.utc_now(), error: "pipeline_failed"})
+
+                update_platform(acc, platform, %{
+                  status: :failed,
+                  completed_at: DateTime.utc_now(),
+                  error: "pipeline_failed"
+                })
 
               _ ->
                 acc
