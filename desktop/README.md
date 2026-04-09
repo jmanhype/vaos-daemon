@@ -48,6 +48,19 @@ cd desktop
 npm run tauri:build              # .dmg / .msi / .AppImage
 ```
 
+## Dependency Audit Tracking
+
+```bash
+cd desktop
+npm run audit:cookie
+```
+
+`npm run audit:cookie` captures the current upstream `@sveltejs/kit` to `cookie`
+advisory state for `vas-swarm-6hv`. It exits non-zero when the published
+`@sveltejs/kit` version, its published `cookie` range, or the local `npm audit`
+result changes, which is the signal to re-run the full desktop audit and decide
+whether the remaining low-severity advisory can finally be removed.
+
 ---
 
 ## Architecture
