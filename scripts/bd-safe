@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Beads spawns a sync worktree under .git/beads-worktrees.
+# Worktree-shell sessions can leak Git env like GIT_INDEX_FILE=.git/index,
+# which breaks git pull inside that worktree with ".git/index: Not a directory".
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR GIT_OBJECT_DIRECTORY
+unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_IMPLICIT_WORK_TREE
+
+exec bd "$@"
