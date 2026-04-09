@@ -95,6 +95,9 @@ defmodule Daemon.Tools.Builtins.Investigate do
   # 10 min cooldown before half-open probe
   @circuit_cooldown_ms 600_000
   @circuit_sources [:openalex, :semantic_scholar, :alphaxiv, :huggingface]
+  # Reuse the same uncertainty bar that triggers an iteration hint.
+  @high_uncertainty_threshold 0.5
+  @emergent_question_contested_directions ~w(genuinely_contested belief_contested)
 
   # OpenAlex polite pool — requests with mailto get routed to faster servers
   @openalex_mailto "vaos-daemon@miosa.ai"
@@ -3399,7 +3402,7 @@ Known failure patterns to avoid:
       metrics = EpistemicLedger.claim_metrics(claim.id, ledger_name)
       uncertainty = metrics["uncertainty"]
 
-      if uncertainty > 0.5 do
+      if uncertainty > @high_uncertainty_threshold do
         "\n### Iteration Suggested\n" <>
           "High uncertainty detected (#{Float.round(uncertainty * 1.0, 3)}). " <>
           "Consider re-investigating with more specific sub-questions to reduce epistemic uncertainty.\n"
@@ -4265,10 +4268,20 @@ Known failure patterns to avoid:
   # research questions that emerge from the TENSION between evidence.
   # These questions don't exist in the ledger — they're forward-looking.
 
+  @doc false
+  def emergent_question_generation_enabled?(direction, supporting, opposing, uncertainty)
+      when is_list(supporting) and is_list(opposing) do
+    supporting != [] and opposing != [] and
+      ((is_binary(direction) and direction in @emergent_question_contested_directions) or
+         (is_number(uncertainty) and uncertainty > @high_uncertainty_threshold))
+  end
+
+  def emergent_question_generation_enabled?(_, _, _, _), do: false
+
   defp extract_emergent_questions(topic, direction, supporting, opposing, uncertainty) do
-    if supporting == [] and opposing == [] do
-      []
-    else
+    if emergent_question_generation_enabled?(direction, supporting, opposing, uncertainty) do
+      uncertainty_value = if is_number(uncertainty), do: uncertainty * 1.0, else: 1.0
+
       for_summaries =
         supporting
         |> Enum.take(3)
@@ -4284,7 +4297,7 @@ Known failure patterns to avoid:
       prompt = """
       You just completed an investigation on: "#{topic}"
 
-      Direction: #{direction} (uncertainty: #{Float.round(uncertainty * 1.0, 2)})
+      Direction: #{direction} (uncertainty: #{Float.round(uncertainty_value, 2)})
 
       Key evidence FOR:
       #{for_summaries}
@@ -4322,6 +4335,12 @@ Known failure patterns to avoid:
           Logger.debug("[investigate] Emergent question extraction failed or empty")
           []
       end
+    else
+      Logger.debug(
+        "[investigate] Skipping emergent question extraction due to low evidence tension"
+      )
+
+      []
     end
   rescue
     e ->

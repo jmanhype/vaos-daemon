@@ -131,6 +131,46 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert Investigate.preferred_utility_model() == "glm-5.1"
   end
 
+  test "emergent_question_generation_enabled?/4 requires real evidence tension" do
+    supporting = [%{summary: "Supporting evidence"}]
+    opposing = [%{summary: "Opposing evidence"}]
+
+    assert Investigate.emergent_question_generation_enabled?(
+             "genuinely_contested",
+             supporting,
+             opposing,
+             0.2
+           )
+
+    assert Investigate.emergent_question_generation_enabled?(
+             "supporting",
+             supporting,
+             opposing,
+             0.8
+           )
+
+    refute Investigate.emergent_question_generation_enabled?(
+             "supporting",
+             supporting,
+             opposing,
+             0.5
+           )
+
+    refute Investigate.emergent_question_generation_enabled?(
+             "supporting",
+             supporting,
+             [],
+             0.8
+           )
+
+    refute Investigate.emergent_question_generation_enabled?(
+             "supporting",
+             supporting,
+             opposing,
+             nil
+           )
+  end
+
   test "run_semantic_scholar_queries stops after terminal 429 failure" do
     counter = :counters.new(1, [])
 
