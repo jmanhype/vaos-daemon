@@ -2,15 +2,7 @@
 
 import { spawnSync } from "node:child_process";
 import process from "node:process";
-
-const EXPECTED_STATE = {
-  publishedKitVersion: "2.57.0",
-  publishedCookieRange: "^0.6.0",
-  installedKitVersion: "2.57.0",
-  installedCookieVersion: "0.6.0",
-  lowSeverityCount: 3,
-  advisoryUrl: "https://github.com/advisories/GHSA-pxg6-pf52-xh8x",
-};
+import { evaluateAdvisoryState } from "./check-cookie-advisory-lib.mjs";
 
 const auditReport = readJson("npm", ["audit", "--json"], {
   allowFailure: true,
@@ -34,64 +26,23 @@ const publishedDependencies = readJson("npm", [
   "--json",
 ]);
 
-const installedKitVersion = findPackageVersion(dependencyTree, "@sveltejs/kit");
-const installedCookieVersion = findPackageVersion(dependencyTree, "cookie");
-const publishedCookieRange = publishedDependencies.cookie ?? "missing";
-const lowSeverityCount = auditReport.metadata?.vulnerabilities?.low ?? 0;
-const advisoryPresent = auditReport.vulnerabilities?.cookie?.via?.some(
-  (entry) =>
-    typeof entry === "object" &&
-    entry !== null &&
-    entry.url === EXPECTED_STATE.advisoryUrl,
-);
-
-console.log(`Installed @sveltejs/kit: ${installedKitVersion}`);
-console.log(`Installed cookie: ${installedCookieVersion}`);
-console.log(`Published @sveltejs/kit: ${publishedKitVersion}`);
-console.log(`Published cookie range: ${publishedCookieRange}`);
-console.log(`npm audit low-severity count: ${lowSeverityCount}`);
-console.log(`cookie advisory present: ${advisoryPresent ? "yes" : "no"}`);
-
-const mismatches = [];
-
-compareState(
-  mismatches,
-  "installed @sveltejs/kit version",
-  EXPECTED_STATE.installedKitVersion,
-  installedKitVersion,
-);
-compareState(
-  mismatches,
-  "installed cookie version",
-  EXPECTED_STATE.installedCookieVersion,
-  installedCookieVersion,
-);
-compareState(
-  mismatches,
-  "published @sveltejs/kit version",
-  EXPECTED_STATE.publishedKitVersion,
+const result = evaluateAdvisoryState({
+  auditReport,
+  dependencyTree,
   publishedKitVersion,
-);
-compareState(
-  mismatches,
-  "published cookie range",
-  EXPECTED_STATE.publishedCookieRange,
-  publishedCookieRange,
-);
-compareState(
-  mismatches,
-  "npm audit low-severity count",
-  String(EXPECTED_STATE.lowSeverityCount),
-  String(lowSeverityCount),
+  publishedDependencies,
+});
+
+console.log(`Installed @sveltejs/kit: ${result.installedKitVersion}`);
+console.log(`Installed cookie: ${result.installedCookieVersion}`);
+console.log(`Published @sveltejs/kit: ${result.publishedKitVersion}`);
+console.log(`Published cookie range: ${result.publishedCookieRange}`);
+console.log(`npm audit low-severity count: ${result.lowSeverityCount}`);
+console.log(
+  `cookie advisory present: ${result.advisoryPresent ? "yes" : "no"}`,
 );
 
-if (!advisoryPresent) {
-  mismatches.push(
-    `npm audit no longer reports ${EXPECTED_STATE.advisoryUrl} for cookie`,
-  );
-}
-
-if (mismatches.length === 0) {
+if (result.status === "unchanged") {
   console.log(
     "Status: upstream remains unchanged. The residual cookie advisory is still inherited from the latest published @sveltejs/kit release.",
   );
@@ -102,43 +53,11 @@ console.error(
   "Status: advisory state changed. Re-run the desktop dependency audit and revisit vas-swarm-6hv.",
 );
 
-for (const mismatch of mismatches) {
+for (const mismatch of result.mismatches) {
   console.error(`- ${mismatch}`);
 }
 
 process.exit(1);
-
-function compareState(mismatches, label, expected, actual) {
-  if (expected !== actual) {
-    mismatches.push(`${label} expected ${expected} but found ${actual}`);
-  }
-}
-
-function findPackageVersion(node, packageName) {
-  if (!node?.dependencies) {
-    return "missing";
-  }
-
-  const pending = Object.entries(node.dependencies);
-
-  while (pending.length > 0) {
-    const [currentName, current] = pending.shift();
-
-    if (!current) {
-      continue;
-    }
-
-    if (currentName === packageName) {
-      return current.version ?? "missing";
-    }
-
-    if (current.dependencies) {
-      pending.push(...Object.entries(current.dependencies));
-    }
-  }
-
-  return "missing";
-}
 
 function readJson(command, args, options = {}) {
   const output = read(command, args, options);

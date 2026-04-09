@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "audit:cookie": "node ./scripts/check-cookie-advisory.mjs",
+    "test:cookie": "node --test ./scripts/check-cookie-advisory.test.mjs",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "check:errors": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --threshold error",
