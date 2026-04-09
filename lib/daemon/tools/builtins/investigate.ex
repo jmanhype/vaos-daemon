@@ -3094,6 +3094,9 @@ Known failure patterns to avoid:
           semantic_seed: "#{subject_query} curvature measurement",
           required_terms: ~w(curvature geodesy geodetic satellite orbital orbit gravity
             circumnavigation horizon navigation surveying ellipsoid spheroid spherical),
+          stable_terms: ~w(geodesy geodetic gravity geoid ellipsoid spheroid spherical
+            curvature reference frame terrestrial gps gnss satellite orbital orbit
+            vlbi slr doris gravimetry surveying navigation),
           direct_queries: [
             {:curvature, "#{subject_query} curvature measurement", []},
             {:geodesy, "#{subject_query} geodesy", []},
@@ -3185,7 +3188,27 @@ Known failure patterns to avoid:
       |> Map.get(:required_terms, [])
       |> Enum.count(&String.contains?(paper_text, &1))
 
-    title_hits * 4 + topic_hits * 2 + evidence_hits * 3 - discourse_hits * 3
+    stable_hits =
+      evidence_profile
+      |> Map.get(:stable_terms, [])
+      |> Enum.count(&String.contains?(paper_text, &1))
+
+    citation_count =
+      case paper do
+        %{citation_count: count} when is_number(count) -> count
+        %{"citation_count" => count} when is_number(count) -> count
+        %{"citationCount" => count} when is_number(count) -> count
+        _ -> 0
+      end
+
+    citation_bonus =
+      citation_count
+      |> Kernel.+(1)
+      |> :math.log10()
+      |> Kernel.*(1.5)
+
+    title_hits * 4 + topic_hits * 2 + evidence_hits * 3 + stable_hits * 4 + citation_bonus -
+      discourse_hits * 3
   end
 
   defp semantic_search_seed(%{evidence_profile: %{semantic_seed: seed}})
@@ -3204,7 +3227,13 @@ Known failure patterns to avoid:
 
   defp search_topic_wrappers do
     [
-      ~r/^\s*(?:investigate|review|examine|assess|evaluate|analy[sz]e|test|check)\s+claims?\s+that\s+/i,
+      ~r/^\s*(?:cross[\s-]*check|re[\s-]*evaluate|triage)\s+(?:the\s+)?claims?\s+that\s+/i,
+      ~r/^\s*(?:cross[\s-]*check|re[\s-]*evaluate|triage)\s+(?:whether|if)\s+/i,
+      ~r/^\s*map\s+the\s+evidence\s+(?:on|for)\s+(?:the\s+)?claims?\s+that\s+/i,
+      ~r/^\s*map\s+the\s+evidence\s+(?:on|for)\s+(?:whether|if)\s+/i,
+      ~r/^\s*map\s+the\s+evidence\s+(?:on|for)\s+/i,
+      ~r/^\s*(?:cross[\s-]*check|re[\s-]*evaluate|triage)\s+/i,
+      ~r/^\s*(?:investigate|review|examine|assess|evaluate|analy[sz]e|test|check)\s+(?:the\s+)?claims?\s+that\s+/i,
       ~r/^\s*(?:investigate|review|examine|assess|evaluate|analy[sz]e|test|check)\s+(?:whether|if)\s+/i,
       ~r/^\s*(?:investigate|review|examine|assess|evaluate|analy[sz]e|test|check)\s+/i
     ]

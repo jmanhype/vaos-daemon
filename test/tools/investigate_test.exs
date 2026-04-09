@@ -998,6 +998,18 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
 
     assert Investigate.normalized_search_topic("Investigate whether creatine helps cognition") ==
              "creatine helps cognition"
+
+    assert Investigate.normalized_search_topic("cross-check whether the earth is flat") ==
+             "the earth is flat"
+
+    assert Investigate.normalized_search_topic("re-evaluate the claim that the earth is flat") ==
+             "the earth is flat"
+
+    assert Investigate.normalized_search_topic("map the evidence on whether the earth is flat") ==
+             "the earth is flat"
+
+    assert Investigate.normalized_search_topic("triage whether the earth is flat") ==
+             "the earth is flat"
   end
 
   test "search_query_plan uses general evidence queries for non-clinical claims" do
@@ -1087,6 +1099,43 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
 
     assert hd(reranked).title ==
              "Satellite measurement of Earth curvature from geodetic orbit data"
+
+    assert Enum.at(reranked, 2).title == "Flat Earth belief and misinformation on social media"
+  end
+
+  test "rerank_retrieval_candidates favors stable direct-evidence core over niche direct matches" do
+    plan =
+      Investigate.search_query_plan("cross-check whether the earth is flat", ["earth", "flat"])
+
+    reranked =
+      Investigate.rerank_retrieval_candidates(
+        [
+          %{
+            title: "Spheroidal modes excited during the 1991 Pinatubo eruption",
+            abstract:
+              "Seismic observations identified spheroidal modes in a volcanic eruption context.",
+            citation_count: 85
+          },
+          %{
+            title: "International Terrestrial Reference Frame from VLBI, SLR, GPS, and DORIS",
+            abstract:
+              "A geodetic terrestrial reference frame combines VLBI, SLR, GPS, and DORIS into a stable three-dimensional Earth reference frame.",
+            citation_count: 1165
+          },
+          %{
+            title: "Flat Earth belief and misinformation on social media",
+            abstract: "A discourse analysis of ideology and public attitudes.",
+            citation_count: 24
+          }
+        ],
+        plan
+      )
+
+    assert hd(reranked).title ==
+             "International Terrestrial Reference Frame from VLBI, SLR, GPS, and DORIS"
+
+    assert Enum.at(reranked, 1).title ==
+             "Spheroidal modes excited during the 1991 Pinatubo eruption"
 
     assert Enum.at(reranked, 2).title == "Flat Earth belief and misinformation on social media"
   end
