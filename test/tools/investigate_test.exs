@@ -271,6 +271,53 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert metadata.opposing == []
   end
 
+  test "partial_completion_metadata does not treat unverified sourced evidence as grounded" do
+    supporting = [
+      %{
+        summary: "Quoted abstract sentence [Paper 1]",
+        score: 0.2,
+        verified: false,
+        verification: "unverified",
+        paper_type: :study,
+        citation_count: 12,
+        strength: "moderate",
+        source_quality: 0.7,
+        source_type: :sourced,
+        evidence_store: :belief
+      }
+    ]
+
+    metadata =
+      Investigate.partial_completion_metadata(
+        "test topic",
+        supporting,
+        [],
+        [%{"title" => "Paper", "year" => 2024, "citation_count" => 12}],
+        %{openalex: 1},
+        Strategy.default(),
+        "variant-456",
+        %{total_ms: 50},
+        %{total_items: 1, llm_items: 1}
+      )
+
+    assert metadata.verified_for == 0
+    assert metadata.grounded_for_count == 0
+    assert metadata.belief_for_count == 1
+    assert metadata.fraudulent_citations == 1
+
+    assert [
+             %{
+               source_type: "sourced",
+               evidence_store: "belief",
+               verification: "unverified"
+             }
+           ] =
+             Enum.map(
+               metadata.supporting,
+               &Map.take(&1, [:source_type, :evidence_store, :verification])
+             )
+  end
+
   test "build_boundary_trace captures prompts, raw outputs, and evidence boundaries" do
     trace =
       Investigate.build_boundary_trace(
@@ -333,6 +380,7 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert hd(trace.verified.supporting).verification == "verified"
     assert trace.classification.grounded_for_count == 1
     assert trace.outcome.direction == "supporting"
+    assert hd(trace.verified.supporting).verification_claim == "Quoted result"
   end
 
   test "maybe_capture_trace writes a trace artifact and annotates metadata" do
@@ -360,5 +408,32 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert payload =~ "\"trace_label\": \"steered eval\""
     assert payload =~ "\"topic\": \"the earth is flat\""
     assert payload =~ "\"direction\": \"opposing\""
+  end
+
+  test "verification_claim_text trims traced sourced paragraphs down to the cited claim" do
+    google_earth_engine_summary =
+      "## 1. [SOURCED] (strength: 9) The entire enterprise of satellite remote sensing—which processes massive volumes of Earth observation data—fundamentally depends on and confirms a spheroidal Earth model. According to [Paper 2], Google Earth Engine facilitates \"processing big geo data over large areas and monitoring the environment for long periods of time,\" utilizing satellite datasets like Landsat and Sentinel that image the complete globe through orbital mechanics only possible around a spherical body. The platform's demonstrated success across \"Land Cover/land Use classification, hydrology, urban planning, natural disaster, climate analyses\" across \"large areas\" requires seamless stitching of imagery captured from orbit—imagery that consistently shows Earth's curvature and enables global coverage that would be geometrically impossible on a flat plane."
+
+    normalized = Investigate.verification_claim_text(google_earth_engine_summary)
+
+    assert normalized =~
+             "According to Google Earth Engine facilitates \"processing big geo data over large areas and monitoring the environment for long periods of time,\""
+
+    refute normalized =~ "only possible around a spherical body"
+    refute normalized =~ "requires seamless stitching"
+    refute normalized =~ "## 1."
+    refute normalized =~ "[SOURCED]"
+    refute normalized =~ "[Paper 2]"
+  end
+
+  test "verification_claim_text drops trailing inference after the cited sentence" do
+    flat_earth_summary =
+      "The academic literature explicitly classifies Flat Earth ideology as \"arguably the paragon of science denial\" and frames it as diametrically opposed to \"scientific consensus on the shape of the Earth\" [Paper 3]. The study empirically demonstrates that Flat Earth belief is predicted not by evidence evaluation but by \"conspiracy mentality,\" with participants recruited from the Flat Earth International Conference scoring \"significantly higher in conspiracy mentality\" than a national sample, while showing \"no significant difference in religiosity and belief in evolution\" [Paper 3]. This establishes that flat Earth adherence is a function of conspiratorial thinking patterns rather than rational assessment of physical evidence."
+
+    normalized = Investigate.verification_claim_text(flat_earth_summary)
+
+    assert normalized =~ "arguably the paragon of science denial"
+    refute normalized =~ "This establishes"
+    refute normalized =~ "[Paper 3]"
   end
 end

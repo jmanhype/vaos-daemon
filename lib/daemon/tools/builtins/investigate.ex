@@ -1201,6 +1201,14 @@ Known failure patterns to avoid:
     }
   end
 
+  defp grounded_evidence?(ev) do
+    case Map.get(ev, :evidence_store) do
+      :grounded -> true
+      "grounded" -> true
+      _ -> false
+    end
+  end
+
   @doc false
   def partial_completion_metadata(
         topic,
@@ -1214,8 +1222,8 @@ Known failure patterns to avoid:
         verification_stats
       ) do
     metadata_timings = timing_metadata(timings)
-    grounded_for = Enum.filter(verified_supporting, &(&1.source_type == :sourced))
-    grounded_against = Enum.filter(verified_opposing, &(&1.source_type == :sourced))
+    grounded_for = Enum.filter(verified_supporting, &grounded_evidence?/1)
+    grounded_against = Enum.filter(verified_opposing, &grounded_evidence?/1)
     all_evidence = verified_supporting ++ verified_opposing
     for_total = Enum.sum(Enum.map(verified_supporting, &Map.get(&1, :score, 0.0)))
     against_total = Enum.sum(Enum.map(verified_opposing, &Map.get(&1, :score, 0.0)))
@@ -1475,6 +1483,7 @@ Known failure patterns to avoid:
   defp verify_single_citation(evidence, paper, prompts) do
     abstract = Map.get(paper, "abstract", "") || ""
     title = Map.get(paper, "title", "") || ""
+    claim = verification_claim_text(evidence.summary)
 
     prompt =
       case prompts["verify_prompt"] do
@@ -1482,7 +1491,7 @@ Known failure patterns to avoid:
           PromptConfig.render(template,
             paper_title: title,
             paper_abstract: String.slice(to_string(abstract), 0, 2000),
-            claim: evidence.summary
+            claim: claim
           )
 
         _ ->
@@ -1491,7 +1500,7 @@ Known failure patterns to avoid:
           Paper title: #{title}
           Paper abstract: #{String.slice(to_string(abstract), 0, 2000)}
 
-          Claim: #{evidence.summary}
+          Claim: #{claim}
 
           Two questions:
           1. Does this paper's abstract support the specific claim? VERIFIED / PARTIAL / UNVERIFIED
@@ -2891,7 +2900,7 @@ Known failure patterns to avoid:
   defp cached_verify(evidence, paper, prompts) do
     # Use the same ETS table as Vaos.Ledger.Experiment.Scorer for caching
     ensure_scorer_cache()
-    cache_key = :erlang.phash2({evidence.summary, paper["title"]})
+    cache_key = :erlang.phash2({verification_claim_text(evidence.summary), paper["title"]})
 
     case :ets.lookup(:scorer_cache, {:verify, cache_key}) do
       [{{:verify, ^cache_key}, result}] ->
@@ -3328,6 +3337,7 @@ Known failure patterns to avoid:
 
       %{
         summary: summary,
+        verification_claim: verification_claim_text(to_string(summary || "")),
         paper_ref: extract_paper_ref(to_string(summary || "")),
         score: map_value(ev, :score),
         verified: map_value(ev, :verified),
@@ -3353,6 +3363,20 @@ Known failure patterns to avoid:
   defp normalize_chat_result(other) do
     %{status: "other", value: inspect(other)}
   end
+
+  @doc false
+  def verification_claim_text(summary) when is_binary(summary) do
+    summary
+    |> strip_evidence_prefix()
+    |> normalize_verification_whitespace()
+    |> first_citation_sentence()
+    |> trim_after_last_quote()
+    |> strip_verification_markup()
+    |> String.trim()
+  end
+
+  def verification_claim_text(nil), do: ""
+  def verification_claim_text(other), do: verification_claim_text(to_string(other))
 
   defp message_content(messages, index) when is_list(messages) and is_integer(index) do
     case Enum.at(messages, index) do
@@ -3420,6 +3444,72 @@ Known failure patterns to avoid:
     else
       String.slice(text, length - limit, limit)
     end
+  end
+
+  defp strip_evidence_prefix(summary) do
+    summary
+    |> String.replace(
+      ~r/^\s*[*_`#\s]*(?:#+\s*)?\d+[\.\)]?\s*\[(?:SOURCED|REASONING)\]\s*\((?:strength|score)\s*:\s*\d+\)\s*/iu,
+      ""
+    )
+    |> String.replace(
+      ~r/^\s*[*_`]*(?:\d+[\.\)]\s*)?\[(?:SOURCED|REASONING)\]\s*\((?:strength|score)\s*:\s*\d+\)\s*/iu,
+      ""
+    )
+  end
+
+  defp normalize_verification_whitespace(summary) do
+    summary
+    |> String.replace(~r/\s+/, " ")
+    |> String.trim()
+  end
+
+  defp first_citation_sentence(summary) do
+    case extract_paper_ref(summary) do
+      nil ->
+        summary
+
+      paper_ref ->
+        ~r/(?<=[.!?])\s+/
+        |> Regex.split(summary, trim: true)
+        |> Enum.find(summary, &String.contains?(&1, "[Paper #{paper_ref}]"))
+    end
+  end
+
+  defp trim_after_last_quote(summary) do
+    quote_indexes =
+      summary
+      |> String.graphemes()
+      |> Enum.with_index()
+      |> Enum.filter(fn {char, _index} -> char == "\"" end)
+
+    case quote_indexes do
+      [] ->
+        summary
+
+      indexes when rem(length(indexes), 2) == 1 ->
+        summary
+
+      _ ->
+        {_quote, last_index} = List.last(quote_indexes)
+
+        if last_index < String.length(summary) - 1 do
+          String.slice(summary, 0, last_index + 1)
+        else
+          summary
+        end
+    end
+  end
+
+  defp strip_verification_markup(summary) do
+    summary
+    |> String.replace(~r/\[Paper\s+\d+\]/i, "")
+    |> String.replace(~r/[*_`]+/, "")
+    |> String.replace(~r/\bAccording to\s*,/i, "According to")
+    |> String.replace(~r/\s+([,.;:!?])/, "\\1")
+    |> String.replace(~r/\(\s+/, "(")
+    |> String.replace(~r/\s+\)/, ")")
+    |> normalize_verification_whitespace()
   end
 
   defp paper_details(all_papers) do
