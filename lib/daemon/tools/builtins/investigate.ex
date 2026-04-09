@@ -63,6 +63,18 @@ defmodule Daemon.Tools.Builtins.Investigate do
     under again further then once here there when where why how all both each
     few more most other some such no nor not only own same so than too very it
     its this that these those and but or if while)
+  @search_relation_words ~w(cause causes caused causing improve improves improved improving
+    prevent prevents prevented preventing effective effectiveness efficacy associated
+    association linked links linking relation relationship claims claim whether if)
+  @clinical_intervention_terms ~w(supplement supplements supplementation treatment treatments
+    therapy therapies drug drugs medication medications placebo homeopathy dose dosing
+    intervention interventions)
+  @health_claim_terms ~w(health disease diseases disorder disorders symptom symptoms
+    cancer autism vaccine vaccines smoking smoker smokers lung lungs muscular strength
+    training resistance cognition mortality survival risk risks pain pains)
+  @retrieval_discourse_terms ~w(misinformation disinformation journalism media communication
+    discourse ideology belief beliefs denial denialism history historical philosophy
+    perception attitudes social conference public commentary review survey overview)
 
   # AEC Two-Store Architecture (arxiv.org/abs/2602.03974)
   # Grounded store: high-quality sources that can determine the verdict
@@ -286,8 +298,10 @@ defmodule Daemon.Tools.Builtins.Investigate do
         _ -> {PromptConfig.load(), "default"}
       end
 
-    # 2. Extract keywords for prior knowledge search
-    keywords = extract_keywords(topic)
+    # 2. Extract search keywords from a normalized factual topic so wrapper
+    # phrasing like "examine claims that ..." does not pollute retrieval.
+    search_topic = normalized_search_topic(topic)
+    keywords = extract_keywords(search_topic)
 
     # 2a. Load prior winning strategy for search/LLM params (scoring params tuned later by optimizer)
     #     Fallback chain: topic-specific → _global (Retrospector-optimized) → defaults
@@ -329,7 +343,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
     # 4. MULTI-SOURCE PAPER SEARCH: Semantic Scholar + OpenAlex + alphaXiv (parallel)
     #    Uses prior strategy's top_n_papers and per_query_limit for tuned search breadth
     {{all_papers, source_counts}, paper_search_ms} =
-      timed(fn -> search_all_papers(topic, keywords, prior_strategy) end)
+      timed(fn -> search_all_papers(search_topic, keywords, prior_strategy) end)
 
     Logger.info("[investigate] Papers: #{length(all_papers)} total (#{inspect(source_counts)})")
 
@@ -2318,9 +2332,11 @@ Known failure patterns to avoid:
 
   # -- Multi-source literature search: Semantic Scholar + OpenAlex + alphaXiv --
 
-  defp search_all_papers(topic, keywords \\ [], strategy \\ Strategy.default()) do
+  defp search_all_papers(topic, keywords, strategy) do
     http_fn = literature_http_fn()
-    {ss_queries, oa_queries} = build_search_queries(topic, keywords)
+    plan = search_query_plan(topic, keywords)
+    normalized_topic = plan.normalized_topic
+    {ss_queries, oa_queries} = {plan.ss_queries, plan.oa_queries}
     per_query = strategy.per_query_limit
 
     # Log circuit breaker state for observability (read-only peek, no state transitions)
@@ -2398,7 +2414,7 @@ Known failure patterns to avoid:
         Task.async(fn ->
           alias Daemon.Tools.Builtins.AlphaXivClient
 
-          case AlphaXivClient.embedding_search(topic) do
+          case AlphaXivClient.embedding_search(normalized_topic) do
             {:ok, papers} when papers != [] ->
               Logger.debug("[investigate] alphaXiv returned #{length(papers)} papers")
               {:alphaxiv, papers}
@@ -2418,7 +2434,7 @@ Known failure patterns to avoid:
         Task.async(fn ->
           alias Daemon.Tools.Builtins.HFPapersClient
 
-          case HFPapersClient.search(topic, limit: 10) do
+          case HFPapersClient.search(normalized_topic, limit: 10) do
             {:ok, papers} when papers != [] ->
               Logger.debug("[investigate] HuggingFace returned #{length(papers)} papers")
               {:huggingface, papers}
@@ -2441,7 +2457,7 @@ Known failure patterns to avoid:
 
     async_results =
       Enum.flat_map(yielded, fn
-        {task, {:ok, result}} ->
+        {_task, {:ok, result}} ->
           # Record circuit success based on source
           case result do
             {:alphaxiv, papers} ->
@@ -2521,10 +2537,11 @@ Known failure patterns to avoid:
     deduped = merge_papers_raw(all_raw)
 
     # Rank by relevance BEFORE normalizing (papers have atom keys)
-    ranked = Literature.rank_papers(deduped, topic)
+    ranked = Literature.rank_papers(deduped, normalized_topic)
+    reranked = rerank_retrieval_candidates(ranked, plan)
 
     # Filter out irrelevant papers (zero topic-term overlap)
-    {relevant, dropped} = filter_relevant(ranked, topic, keywords)
+    {relevant, dropped} = filter_relevant(reranked, normalized_topic, plan.keywords)
 
     if dropped > 0 do
       Logger.info("[investigate] Filtered out #{dropped} irrelevant papers")
@@ -2539,39 +2556,130 @@ Known failure patterns to avoid:
     {sorted, source_counts}
   end
 
+  @doc false
+  def normalized_search_topic(topic) do
+    original =
+      topic
+      |> to_string()
+      |> String.trim()
+      |> String.trim_trailing(".")
+      |> String.trim_trailing("?")
+      |> String.trim_trailing("!")
+
+    normalized =
+      Enum.reduce(search_topic_wrappers(), original, fn pattern, acc ->
+        String.replace(acc, pattern, "")
+      end)
+      |> String.replace(~r/\s+/, " ")
+      |> String.trim()
+
+    if normalized == "", do: original, else: normalized
+  end
+
+  @doc false
+  def search_query_plan(topic, keywords \\ []) do
+    normalized_topic = normalized_search_topic(topic)
+    normalized_keywords = search_keywords(normalized_topic, keywords)
+    profile = search_query_profile(normalized_topic, normalized_keywords)
+    {ss_queries, oa_queries} = build_search_queries(normalized_topic, normalized_keywords, profile)
+
+    %{
+      normalized_topic: normalized_topic,
+      keywords: normalized_keywords,
+      profile: profile,
+      ss_queries: ss_queries,
+      oa_queries: oa_queries
+    }
+  end
+
+  @doc false
+  def rerank_retrieval_candidates(papers, %{profile: :general, normalized_topic: topic})
+      when is_list(papers) do
+    topic_terms = distinctive_topic_terms(topic)
+
+    papers
+    |> Enum.with_index()
+    |> Enum.sort_by(
+      fn {paper, index} ->
+        {-retrieval_directness_score(paper, topic_terms), index}
+      end
+    )
+    |> Enum.map(&elem(&1, 0))
+  end
+
+  def rerank_retrieval_candidates(papers, _plan) when is_list(papers), do: papers
+
   # Build search queries split by API. SS gets 3 queries (rate limit safe),
-  # OA gets all 7+ (generous rate limits). Returns {ss_queries, oa_queries}.
-  defp build_search_queries(topic, keywords) do
-    topic_words = topic |> String.downcase() |> String.split(~r/\s+/, trim: true) |> MapSet.new()
+  # OA gets the broader query family. Returns {ss_queries, oa_queries}.
+  defp build_search_queries(topic, keywords, profile) do
+    topic_words = topic_terms(topic) |> MapSet.new()
+    keyword_topic = keyword_query_topic(topic, keywords)
 
     novel_keywords =
       Enum.reject(keywords, fn kw -> MapSet.member?(topic_words, kw) end) |> Enum.take(3)
 
-    # Opts for review-specific queries: filter at API level for reviews/meta-analyses
     review_opts = [publication_types: "Review,MetaAnalysis", type: "review"]
 
-    # SS: only 3 highest-value queries (avoids rate limiting without API key)
-    ss_queries = [
-      {:topic, topic, []},
-      {:reviews, "systematic review #{topic}", review_opts},
-      {:rct, "randomized controlled trial #{topic}", []}
-    ]
+    {ss_queries, oa_queries} =
+      case profile do
+        :clinical_intervention ->
+          {
+            [
+              {:topic, topic, []},
+              {:reviews, "systematic review #{keyword_topic}", review_opts},
+              {:rct, "randomized controlled trial #{keyword_topic}", []}
+            ],
+            [
+              {:topic, topic, []},
+              {:reviews, "systematic review #{keyword_topic}", review_opts},
+              {:meta_analysis, "meta-analysis #{keyword_topic}", review_opts},
+              {:cochrane, "Cochrane review #{keyword_topic}", review_opts},
+              {:placebo, "#{keyword_topic} placebo controlled trial", []},
+              {:guideline, "clinical guideline #{keyword_topic}", []},
+              {:rct, "randomized controlled trial #{keyword_topic}", []}
+            ]
+          }
 
-    # OA: all queries (10 req/s polite pool)
-    oa_queries = [
-      {:topic, topic, []},
-      {:reviews, "systematic review #{topic}", review_opts},
-      {:cochrane, "Cochrane review #{topic}", review_opts},
-      {:placebo, "#{topic} placebo controlled trial", []},
-      {:consensus, "scientific consensus #{topic}", []},
-      {:critique, "#{topic} critical evaluation", []},
-      {:rct, "randomized controlled trial #{topic}", []}
-    ]
+        :health_claim ->
+          {
+            [
+              {:topic, topic, []},
+              {:reviews, "systematic review #{keyword_topic}", review_opts},
+              {:cohort, "cohort study #{keyword_topic}", []}
+            ],
+            [
+              {:topic, topic, []},
+              {:reviews, "systematic review #{keyword_topic}", review_opts},
+              {:meta_analysis, "meta-analysis #{keyword_topic}", review_opts},
+              {:cohort, "cohort study #{keyword_topic}", []},
+              {:case_control, "case-control study #{keyword_topic}", []},
+              {:observational, "observational study #{keyword_topic}", []},
+              {:consensus, "scientific consensus #{keyword_topic}", []}
+            ]
+          }
 
-    # Add keyword-augmented query to OA only if novel keywords exist
+        :general ->
+          {
+            [
+              {:topic, topic, []},
+              {:keywords, keyword_topic, []},
+              {:evidence, "#{keyword_topic} empirical evidence", []}
+            ],
+            [
+              {:topic, topic, []},
+              {:keywords, keyword_topic, []},
+              {:evidence, "#{keyword_topic} empirical evidence", []},
+              {:observation, "#{keyword_topic} direct observation", []},
+              {:measurement, "#{keyword_topic} measurement data", []},
+              {:evaluation, "#{keyword_topic} physical evidence", []},
+              {:analysis, "#{keyword_topic} empirical test", []}
+            ]
+          }
+      end
+
     oa_queries =
       if novel_keywords != [] do
-        oa_queries ++ [{:keywords, "#{topic} #{Enum.join(novel_keywords, " ")}", []}]
+        oa_queries ++ [{:keywords_augmented, "#{keyword_topic} #{Enum.join(novel_keywords, " ")}", []}]
       else
         oa_queries
       end
@@ -2613,14 +2721,7 @@ Known failure patterns to avoid:
   # This prevents generic words like "effectiveness" from matching unrelated papers
   # (e.g. "Effectiveness of treatments for firework fears in dogs").
   defp filter_relevant(papers, topic, _keywords) do
-    # Extract distinctive terms from topic — skip short/generic words
-    distinctive_terms =
-      topic
-      |> String.downcase()
-      |> String.replace(~r/[^a-z0-9\s\-]/, " ")
-      |> String.split(~r/\s+/, trim: true)
-      |> Enum.reject(&(&1 in @stop_words))
-      |> Enum.reject(&(String.length(&1) < 4))
+    distinctive_terms = distinctive_topic_terms(topic)
 
     # Generic modifiers that appear across many domains — never use as primary filter term
     generic_modifiers =
@@ -2711,6 +2812,102 @@ Known failure patterns to avoid:
       "citationCount" => 0,
       "source" => "unknown"
     }
+  end
+
+  defp search_keywords(topic, keywords) do
+    base_keywords =
+      case keywords do
+        list when is_list(list) and list != [] -> list
+        _ -> extract_keywords(topic)
+      end
+
+    base_keywords
+    |> Enum.map(&to_string/1)
+    |> Enum.map(&String.downcase/1)
+    |> Enum.reject(&(&1 in @stop_words))
+    |> Enum.reject(&(&1 in @search_relation_words))
+    |> Enum.reject(&(String.length(&1) < 3))
+    |> Enum.uniq()
+    |> Enum.take(4)
+  end
+
+  defp search_query_profile(topic, keywords) do
+    terms =
+      topic_terms(topic)
+      |> Kernel.++(keywords)
+      |> MapSet.new()
+
+    cond do
+      intersects_term_set?(terms, @clinical_intervention_terms) and
+          intersects_term_set?(terms, @health_claim_terms) ->
+        :clinical_intervention
+
+      intersects_term_set?(terms, @health_claim_terms) ->
+        :health_claim
+
+      true ->
+        :general
+    end
+  end
+
+  defp intersects_term_set?(term_set, candidates) do
+    Enum.any?(candidates, &MapSet.member?(term_set, &1))
+  end
+
+  defp keyword_query_topic(topic, keywords) do
+    case keywords do
+      [] -> topic
+      _ -> Enum.join(keywords, " ")
+    end
+  end
+
+  defp distinctive_topic_terms(topic) do
+    topic
+    |> topic_terms()
+    |> Enum.reject(&(String.length(&1) < 4))
+  end
+
+  defp topic_terms(text) do
+    text
+    |> to_string()
+    |> String.downcase()
+    |> String.replace(~r/[^a-z0-9\s\-]/, " ")
+    |> String.split(~r/\s+/, trim: true)
+    |> Enum.reject(&(&1 in @stop_words))
+    |> Enum.reject(&(&1 in @search_relation_words))
+  end
+
+  defp retrieval_directness_score(paper, topic_terms) do
+    {title, abstract} =
+      case paper do
+        %{title: t, abstract: a} -> {t, a}
+        %{"title" => t, "abstract" => a} -> {t, a}
+        _ -> {"", ""}
+      end
+
+    title_text = normalize_search_text(title)
+    paper_text = normalize_search_text("#{title} #{abstract}")
+
+    title_hits = Enum.count(topic_terms, &String.contains?(title_text, &1))
+    topic_hits = Enum.count(topic_terms, &String.contains?(paper_text, &1))
+    discourse_hits = Enum.count(@retrieval_discourse_terms, &String.contains?(paper_text, &1))
+
+    title_hits * 4 + topic_hits * 2 - discourse_hits * 3
+  end
+
+  defp normalize_search_text(text) do
+    text
+    |> to_string()
+    |> String.downcase()
+    |> String.replace(~r/[^a-z0-9\s\-]/, " ")
+  end
+
+  defp search_topic_wrappers do
+    [
+      ~r/^\s*(?:investigate|review|examine|assess|evaluate|analy[sz]e|test|check)\s+claims?\s+that\s+/i,
+      ~r/^\s*(?:investigate|review|examine|assess|evaluate|analy[sz]e|test|check)\s+(?:whether|if)\s+/i,
+      ~r/^\s*(?:investigate|review|examine|assess|evaluate|analy[sz]e|test|check)\s+/i
+    ]
   end
 
   # Convert string-keyed papers (e.g. from alphaXiv) to atom keys for rank_papers compatibility

@@ -445,4 +445,84 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
 
     assert normalized == "Paper 2 reports improved calibration under controlled conditions."
   end
+
+  test "normalized_search_topic strips wrapper phrasing from manual eval prompts" do
+    assert Investigate.normalized_search_topic("examine claims that the earth is flat") ==
+             "the earth is flat"
+
+    assert Investigate.normalized_search_topic("Investigate whether creatine helps cognition") ==
+             "creatine helps cognition"
+  end
+
+  test "search_query_plan uses general evidence queries for non-clinical claims" do
+    plan = Investigate.search_query_plan("examine claims that the earth is flat", ["earth", "flat"])
+
+    assert plan.normalized_topic == "the earth is flat"
+    assert plan.profile == :general
+
+    ss_queries = Enum.map(plan.ss_queries, fn {_label, query, _opts} -> query end)
+    oa_queries = Enum.map(plan.oa_queries, fn {_label, query, _opts} -> query end)
+
+    assert "earth flat empirical evidence" in ss_queries
+    assert "earth flat physical evidence" in oa_queries
+    refute Enum.any?(ss_queries ++ oa_queries, &String.contains?(&1, "randomized controlled trial"))
+    refute Enum.any?(ss_queries ++ oa_queries, &String.contains?(&1, "placebo controlled trial"))
+    refute Enum.any?(ss_queries ++ oa_queries, &String.contains?(&1, "Cochrane review"))
+  end
+
+  test "search_query_plan keeps clinical intervention queries for treatment claims" do
+    plan =
+      Investigate.search_query_plan(
+        "creatine supplementation improves muscular strength in resistance training",
+        ["creatine", "supplementation", "muscular", "strength"]
+      )
+
+    assert plan.profile == :clinical_intervention
+
+    queries =
+      Enum.map(plan.ss_queries ++ plan.oa_queries, fn {_label, query, _opts} -> query end)
+
+    assert Enum.any?(queries, &String.contains?(&1, "systematic review"))
+    assert Enum.any?(queries, &String.contains?(&1, "randomized controlled trial"))
+    assert Enum.any?(queries, &String.contains?(&1, "placebo controlled trial"))
+  end
+
+  test "search_query_plan uses observational queries for health-effect claims without trials" do
+    plan =
+      Investigate.search_query_plan(
+        "vaccines cause autism",
+        ["vaccines", "autism"]
+      )
+
+    assert plan.profile == :health_claim
+
+    queries =
+      Enum.map(plan.ss_queries ++ plan.oa_queries, fn {_label, query, _opts} -> query end)
+
+    assert Enum.any?(queries, &String.contains?(&1, "cohort study"))
+    assert Enum.any?(queries, &String.contains?(&1, "case-control study"))
+    refute Enum.any?(queries, &String.contains?(&1, "placebo controlled trial"))
+    refute Enum.any?(queries, &String.contains?(&1, "randomized controlled trial"))
+  end
+
+  test "rerank_retrieval_candidates demotes discourse-heavy papers for general claims" do
+    plan = %{profile: :general, normalized_topic: "the earth is flat"}
+
+    reranked =
+      Investigate.rerank_retrieval_candidates(
+        [
+          %{
+            title: "Flat Earth belief and misinformation on social media",
+            abstract: "A discourse analysis of ideology and public attitudes."
+          },
+          %{
+            title: "Satellite measurement of Earth curvature",
+            abstract: "Orbital observation data directly constrains planetary shape."
+          }
+        ],
+        plan
+      )
+
+    assert hd(reranked).title == "Satellite measurement of Earth curvature"
+  end
 end
