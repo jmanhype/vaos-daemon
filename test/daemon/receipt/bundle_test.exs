@@ -64,6 +64,12 @@ defmodule Daemon.Receipt.BundleTest do
           for_llm_ms: 80,
           against_llm_ms: 74,
           citation_verification_ms: 22,
+          prompt_feedback_ms: 5,
+          ledger_persistence_ms: 9,
+          emergent_questions_ms: 4,
+          knowledge_graph_ms: 15,
+          deep_research_ms: 0,
+          policy_ranking_ms: 6,
           post_processing_ms: 11,
           total_ms: 321
         },
@@ -92,6 +98,7 @@ defmodule Daemon.Receipt.BundleTest do
       assert bundle.evidence.papers_found == 12
       assert bundle.evidence.fraudulent_citations == 1
       assert bundle.evidence.phase_timings_ms.paper_search_ms == 120
+      assert bundle.evidence.phase_timings_ms.knowledge_graph_ms == 15
       assert bundle.evidence.verification_stats.model == "glm-4.5-flash"
       assert bundle.intent_hash != nil
     end

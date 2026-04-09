@@ -853,23 +853,29 @@ Known failure patterns to avoid:
     count_unverified_sourced =
       Enum.count(sourced_evidence, fn ev -> ev.verification == "unverified" end)
 
-    try do
-      prompt_hash = PromptConfig.prompt_hash(prompts)
+    {_prompt_feedback_result, timings} =
+      capture_timed(timings, :prompt_feedback_ms, fn ->
+        try do
+          prompt_hash = PromptConfig.prompt_hash(prompts)
 
-      PromptFeedback.record(prompt_hash, topic, %{
-        total_sourced: total_sourced,
-        verified: count_verified,
-        partial: count_partial,
-        unverified: count_unverified_sourced,
-        verification_rate: if(total_sourced > 0, do: count_verified / total_sourced, else: 0.0)
-      })
+          PromptFeedback.record(prompt_hash, topic, %{
+            total_sourced: total_sourced,
+            verified: count_verified,
+            partial: count_partial,
+            unverified: count_unverified_sourced,
+            verification_rate:
+              if(total_sourced > 0, do: count_verified / total_sourced, else: 0.0)
+          })
 
-      # Update Thompson Sampling posterior for the selected prompt variant
-      PromptSelector.update(variant_id, count_verified, count_unverified_sourced)
-    rescue
-      e ->
-        Logger.warning("[investigate] Failed to record prompt feedback: #{Exception.message(e)}")
-    end
+          # Update Thompson Sampling posterior for the selected prompt variant
+          PromptSelector.update(variant_id, count_verified, count_unverified_sourced)
+        rescue
+          e ->
+            Logger.warning(
+              "[investigate] Failed to record prompt feedback: #{Exception.message(e)}"
+            )
+        end
+      end)
 
     # Count paper types across all evidence
     all_evidence = verified_supporting ++ verified_opposing
@@ -878,129 +884,139 @@ Known failure patterns to avoid:
     study_count = Enum.count(all_evidence, fn ev -> ev.paper_type == :study end)
 
     # 11. Create claim and add evidence to ledger
-    claim =
-      EpistemicLedger.add_claim(
-        [
-          title: String.slice(topic, 0, 100),
-          statement: topic,
-          tags: ["investigate", "auto", "adversarial"]
-        ],
-        @ledger_name
-      )
+    {{claim, supporting_records, opposing_records, belief, uncertainty}, timings} =
+      capture_timed(timings, :ledger_persistence_ms, fn ->
+        claim =
+          EpistemicLedger.add_claim(
+            [
+              title: String.slice(topic, 0, 100),
+              statement: topic,
+              tags: ["investigate", "auto", "adversarial"]
+            ],
+            @ledger_name
+          )
 
-    # Add FOR arguments as supporting evidence (using hierarchy-weighted score)
-    supporting_records = add_evidence_to_ledger(verified_supporting, claim, :support)
+        # Add FOR arguments as supporting evidence (using hierarchy-weighted score)
+        supporting_records = add_evidence_to_ledger(verified_supporting, claim, :support)
 
-    # Add AGAINST arguments as BOTH attacks AND contradicting evidence
-    _contra_records = add_evidence_to_ledger(verified_opposing, claim, :contradict)
-    opposing_records = add_attacks_to_ledger(verified_opposing, claim)
+        # Add AGAINST arguments as BOTH attacks AND contradicting evidence
+        _contra_records = add_evidence_to_ledger(verified_opposing, claim, :contradict)
+        opposing_records = add_attacks_to_ledger(verified_opposing, claim)
 
-    # Refresh claim to recompute metrics
-    EpistemicLedger.refresh_claim(claim.id, @ledger_name)
+        # Refresh claim to recompute metrics
+        EpistemicLedger.refresh_claim(claim.id, @ledger_name)
 
-    # Get ledger metrics for supplementary display
-    metrics = EpistemicLedger.claim_metrics(claim.id, @ledger_name)
-    belief = metrics["belief"]
-    uncertainty = metrics["uncertainty"]
+        # Get ledger metrics for supplementary display
+        metrics = EpistemicLedger.claim_metrics(claim.id, @ledger_name)
+        belief = metrics["belief"]
+        uncertainty = metrics["uncertainty"]
 
-    # 12. Persist ledger to disk
-    EpistemicLedger.save(@ledger_name)
+        # 12. Persist ledger to disk
+        EpistemicLedger.save(@ledger_name)
+
+        {claim, supporting_records, opposing_records, belief, uncertainty}
+      end)
 
     # 12b. Emergent question synthesis — extract novel research questions from evidence tension
-    emergent_questions =
-      extract_emergent_questions(
-        topic,
-        direction,
-        verified_supporting,
-        verified_opposing,
-        uncertainty
-      )
+    {emergent_questions, timings} =
+      capture_timed(timings, :emergent_questions_ms, fn ->
+        extract_emergent_questions(
+          topic,
+          direction,
+          verified_supporting,
+          verified_opposing,
+          uncertainty
+        )
+      end)
 
     # 13. Store in knowledge graph
     topic_id = "investigate:" <> short_hash(topic)
     claim_id = claim.id
 
-    triples = [
-      {topic_id, "rdf:type", "vaos:Investigation"},
-      {topic_id, "vaos:topic", topic},
-      {topic_id, "vaos:direction", direction},
-      {topic_id, "vaos:verified_for", Integer.to_string(verified_for)},
-      {topic_id, "vaos:verified_against", Integer.to_string(verified_against)},
-      {topic_id, "vaos:fraudulent_citations", Integer.to_string(fraudulent_count)},
-      {topic_id, "vaos:claim_id", claim_id},
-      {topic_id, "vaos:timestamp", DateTime.utc_now() |> DateTime.to_iso8601()}
-    ]
+    {conflicts, timings} =
+      capture_timed(timings, :knowledge_graph_ms, fn ->
+        triples = [
+          {topic_id, "rdf:type", "vaos:Investigation"},
+          {topic_id, "vaos:topic", topic},
+          {topic_id, "vaos:direction", direction},
+          {topic_id, "vaos:verified_for", Integer.to_string(verified_for)},
+          {topic_id, "vaos:verified_against", Integer.to_string(verified_against)},
+          {topic_id, "vaos:fraudulent_citations", Integer.to_string(fraudulent_count)},
+          {topic_id, "vaos:claim_id", claim_id},
+          {topic_id, "vaos:timestamp", DateTime.utc_now() |> DateTime.to_iso8601()}
+        ]
 
-    keyword_triples =
-      Enum.map(keywords, fn kw ->
-        {topic_id, "vaos:keyword", kw}
-      end)
+        keyword_triples =
+          Enum.map(keywords, fn kw ->
+            {topic_id, "vaos:keyword", kw}
+          end)
 
-    for triple <- triples ++ keyword_triples do
-      MiosaKnowledge.assert(store, triple)
-    end
+        for triple <- triples ++ keyword_triples do
+          MiosaKnowledge.assert(store, triple)
+        end
 
-    # Store helpful/harmful counters for supporting evidence
-    Enum.each(supporting_records, fn ev ->
-      ev_id = "evidence:" <> ev.id
-      MiosaKnowledge.assert(store, {topic_id, "vaos:has_evidence", ev_id})
-      MiosaKnowledge.assert(store, {ev_id, "vaos:helpful_count", "0"})
-      MiosaKnowledge.assert(store, {ev_id, "vaos:harmful_count", "0"})
-      MiosaKnowledge.assert(store, {ev_id, "vaos:summary", ev.summary})
-    end)
+        # Store helpful/harmful counters for supporting evidence
+        Enum.each(supporting_records, fn ev ->
+          ev_id = "evidence:" <> ev.id
+          MiosaKnowledge.assert(store, {topic_id, "vaos:has_evidence", ev_id})
+          MiosaKnowledge.assert(store, {ev_id, "vaos:helpful_count", "0"})
+          MiosaKnowledge.assert(store, {ev_id, "vaos:harmful_count", "0"})
+          MiosaKnowledge.assert(store, {ev_id, "vaos:summary", ev.summary})
+        end)
 
-    # Store attack records in knowledge graph
-    Enum.each(opposing_records, fn atk ->
-      atk_id = "attack:" <> atk.id
-      MiosaKnowledge.assert(store, {topic_id, "vaos:has_attack", atk_id})
-      MiosaKnowledge.assert(store, {atk_id, "vaos:helpful_count", "0"})
-      MiosaKnowledge.assert(store, {atk_id, "vaos:harmful_count", "0"})
-      MiosaKnowledge.assert(store, {atk_id, "vaos:summary", atk.description})
-    end)
+        # Store attack records in knowledge graph
+        Enum.each(opposing_records, fn atk ->
+          atk_id = "attack:" <> atk.id
+          MiosaKnowledge.assert(store, {topic_id, "vaos:has_attack", atk_id})
+          MiosaKnowledge.assert(store, {atk_id, "vaos:helpful_count", "0"})
+          MiosaKnowledge.assert(store, {atk_id, "vaos:harmful_count", "0"})
+          MiosaKnowledge.assert(store, {atk_id, "vaos:summary", atk.description})
+        end)
 
-    # Increment helpful counters for prior evidence that was independently regenerated
-    increment_helpful_for_reused_evidence(
-      store,
-      prior_evidence,
-      verified_supporting ++ verified_opposing
-    )
+        # Increment helpful counters for prior evidence that was independently regenerated
+        increment_helpful_for_reused_evidence(
+          store,
+          prior_evidence,
+          verified_supporting ++ verified_opposing
+        )
 
-    # 13a. OWL Reasoner bridge — materialize inferred triples and check for contradictions
-    try do
-      case MiosaKnowledge.Reasoner.materialize(store) do
-        {:ok, rounds} when rounds > 0 ->
-          Logger.info(
-            "[investigate] OWL reasoner ran #{rounds} fixpoint round(s), inferred new triples"
-          )
+        # 13a. OWL Reasoner bridge — materialize inferred triples and check for contradictions
+        try do
+          case MiosaKnowledge.Reasoner.materialize(store) do
+            {:ok, rounds} when rounds > 0 ->
+              Logger.info(
+                "[investigate] OWL reasoner ran #{rounds} fixpoint round(s), inferred new triples"
+              )
 
-          # Check if any inferred contradictions relate to our investigation
-          case MiosaKnowledge.sparql(
-                 store,
-                 "SELECT ?s ?p ?o WHERE { ?s vaos:contradicts ?o }"
-               ) do
-            {:ok, results} when is_list(results) and results != [] ->
-              for r <- results do
-                Logger.info(
-                  "[investigate] OWL-visible contradiction: #{r["s"]} contradicts #{r["o"]}"
-                )
+              # Check if any inferred contradictions relate to our investigation
+              case MiosaKnowledge.sparql(
+                     store,
+                     "SELECT ?s ?p ?o WHERE { ?s vaos:contradicts ?o }"
+                   ) do
+                {:ok, results} when is_list(results) and results != [] ->
+                  for r <- results do
+                    Logger.info(
+                      "[investigate] OWL-visible contradiction: #{r["s"]} contradicts #{r["o"]}"
+                    )
+                  end
+
+                _ ->
+                  :ok
               end
+
+            {:ok, 0} ->
+              Logger.debug("[investigate] OWL reasoner: no new inferences")
 
             _ ->
               :ok
           end
+        rescue
+          e -> Logger.warning("[investigate] OWL reasoner failed: #{Exception.message(e)}")
+        end
 
-        {:ok, 0} ->
-          Logger.debug("[investigate] OWL reasoner: no new inferences")
-
-        _ ->
-          :ok
-      end
-    rescue
-      e -> Logger.warning("[investigate] OWL reasoner failed: #{Exception.message(e)}")
-    end
-
-    # 14. Cross-investigation contradiction detection
-    conflicts = detect_contradictions(store, topic_id, direction, keywords)
+        # 14. Cross-investigation contradiction detection
+        detect_contradictions(store, topic_id, direction, keywords)
+      end)
 
     conflict_note =
       if conflicts == [] do
@@ -1021,12 +1037,14 @@ Known failure patterns to avoid:
     iteration_note = maybe_suggest_iteration(claim, @ledger_name)
 
     # 15b. Deep mode: run research pipeline if requested
-    deep_note =
-      if depth == "deep" do
-        deep_research_note(topic, claim, all_papers, store)
-      else
-        ""
-      end
+    {deep_note, timings} =
+      capture_timed(timings, :deep_research_ms, fn ->
+        if depth == "deep" do
+          deep_research_note(topic, claim, all_papers, store)
+        else
+          ""
+        end
+      end)
 
     # 16. Format result with verification status and evidence quality
     for_arguments =
@@ -1072,36 +1090,38 @@ Known failure patterns to avoid:
         "*Claim ID: #{claim_id} -- stored in knowledge graph as #{topic_id}*"
 
     # 16. Policy — suggest next investigations based on information gain
-    next_actions_text =
-      try do
-        next_actions = Policy.rank_actions(Process.whereis(@ledger_name), limit: 5)
+    {next_actions_text, timings} =
+      capture_timed(timings, :policy_ranking_ms, fn ->
+        try do
+          next_actions = Policy.rank_actions(Process.whereis(@ledger_name), limit: 5)
 
-        if next_actions != [] do
-          suggestions =
-            next_actions
-            |> Enum.with_index(1)
-            |> Enum.map(fn {action, i} ->
-              gain_str = Float.round(action.expected_information_gain, 2) |> to_string()
+          if next_actions != [] do
+            suggestions =
+              next_actions
+              |> Enum.with_index(1)
+              |> Enum.map(fn {action, i} ->
+                gain_str = Float.round(action.expected_information_gain, 2) |> to_string()
 
-              "  #{i}. #{action.action_type}: \"#{action.claim_title}\" (gain: #{gain_str}) — #{action.reason}"
-            end)
-            |> Enum.join("
+                "  #{i}. #{action.action_type}: \"#{action.claim_title}\" (gain: #{gain_str}) — #{action.reason}"
+              end)
+              |> Enum.join("
 ")
 
-          "
+            "
 
 ### Suggested Next Investigations
 " <>
-            "Based on where uncertainty is highest in the knowledge graph:
+              "Based on where uncertainty is highest in the knowledge graph:
 " <> suggestions
-        else
-          ""
+          else
+            ""
+          end
+        rescue
+          e ->
+            Logger.warning("[investigate] Policy.rank_actions failed: #{Exception.message(e)}")
+            ""
         end
-      rescue
-        e ->
-          Logger.warning("[investigate] Policy.rank_actions failed: #{Exception.message(e)}")
-          ""
-      end
+      end)
 
     timings =
       complete_phase_timings(timings, investigation_started_ms, post_processing_started_ms)
@@ -1366,6 +1386,12 @@ Known failure patterns to avoid:
     {fun.(), elapsed_ms(started_ms)}
   end
 
+  defp capture_timed(timings, key, fun)
+       when is_map(timings) and is_atom(key) and is_function(fun, 0) do
+    {result, elapsed} = timed(fun)
+    {result, Map.put(timings, key, elapsed)}
+  end
+
   defp complete_phase_timings(
          timings,
          investigation_started_ms,
@@ -1389,6 +1415,12 @@ Known failure patterns to avoid:
         "for_llm=#{Map.get(timings, :for_llm_ms, 0)}ms " <>
         "against_llm=#{Map.get(timings, :against_llm_ms, 0)}ms " <>
         "verify=#{Map.get(timings, :citation_verification_ms, 0)}ms " <>
+        "feedback=#{Map.get(timings, :prompt_feedback_ms, 0)}ms " <>
+        "ledger=#{Map.get(timings, :ledger_persistence_ms, 0)}ms " <>
+        "questions=#{Map.get(timings, :emergent_questions_ms, 0)}ms " <>
+        "kg=#{Map.get(timings, :knowledge_graph_ms, 0)}ms " <>
+        "deep=#{Map.get(timings, :deep_research_ms, 0)}ms " <>
+        "policy=#{Map.get(timings, :policy_ranking_ms, 0)}ms " <>
         "post=#{Map.get(timings, :post_processing_ms, 0)}ms " <>
         "total=#{Map.get(timings, :total_ms, 0)}ms"
     )

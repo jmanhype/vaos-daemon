@@ -249,6 +249,12 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
       preflight_ms: 10,
       paper_search_ms: 20,
       citation_verification_ms: 30,
+      prompt_feedback_ms: 4,
+      ledger_persistence_ms: 8,
+      emergent_questions_ms: 3,
+      knowledge_graph_ms: 11,
+      deep_research_ms: 0,
+      policy_ranking_ms: 5,
       post_processing_ms: 40,
       total_ms: 100
     }
@@ -292,6 +298,8 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert metadata.verification_stats == verification_stats
     assert metadata.evidence_quality.reviews == 1
     assert metadata.variant_id == "variant-123"
+    assert metadata.phase_timings_ms.ledger_persistence_ms == 8
+    assert metadata.phase_timings_ms.knowledge_graph_ms == 11
 
     assert [
              %{
