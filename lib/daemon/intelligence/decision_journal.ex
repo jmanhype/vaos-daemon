@@ -56,10 +56,10 @@ defmodule Daemon.Intelligence.DecisionJournal do
   end
 
   @doc "Record that a proposed decision completed (success or failure)."
-  @spec record_outcome(String.t(), :success | :failure, map()) :: :ok
+  @spec record_outcome(String.t(), atom(), map()) :: :ok
   def record_outcome(branch, outcome, metadata \\ %{}) do
     try do
-      GenServer.cast(__MODULE__, {:record_outcome, branch, outcome, metadata})
+      GenServer.call(__MODULE__, {:record_outcome, branch, outcome, metadata}, 10_000)
     rescue
       _ -> :ok
     catch
@@ -339,6 +339,12 @@ defmodule Daemon.Intelligence.DecisionJournal do
     state = %{state | decisions: decisions, in_flight: %{}}
     persist_state(state)
     {:reply, {:ok, count}, state}
+  end
+
+  @impl true
+  def handle_call({:record_outcome, branch, outcome, metadata}, _from, state) do
+    state = do_record_outcome(state, branch, outcome, metadata)
+    {:reply, :ok, state}
   end
 
   @impl true

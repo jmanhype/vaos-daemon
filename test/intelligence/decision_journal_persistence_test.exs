@@ -62,4 +62,43 @@ defmodule Daemon.Intelligence.DecisionJournalPersistenceTest do
              }
            ] = state.decisions
   end
+
+  test "short-lived batch runs persist recorded outcomes before exit" do
+    File.rm(@journal_path)
+
+    code = """
+    branch = "investigate:batch-regression"
+
+    :approved =
+      Daemon.Intelligence.DecisionJournal.propose(:investigation, :investigate, %{
+        topic: "batch regression topic",
+        branch: branch
+      })
+
+    :ok =
+      Daemon.Intelligence.DecisionJournal.record_outcome(branch, :success, %{
+        topic: "batch regression topic"
+      })
+    """
+
+    {output, 0} =
+      System.cmd("mix", ["run", "-e", code],
+        cd: File.cwd!(),
+        env: [{"MIX_ENV", "test"}],
+        stderr_to_stdout: true
+      )
+
+    assert output != ""
+    assert {:ok, payload} = File.read(@journal_path)
+
+    decision =
+      payload
+      |> Jason.decode!()
+      |> Map.fetch!("decisions")
+      |> Enum.find(&(&1["branch"] == "investigate:batch-regression"))
+
+    assert decision["status"] == "completed"
+    assert decision["outcome"] == "success"
+    refute is_nil(decision["completed_at"])
+  end
 end
