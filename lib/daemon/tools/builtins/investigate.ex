@@ -733,6 +733,8 @@ Known failure patterns to avoid:
          investigation_started_ms
        ) do
     # 9. CITATION VERIFICATION + PAPER TYPE CLASSIFICATION — the evidence quality step
+    overlap_stats = cross_side_overlap_stats(supporting_raw, opposing_raw, paper_map)
+
     {{{verified_supporting, supporting_verification_stats},
       {verified_opposing, opposing_verification_stats}},
      citation_verification_ms} =
@@ -748,6 +750,7 @@ Known failure patterns to avoid:
         supporting_verification_stats,
         opposing_verification_stats
       ])
+      |> Map.merge(overlap_stats)
 
     # 9.7 Re-score evidence with winning strategy's hierarchy weights
     verified_supporting = rescore_evidence(verified_supporting, strategy)
@@ -1381,6 +1384,41 @@ Known failure patterns to avoid:
     |> finalize_verification_stats()
   end
 
+  @doc false
+  def cross_side_overlap_stats(supporting_raw, opposing_raw, paper_map)
+      when is_list(supporting_raw) and is_list(opposing_raw) and is_map(paper_map) do
+    supporting_pairs = overlap_pair_lookup(supporting_raw, paper_map)
+    opposing_pairs = overlap_pair_lookup(opposing_raw, paper_map)
+
+    shared_keys =
+      MapSet.intersection(
+        MapSet.new(Map.keys(supporting_pairs)),
+        MapSet.new(Map.keys(opposing_pairs))
+      )
+
+    supporting_unique = map_size(supporting_pairs)
+    opposing_unique = map_size(opposing_pairs)
+    shared_count = MapSet.size(shared_keys)
+    union_count = supporting_unique + opposing_unique - shared_count
+
+    overlap_examples =
+      shared_keys
+      |> Enum.map(&Map.fetch!(supporting_pairs, &1))
+      |> Enum.sort_by(fn %{paper_ref: paper_ref, claim: claim} -> {paper_ref || 0, claim} end)
+      |> Enum.take(3)
+
+    %{
+      supporting_unique_llm_items: supporting_unique,
+      opposing_unique_llm_items: opposing_unique,
+      cross_side_unique_llm_items: union_count,
+      cross_side_overlap_items: shared_count,
+      cross_side_overlap_rate: ratio(shared_count, union_count),
+      supporting_overlap_rate: ratio(shared_count, supporting_unique),
+      opposing_overlap_rate: ratio(shared_count, opposing_unique),
+      cross_side_overlap_examples: overlap_examples
+    }
+  end
+
   defp timed(fun) when is_function(fun, 0) do
     started_ms = monotonic_ms()
     {fun.(), elapsed_ms(started_ms)}
@@ -1436,6 +1474,10 @@ Known failure patterns to avoid:
         "deduped=#{Map.get(stats, :deduped_llm_items, 0)} " <>
         "hits=#{Map.get(stats, :cache_hits, 0)} " <>
         "misses=#{Map.get(stats, :cache_misses, 0)} " <>
+        "cross_overlap=#{Map.get(stats, :cross_side_overlap_items, 0)}/#{Map.get(stats, :cross_side_unique_llm_items, 0)} " <>
+        "cross_rate=#{format_pct(Map.get(stats, :cross_side_overlap_rate, 0.0))} " <>
+        "for_overlap=#{format_pct(Map.get(stats, :supporting_overlap_rate, 0.0))} " <>
+        "against_overlap=#{format_pct(Map.get(stats, :opposing_overlap_rate, 0.0))} " <>
         "llm_total=#{Map.get(stats, :llm_ms_total, 0)}ms " <>
         "avg_llm=#{Map.get(stats, :average_llm_ms, 0)}ms " <>
         "slowest_llm=#{Map.get(stats, :slowest_llm_ms, 0)}ms"
@@ -1633,6 +1675,33 @@ Known failure patterns to avoid:
 
   defp verification_key(ev), do: {extract_paper_ref(ev.summary), ev.summary}
 
+  defp overlap_pair_lookup(evidence_list, paper_map) do
+    Enum.reduce(evidence_list, %{}, fn evidence, acc ->
+      case overlap_pair_entry(evidence, paper_map) do
+        nil -> acc
+        entry -> Map.put(acc, {entry.claim, entry.paper_title}, entry)
+      end
+    end)
+  end
+
+  defp overlap_pair_entry(evidence, paper_map) do
+    summary = map_value(evidence, :summary)
+
+    with summary when is_binary(summary) <- summary,
+         paper_ref when not is_nil(paper_ref) <- extract_paper_ref(summary),
+         %{} = paper <- Map.get(paper_map, paper_ref),
+         claim when is_binary(claim) <- verification_claim_text(summary),
+         false <- claim == "" do
+      %{
+        paper_ref: paper_ref,
+        paper_title: to_string(Map.get(paper, "title", "")),
+        claim: claim
+      }
+    else
+      _ -> nil
+    end
+  end
+
   defp update_verification_stats(stats, :hit, duration_ms) do
     %{
       stats
@@ -1659,6 +1728,13 @@ Known failure patterns to avoid:
       end
 
     Map.put(stats, :average_llm_ms, average_llm_ms)
+  end
+
+  defp ratio(_numerator, 0), do: 0.0
+  defp ratio(numerator, denominator), do: Float.round(numerator / denominator, 3)
+
+  defp format_pct(value) when is_number(value) do
+    "#{Float.round(value * 100.0, 1)}%"
   end
 
   # -- Evidence hierarchy scoring -----------------------------------------

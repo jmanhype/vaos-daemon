@@ -281,6 +281,58 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert merged.model == "glm-4.5-flash"
   end
 
+  test "cross_side_overlap_stats reports shared normalized claim and paper pairs" do
+    paper_map = %{
+      1 => %{"title" => "Creatine Review"},
+      2 => %{"title" => "Sleep Trial"}
+    }
+
+    supporting = [
+      %{
+        summary:
+          "[SOURCED] (strength: 8) Creatine improved working memory in healthy adults [Paper 1]"
+      },
+      %{
+        summary:
+          "[SOURCED] (strength: 6) Better sleep consolidation followed supplementation [Paper 2]"
+      }
+    ]
+
+    opposing = [
+      %{
+        summary:
+          "[REASONING] (strength: 5) Creatine improved working memory in healthy adults [Paper 1]"
+      },
+      %{
+        summary:
+          "[SOURCED] (strength: 4) No meaningful benefit was observed for sleep onset latency [Paper 2]"
+      }
+    ]
+
+    overlap =
+      Investigate.cross_side_overlap_stats(
+        supporting,
+        opposing,
+        paper_map
+      )
+
+    assert overlap.supporting_unique_llm_items == 2
+    assert overlap.opposing_unique_llm_items == 2
+    assert overlap.cross_side_overlap_items == 1
+    assert overlap.cross_side_unique_llm_items == 3
+    assert overlap.cross_side_overlap_rate == 0.333
+    assert overlap.supporting_overlap_rate == 0.5
+    assert overlap.opposing_overlap_rate == 0.5
+
+    assert overlap.cross_side_overlap_examples == [
+             %{
+               paper_ref: 1,
+               paper_title: "Creatine Review",
+               claim: "Creatine improved working memory in healthy adults"
+             }
+           ]
+  end
+
   test "maybe_apply_pending_trial_steering consumes a pending trial when opted in" do
     TrialStub.expect(
       "manual pilot topic",
