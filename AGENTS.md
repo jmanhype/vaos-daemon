@@ -12,6 +12,18 @@ bd close <id>         # Complete work
 bd sync               # Sync with git
 ```
 
+## Beads Drift Recovery
+
+If Beads reports `DB (...) has more issues than JSONL (...) after pull`, treat it as a sync-drift incident first, not a deletion prompt.
+
+```bash
+bd sync --status      # Check main vs sync-branch drift
+bd sync               # Re-export/push/pull/import the current issue set
+```
+
+- Do not run `bd import --delete-missing` unless you have confirmed the main worktree JSONL and the sync worktree JSONL already agree on issue IDs.
+- A stale Beads sync worktree can lag behind `main` and temporarily make legitimate issues look DB-only.
+
 ## Landing the Plane (Session Completion)
 
 **When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
@@ -37,4 +49,3 @@ bd sync               # Sync with git
 - NEVER stop before pushing - that leaves work stranded locally
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
-
