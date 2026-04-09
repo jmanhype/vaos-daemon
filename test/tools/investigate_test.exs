@@ -622,6 +622,24 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
         %{
           steering:
             "CORRECTIVE FOCUS: Quote exact abstract sentences and demote unsupported claims.",
+          search_plan: %{
+            evidence_plan: %{
+              mode: :measurement,
+              profile: :general,
+              probe_score: 8.5,
+              rationale: "measurement/observation route",
+              semantic_seed: "earth curvature measurement"
+            },
+            evidence_plan_candidates: [
+              %{
+                mode: :measurement,
+                profile: :general,
+                probe_score: 8.5,
+                rationale: "measurement/observation route",
+                semantic_seed: "earth curvature measurement"
+              }
+            ]
+          },
           for_messages: [
             %{content: "FOR SYSTEM PROMPT"},
             %{content: "FOR USER PROMPT"}
@@ -667,6 +685,8 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
       )
 
     assert trace.steering.preview =~ "CORRECTIVE FOCUS"
+    assert trace.planning.selected.mode == :measurement
+    assert hd(trace.planning.candidates).semantic_seed == "earth curvature measurement"
     assert trace.prompts.for_system.preview == "FOR SYSTEM PROMPT"
     assert trace.prompts.against_user.preview == "AGAINST USER PROMPT"
     assert trace.llm.for.status == "ok"
@@ -1055,9 +1075,12 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
       Investigate.search_query_plan("examine claims that the earth is flat", ["earth", "flat"])
 
     assert plan.normalized_topic == "the earth is flat"
+    assert plan.family_profile == :general
     assert plan.profile == :general
     assert plan.claim_family == :planetary_shape
+    assert plan.evidence_plan.mode == :measurement
     assert plan.evidence_profile.kind == :planetary_shape
+    assert Enum.any?(plan.evidence_plan_candidates, &(&1.mode == :measurement))
 
     ss_queries = Enum.map(plan.ss_queries, fn {_label, query, _opts} -> query end)
     oa_queries = Enum.map(plan.oa_queries, fn {_label, query, _opts} -> query end)
@@ -1084,8 +1107,10 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
         ["creatine", "supplementation", "muscular", "strength"]
       )
 
+    assert plan.family_profile == :clinical_intervention
     assert plan.profile == :clinical_intervention
     assert plan.claim_family == :clinical_intervention
+    assert plan.evidence_plan.mode == :randomized_intervention
 
     queries =
       Enum.map(plan.ss_queries ++ plan.oa_queries, fn {_label, query, _opts} -> query end)
@@ -1102,8 +1127,10 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
         ["vaccines", "autism"]
       )
 
+    assert plan.family_profile == :health_claim
     assert plan.profile == :health_claim
     assert plan.claim_family == :health_effect
+    assert plan.evidence_plan.mode == :observational
 
     queries =
       Enum.map(plan.ss_queries ++ plan.oa_queries, fn {_label, query, _opts} -> query end)

@@ -48,6 +48,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
   alias Daemon.Investigation.{
     AdversarialParser,
     ClaimFamily,
+    EvidencePlanner,
     Strategy,
     StrategyStore,
     SourceScoring,
@@ -348,14 +349,16 @@ defmodule Daemon.Tools.Builtins.Investigate do
 
     # 4. MULTI-SOURCE PAPER SEARCH: Semantic Scholar + OpenAlex + alphaXiv (parallel)
     #    Uses prior strategy's top_n_papers and per_query_limit for tuned search breadth
-    {{all_papers, source_counts}, paper_search_ms} =
+    {{all_papers, source_counts, search_plan}, paper_search_ms} =
       timed(fn ->
         search_all_papers(search_topic, keywords, prior_strategy,
           alphaxiv_enabled?: alphaxiv_enabled?
         )
       end)
 
-    Logger.info("[investigate] Papers: #{length(all_papers)} total (#{inspect(source_counts)})")
+    Logger.info(
+      "[investigate] Papers: #{length(all_papers)} total (#{inspect(source_counts)}) via evidence_plan=#{search_plan.evidence_plan.mode}"
+    )
 
     # 5. Format papers context for LLM prompts
     papers_context = format_papers(all_papers, prompts)
@@ -541,6 +544,7 @@ Known failure patterns to avoid:
       build_trace_context(
         topic,
         steering,
+        search_plan,
         for_messages,
         against_messages,
         for_result,
@@ -593,6 +597,7 @@ Known failure patterns to avoid:
             timings,
             verification_stats
           )
+          |> put_evidence_plan_metadata(Map.get(trace_context, :search_plan, %{}))
 
         trace_payload =
           build_boundary_trace(trace_context, %{
@@ -649,6 +654,7 @@ Known failure patterns to avoid:
             timings,
             verification_stats
           )
+          |> put_evidence_plan_metadata(Map.get(trace_context, :search_plan, %{}))
 
         trace_payload =
           build_boundary_trace(trace_context, %{
@@ -689,6 +695,7 @@ Known failure patterns to avoid:
           prompts,
           variant_id,
           trace_context,
+          search_plan,
           caller_metadata,
           timings,
           investigation_started_ms
@@ -720,6 +727,7 @@ Known failure patterns to avoid:
          prompts,
          variant_id,
          trace_context,
+         search_plan,
          caller_metadata,
          timings,
          investigation_started_ms
@@ -1123,97 +1131,99 @@ Known failure patterns to avoid:
 
     metadata_timings = timing_metadata(timings)
 
-    json_metadata = %{
-      topic: topic,
-      claim_id: claim_id,
-      direction: direction,
-      strategy_hash: Strategy.param_hash(strategy),
-      verified_for: verified_for,
-      verified_against: verified_against,
-      reasoning_for: reasoning_for,
-      reasoning_against: reasoning_against,
-      for_score: Float.round(for_total * 1.0, 3),
-      against_score: Float.round(against_total * 1.0, 3),
-      grounded_for_score: Float.round(grounded_for_score * 1.0, 3),
-      grounded_against_score: Float.round(grounded_against_score * 1.0, 3),
-      grounded_for_count: grounded_for_count,
-      grounded_against_count: grounded_against_count,
-      belief_for_count: belief_for_count,
-      belief_against_count: belief_against_count,
-      aec_methodology: "arxiv.org/abs/2602.03974",
-      fraudulent_citations: fraudulent_count,
-      belief: Float.round(belief * 1.0, 3),
-      uncertainty: Float.round(uncertainty * 1.0, 3),
-      duration_ms: metadata_timings.duration_ms,
-      phase_timings_ms: metadata_timings.phase_timings_ms,
-      verification_stats: verification_stats,
-      evidence_quality: %{
-        reviews: review_count,
-        trials: trial_count,
-        studies: study_count
-      },
-      supporting:
-        Enum.map(verified_supporting, fn ev ->
-          %{
-            summary: ev.summary,
-            score: ev.score,
-            verified: ev.verified,
-            verification: ev.verification,
-            paper_type: Atom.to_string(ev.paper_type),
-            citation_count: ev.citation_count,
-            strength_display: ev.strength,
-            source_quality: Map.get(ev, :source_quality, 0),
-            source_type: ev.source_type,
-            evidence_store: Atom.to_string(Map.get(ev, :evidence_store, :unknown))
-          }
-        end),
-      opposing:
-        Enum.map(verified_opposing, fn ev ->
-          %{
-            summary: ev.summary,
-            score: ev.score,
-            verified: ev.verified,
-            verification: ev.verification,
-            paper_type: Atom.to_string(ev.paper_type),
-            citation_count: ev.citation_count,
-            strength_display: ev.strength,
-            source_quality: Map.get(ev, :source_quality, 0),
-            source_type: ev.source_type,
-            evidence_store: Atom.to_string(Map.get(ev, :evidence_store, :unknown))
-          }
-        end),
-      papers_found: length(all_papers),
-      source_counts: source_counts,
-      papers_detail:
-        Enum.map(all_papers, fn p ->
-          %{
-            title: p["title"],
-            year: p["year"],
-            citations: p["citation_count"] || p["citationCount"] || 0,
-            source: p["source"] || "unknown",
-            abstract: String.slice(to_string(p["abstract"] || ""), 0, 500)
-          }
-        end),
-      investigation_id: topic_id,
-      optimization: nil,
-      suggested_next:
-        try do
-          Policy.rank_actions(@ledger_name, limit: 3)
-          |> Enum.map(fn a ->
+    json_metadata =
+      %{
+        topic: topic,
+        claim_id: claim_id,
+        direction: direction,
+        strategy_hash: Strategy.param_hash(strategy),
+        verified_for: verified_for,
+        verified_against: verified_against,
+        reasoning_for: reasoning_for,
+        reasoning_against: reasoning_against,
+        for_score: Float.round(for_total * 1.0, 3),
+        against_score: Float.round(against_total * 1.0, 3),
+        grounded_for_score: Float.round(grounded_for_score * 1.0, 3),
+        grounded_against_score: Float.round(grounded_against_score * 1.0, 3),
+        grounded_for_count: grounded_for_count,
+        grounded_against_count: grounded_against_count,
+        belief_for_count: belief_for_count,
+        belief_against_count: belief_against_count,
+        aec_methodology: "arxiv.org/abs/2602.03974",
+        fraudulent_citations: fraudulent_count,
+        belief: Float.round(belief * 1.0, 3),
+        uncertainty: Float.round(uncertainty * 1.0, 3),
+        duration_ms: metadata_timings.duration_ms,
+        phase_timings_ms: metadata_timings.phase_timings_ms,
+        verification_stats: verification_stats,
+        evidence_quality: %{
+          reviews: review_count,
+          trials: trial_count,
+          studies: study_count
+        },
+        supporting:
+          Enum.map(verified_supporting, fn ev ->
             %{
-              action_type: a.action_type,
-              claim_title: a.claim_title,
-              information_gain: a.expected_information_gain,
-              claim_id: a.claim_id,
-              reason: a.reason
+              summary: ev.summary,
+              score: ev.score,
+              verified: ev.verified,
+              verification: ev.verification,
+              paper_type: Atom.to_string(ev.paper_type),
+              citation_count: ev.citation_count,
+              strength_display: ev.strength,
+              source_quality: Map.get(ev, :source_quality, 0),
+              source_type: ev.source_type,
+              evidence_store: Atom.to_string(Map.get(ev, :evidence_store, :unknown))
             }
-          end)
-        rescue
-          _ -> []
-        end,
-      emergent_questions: emergent_questions,
-      variant_id: variant_id
-    }
+          end),
+        opposing:
+          Enum.map(verified_opposing, fn ev ->
+            %{
+              summary: ev.summary,
+              score: ev.score,
+              verified: ev.verified,
+              verification: ev.verification,
+              paper_type: Atom.to_string(ev.paper_type),
+              citation_count: ev.citation_count,
+              strength_display: ev.strength,
+              source_quality: Map.get(ev, :source_quality, 0),
+              source_type: ev.source_type,
+              evidence_store: Atom.to_string(Map.get(ev, :evidence_store, :unknown))
+            }
+          end),
+        papers_found: length(all_papers),
+        source_counts: source_counts,
+        papers_detail:
+          Enum.map(all_papers, fn p ->
+            %{
+              title: p["title"],
+              year: p["year"],
+              citations: p["citation_count"] || p["citationCount"] || 0,
+              source: p["source"] || "unknown",
+              abstract: String.slice(to_string(p["abstract"] || ""), 0, 500)
+            }
+          end),
+        investigation_id: topic_id,
+        optimization: nil,
+        suggested_next:
+          try do
+            Policy.rank_actions(@ledger_name, limit: 3)
+            |> Enum.map(fn a ->
+              %{
+                action_type: a.action_type,
+                claim_title: a.claim_title,
+                information_gain: a.expected_information_gain,
+                claim_id: a.claim_id,
+                reason: a.reason
+              }
+            end)
+          rescue
+            _ -> []
+          end,
+        emergent_questions: emergent_questions,
+        variant_id: variant_id
+      }
+      |> put_evidence_plan_metadata(search_plan)
 
     trace_payload =
       build_boundary_trace(trace_context, %{
@@ -1244,6 +1254,18 @@ Known failure patterns to avoid:
       phase_timings_ms: timings
     }
   end
+
+  defp put_evidence_plan_metadata(metadata, %{evidence_plan: evidence_plan} = search_plan)
+       when is_map(metadata) and is_map(evidence_plan) do
+    metadata
+    |> Map.put(:evidence_plan, EvidencePlanner.summary(evidence_plan))
+    |> Map.put(
+      :evidence_plan_candidates,
+      Map.get(search_plan, :evidence_plan_candidates, [])
+    )
+  end
+
+  defp put_evidence_plan_metadata(metadata, _search_plan) when is_map(metadata), do: metadata
 
   defp grounded_evidence?(ev) do
     case Map.get(ev, :evidence_store) do
@@ -2730,7 +2752,7 @@ Known failure patterns to avoid:
       |> Enum.map(&normalize_paper_format/1)
       |> Enum.take(strategy.top_n_papers)
 
-    {sorted, source_counts}
+    {sorted, source_counts, plan}
   end
 
   @doc false
@@ -2744,26 +2766,31 @@ Known failure patterns to avoid:
     normalized_keywords = search_keywords(normalized_topic, keywords)
     terms = topic_terms(normalized_topic)
     claim_family = ClaimFamily.match(normalized_topic, normalized_keywords, terms)
-    profile = ClaimFamily.search_profile(normalized_topic, normalized_keywords, terms)
+    family_profile = ClaimFamily.search_profile(normalized_topic, normalized_keywords, terms)
     evidence_profile = ClaimFamily.evidence_profile(normalized_topic, normalized_keywords, terms)
 
-    {ss_queries, oa_queries} =
-      build_search_queries(
+    planner =
+      EvidencePlanner.plan(
         normalized_topic,
         normalized_keywords,
         terms,
-        profile,
+        claim_family,
         evidence_profile
       )
+
+    selected_plan = planner.selected
 
     %{
       normalized_topic: normalized_topic,
       keywords: normalized_keywords,
       claim_family: claim_family && claim_family.kind,
-      profile: profile,
-      evidence_profile: evidence_profile,
-      ss_queries: ss_queries,
-      oa_queries: oa_queries
+      family_profile: family_profile,
+      profile: selected_plan.profile,
+      evidence_profile: selected_plan.evidence_profile || evidence_profile,
+      evidence_plan: selected_plan,
+      evidence_plan_candidates: EvidencePlanner.candidate_summaries(planner.candidates),
+      ss_queries: selected_plan.ss_queries,
+      oa_queries: selected_plan.oa_queries
     }
   end
 
@@ -2784,29 +2811,6 @@ Known failure patterns to avoid:
   end
 
   def rerank_retrieval_candidates(papers, _plan) when is_list(papers), do: papers
-
-  # Build search queries split by API. SS gets 3 queries (rate limit safe),
-  # OA gets the broader query family. Returns {ss_queries, oa_queries}.
-  defp build_search_queries(topic, keywords, terms, _profile, evidence_profile) do
-    topic_words = topic_terms(topic) |> MapSet.new()
-    keyword_topic = keyword_query_topic(topic, keywords)
-
-    novel_keywords =
-      Enum.reject(keywords, fn kw -> MapSet.member?(topic_words, kw) end) |> Enum.take(3)
-
-    {ss_queries, oa_queries} =
-      ClaimFamily.search_queries(topic, keywords, terms, evidence_profile)
-
-    oa_queries =
-      if novel_keywords != [] do
-        oa_queries ++
-          [{:keywords_augmented, "#{keyword_topic} #{Enum.join(novel_keywords, " ")}", []}]
-      else
-        oa_queries
-      end
-
-    {ss_queries, oa_queries}
-  end
 
   # Categorize source labels into summary keys
   defp source_category("alphaxiv"), do: :alphaxiv
@@ -2979,13 +2983,6 @@ Known failure patterns to avoid:
     |> Enum.take(4)
   end
 
-  defp keyword_query_topic(topic, keywords) do
-    case keywords do
-      [] -> topic
-      _ -> Enum.join(keywords, " ")
-    end
-  end
-
   defp distinctive_topic_terms(topic) do
     topic
     |> topic_terms()
@@ -3048,6 +3045,11 @@ Known failure patterns to avoid:
   end
 
   defp semantic_search_seed(%{evidence_profile: %{semantic_seed: seed}})
+       when is_binary(seed) and seed != "" do
+    seed
+  end
+
+  defp semantic_search_seed(%{evidence_plan: %{semantic_seed: seed}})
        when is_binary(seed) and seed != "" do
     seed
   end
@@ -3537,6 +3539,10 @@ Known failure patterns to avoid:
 
     %{
       steering: text_snapshot(Map.get(trace_context, :steering, "")),
+      planning: %{
+        selected: evidence_plan_trace(Map.get(trace_context, :search_plan, %{})),
+        candidates: evidence_plan_candidates_trace(Map.get(trace_context, :search_plan, %{}))
+      },
       prompts: %{
         for_system: text_snapshot(message_content(Map.get(trace_context, :for_messages, []), 0)),
         for_user: text_snapshot(message_content(Map.get(trace_context, :for_messages, []), 1)),
@@ -3678,6 +3684,7 @@ Known failure patterns to avoid:
   defp build_trace_context(
          topic,
          steering,
+         search_plan,
          for_messages,
          against_messages,
          for_result,
@@ -3686,12 +3693,26 @@ Known failure patterns to avoid:
     %{
       topic: topic,
       steering: steering,
+      search_plan: search_plan,
       for_messages: for_messages,
       against_messages: against_messages,
       for_result: for_result,
       against_result: against_result
     }
   end
+
+  defp evidence_plan_trace(%{evidence_plan: evidence_plan}) when is_map(evidence_plan) do
+    EvidencePlanner.summary(evidence_plan)
+  end
+
+  defp evidence_plan_trace(_search_plan), do: %{}
+
+  defp evidence_plan_candidates_trace(%{evidence_plan_candidates: candidates})
+       when is_list(candidates) do
+    candidates
+  end
+
+  defp evidence_plan_candidates_trace(_search_plan), do: []
 
   defp evidence_trace(evidence) when is_list(evidence) do
     Enum.map(evidence, fn ev ->
