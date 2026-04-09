@@ -141,6 +141,54 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert Investigate.parse_verification_response(response) == {:verified, :other}
   end
 
+  test "parse_verification_response salvages clearly-identifies reasoning without final label" do
+    response = """
+    I need to classify the claim about whether the paper "Spherical-Earth-Based Measurement Modeling for Practical OTHR Target Tracking" explicitly identifies that flat-Earth assumptions in over-the-horizon radar tracking produce two "obvious drawbacks".
+
+    The abstract clearly identifies two "obvious drawbacks" of using a flat Earth OTHR measurement model.
+    These are exactly the two "obvious drawbacks" mentioned in the claim.
+    The paper is described as an article, which suggests it's a REVIEW of existing literature with a proposed solution.
+
+    Classification:
+    """
+
+    assert Investigate.parse_verification_response(response) == {:verified, :review}
+  end
+
+  test "parse_verification_response overrides unverified when abstract directly states claim but model hedges on full-paper access" do
+    response = """
+    The claim is: "the error that must be taken into account when compiling and reading maps does not exceed 3%"
+
+    In the abstract, the final sentence says exactly that the error that must be taken into account when compiling and reading maps does not exceed 3%.
+    So the paper directly states this claim in its abstract.
+
+    However, since I only have access to the abstract, I cannot verify if the methods and calculations in the full paper rigorously justify the exact 3% figure beyond the abstract's statement.
+
+    UNVERIFIED OTHER
+    """
+
+    assert Investigate.parse_verification_response(response) == {:verified, :other}
+  end
+
+  test "parse_verification_response treats fully-supported reasoning as verified without final label" do
+    response = """
+    The abstract clearly states that the flat-Earth assumptions have two obvious drawbacks.
+    The paper explicitly identifies those drawbacks, which exactly matches the claim.
+    Therefore, the claim is fully supported by the paper.
+    """
+
+    assert Investigate.parse_verification_response(response) == {:verified, :other}
+  end
+
+  test "parse_verification_response treats explicitly-identify reasoning as verified without final label" do
+    response = """
+    Looking at the abstract, I can see that the paper does indeed explicitly identify two drawbacks of the flat-Earth model.
+    That reasoning is enough to support the claim.
+    """
+
+    assert Investigate.parse_verification_response(response) == {:verified, :other}
+  end
+
   test "preferred_utility_model prefers provider-specific active model over stale default_model" do
     Application.put_env(:daemon, :default_provider, :zhipu)
     Application.put_env(:daemon, :default_model, "glm-4.7")
@@ -794,6 +842,18 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
 
     refute normalized =~ "under gravitational theory"
     refute String.starts_with?(normalized, "explicitly derives that")
+  end
+
+  test "verification_claim_text strips identifies-that wrappers from sourced claims" do
+    summary =
+      "Multiple independent engineering domains require spherical Earth models to achieve functional accuracy. [Paper 1] explicitly identifies that flat-Earth assumptions in over-the-horizon radar tracking produce two \"obvious drawbacks\": inability to use standard kinematic models and degraded measurement accuracy from ignoring Earth's curvature."
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized ==
+             "flat-Earth assumptions in over-the-horizon radar tracking produce two \"obvious drawbacks\""
+
+    refute String.starts_with?(normalized, "explicitly identifies that")
   end
 
   test "verification_claim_text drops later paper clauses from the selected citation sentence" do

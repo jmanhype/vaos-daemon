@@ -205,6 +205,8 @@ defmodule Daemon.Investigation.PromptConfig do
       Return ONLY the classification on the first line using exactly two uppercase words.
       First word: VERIFIED / PARTIAL / UNVERIFIED
       Second word: REVIEW / TRIAL / STUDY / OTHER
+      Judge ONLY whether the abstract text states or supports the claim.
+      Do NOT require the full paper or methods to classify a claim as VERIFIED.
       Do not write analysis before the first line. If needed, explanation may follow after it.
 
       Paper title: ~paper_title~

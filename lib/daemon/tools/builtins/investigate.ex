@@ -4087,7 +4087,7 @@ Known failure patterns to avoid:
 
   defp strip_leading_reporting_clause(summary) do
     reporting_verbs =
-      "describes|documents|notes|explains|reports|reported|finds|found|shows|showed|demonstrates|demonstrated|discusses|states|stated|establishes|established|derives|derived|argues|argued|observes|observed|indicates|indicated|mentions|mentioned|writes|wrote|proposes|proposed|details|detailed"
+      "describes|documents|notes|explains|reports|reported|finds|found|shows|showed|demonstrates|demonstrated|discusses|states|stated|establishes|established|derives|derived|argues|argued|observes|observed|indicates|indicated|identifies|identified|mentions|mentioned|writes|wrote|proposes|proposed|details|detailed"
 
     lead_in =
       ~r/^\s*(?:(?:explicitly|clearly|directly|specifically)\s+)?(?:#{reporting_verbs})\s+/iu
@@ -4300,16 +4300,27 @@ Known failure patterns to avoid:
     Reply with the classification on the first line using exactly two uppercase words.
     First word must be VERIFIED, PARTIAL, or UNVERIFIED.
     Second word must be REVIEW, TRIAL, STUDY, or OTHER.
+    Judge ONLY whether the abstract text states or supports the claim.
+    Do NOT require the full paper or methods to classify a claim as VERIFIED.
     Do not put analysis before the first line.
     """
   end
 
   defp normalize_verification_keyword(keyword, response_clean) do
     case keyword do
-      "UNVERIFIED" -> :unverified
-      "PARTIAL" -> :partial
-      "VERIFIED" -> :verified
-      _ -> infer_verification_from_reasoning(response_clean)
+      "UNVERIFIED" ->
+        if abstract_support_overrides_unverified?(response_clean),
+          do: :verified,
+          else: :unverified
+
+      "PARTIAL" ->
+        :partial
+
+      "VERIFIED" ->
+        :verified
+
+      _ ->
+        infer_verification_from_reasoning(response_clean)
     end
   end
 
@@ -4336,7 +4347,7 @@ Known failure patterns to avoid:
         :partial
 
       Regex.match?(
-        ~r/\bDIRECTLY\s+SUPPORTS\b|\bDIRECTLY\s+STATED\b|\bEXPLICITLY\s+STATED\b|\bMATCHES\s+THE\s+CLAIM\b|\bMATCHES\s+ALMOST\s+WORD[-\s]?FOR[-\s]?WORD\b|\bWORD[-\s]?FOR[-\s]?WORD\b|\bAPPEARS\s+TO\s+BE\s+DIRECTLY\s+STATED\b/u,
+        ~r/\bDIRECTLY\s+SUPPORTS(?:\s+THE\s+CLAIM)?\b|\bDIRECTLY\s+STATE[SD]?(?:\s+THIS\s+CLAIM|\s+THE\s+CLAIM)?\b|\bEXPLICITLY\s+STATE[SD]?\b|\bFULLY\s+SUPPORT(?:ED|S)\b|\bMATCHES\s+THE\s+CLAIM\b|\bMATCHES\s+ALMOST\s+WORD[-\s]?FOR[-\s]?WORD\b|\bWORD[-\s]?FOR[-\s]?WORD\b|\bAPPEARS\s+TO\s+BE\s+DIRECTLY\s+STATED\b|\b(?:CLEARLY|EXPLICITLY)\s+IDENTIF(?:IES|IED|YING)\b|\bDOES\s+INDEED\s+EXPLICITLY\s+IDENTIFY\b|\bEXACTLY\s+THE\b.+\bMENTIONED\s+IN\s+THE\s+CLAIM\b/u,
         response_clean
       ) ->
         :verified
@@ -4345,6 +4356,24 @@ Known failure patterns to avoid:
         :unverified
     end
   end
+
+  defp abstract_support_overrides_unverified?(response_clean) when is_binary(response_clean) do
+    abstract_support? =
+      Regex.match?(
+        ~r/\b(?:THE\s+ABSTRACT|THE\s+PAPER|SO\s+THE\s+PAPER)\s+DIRECTLY\s+(?:STATE[SD]?|SUPPORTS?)\s+(?:THIS\s+CLAIM|THE\s+CLAIM)\b|\bTHE\s+PAPER\s+DIRECTLY\s+STATES\s+THIS\s+CLAIM\s+IN\s+ITS\s+ABSTRACT\b|\bTHE\s+ABSTRACT\s+CLEARLY\s+IDENTIF(?:IES|Y)\b/u,
+        response_clean
+      )
+
+    abstract_scope_hedge? =
+      Regex.match?(
+        ~r/\bONLY\s+(?:HAVE\s+ACCESS\s+TO|HAVE)\s+THE\s+ABSTRACT\b|\bONLY\s+THE\s+ABSTRACT\b|\bCANNOT\s+VERIFY\b.{0,120}\b(?:METHODS?|FULL\s+PAPER|RIGOROUSLY\s+JUSTIFY)\b|\bHAVE\s+NOT\s+READ\s+THE\s+FULL\s+PAPER\b/u,
+        response_clean
+      )
+
+    abstract_support? and abstract_scope_hedge?
+  end
+
+  defp abstract_support_overrides_unverified?(_response_clean), do: false
 
   defp infer_paper_type_from_reasoning(response_clean) when is_binary(response_clean) do
     cond do
