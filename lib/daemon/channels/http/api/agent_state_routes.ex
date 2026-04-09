@@ -12,10 +12,11 @@ defmodule Daemon.Channels.HTTP.API.AgentStateRoutes do
   require Logger
 
   alias Daemon.Agent.Introspection
+  alias Daemon.ModelSelection
   alias Daemon.Tools.Registry, as: ToolsRegistry
 
-  plug :match
-  plug :dispatch
+  plug(:match)
+  plug(:dispatch)
 
   get "/state" do
     snap = Introspection.snapshot()
@@ -75,15 +76,8 @@ defmodule Daemon.Channels.HTTP.API.AgentStateRoutes do
   end
 
   defp current_model_info do
-    provider =
-      Application.get_env(:daemon, :default_provider, :ollama)
-      |> to_string()
-
-    model =
-      Application.get_env(:daemon, :default_model) ||
-        Application.get_env(:daemon, :ollama_model, "llama3.2:latest")
-
-    {provider, to_string(model)}
+    {provider, model} = ModelSelection.current_provider_and_model()
+    {to_string(provider), to_string(model)}
   end
 
   defp total_memory_mb do

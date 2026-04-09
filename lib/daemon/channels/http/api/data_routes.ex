@@ -15,12 +15,13 @@ defmodule Daemon.Channels.HTTP.API.DataRoutes do
   require Logger
 
   alias Daemon.Agent.Memory
+  alias Daemon.ModelSelection
   alias MiosaProviders
   alias Daemon.Agent.Scheduler
   alias Daemon.Machines
 
-  plug :match
-  plug :dispatch
+  plug(:match)
+  plug(:dispatch)
 
   # ── GET / ─────────────────────────────────────────────────────────
   # Handles GET /models, GET /analytics, GET /machines after prefix strip.
@@ -136,7 +137,14 @@ defmodule Daemon.Channels.HTTP.API.DataRoutes do
       Logger.info("[Models] Switched to #{prov_str}/#{model_name}")
 
       context_window = MiosaProviders.Registry.context_window(model_name)
-      body = Jason.encode!(%{provider: prov_str, model: model_name, status: "ok", context_window: context_window})
+
+      body =
+        Jason.encode!(%{
+          provider: prov_str,
+          model: model_name,
+          status: "ok",
+          context_window: context_window
+        })
 
       conn
       |> put_resp_content_type("application/json")
@@ -158,26 +166,13 @@ defmodule Daemon.Channels.HTTP.API.DataRoutes do
   # Effective path: GET /models/current
 
   get "/current" do
-    provider =
-      Application.get_env(:daemon, :default_provider, :ollama)
-      |> to_string()
-
-    model =
-      Application.get_env(:daemon, :default_model) ||
-        Application.get_env(:daemon, :ollama_model, "llama3.2:latest")
-
+    {provider, model} = ModelSelection.current_provider_and_model()
     model_name = to_string(model)
-
-    context_window =
-      try do
-        MiosaProviders.Registry.context_window(model_name)
-      rescue
-        _ -> nil
-      end
+    context_window = ModelSelection.context_window(model_name)
 
     body =
       Jason.encode!(%{
-        provider: provider,
+        provider: to_string(provider),
         model: model_name,
         context_window: context_window
       })
@@ -233,12 +228,21 @@ defmodule Daemon.Channels.HTTP.API.DataRoutes do
       false ->
         conn
         |> put_resp_content_type("application/json")
-        |> send_resp(400, Jason.encode!(%{error: "unknown_provider", details: "Provider not registered"}))
+        |> send_resp(
+          400,
+          Jason.encode!(%{error: "unknown_provider", details: "Provider not registered"})
+        )
 
       _ ->
         conn
         |> put_resp_content_type("application/json")
-        |> send_resp(400, Jason.encode!(%{error: "invalid_request", details: "Missing or invalid provider/model fields"}))
+        |> send_resp(
+          400,
+          Jason.encode!(%{
+            error: "invalid_request",
+            details: "Missing or invalid provider/model fields"
+          })
+        )
     end
   end
 
@@ -284,17 +288,20 @@ defmodule Daemon.Channels.HTTP.API.DataRoutes do
 
   defp handle_list_models(conn) do
     provider = Application.get_env(:daemon, :default_provider, :ollama)
-
-    current_model =
-      Application.get_env(:daemon, :default_model) ||
-        Application.get_env(:daemon, :ollama_model, "llama3.2:latest")
+    current_model = ModelSelection.current_model(provider)
 
     ollama_models =
       try do
         case MiosaProviders.Ollama.list_models() do
           {:ok, models} ->
             Enum.map(models, fn m ->
-              ctx = try do MiosaProviders.Registry.context_window(m.name) rescue _ -> 128_000 end
+              ctx =
+                try do
+                  MiosaProviders.Registry.context_window(m.name)
+                rescue
+                  _ -> 128_000
+                end
+
               %{
                 name: m.name,
                 provider: "ollama",
@@ -320,7 +327,13 @@ defmodule Daemon.Channels.HTTP.API.DataRoutes do
           case MiosaProviders.Registry.provider_info(p) do
             {:ok, info} ->
               Enum.map(info.available_models, fn model_name ->
-                ctx = try do MiosaProviders.Registry.context_window(model_name) rescue _ -> 128_000 end
+                ctx =
+                  try do
+                    MiosaProviders.Registry.context_window(model_name)
+                  rescue
+                    _ -> 128_000
+                  end
+
                 %{
                   name: model_name,
                   provider: to_string(p),

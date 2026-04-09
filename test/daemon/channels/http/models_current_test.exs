@@ -16,7 +16,7 @@ defmodule Daemon.Channels.HTTP.API.ModelsCurrentTest do
     6. GET /current reflects Application env after a POST /current switch
   """
   use ExUnit.Case, async: false
-  use Plug.Test
+  import Plug.Test
 
   alias Daemon.Channels.HTTP.API.DataRoutes
 
@@ -33,7 +33,7 @@ defmodule Daemon.Channels.HTTP.API.ModelsCurrentTest do
 
   defp json_post(path, body) do
     conn(:post, path, Jason.encode!(body))
-    |> put_req_header("content-type", "application/json")
+    |> Plug.Conn.put_req_header("content-type", "application/json")
     |> Plug.Parsers.call(Plug.Parsers.init(parsers: [:json], json_decoder: Jason))
     |> call()
   end
@@ -52,6 +52,7 @@ defmodule Daemon.Channels.HTTP.API.ModelsCurrentTest do
     original_provider = Application.get_env(:daemon, :default_provider)
     original_model = Application.get_env(:daemon, :default_model)
     original_ollama = Application.get_env(:daemon, :ollama_model)
+    original_zhipu = Application.get_env(:daemon, :zhipu_model)
 
     on_exit(fn ->
       if is_nil(original_provider) do
@@ -70,6 +71,12 @@ defmodule Daemon.Channels.HTTP.API.ModelsCurrentTest do
         Application.delete_env(:daemon, :ollama_model)
       else
         Application.put_env(:daemon, :ollama_model, original_ollama)
+      end
+
+      if is_nil(original_zhipu) do
+        Application.delete_env(:daemon, :zhipu_model)
+      else
+        Application.put_env(:daemon, :zhipu_model, original_zhipu)
       end
     end)
 
@@ -130,6 +137,18 @@ defmodule Daemon.Channels.HTTP.API.ModelsCurrentTest do
 
       assert body["provider"] == "ollama"
       assert body["model"] == "llama3.2:latest"
+    end
+
+    test "prefers provider-specific model over stale default_model" do
+      Application.put_env(:daemon, :default_provider, :zhipu)
+      Application.put_env(:daemon, :default_model, "glm-4.7")
+      Application.put_env(:daemon, :zhipu_model, "glm-5.1")
+
+      conn = json_get("/current")
+      body = decode(conn)
+
+      assert body["provider"] == "zhipu"
+      assert body["model"] == "glm-5.1"
     end
   end
 
@@ -232,17 +251,23 @@ defmodule Daemon.Channels.HTTP.API.ModelsCurrentTest do
 
   describe "POST /current with unknown provider" do
     test "returns 400" do
-      conn = json_post("/current", %{"provider" => "nonexistent_provider_xyz", "model" => "some-model"})
+      conn =
+        json_post("/current", %{"provider" => "nonexistent_provider_xyz", "model" => "some-model"})
+
       assert conn.status == 400
     end
 
     test "returns application/json on 400 for unknown provider" do
-      conn = json_post("/current", %{"provider" => "nonexistent_provider_xyz", "model" => "some-model"})
+      conn =
+        json_post("/current", %{"provider" => "nonexistent_provider_xyz", "model" => "some-model"})
+
       assert content_type(conn) =~ "application/json"
     end
 
     test "error body contains error key for unknown provider" do
-      conn = json_post("/current", %{"provider" => "nonexistent_provider_xyz", "model" => "some-model"})
+      conn =
+        json_post("/current", %{"provider" => "nonexistent_provider_xyz", "model" => "some-model"})
+
       body = decode(conn)
       assert is_binary(body["error"])
     end

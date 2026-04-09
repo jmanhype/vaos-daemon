@@ -23,7 +23,10 @@ defmodule Daemon.Tools.Builtins.AlphaXivClient do
               start_mcp_client(%{"authorization" => "Bearer " <> new_token})
 
             {:error, reason} ->
-              Logger.warning("[alphaxiv] Token expired and refresh failed: #{inspect(reason)}. Re-auth needed.")
+              Logger.warning(
+                "[alphaxiv] Token expired and refresh failed: #{inspect(reason)}. Re-auth needed."
+              )
+
               {:error, :token_expired}
           end
 
@@ -36,7 +39,10 @@ defmodule Daemon.Tools.Builtins.AlphaXivClient do
         {:error, :mcp_unavailable}
     catch
       kind, reason ->
-        Logger.warning("[alphaxiv] Failed to start MCP client: #{inspect(kind)} #{inspect(reason)}")
+        Logger.warning(
+          "[alphaxiv] Failed to start MCP client: #{inspect(kind)} #{inspect(reason)}"
+        )
+
         {:error, :mcp_unavailable}
     end
   end
@@ -44,7 +50,9 @@ defmodule Daemon.Tools.Builtins.AlphaXivClient do
   @doc "Search papers by semantic embedding similarity"
   def embedding_search(query) do
     case call_tool("embedding_similarity_search", %{"query" => query}) do
-      {:ok, response} -> {:ok, extract_papers(response)}
+      {:ok, response} ->
+        {:ok, extract_papers(response)}
+
       error ->
         Logger.debug("[alphaxiv] embedding_search error: #{inspect(error)}")
         error
@@ -54,7 +62,9 @@ defmodule Daemon.Tools.Builtins.AlphaXivClient do
   @doc "Search papers by keywords"
   def keyword_search(query) do
     case call_tool("full_text_papers_search", %{"query" => query}) do
-      {:ok, response} -> {:ok, extract_papers(response)}
+      {:ok, response} ->
+        {:ok, extract_papers(response)}
+
       error ->
         Logger.debug("[alphaxiv] keyword_search error: #{inspect(error)}")
         error
@@ -71,6 +81,23 @@ defmodule Daemon.Tools.Builtins.AlphaXivClient do
     call_tool("answer_pdf_queries", %{"url" => arxiv_url, "query" => question})
   end
 
+  @doc false
+  def auth_available?(opts \\ []) do
+    token_path = Keyword.get(opts, :token_path, @token_path)
+    oauth_path = Keyword.get(opts, :oauth_path, @oauth_path)
+
+    case load_auth_headers(token_path) do
+      {:expired, _exp_date} ->
+        File.exists?(oauth_path)
+
+      headers when is_map(headers) ->
+        map_size(headers) > 0
+
+      _ ->
+        false
+    end
+  end
+
   defp call_tool(tool_name, params) do
     case GenServer.whereis(@client_name) do
       nil ->
@@ -81,9 +108,14 @@ defmodule Daemon.Tools.Builtins.AlphaXivClient do
         try do
           case Anubis.Client.call_tool(@client_name, tool_name, params, timeout: 30_000) do
             {:ok, response} ->
-              Logger.debug("[alphaxiv] Got response: #{inspect(response) |> String.slice(0, 300)}")
+              Logger.debug(
+                "[alphaxiv] Got response: #{inspect(response) |> String.slice(0, 300)}"
+              )
+
               {:ok, response}
-            {:error, _} = err -> err
+
+            {:error, _} = err ->
+              err
           end
         rescue
           e ->
@@ -105,9 +137,12 @@ defmodule Daemon.Tools.Builtins.AlphaXivClient do
           {:ok, decoded} when is_map(decoded) -> [decoded]
           _ -> []
         end
-      _ -> []
+
+      _ ->
+        []
     end)
   end
+
   defp extract_content(result) when is_list(result), do: result
   defp extract_content(result) when is_map(result), do: [result]
   defp extract_content(_), do: []
@@ -121,10 +156,13 @@ defmodule Daemon.Tools.Builtins.AlphaXivClient do
     case Jason.decode(text) do
       {:ok, papers} when is_list(papers) ->
         Enum.map(papers, &normalize_paper/1)
+
       {:ok, %{"papers" => papers}} when is_list(papers) ->
         Enum.map(papers, &normalize_paper/1)
+
       {:ok, %{"results" => papers}} when is_list(papers) ->
         Enum.map(papers, &normalize_paper/1)
+
       _ ->
         # Parse structured text response
         parse_text_papers(text)
@@ -132,20 +170,26 @@ defmodule Daemon.Tools.Builtins.AlphaXivClient do
   end
 
   defp extract_text(response) when is_binary(response), do: response
+
   defp extract_text(%{content: content}) when is_list(content) do
     content
     |> Enum.filter(fn item -> is_map(item) and Map.get(item, "type") == "text" end)
     |> Enum.map(fn item -> Map.get(item, "text", "") end)
     |> Enum.join("\n")
   end
+
   defp extract_text(%{result: result}) when is_map(result) do
     case Map.get(result, "content") do
       content when is_list(content) -> extract_text(%{content: content})
       _ -> inspect(result)
     end
   end
+
   defp extract_text(other) do
-    Logger.debug("[alphaxiv] Unexpected response format: #{inspect(other) |> String.slice(0, 200)}")
+    Logger.debug(
+      "[alphaxiv] Unexpected response format: #{inspect(other) |> String.slice(0, 200)}"
+    )
+
     ""
   end
 
@@ -155,23 +199,38 @@ defmodule Daemon.Tools.Builtins.AlphaXivClient do
       _ -> id
     end
   end
+
   defp clean_arxiv_id(id), do: id
 
   defp normalize_paper(paper) when is_map(paper) do
     %{
       "title" => Map.get(paper, "title", "Unknown"),
       "abstract" => (Map.get(paper, "abstract", "") || "") |> to_string() |> String.slice(0, 200),
-      "year" => (Map.get(paper, "publicationDate", Map.get(paper, "year", "unknown")) || "unknown") |> to_string() |> String.slice(0, 4),
+      "year" =>
+        (Map.get(paper, "publicationDate", Map.get(paper, "year", "unknown")) || "unknown")
+        |> to_string()
+        |> String.slice(0, 4),
       "citationCount" => Map.get(paper, "likes", Map.get(paper, "citationCount", 0)) || 0,
       "arxivId" => clean_arxiv_id(Map.get(paper, "arxivId", Map.get(paper, "id", "")) || "")
     }
   end
-  defp normalize_paper(_), do: %{"title" => "Unknown", "abstract" => "", "year" => "unknown", "citationCount" => 0, "arxivId" => ""}
+
+  defp normalize_paper(_),
+    do: %{
+      "title" => "Unknown",
+      "abstract" => "",
+      "year" => "unknown",
+      "citationCount" => 0,
+      "arxivId" => ""
+    }
 
   defp parse_text_papers(text) do
     # Extract papers from alphaXiv formatted text response
     # Pattern: [ID=XXXX] **Title**. Published on DATE by ORG: Abstract...
-    Regex.scan(~r/\[ID=([^\]]+)\]\s*\*\*([^*]+)\*\*\.\s*Published on (\d{4})[^:]*:(.+?)(?=\[ID=|\z)/s, text)
+    Regex.scan(
+      ~r/\[ID=([^\]]+)\]\s*\*\*([^*]+)\*\*\.\s*Published on (\d{4})[^:]*:(.+?)(?=\[ID=|\z)/s,
+      text
+    )
     |> Enum.map(fn [_, id, title, year, abstract] ->
       %{
         "title" => String.trim(title),
@@ -184,10 +243,15 @@ defmodule Daemon.Tools.Builtins.AlphaXivClient do
   end
 
   defp start_mcp_client(headers) do
-    Logger.info("[alphaxiv] Starting MCP client with #{if map_size(headers) > 0, do: "auth token", else: "no auth"}")
+    Logger.info(
+      "[alphaxiv] Starting MCP client with #{if map_size(headers) > 0, do: "auth token", else: "no auth"}"
+    )
+
     Anubis.Client.start_link(
       name: @client_name,
-      transport: {:streamable_http, base_url: @alphaxiv_base_url, mcp_path: @alphaxiv_mcp_path, headers: headers},
+      transport:
+        {:streamable_http,
+         base_url: @alphaxiv_base_url, mcp_path: @alphaxiv_mcp_path, headers: headers},
       client_info: %{"name" => "VAOS", "version" => "1.0.0"},
       capabilities: %{},
       protocol_version: "2025-06-18"
@@ -198,19 +262,27 @@ defmodule Daemon.Tools.Builtins.AlphaXivClient do
     case File.read(@oauth_path) do
       {:ok, json} ->
         case Jason.decode(json) do
-          {:ok, %{"refresh_token" => refresh, "client_id" => client_id, "token_endpoint" => endpoint}} ->
-            body = URI.encode_query(%{
-              "grant_type" => "refresh_token",
-              "refresh_token" => refresh,
-              "client_id" => client_id
-            })
-            case Req.post(endpoint, body: body, headers: [{"content-type", "application/x-www-form-urlencoded"}], receive_timeout: 10_000) do
+          {:ok,
+           %{"refresh_token" => refresh, "client_id" => client_id, "token_endpoint" => endpoint}} ->
+            body =
+              URI.encode_query(%{
+                "grant_type" => "refresh_token",
+                "refresh_token" => refresh,
+                "client_id" => client_id
+              })
+
+            case Req.post(endpoint,
+                   body: body,
+                   headers: [{"content-type", "application/x-www-form-urlencoded"}],
+                   receive_timeout: 10_000
+                 ) do
               {:ok, %{status: 200, body: %{"access_token" => new_token} = resp}} ->
                 # Save new access token
                 File.write!(@token_path, new_token)
                 # Update refresh token if rotated
                 if new_refresh = resp["refresh_token"] do
                   oauth = Jason.decode!(json) |> Map.put("refresh_token", new_refresh)
+
                   if exp = resp["expires_in"] do
                     oauth = Map.put(oauth, "expires_at", System.os_time(:second) + exp)
                     File.write!(@oauth_path, Jason.encode!(oauth))
@@ -218,28 +290,38 @@ defmodule Daemon.Tools.Builtins.AlphaXivClient do
                     File.write!(@oauth_path, Jason.encode!(oauth))
                   end
                 end
+
                 {:ok, new_token}
+
               {:ok, %{status: status, body: body}} ->
                 {:error, {:refresh_failed, status, body}}
+
               {:error, reason} ->
                 {:error, reason}
             end
-          _ -> {:error, :invalid_oauth_config}
+
+          _ ->
+            {:error, :invalid_oauth_config}
         end
-      _ -> {:error, :no_oauth_config}
+
+      _ ->
+        {:error, :no_oauth_config}
     end
   end
 
-  defp load_auth_headers do
-    case File.read(@token_path) do
+  defp load_auth_headers(token_path \\ @token_path) do
+    case File.read(token_path) do
       {:ok, token} ->
         t = String.trim(token)
+
         cond do
           t == "" -> %{}
           jwt_expired?(t) -> {:expired, jwt_exp_date(t)}
           true -> %{"authorization" => "Bearer " <> t}
         end
-      _ -> %{}
+
+      _ ->
+        %{}
     end
   end
 
@@ -248,7 +330,9 @@ defmodule Daemon.Tools.Builtins.AlphaXivClient do
     case decode_jwt_payload(token) do
       %{"exp" => exp} when is_integer(exp) ->
         System.os_time(:second) > exp
-      _ -> false
+
+      _ ->
+        false
     end
   end
 
@@ -256,7 +340,9 @@ defmodule Daemon.Tools.Builtins.AlphaXivClient do
     case decode_jwt_payload(token) do
       %{"exp" => exp} when is_integer(exp) ->
         exp |> DateTime.from_unix!() |> DateTime.to_iso8601()
-      _ -> "unknown"
+
+      _ ->
+        "unknown"
     end
   end
 
@@ -264,17 +350,22 @@ defmodule Daemon.Tools.Builtins.AlphaXivClient do
     case String.split(token, ".") do
       [_, payload_b64 | _] ->
         # Add base64url padding
-        padded = case rem(byte_size(payload_b64), 4) do
-          2 -> payload_b64 <> "=="
-          3 -> payload_b64 <> "="
-          _ -> payload_b64
-        end
+        padded =
+          case rem(byte_size(payload_b64), 4) do
+            2 -> payload_b64 <> "=="
+            3 -> payload_b64 <> "="
+            _ -> payload_b64
+          end
+
         padded = String.replace(padded, "-", "+") |> String.replace("_", "/")
+
         case Base.decode64(padded) do
           {:ok, json} -> Jason.decode!(json)
           _ -> %{}
         end
-      _ -> %{}
+
+      _ ->
+        %{}
     end
   rescue
     _ -> %{}

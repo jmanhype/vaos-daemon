@@ -28,6 +28,8 @@ defmodule Daemon.Channels.HTTP do
   use Plug.Router
   require Logger
 
+  alias Daemon.ModelSelection
+
   plug(:security_headers)
   plug(:cors_headers)
   plug(Plug.Logger, log: :debug)
@@ -52,7 +54,10 @@ defmodule Daemon.Channels.HTTP do
     conn
     |> put_resp_header("access-control-allow-origin", "*")
     |> put_resp_header("access-control-allow-methods", "GET, POST, PUT, DELETE, OPTIONS")
-    |> put_resp_header("access-control-allow-headers", "content-type, authorization, accept, cache-control, x-accel-buffering")
+    |> put_resp_header(
+      "access-control-allow-headers",
+      "content-type, authorization, accept, cache-control, x-accel-buffering"
+    )
     |> put_resp_header("access-control-max-age", "86400")
   end
 
@@ -66,24 +71,8 @@ defmodule Daemon.Channels.HTTP do
   # ── Health (no auth) ────────────────────────────────────────────────
 
   get "/health" do
-    provider =
-      Application.get_env(:daemon, :default_provider, "unknown")
-      |> to_string()
-
-    model_name =
-      case Application.get_env(:daemon, :default_model) do
-        nil ->
-          # Resolve from provider's default model
-          prov = Application.get_env(:daemon, :default_provider, :ollama)
-
-          case MiosaProviders.Registry.provider_info(prov) do
-            {:ok, info} -> to_string(info.default_model)
-            _ -> to_string(prov)
-          end
-
-        m ->
-          to_string(m)
-      end
+    provider = ModelSelection.current_provider() |> to_string()
+    model_name = ModelSelection.current_model() |> to_string()
 
     version =
       case Application.spec(:daemon, :vsn) do
@@ -91,9 +80,11 @@ defmodule Daemon.Channels.HTTP do
         vsn -> to_string(vsn)
       end
 
-    uptime = System.system_time(:second) - Application.get_env(:daemon, :start_time, System.system_time(:second))
+    uptime =
+      System.system_time(:second) -
+        Application.get_env(:daemon, :start_time, System.system_time(:second))
 
-    context_window = MiosaProviders.Registry.context_window(model_name)
+    context_window = ModelSelection.context_window(model_name)
 
     body =
       Jason.encode!(%{
@@ -141,10 +132,14 @@ defmodule Daemon.Channels.HTTP do
         setup_onboarding(conn, raw)
 
       {:more, _partial, conn} ->
-        conn |> put_resp_content_type("application/json") |> send_resp(413, ~s({"error":"payload_too_large"}))
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(413, ~s({"error":"payload_too_large"}))
 
       {:error, _reason} ->
-        conn |> put_resp_content_type("application/json") |> send_resp(400, ~s({"error":"read_failed"}))
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(400, ~s({"error":"read_failed"}))
     end
   end
 
@@ -178,8 +173,14 @@ defmodule Daemon.Channels.HTTP do
           provider: provider,
           model: Map.get(params, "model", "kimi-k2.5:cloud"),
           api_key: api_key,
-          env_var: Map.get(params, "env_var") || (if raw_provider == "ollama_cloud", do: "OLLAMA_API_KEY"),
-          machines: Map.get(params, "machines", %{"communication" => false, "productivity" => false, "research" => false}),
+          env_var:
+            Map.get(params, "env_var") || if(raw_provider == "ollama_cloud", do: "OLLAMA_API_KEY"),
+          machines:
+            Map.get(params, "machines", %{
+              "communication" => false,
+              "productivity" => false,
+              "research" => false
+            }),
           channels_config: Map.get(params, "channels", %{}),
           os_template: Map.get(params, "os_template"),
           ollama_url: ollama_url
@@ -271,7 +272,11 @@ defmodule Daemon.Channels.HTTP do
           if Application.get_env(:daemon, :platform_enabled, false) do
             Daemon.Platform.Surveys.create(body)
           else
-            :ets.insert(:daemon_survey_responses, {System.unique_integer([:positive]), body, DateTime.utc_now()})
+            :ets.insert(
+              :daemon_survey_responses,
+              {System.unique_integer([:positive]), body, DateTime.utc_now()}
+            )
+
             {:ok, body}
           end
 
@@ -309,7 +314,11 @@ defmodule Daemon.Channels.HTTP do
           if Application.get_env(:daemon, :platform_enabled, false) do
             Daemon.Platform.Surveys.create(attrs)
           else
-            :ets.insert(:daemon_survey_responses, {System.unique_integer([:positive]), attrs, DateTime.utc_now()})
+            :ets.insert(
+              :daemon_survey_responses,
+              {System.unique_integer([:positive]), attrs, DateTime.utc_now()}
+            )
+
             {:ok, attrs}
           end
 

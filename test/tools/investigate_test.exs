@@ -44,6 +44,7 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     keys = [
       :default_provider,
       :default_model,
+      :zhipu_model,
       :utility_model,
       :investigate_verification_model,
       :investigate_verify_max_tokens
@@ -85,6 +86,47 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     Application.put_env(:daemon, :investigate_verification_model, "glm-custom-verify")
 
     assert Investigate.preferred_verification_model() == "glm-custom-verify"
+  end
+
+  test "preferred_utility_model prefers provider-specific active model over stale default_model" do
+    Application.put_env(:daemon, :default_provider, :zhipu)
+    Application.put_env(:daemon, :default_model, "glm-4.7")
+    Application.put_env(:daemon, :zhipu_model, "glm-5.1")
+    Application.delete_env(:daemon, :utility_model)
+
+    assert Investigate.preferred_utility_model() == "glm-5.1"
+  end
+
+  test "run_semantic_scholar_queries stops after terminal 429 failure" do
+    counter = :counters.new(1, [])
+
+    http_fn = fn _url, _opts ->
+      :counters.add(counter, 1, 1)
+      {:error, "HTTP 429"}
+    end
+
+    queries = [
+      {:broad, "first query", []},
+      {:mechanism, "second query", []},
+      {:review, "third query", []}
+    ]
+
+    {results, terminal_failure?} =
+      Investigate.run_semantic_scholar_queries(queries, http_fn, 5, nil)
+
+    assert terminal_failure? == true
+    assert :counters.get(counter, 1) == 1
+    assert results == [ss_broad: []]
+  end
+
+  test "semantic_scholar_terminal_error? recognizes nested terminal failures" do
+    assert Investigate.semantic_scholar_terminal_error?({:semantic_scholar_failed, "HTTP 429"})
+
+    assert Investigate.semantic_scholar_terminal_error?(
+             {:wrapped, {:semantic_scholar_failed, "HTTP 403"}}
+           )
+
+    refute Investigate.semantic_scholar_terminal_error?({:semantic_scholar_failed, "HTTP 500"})
   end
 
   test "merge_verification_stats aggregates counts and averages" do
@@ -500,7 +542,8 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
   end
 
   test "search_query_plan uses general evidence queries for non-clinical claims" do
-    plan = Investigate.search_query_plan("examine claims that the earth is flat", ["earth", "flat"])
+    plan =
+      Investigate.search_query_plan("examine claims that the earth is flat", ["earth", "flat"])
 
     assert plan.normalized_topic == "the earth is flat"
     assert plan.profile == :general
@@ -514,7 +557,12 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert "earth satellite observation" in oa_queries
     assert plan.evidence_profile.semantic_seed == "earth curvature measurement"
     refute "the earth is flat" in ss_queries
-    refute Enum.any?(ss_queries ++ oa_queries, &String.contains?(&1, "randomized controlled trial"))
+
+    refute Enum.any?(
+             ss_queries ++ oa_queries,
+             &String.contains?(&1, "randomized controlled trial")
+           )
+
     refute Enum.any?(ss_queries ++ oa_queries, &String.contains?(&1, "placebo controlled trial"))
     refute Enum.any?(ss_queries ++ oa_queries, &String.contains?(&1, "Cochrane review"))
   end
@@ -563,7 +611,8 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
         [
           %{
             title: "The Flat Transmission Spectrum of a Super-Earth Exoplanet",
-            abstract: "Atmospheric spectroscopy of an exoplanet with a flat transmission spectrum."
+            abstract:
+              "Atmospheric spectroscopy of an exoplanet with a flat transmission spectrum."
           },
           %{
             title: "Flat Earth belief and misinformation on social media",
@@ -577,7 +626,9 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
         plan
       )
 
-    assert hd(reranked).title == "Satellite measurement of Earth curvature from geodetic orbit data"
+    assert hd(reranked).title ==
+             "Satellite measurement of Earth curvature from geodetic orbit data"
+
     assert Enum.at(reranked, 2).title == "Flat Earth belief and misinformation on social media"
   end
 end

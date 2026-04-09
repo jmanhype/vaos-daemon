@@ -43,6 +43,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
   alias Vaos.Ledger.ML.CrashLearner
 
   alias Daemon.Intelligence.AdaptationTrials
+  alias Daemon.ModelSelection
 
   alias Daemon.Investigation.{
     AdversarialParser,
@@ -175,7 +176,8 @@ defmodule Daemon.Tools.Builtins.Investigate do
 
     if apply_pending_trial?(args) and is_binary(topic) and String.trim(topic) != "" do
       case trials_module.consume_trial(topic) do
-        {:ok, %{steering: trial_steering}} when is_binary(trial_steering) and trial_steering != "" ->
+        {:ok, %{steering: trial_steering}}
+        when is_binary(trial_steering) and trial_steering != "" ->
           merged = merge_manual_steering(steering, trial_steering)
 
           Logger.info(
@@ -260,6 +262,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
     :inets.start()
     :ssl.start()
     ensure_circuit_table()
+    alphaxiv_enabled? = Daemon.Tools.Builtins.AlphaXivClient.auth_available?()
 
     # Start alphaXiv MCP in an unlinked process — the MCP client crash-loops
     # on auth failure (401) and sends EXIT to linked callers, killing the pipeline.
@@ -267,13 +270,18 @@ defmodule Daemon.Tools.Builtins.Investigate do
     old_trap = Process.flag(:trap_exit, true)
 
     try do
-      Daemon.Tools.Builtins.AlphaXivClient.start_link()
-      # Drain any immediate EXIT from the MCP client crashing during handshake
-      receive do
-        {:EXIT, _pid, reason} ->
-          Logger.warning("[investigate] alphaXiv MCP crashed during init: #{inspect(reason)}")
-      after
-        2_000 -> :ok
+      if alphaxiv_enabled? do
+        Daemon.Tools.Builtins.AlphaXivClient.start_link()
+
+        # Drain any immediate EXIT from the MCP client crashing during handshake
+        receive do
+          {:EXIT, _pid, reason} ->
+            Logger.warning("[investigate] alphaXiv MCP crashed during init: #{inspect(reason)}")
+        after
+          2_000 -> :ok
+        end
+      else
+        Logger.info("[investigate] alphaXiv auth missing — skipping MCP startup")
       end
     catch
       :exit, reason ->
@@ -346,7 +354,11 @@ defmodule Daemon.Tools.Builtins.Investigate do
     # 4. MULTI-SOURCE PAPER SEARCH: Semantic Scholar + OpenAlex + alphaXiv (parallel)
     #    Uses prior strategy's top_n_papers and per_query_limit for tuned search breadth
     {{all_papers, source_counts}, paper_search_ms} =
-      timed(fn -> search_all_papers(search_topic, keywords, prior_strategy) end)
+      timed(fn ->
+        search_all_papers(search_topic, keywords, prior_strategy,
+          alphaxiv_enabled?: alphaxiv_enabled?
+        )
+      end)
 
     Logger.info("[investigate] Papers: #{length(all_papers)} total (#{inspect(source_counts)})")
 
@@ -2318,6 +2330,24 @@ Known failure patterns to avoid:
     _ -> :ok
   end
 
+  defp circuit_trip(source, reason) do
+    ensure_circuit_table()
+
+    Logger.warning("[investigate] Circuit OPENED for #{source} — #{reason}")
+
+    :ets.insert(
+      @circuit_table,
+      {source,
+       %{
+         state: :open,
+         consecutive_failures: @circuit_failure_threshold,
+         tripped_at: System.monotonic_time(:millisecond)
+       }}
+    )
+  rescue
+    _ -> :ok
+  end
+
   @doc "Get circuit breaker status for all sources"
   def circuit_status do
     ensure_circuit_table()
@@ -2335,13 +2365,73 @@ Known failure patterns to avoid:
 
   # -- Multi-source literature search: Semantic Scholar + OpenAlex + alphaXiv --
 
-  defp search_all_papers(topic, keywords, strategy) do
+  @doc false
+  def run_semantic_scholar_queries(queries, http_fn, per_query, api_key \\ nil) do
+    result =
+      Enum.reduce_while(Enum.with_index(queries), %{results: [], terminal_failure?: false}, fn
+        {{label, query, opts}, idx}, acc ->
+          if idx > 0 and is_nil(api_key), do: Process.sleep(1_500)
+
+          search_opts = Keyword.merge([limit: per_query], opts)
+
+          search_opts =
+            if api_key, do: Keyword.put(search_opts, :api_key, api_key), else: search_opts
+
+          case Literature.search_semantic_scholar(query, http_fn, search_opts) do
+            {:ok, papers} ->
+              {:cont, %{acc | results: [{:"ss_#{label}", papers} | acc.results]}}
+
+            {:error, reason} ->
+              next = %{acc | results: [{:"ss_#{label}", []} | acc.results]}
+
+              if semantic_scholar_terminal_error?(reason) do
+                Logger.info(
+                  "[investigate] Semantic Scholar terminal failure on #{label} — skipping remaining queries"
+                )
+
+                {:halt, %{next | terminal_failure?: true}}
+              else
+                {:cont, next}
+              end
+          end
+      end)
+
+    {Enum.reverse(result.results), result.terminal_failure?}
+  end
+
+  @doc false
+  def semantic_scholar_terminal_error?({:semantic_scholar_failed, reason}),
+    do: semantic_scholar_terminal_error?(reason)
+
+  def semantic_scholar_terminal_error?(reason) when is_binary(reason) do
+    String.contains?(reason, "HTTP 429") or
+      String.contains?(reason, "HTTP 401") or
+      String.contains?(reason, "HTTP 403")
+  end
+
+  def semantic_scholar_terminal_error?(reason) when is_tuple(reason) do
+    reason
+    |> Tuple.to_list()
+    |> Enum.any?(&semantic_scholar_terminal_error?/1)
+  end
+
+  def semantic_scholar_terminal_error?(reason) when is_atom(reason) do
+    reason in [:rate_limited, :unauthorized, :forbidden]
+  end
+
+  def semantic_scholar_terminal_error?(_), do: false
+
+  defp search_all_papers(topic, keywords, strategy),
+    do: search_all_papers(topic, keywords, strategy, [])
+
+  defp search_all_papers(topic, keywords, strategy, opts) do
     http_fn = literature_http_fn()
     plan = search_query_plan(topic, keywords)
     normalized_topic = plan.normalized_topic
     semantic_seed = semantic_search_seed(plan)
     {ss_queries, oa_queries} = {plan.ss_queries, plan.oa_queries}
     per_query = strategy.per_query_limit
+    alphaxiv_enabled? = Keyword.get(opts, :alphaxiv_enabled?, true)
 
     # Log circuit breaker state for observability (read-only peek, no state transitions)
     ensure_circuit_table()
@@ -2368,32 +2458,27 @@ Known failure patterns to avoid:
     # SS: sequential with 1.5s delay — unauthenticated rate limit is ~1 req/s.
     ss_api_key = Application.get_env(:daemon, :semantic_scholar_api_key)
 
-    ss_results =
+    {ss_results, ss_terminal_failure?} =
       if circuit_check(:semantic_scholar) == :ok do
-        results =
-          Enum.flat_map(Enum.with_index(ss_queries), fn {{label, query, opts}, idx} ->
-            if idx > 0 and is_nil(ss_api_key), do: Process.sleep(1_500)
-            search_opts = Keyword.merge([limit: per_query], opts)
-
-            search_opts =
-              if ss_api_key, do: Keyword.put(search_opts, :api_key, ss_api_key), else: search_opts
-
-            case Literature.search_semantic_scholar(query, http_fn, search_opts) do
-              {:ok, papers} -> [{:"ss_#{label}", papers}]
-              _ -> [{:"ss_#{label}", []}]
-            end
-          end)
-
-        any_papers = Enum.any?(results, fn {_label, papers} -> papers != [] end)
-
-        if any_papers,
-          do: circuit_record_success(:semantic_scholar),
-          else: circuit_record_failure(:semantic_scholar)
-
-        results
+        run_semantic_scholar_queries(ss_queries, http_fn, per_query, ss_api_key)
       else
-        []
+        {[], false}
       end
+
+    if ss_results != [] or ss_terminal_failure? do
+      any_papers = Enum.any?(ss_results, fn {_label, papers} -> papers != [] end)
+
+      cond do
+        any_papers ->
+          circuit_record_success(:semantic_scholar)
+
+        ss_terminal_failure? ->
+          circuit_trip(:semantic_scholar, "terminal rate/auth failure")
+
+        true ->
+          circuit_record_failure(:semantic_scholar)
+      end
+    end
 
     # OA: parallel queries — circuit breaker gates the entire batch
     oa_tasks =
@@ -2414,7 +2499,7 @@ Known failure patterns to avoid:
 
     # alphaXiv embedding search
     alphaxiv_task =
-      if circuit_check(:alphaxiv) == :ok do
+      if alphaxiv_enabled? and circuit_check(:alphaxiv) == :ok do
         Task.async(fn ->
           alias Daemon.Tools.Builtins.AlphaXivClient
 
@@ -2431,6 +2516,10 @@ Known failure patterns to avoid:
       else
         nil
       end
+
+    if not alphaxiv_enabled? do
+      Logger.debug("[investigate] alphaXiv disabled — auth not configured")
+    end
 
     # HuggingFace Papers search (ML/AI papers from arXiv via HF Hub API)
     hf_task =
@@ -2586,6 +2675,7 @@ Known failure patterns to avoid:
     normalized_keywords = search_keywords(normalized_topic, keywords)
     profile = search_query_profile(normalized_topic, normalized_keywords)
     evidence_profile = evidence_profile_for(profile, normalized_topic, normalized_keywords)
+
     {ss_queries, oa_queries} =
       build_search_queries(normalized_topic, normalized_keywords, profile, evidence_profile)
 
@@ -2609,11 +2699,9 @@ Known failure patterns to avoid:
 
     papers
     |> Enum.with_index()
-    |> Enum.sort_by(
-      fn {paper, index} ->
-        {-retrieval_directness_score(paper, topic_terms, evidence_profile), index}
-      end
-    )
+    |> Enum.sort_by(fn {paper, index} ->
+      {-retrieval_directness_score(paper, topic_terms, evidence_profile), index}
+    end)
     |> Enum.map(&elem(&1, 0))
   end
 
@@ -2674,7 +2762,8 @@ Known failure patterns to avoid:
 
     oa_queries =
       if novel_keywords != [] do
-        oa_queries ++ [{:keywords_augmented, "#{keyword_topic} #{Enum.join(novel_keywords, " ")}", []}]
+        oa_queries ++
+          [{:keywords_augmented, "#{keyword_topic} #{Enum.join(novel_keywords, " ")}", []}]
       else
         oa_queries
       end
@@ -2715,7 +2804,11 @@ Known failure patterns to avoid:
   # Requires the MOST SPECIFIC term (longest word) to appear in title or abstract.
   # This prevents generic words like "effectiveness" from matching unrelated papers
   # (e.g. "Effectiveness of treatments for firework fears in dogs").
-  defp filter_relevant(papers, %{profile: :general, normalized_topic: topic, evidence_profile: evidence_profile})
+  defp filter_relevant(papers, %{
+         profile: :general,
+         normalized_topic: topic,
+         evidence_profile: evidence_profile
+       })
        when is_map(evidence_profile) do
     specific_terms = Map.get(evidence_profile, :required_terms, [])
     subject_terms = Map.get(evidence_profile, :subject_terms, [])
@@ -2723,7 +2816,10 @@ Known failure patterns to avoid:
     {relevant, dropped} =
       Enum.split_with(papers, fn paper ->
         paper_text = paper_search_text(paper)
-        subject_hit = subject_terms == [] or Enum.any?(subject_terms, &String.contains?(paper_text, &1))
+
+        subject_hit =
+          subject_terms == [] or Enum.any?(subject_terms, &String.contains?(paper_text, &1))
+
         evidence_hit = Enum.any?(specific_terms, &String.contains?(paper_text, &1))
         subject_hit and evidence_hit
       end)
@@ -2989,6 +3085,7 @@ Known failure patterns to avoid:
     title_hits = Enum.count(topic_terms, &String.contains?(title_text, &1))
     topic_hits = Enum.count(topic_terms, &String.contains?(paper_text, &1))
     discourse_hits = Enum.count(@retrieval_discourse_terms, &String.contains?(paper_text, &1))
+
     evidence_hits =
       evidence_profile
       |> Map.get(:required_terms, [])
@@ -3724,7 +3821,10 @@ Known failure patterns to avoid:
 
   defp write_trace_payload(topic, label, payload) do
     safe_label = sanitize_trace_label(label)
-    trace_name = "vaos-investigate-trace-#{short_hash(topic)}-#{safe_label}-#{System.system_time(:millisecond)}.json"
+
+    trace_name =
+      "vaos-investigate-trace-#{short_hash(topic)}-#{safe_label}-#{System.system_time(:millisecond)}.json"
+
     path = Path.join(System.tmp_dir!(), trace_name)
     File.write(path, Jason.encode_to_iodata!(payload, pretty: true))
     {:ok, path}
@@ -3845,7 +3945,10 @@ Known failure patterns to avoid:
       ~r/^\s*(?:(?:explicitly|clearly|directly|specifically)\s+)?(?:#{reporting_verbs})\s+/iu
 
     summary
-    |> String.replace(~r/^\s*(?:(?:explicitly|clearly|directly|specifically)\s+)?(?:#{reporting_verbs})\s+that\s*,?\s+/iu, "")
+    |> String.replace(
+      ~r/^\s*(?:(?:explicitly|clearly|directly|specifically)\s+)?(?:#{reporting_verbs})\s+that\s*,?\s+/iu,
+      ""
+    )
     |> String.replace(lead_in, "")
     |> String.replace(~r/^\s*,\s*/, "")
     |> String.replace(~r/^\s*how\s+/iu, "")
@@ -3896,33 +3999,22 @@ Known failure patterns to avoid:
     "investigate:" <> short_hash(topic)
   end
 
-  defp preferred_utility_model do
-    provider = Application.get_env(:daemon, :default_provider)
-
+  @doc false
+  def preferred_utility_model do
     Application.get_env(:daemon, :utility_model) ||
-      Application.get_env(:daemon, :default_model) ||
-      active_provider_model(provider) ||
-      utility_tier_model(provider) ||
-      default_model_for(provider)
+      ModelSelection.current_model() ||
+      utility_tier_model(ModelSelection.current_provider())
   end
 
   @doc false
   def preferred_verification_model do
-    provider = Application.get_env(:daemon, :default_provider)
+    provider = ModelSelection.current_provider()
 
     Application.get_env(:daemon, :investigate_verification_model) ||
       Application.get_env(:daemon, :utility_model) ||
       utility_tier_model(provider) ||
-      Application.get_env(:daemon, :default_model) ||
-      active_provider_model(provider) ||
-      default_model_for(provider)
+      ModelSelection.current_model(provider)
   end
-
-  defp active_provider_model(provider) when is_atom(provider) do
-    Application.get_env(:daemon, :"#{provider}_model")
-  end
-
-  defp active_provider_model(_), do: nil
 
   defp utility_tier_model(provider) when is_atom(provider) do
     try do
@@ -3933,15 +4025,6 @@ Known failure patterns to avoid:
   end
 
   defp utility_tier_model(_), do: nil
-
-  defp default_model_for(nil), do: nil
-
-  defp default_model_for(provider) do
-    case Providers.provider_info(provider) do
-      {:ok, info} -> info.default_model
-      _ -> nil
-    end
-  end
 
   defp parse_adversarial_response(response, side) do
     evidence = parse_adversarial_evidence(response)
