@@ -212,6 +212,13 @@ export interface Model {
   is_local: boolean;
 }
 
+export interface ModelSwitchResponse {
+  status: string;
+  provider: string;
+  model: string;
+  context_window?: number | null;
+}
+
 // ── Providers ────────────────────────────────────────────────────────────────
 
 export interface Provider {

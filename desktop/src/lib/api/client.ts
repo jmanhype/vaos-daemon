@@ -22,6 +22,7 @@ import type {
   HierarchyUpdateRequest,
   Message,
   Model,
+  ModelSwitchResponse,
   OnboardingStatus,
   OrchestrateRequest,
   OrchestrateResponse,
@@ -146,7 +147,6 @@ export class ApiError extends Error {
   }
 }
 
-
 // ── Retry with Backoff ──────────────────────────────────────────────────────
 
 interface RetryConfig {
@@ -157,10 +157,21 @@ interface RetryConfig {
 
 // ── Retry with Backoff ──────────────────────────────────────────────────────
 
-interface RetryConfig { maxRetries: number; backoffMs: number; maxBackoff: number; }
-const DEFAULT_RETRY: RetryConfig = { maxRetries: 3, backoffMs: 1000, maxBackoff: 30000 };
+interface RetryConfig {
+  maxRetries: number;
+  backoffMs: number;
+  maxBackoff: number;
+}
+const DEFAULT_RETRY: RetryConfig = {
+  maxRetries: 3,
+  backoffMs: 1000,
+  maxBackoff: 30000,
+};
 
-async function withRetry<T>(fn: () => Promise<T>, config = DEFAULT_RETRY): Promise<T> {
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  config = DEFAULT_RETRY,
+): Promise<T> {
   let lastError: Error = new Error("No attempts made");
   for (let attempt = 0; attempt < config.maxRetries; attempt++) {
     try {
@@ -168,7 +179,10 @@ async function withRetry<T>(fn: () => Promise<T>, config = DEFAULT_RETRY): Promi
     } catch (error) {
       lastError = error as Error;
       if (error instanceof ApiError && error.status < 500) throw error;
-      const delay = Math.min(config.backoffMs * 2 ** attempt, config.maxBackoff);
+      const delay = Math.min(
+        config.backoffMs * 2 ** attempt,
+        config.maxBackoff,
+      );
       await new Promise((r) => setTimeout(r, delay));
     }
   }
@@ -226,7 +240,10 @@ export function getOfflineQueueSize(): number {
   return offlineQueue.length;
 }
 
-export async function flushOfflineQueue(): Promise<{ succeeded: number; failed: number }> {
+export async function flushOfflineQueue(): Promise<{
+  succeeded: number;
+  failed: number;
+}> {
   let succeeded = 0;
   let failed = 0;
   while (offlineQueue.length > 0) {
@@ -333,10 +350,7 @@ async function doFetch<T>(
   return response.json() as Promise<T>;
 }
 
-async function request<T>(
-  path: string,
-  options: RequestInit = {},
-): Promise<T> {
+async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const method = (options.method ?? "GET").toUpperCase();
 
   if (method === "GET") {
@@ -358,7 +372,10 @@ async function request<T>(
     return await withRetry(() => doFetch<T>(path, options));
   } catch (error) {
     if (!(error instanceof ApiError)) {
-      const body = options.body !== undefined ? JSON.parse(options.body as string) : undefined;
+      const body =
+        options.body !== undefined
+          ? JSON.parse(options.body as string)
+          : undefined;
       queueForOffline(method, path, body);
     }
     throw error;
@@ -455,7 +472,7 @@ export const models = {
     return data.models ?? [];
   },
   activate: (name: string, provider = "ollama") =>
-    request<Model>(`/models/switch`, {
+    request<ModelSwitchResponse>(`/models/switch`, {
       method: "POST",
       body: JSON.stringify({ model: name, provider }),
     }),
@@ -741,11 +758,13 @@ export const configRevisions = {
   rollback: (entityType: string, entityId: string, revisionNumber: number) =>
     request<ConfigRevision>(
       `/config/revisions/${entityType}/${entityId}/rollback`,
-      { method: "POST", body: JSON.stringify({ revision_number: revisionNumber }) },
+      {
+        method: "POST",
+        body: JSON.stringify({ revision_number: revisionNumber }),
+      },
     ),
   diff: (entityType: string, entityId: string, from: number, to: number) =>
     request<{ diff: ConfigDiff; from: number; to: number }>(
       `/config/revisions/${entityType}/${entityId}/diff?from=${from}&to=${to}`,
     ),
 };
-

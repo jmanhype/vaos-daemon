@@ -67,14 +67,22 @@ This starts Vite at `http://localhost:5199` in the browser. The `@tauri-apps/api
 ```bash
 npm run check          # run once
 npm run check:watch    # watch mode
+npm run check:errors   # errors only, suppresses legacy warning details
 ```
 
 **Lint and format:**
 
 ```bash
 npm run lint           # prettier + eslint (check only)
+npm run verify:ui      # changed desktop files + svelte-check errors-only
+npm run verify:ui -- src/routes/app/+page.svelte src/lib/stores/models.svelte.ts
 npm run format         # prettier write
 ```
+
+`npm run verify:ui` is the bounded verification path for desktop UI work. It
+checks only changed files with Prettier and ESLint, then runs `svelte-check`
+with `--threshold error` so existing warning-only diagnostics do not drown out
+real regressions.
 
 ## Building for Production
 
@@ -83,10 +91,12 @@ npm run tauri:build
 ```
 
 This runs:
+
 1. `npm run build` — Vite builds the SvelteKit app with the static adapter into `build/`.
 2. `tauri build` — compiles the Rust crate in release mode, bundles `build/` into the native app, and packages installers.
 
 Output locations:
+
 - macOS: `src-tauri/target/release/bundle/dmg/DAEMON_*.dmg` and `.app`
 - Linux: `src-tauri/target/release/bundle/deb/*.deb` and `.AppImage`
 - Windows: `src-tauri/target/release/bundle/msi/*.msi`
@@ -136,9 +146,9 @@ The `check_backend_health` IPC command and the `connectionStore` poll `/health` 
 
 ```javascript
 const { invoke } = window.__TAURI__.core;
-await invoke("check_backend_health");        // true / false
-await invoke("get_backend_url");             // "http://127.0.0.1:9089"
-await invoke("detect_hardware");             // { cpu_brand, cpu_cores, ... }
+await invoke("check_backend_health"); // true / false
+await invoke("get_backend_url"); // "http://127.0.0.1:9089"
+await invoke("detect_hardware"); // { cpu_brand, cpu_cores, ... }
 ```
 
 ### Common Dev Problems
@@ -169,6 +179,7 @@ make build    # alias for npm run tauri:build
 `svelte.config.js` uses `@sveltejs/adapter-static` — the SvelteKit app builds to static files, not a Node.js server. This is required because Tauri serves the frontend from the filesystem (or the Vite dev server URL in dev mode).
 
 Path aliases are defined in `tsconfig.json`:
+
 - `$lib` → `src/lib`
 - `$api` → `src/lib/api`
 - `$app` → SvelteKit virtual module (navigation, environment, stores)

@@ -448,7 +448,7 @@ class ModelsStore {
       // Mark the activated model and clear others
       this.models = this.models.map((m) => ({
         ...m,
-        active: m.name === (updated.model ?? updated.name) && m.provider === (updated.provider ?? provider),
+        active: m.name === updated.model && m.provider === updated.provider,
       }));
     } catch (err) {
       this.switchError =

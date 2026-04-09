@@ -7,7 +7,7 @@ All data communication between the SvelteKit frontend and the Daemon backend goe
 **Base coordinates:**
 
 ```typescript
-export const BASE_URL   = "http://127.0.0.1:9089";
+export const BASE_URL = "http://127.0.0.1:9089";
 export const API_PREFIX = "/api/v1";
 ```
 
@@ -29,25 +29,25 @@ Every API call goes through a single typed `request<T>(path, options, retried)` 
 ```typescript
 class ApiError extends Error {
   readonly status: number;
-  readonly code:   string | undefined;
-  readonly body:   unknown;
+  readonly code: string | undefined;
+  readonly body: unknown;
 }
 ```
 
 **API namespaces exposed:**
 
-| Export | Methods | Paths |
-|---|---|---|
-| `health` | `get()` | `GET /health` |
-| `onboarding` | `status()`, `complete()` | `GET /onboarding/status`, `POST /onboarding/complete` |
-| `sessions` | `list()`, `get(id)`, `create(body)`, `delete(id)`, `rename(id, title)` | `/sessions` |
-| `messages` | `list(sessionId)`, `send(body)` | `/sessions/:id/messages`, `/messages` |
-| `models` | `list()`, `activate(name)`, `download(name)`, `delete(name)` | `/models` |
-| `providers` | `list()`, `connect(slug, apiKey)`, `disconnect(slug)` | `/providers` |
-| `agents` | `list()`, `get(id)`, `pause(id)`, `resume(id)`, `cancel(id)` | `/agents` |
-| `orchestrate` | `run(body)` | `POST /orchestrate` |
-| `settings` | `get()`, `update(body)` | `/settings` |
-| `scheduler` | `list()`, `get(id)`, `create(body)`, `delete(id)`, `toggle(id)`, `runNow(id)` | `/scheduler/jobs` |
+| Export        | Methods                                                                       | Paths                                                 |
+| ------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `health`      | `get()`                                                                       | `GET /health`                                         |
+| `onboarding`  | `status()`, `complete()`                                                      | `GET /onboarding/status`, `POST /onboarding/complete` |
+| `sessions`    | `list()`, `get(id)`, `create(body)`, `delete(id)`, `rename(id, title)`        | `/sessions`                                           |
+| `messages`    | `list(sessionId)`, `send(body)`                                               | `/sessions/:id/messages`, `/messages`                 |
+| `models`      | `list()`, `activate(name, provider)`, `download(name)`, `delete(name)`        | `/models`                                             |
+| `providers`   | `list()`, `connect(slug, apiKey)`, `disconnect(slug)`                         | `/providers`                                          |
+| `agents`      | `list()`, `get(id)`, `pause(id)`, `resume(id)`, `cancel(id)`                  | `/agents`                                             |
+| `orchestrate` | `run(body)`                                                                   | `POST /orchestrate`                                   |
+| `settings`    | `get()`, `update(body)`                                                       | `/settings`                                           |
+| `scheduler`   | `list()`, `get(id)`, `create(body)`, `delete(id)`, `toggle(id)`, `runNow(id)` | `/scheduler/jobs`                                     |
 
 **`messages.send(body)`** always sets `stream: true`. It returns `{ stream_id, session_id }`. In practice, the chat flow uses the SSE-based `streamMessage()` instead, which sends the message and opens the stream in a single coordinated call.
 
@@ -109,15 +109,15 @@ The parser extracts `event:` and `data:` lines. If `data` is JSON, parses it; if
 
 Defined in `src/lib/api/types.ts`:
 
-| Type | Fields | Description |
-|---|---|---|
-| `streaming_token` | `delta: string` | Incremental text token from the LLM |
-| `thinking_delta` | `delta: string` | Extended thinking / reasoning trace chunk |
-| `tool_call` | `tool_use_id`, `tool_name`, `input`, `phase?`, `description?`, `paths?` | Agent is calling a tool; `phase: "awaiting_permission"` pauses for user |
-| `tool_result` | `tool_use_id`, `result`, `is_error` | Tool execution result |
-| `system_event` | `event: string`, `payload?` | Lifecycle events (survey_shown, task_created, task_updated) |
-| `done` | `session_id`, `message_id` | Stream complete |
-| `error` | `message`, `code?` | Stream-level error |
+| Type              | Fields                                                                  | Description                                                             |
+| ----------------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `streaming_token` | `delta: string`                                                         | Incremental text token from the LLM                                     |
+| `thinking_delta`  | `delta: string`                                                         | Extended thinking / reasoning trace chunk                               |
+| `tool_call`       | `tool_use_id`, `tool_name`, `input`, `phase?`, `description?`, `paths?` | Agent is calling a tool; `phase: "awaiting_permission"` pauses for user |
+| `tool_result`     | `tool_use_id`, `result`, `is_error`                                     | Tool execution result                                                   |
+| `system_event`    | `event: string`, `payload?`                                             | Lifecycle events (survey_shown, task_created, task_updated)             |
+| `done`            | `session_id`, `message_id`                                              | Stream complete                                                         |
+| `error`           | `message`, `code?`                                                      | Stream-level error                                                      |
 
 ### Agent Event Stream — `subscribeToAgentEvents(callbacks, signal)`
 
@@ -130,9 +130,9 @@ General-purpose SSE connector with configurable max attempts (default 5). Return
 **Backoff constants:**
 
 ```typescript
-const INITIAL_DELAY_MS = 1_000
-const MAX_DELAY_MS     = 30_000
-const BACKOFF_FACTOR   = 2
+const INITIAL_DELAY_MS = 1_000;
+const MAX_DELAY_MS = 30_000;
+const BACKOFF_FACTOR = 2;
 ```
 
 ## Permission Flow (End to End)
@@ -188,13 +188,13 @@ The frontend invokes Tauri commands via `@tauri-apps/api`:
 ```typescript
 import { invoke } from "@tauri-apps/api/core";
 
-await invoke("check_backend_health");           // boolean
-await invoke("restart_backend");                // void
-await invoke("get_backend_url");                // "http://127.0.0.1:9089"
-await invoke("detect_hardware");                // HardwareInfo
-await invoke("get_platform");                   // PlatformInfo
-await invoke("open_terminal");                  // void
-await invoke("get_app_version");                // "0.1.0"
+await invoke("check_backend_health"); // boolean
+await invoke("restart_backend"); // void
+await invoke("get_backend_url"); // "http://127.0.0.1:9089"
+await invoke("detect_hardware"); // HardwareInfo
+await invoke("get_platform"); // PlatformInfo
+await invoke("open_terminal"); // void
+await invoke("get_app_version"); // "0.1.0"
 ```
 
 The Tauri `backend-ready` and `backend-crashed` events from the Rust layer are consumed in `connectionStore` and the app layout:
@@ -202,7 +202,9 @@ The Tauri `backend-ready` and `backend-crashed` events from the Rust layer are c
 ```typescript
 import { listen } from "@tauri-apps/api/event";
 
-listen("backend-ready",       () => connectionStore.onBackendReady());
-listen("backend-unavailable", () => connectionStore.markCrashed("Backend unavailable"));
-listen("backend-crashed",     () => connectionStore.markCrashed("Backend crashed"));
+listen("backend-ready", () => connectionStore.onBackendReady());
+listen("backend-unavailable", () =>
+  connectionStore.markCrashed("Backend unavailable"),
+);
+listen("backend-crashed", () => connectionStore.markCrashed("Backend crashed"));
 ```
