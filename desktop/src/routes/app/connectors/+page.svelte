@@ -99,6 +99,10 @@
     scanning = false;
   }
 
+  function closeAddModal() {
+    showAddModal = false;
+  }
+
   function addConnector() {
     if (!addName.trim() || !addUrl.trim()) return;
 
@@ -167,7 +171,15 @@
     disconnected: 'rgba(255, 255, 255, 0.25)',
     error: 'rgba(239, 68, 68, 0.8)',
   };
+
+  function handleWindowKeydown(event: KeyboardEvent) {
+    if (showAddModal && event.key === 'Escape') {
+      closeAddModal();
+    }
+  }
 </script>
+
+<svelte:window onkeydown={handleWindowKeydown} />
 
 <div class="connectors-page">
   <!-- Header -->
@@ -283,11 +295,21 @@
 
 <!-- Add connector modal -->
 {#if showAddModal}
-  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div class="modal-backdrop" onclick={() => { showAddModal = false; }} transition:fade={{ duration: 150 }}>
-    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-    <div class="modal-card" onclick={(e) => e.stopPropagation()} transition:fly={{ y: -10, duration: 150 }}>
-      <h3 class="modal-title">Add Connector</h3>
+  <div class="modal-backdrop" transition:fade={{ duration: 150 }}>
+    <button
+      type="button"
+      class="modal-dismiss"
+      aria-label="Close add connector dialog"
+      onclick={closeAddModal}
+    ></button>
+    <div
+      class="modal-card"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="add-connector-title"
+      transition:fly={{ y: -10, duration: 150 }}
+    >
+      <h3 class="modal-title" id="add-connector-title">Add Connector</h3>
 
       <div class="modal-field">
         <label class="modal-label" for="conn-name">Name</label>
@@ -315,7 +337,7 @@
       </div>
 
       <div class="modal-actions">
-        <button class="btn-ghost" onclick={() => { showAddModal = false; }}>Cancel</button>
+        <button class="btn-ghost" onclick={closeAddModal}>Cancel</button>
         <button class="btn-primary" onclick={addConnector} disabled={!addName.trim() || !addUrl.trim()}>Add</button>
       </div>
     </div>
@@ -592,6 +614,7 @@
     position: fixed;
     inset: 0;
     z-index: var(--z-modal-backdrop);
+    overflow: hidden;
     background: rgba(0, 0, 0, 0.6);
     backdrop-filter: blur(4px);
     -webkit-backdrop-filter: blur(4px);
@@ -600,7 +623,17 @@
     justify-content: center;
   }
 
+  .modal-dismiss {
+    position: absolute;
+    inset: 0;
+    padding: 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+  }
+
   .modal-card {
+    position: relative;
     z-index: var(--z-modal);
     width: min(440px, calc(100vw - 32px));
     background: rgba(20, 20, 22, 0.95);
