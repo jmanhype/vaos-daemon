@@ -3819,6 +3819,7 @@ Known failure patterns to avoid:
     |> strip_evidence_prefix()
     |> normalize_verification_whitespace()
     |> first_citation_sentence()
+    |> trim_after_other_paper_ref()
     |> trim_after_last_quote()
     |> strip_verification_markup()
     |> strip_leading_reporting_clause()
@@ -3923,14 +3924,57 @@ Known failure patterns to avoid:
         summary
 
       paper_ref ->
-        ~r/(?<=[.!?])\s+/
-        |> Regex.split(summary, trim: true)
+        summary
+        |> protect_sentence_abbreviation_periods()
+        |> then(&Regex.split(~r/(?<=[.!?])\s+/, &1, trim: true))
+        |> Enum.map(&restore_sentence_abbreviation_periods/1)
         |> Enum.find(summary, &contains_paper_ref?(&1, paper_ref))
     end
   end
 
   defp contains_paper_ref?(summary, paper_ref) when is_integer(paper_ref) do
     Regex.match?(~r/(?:\[Paper\s+#{paper_ref}\]|\bPaper\s+#{paper_ref}\b)/i, summary)
+  end
+
+  defp protect_sentence_abbreviation_periods(summary) do
+    summary
+    |> String.replace(~r/\bvs\./iu, "vs__VAOS_DOT__")
+    |> String.replace(~r/\be\.g\./iu, "e__VAOS_DOT__g__VAOS_DOT__")
+    |> String.replace(~r/\bi\.e\./iu, "i__VAOS_DOT__e__VAOS_DOT__")
+    |> String.replace(~r/\bet al\./iu, "et al__VAOS_DOT__")
+  end
+
+  defp restore_sentence_abbreviation_periods(summary) do
+    String.replace(summary, "__VAOS_DOT__", ".")
+  end
+
+  defp trim_after_other_paper_ref(summary) do
+    case extract_paper_ref(summary) do
+      nil ->
+        summary
+
+      current_ref ->
+        case Enum.find(paper_ref_mentions(summary), &(&1.ref != current_ref)) do
+          nil ->
+            summary
+
+          %{start: start} ->
+            summary
+            |> String.slice(0, start)
+            |> String.replace(~r/(?:\s|[,;:()-])*(?:and|but|while|whereas)\s*$/iu, "")
+            |> String.trim()
+        end
+    end
+  end
+
+  defp paper_ref_mentions(summary) when is_binary(summary) do
+    regex = ~r/\[Paper\s+\d+\]|\bPaper\s+\d+\b/i
+
+    Regex.scan(regex, summary)
+    |> Enum.zip(Regex.scan(regex, summary, return: :index))
+    |> Enum.map(fn {[match], [{start, _length}]} ->
+      %{ref: extract_paper_ref(match), start: start}
+    end)
   end
 
   defp trim_after_last_quote(summary) do
@@ -3971,7 +4015,7 @@ Known failure patterns to avoid:
 
   defp strip_leading_reporting_clause(summary) do
     reporting_verbs =
-      "describes|documents|notes|explains|reports|reported|finds|found|shows|showed|demonstrates|demonstrated|discusses|states|stated|establishes|established|argues|argued|observes|observed|indicates|indicated|mentions|mentioned|writes|wrote|proposes|proposed|details|detailed"
+      "describes|documents|notes|explains|reports|reported|finds|found|shows|showed|demonstrates|demonstrated|discusses|states|stated|establishes|established|derives|derived|argues|argued|observes|observed|indicates|indicated|mentions|mentioned|writes|wrote|proposes|proposed|details|detailed"
 
     lead_in =
       ~r/^\s*(?:(?:explicitly|clearly|directly|specifically)\s+)?(?:#{reporting_verbs})\s+/iu

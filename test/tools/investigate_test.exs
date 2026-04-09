@@ -541,6 +541,40 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     refute String.starts_with?(normalized, "how modern geodesy")
   end
 
+  test "verification_claim_text strips derives-that wrappers from sourced claims" do
+    summary =
+      "Classical geodetic theory, confirmed by centuries of observation, establishes that the Earth is an oblate spheroid. [Paper 4] explicitly derives that under gravitational theory, the Earth's surface \"ought to be of the form of an oblate spheroid of small ellipticity, having its axis of figure coincident with the axis of rotation,\" and that gravity varies along the surface according to Clairaut's Theorem."
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized =~ "under gravitational theory"
+    assert normalized =~ "\"ought to be of the form of an oblate spheroid"
+    refute String.starts_with?(normalized, "explicitly derives that")
+  end
+
+  test "verification_claim_text drops later paper clauses from the selected citation sentence" do
+    summary =
+      "Local flatness approximations are routinely employed in geodetic and engineering calculations, demonstrating practical utility of flat-Earth models at certain scales. [Paper 1] describes elastic dislocation models using \"homogeneous and layered half-spaces\"—flat-plane approximations—for calculating earthquake deformations, while [Paper 12] notes that terrestrial geodetic techniques serve \"regional and local applications.\" These flat-plane mathematical frameworks produce accurate results at local scales, which is consistent with a surface that appears flat to human-scale observation."
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized =~ "elastic dislocation models using"
+    assert normalized =~ "\"homogeneous and layered half-spaces\""
+    refute normalized =~ "regional and local applications"
+    refute normalized =~ "while"
+  end
+
+  test "verification_claim_text keeps vs abbreviations inside the cited sentence" do
+    summary =
+      "The extreme precision required in modern geodetic measurements reveals that Earth's shape is a model-dependent construct rather than a directly observed fact. [Paper 10] reports that the International Terrestrial Reference Frame achieves only centimeter-level accuracy and undergoes continual refinement, with millimeter-scale discrepancies between successive reference frames (ITRF2005 vs. ITRF2008 showing translation differences of −0.5, −0.9, and −4.7 mm). [Paper 3] confirms that geodesy is \"striving to increase the level of accuracy by a factor of ten,\" indicating the Earth's precise shape remains an actively refined estimate rather than a directly verifiable observation."
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized =~ "ITRF2005 vs. ITRF2008"
+    assert normalized =~ "−4.7 mm)."
+    refute normalized =~ "striving to increase the level of accuracy"
+  end
+
   test "normalized_search_topic strips wrapper phrasing from manual eval prompts" do
     assert Investigate.normalized_search_topic("examine claims that the earth is flat") ==
              "the earth is flat"
