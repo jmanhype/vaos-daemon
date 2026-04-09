@@ -1,5 +1,5 @@
 defmodule Daemon.Production.ComfyUISceneRunnerTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Daemon.Production.ComfyUISceneRunner
 
@@ -76,6 +76,75 @@ defmodule Daemon.Production.ComfyUISceneRunnerTest do
       assert get_in(prompt, ["5645", "inputs", "filename_prefix"]) == "scene01_new"
       assert get_in(prompt, ["5730", "inputs", "text"]) =~ "Ain't no party like a Bad Boy party."
       assert get_in(prompt, ["5731", "inputs", "text"]) == "no text"
+    end
+  end
+
+  describe "produce/1" do
+    test "fails cleanly for local workflows when remote transfer fails" do
+      runner = Process.whereis(ComfyUISceneRunner) || start_supervised!(ComfyUISceneRunner)
+      assert is_pid(runner)
+
+      tmp_dir =
+        Path.join(
+          System.tmp_dir!(),
+          "comfyui_scene_runner_test_#{System.unique_integer([:positive])}"
+        )
+
+      File.mkdir_p!(tmp_dir)
+
+      workflow_path = Path.join(tmp_dir, "scene.workflow.json")
+      output_dir = Path.join(tmp_dir, "outputs")
+
+      workflow = %{
+        "prompt" => %{
+          "5645" => %{"inputs" => %{"filename_prefix" => "test_prefix", "save_output" => true}}
+        }
+      }
+
+      File.write!(workflow_path, Jason.encode!(workflow))
+
+      assert {:ok, %{local_output_dir: ^output_dir}} =
+               ComfyUISceneRunner.produce(%{
+                 "title" => "Regression",
+                 "remote_host" => "127.0.0.1",
+                 "remote_user" => "nobody",
+                 "remote_port" => 1,
+                 "local_output_dir" => output_dir,
+                 "scenes" => [
+                   %{
+                     "name" => "Scene 01",
+                     "workflow_path" => workflow_path,
+                     "output_prefix" => "regression_scene01"
+                   }
+                 ]
+               })
+
+      deadline = System.monotonic_time(:millisecond) + 5_000
+
+      wait_for_terminal_state = fn wait_for_terminal_state ->
+        status = ComfyUISceneRunner.status()
+
+        cond do
+          status.state in [:failed, :complete, :aborted] ->
+            status
+
+          System.monotonic_time(:millisecond) > deadline ->
+            flunk("expected terminal status, got #{inspect(status)}")
+
+          true ->
+            Process.sleep(100)
+            wait_for_terminal_state.(wait_for_terminal_state)
+        end
+      end
+
+      status = wait_for_terminal_state.(wait_for_terminal_state)
+
+      assert status.state == :failed
+      assert status.outputs == []
+      assert Enum.any?(status.errors, &String.contains?(&1, "scp failed"))
+
+      patched = Path.join(output_dir, "regression_scene01_#{status.run_id}_01.workflow.json")
+      assert File.exists?(patched)
     end
   end
 end

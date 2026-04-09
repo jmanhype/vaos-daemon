@@ -184,7 +184,15 @@ defmodule Daemon.Production.ComfyUISceneRunner do
 
       {:ok, worker_pid} =
         Task.start(fn ->
-          run_brief(parent, normalized)
+          try do
+            run_brief(parent, normalized)
+          rescue
+            error ->
+              send(parent, {:run_failed, Exception.format(:error, error, __STACKTRACE__), nil})
+          catch
+            kind, reason ->
+              send(parent, {:run_failed, Exception.format(kind, reason, __STACKTRACE__), nil})
+          end
         end)
 
       new_state = %{
@@ -261,10 +269,12 @@ defmodule Daemon.Production.ComfyUISceneRunner do
   end
 
   def handle_info({:run_failed, reason, partial_outputs}, state) do
+    outputs = partial_outputs || state.outputs
+
     new_state = %{
       state
       | state: :failed,
-        outputs: partial_outputs,
+        outputs: outputs,
         errors: state.errors ++ [reason],
         finished_at: DateTime.utc_now(),
         worker_pid: nil
@@ -347,9 +357,13 @@ defmodule Daemon.Production.ComfyUISceneRunner do
 
   defp load_workflow(brief, workflow_path) do
     if File.exists?(workflow_path) do
-      workflow_path
-      |> File.read()
-      |> decode_workflow(workflow_path)
+      case File.read(workflow_path) do
+        {:ok, json} ->
+          decode_workflow(json, workflow_path)
+
+        {:error, reason} ->
+          {:error, "failed to read workflow #{workflow_path}: #{:file.format_error(reason)}"}
+      end
     else
       script = """
       python3 - <<'PY'
