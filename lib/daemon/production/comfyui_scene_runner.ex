@@ -114,6 +114,8 @@ defmodule Daemon.Production.ComfyUISceneRunner do
                remote_port: get_any(brief, "remote_port", 22),
                remote_output_dir:
                  get_any(brief, "remote_output_dir", "/home/straughter/ComfyUI/output"),
+               remote_input_dir:
+                 get_any(brief, "remote_input_dir", "/home/straughter/ComfyUI/input"),
                local_output_dir: local_output_dir,
                render_timeout_ms: get_any(brief, "render_timeout_ms", @render_timeout_ms),
                poll_interval_ms: get_any(brief, "poll_interval_ms", @poll_interval_ms),
@@ -151,6 +153,42 @@ defmodule Daemon.Production.ComfyUISceneRunner do
       |> apply_node_overrides(scene[:node_overrides])
 
     %{"prompt" => patched_prompt}
+  end
+
+  @doc false
+  @spec patch_workflow_strict(map(), map()) :: {:ok, map()} | {:error, String.t()}
+  def patch_workflow_strict(%{"prompt" => prompt} = workflow, scene) when is_map(prompt) do
+    case validate_patch_targets(prompt, scene) do
+      :ok -> {:ok, patch_workflow(workflow, scene)}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @doc false
+  @spec prepare_scene_assets(map()) ::
+          {map(), [%{local_path: String.t(), remote_name: String.t()}]}
+  def prepare_scene_assets(scene) when is_map(scene) do
+    asset_map =
+      scene
+      |> collect_scene_asset_paths()
+      |> Enum.reduce(%{}, fn local_path, acc ->
+        if Map.has_key?(acc, local_path) do
+          acc
+        else
+          Map.put(acc, local_path, build_remote_asset_name(scene.output_prefix, local_path, acc))
+        end
+      end)
+
+    prepared_scene = rewrite_scene_asset_refs(scene, asset_map)
+
+    uploads =
+      asset_map
+      |> Enum.map(fn {local_path, remote_name} ->
+        %{local_path: local_path, remote_name: remote_name}
+      end)
+      |> Enum.sort_by(& &1.remote_name)
+
+    {prepared_scene, uploads}
   end
 
   # ── GenServer callbacks ────────────────────────────────────────────────
@@ -332,13 +370,19 @@ defmodule Daemon.Production.ComfyUISceneRunner do
 
   defp run_scene(brief, scene, index) do
     with {:ok, workflow} <- load_workflow(brief, scene.workflow_path),
-         patched_workflow <- patch_workflow(workflow, scene),
+         {prepared_scene, uploads} = prepare_scene_assets(scene),
+         :ok <- stage_scene_assets(brief, uploads),
+         {:ok, patched_workflow} <- patch_workflow_strict(workflow, prepared_scene),
          {:ok, local_workflow_path} <- write_patched_workflow(brief, scene, patched_workflow),
          remote_workflow_path = "/tmp/#{scene.output_prefix}.workflow.json",
          :ok <- scp_to_remote(brief, local_workflow_path, remote_workflow_path),
          {:ok, prompt_id} <- submit_remote_workflow(brief, remote_workflow_path),
          {:ok, remote_output_path} <-
-           wait_for_remote_output(brief, scene.output_prefix, scene.output_extension),
+           wait_for_remote_output(
+             brief,
+             prepared_scene.output_prefix,
+             prepared_scene.output_extension
+           ),
          {:ok, local_output_path} <-
            copy_remote_output(brief, remote_output_path, brief.local_output_dir) do
       {:ok,
@@ -347,7 +391,7 @@ defmodule Daemon.Production.ComfyUISceneRunner do
          scene_name: scene.name,
          workflow_path: scene.workflow_path,
          patched_workflow_path: local_workflow_path,
-         output_prefix: scene.output_prefix,
+         output_prefix: prepared_scene.output_prefix,
          prompt_id: prompt_id,
          remote_output_path: remote_output_path,
          local_output_path: local_output_path
@@ -573,6 +617,188 @@ defmodule Daemon.Production.ComfyUISceneRunner do
   end
 
   # ── Workflow patching helpers ──────────────────────────────────────────
+
+  defp validate_patch_targets(prompt, scene) do
+    targets =
+      built_in_patch_targets(scene)
+      |> Enum.filter(fn {node_id, _input_key} -> Map.has_key?(prompt, node_id) end)
+      |> Kernel.++(
+        node_override_targets(get_any(scene, :node_overrides, nil))
+      )
+
+    case Enum.find(targets, fn {node_id, input_key} ->
+           not patch_target_exists?(prompt, node_id, input_key)
+         end) do
+      nil ->
+        :ok
+
+      {node_id, input_key} ->
+        {:error, "workflow patch target missing node/input #{node_id}:#{input_key}"}
+    end
+  end
+
+  defp built_in_patch_targets(scene) do
+    [
+      {scene[:image], @node_ids.image, "image"},
+      {scene[:audio], @node_ids.audio, "audio"},
+      {scene[:steps], @node_ids.steps, "value"},
+      {scene[:frames], @node_ids.frames, "value"},
+      {scene[:seed_a], @node_ids.seed_a, "noise_seed"},
+      {scene[:seed_b], @node_ids.seed_b, "noise_seed"},
+      {scene[:lora_strength], @node_ids.lora, "strength_model"},
+      {scene[:unet_name], @node_ids.unet, "unet_name"},
+      {scene[:video_vae], @node_ids.video_vae, "vae_name"},
+      {scene[:audio_vae], @node_ids.audio_vae, "vae_name"},
+      {scene[:audio_model], @node_ids.audio_model, "model_name"},
+      {scene[:upscaler], @node_ids.upscaler, "model_name"},
+      {scene[:output_prefix], @node_ids.video_combine, "filename_prefix"},
+      {get_any(scene, :save_output, nil), @node_ids.video_combine, "save_output"},
+      {scene[:negative_prompt], @node_ids.negative_prompt, "text"},
+      {positive_prompt_target(scene), @node_ids.positive_prompt, "text"}
+    ]
+    |> Enum.flat_map(fn
+      {nil, _node_id, _input_key} -> []
+      {_value, node_id, input_key} -> [{node_id, input_key}]
+    end)
+  end
+
+  defp positive_prompt_target(scene) do
+    cond do
+      scene[:positive_prompt] -> scene[:positive_prompt]
+      scene[:speech_text] -> scene[:speech_text]
+      true -> nil
+    end
+  end
+
+  defp node_override_targets(nil), do: []
+
+  defp node_override_targets(overrides) when is_map(overrides) do
+    Enum.flat_map(overrides, fn {node_id, inputs} ->
+      if is_map(inputs) do
+        Enum.map(inputs, fn {input_key, _value} -> {to_string(node_id), to_string(input_key)} end)
+      else
+        []
+      end
+    end)
+  end
+
+  defp node_override_targets(_other), do: []
+
+  defp patch_target_exists?(prompt, node_id, input_key) do
+    case get_in(prompt, [to_string(node_id), "inputs"]) do
+      inputs when is_map(inputs) -> Map.has_key?(inputs, to_string(input_key))
+      _other -> false
+    end
+  end
+
+  defp collect_scene_asset_paths(scene) do
+    top_level =
+      [scene[:image], scene[:audio]]
+      |> Enum.filter(&local_asset_path?/1)
+
+    override_paths =
+      scene
+      |> get_any(:node_overrides, %{})
+      |> collect_override_asset_paths()
+
+    Enum.uniq(top_level ++ override_paths)
+  end
+
+  defp collect_override_asset_paths(overrides) when is_map(overrides) do
+    overrides
+    |> Map.values()
+    |> Enum.flat_map(fn
+      inputs when is_map(inputs) ->
+        inputs
+        |> Map.values()
+        |> Enum.filter(&local_asset_path?/1)
+
+      _other ->
+        []
+    end)
+  end
+
+  defp collect_override_asset_paths(_other), do: []
+
+  defp local_asset_path?(value) when is_binary(value), do: File.exists?(value)
+  defp local_asset_path?(_other), do: false
+
+  defp build_remote_asset_name(output_prefix, local_path, existing_map) do
+    basename = Path.basename(local_path)
+    candidate = "#{output_prefix}__#{basename}"
+
+    if Enum.any?(existing_map, fn {_path, remote_name} -> remote_name == candidate end) do
+      ext = Path.extname(basename)
+      stem = Path.rootname(basename, ext)
+      index = map_size(existing_map) + 1
+      "#{output_prefix}__#{stem}_#{index}#{ext}"
+    else
+      candidate
+    end
+  end
+
+  defp rewrite_scene_asset_refs(scene, asset_map) do
+    rewritten_overrides =
+      scene
+      |> get_any(:node_overrides, %{})
+      |> rewrite_override_asset_paths(asset_map)
+
+    scene
+    |> maybe_rewrite_scene_asset(:image, asset_map)
+    |> maybe_rewrite_scene_asset(:audio, asset_map)
+    |> Map.put(:node_overrides, rewritten_overrides)
+  end
+
+  defp rewrite_override_asset_paths(overrides, asset_map) when is_map(overrides) do
+    Enum.into(overrides, %{}, fn {node_id, inputs} ->
+      rewritten_inputs =
+        if is_map(inputs) do
+          Enum.into(inputs, %{}, fn {input_key, value} ->
+            {input_key, Map.get(asset_map, value, value)}
+          end)
+        else
+          inputs
+        end
+
+      {node_id, rewritten_inputs}
+    end)
+  end
+
+  defp rewrite_override_asset_paths(_other, _asset_map), do: %{}
+
+  defp maybe_rewrite_scene_asset(scene, key, asset_map) do
+    case Map.get(scene, key) do
+      value when is_binary(value) ->
+        Map.put(scene, key, Map.get(asset_map, value, value))
+
+      _other ->
+        scene
+    end
+  end
+
+  defp stage_scene_assets(_brief, []), do: :ok
+
+  defp stage_scene_assets(brief, uploads) do
+    with :ok <- ensure_remote_dir(brief, brief.remote_input_dir) do
+      Enum.reduce_while(uploads, :ok, fn upload, :ok ->
+        remote_path = Path.join(brief.remote_input_dir, upload.remote_name)
+
+        case scp_to_remote(brief, upload.local_path, remote_path) do
+          :ok -> {:cont, :ok}
+          {:error, reason} -> {:halt, {:error, reason}}
+        end
+      end)
+    end
+  end
+
+  defp ensure_remote_dir(brief, remote_dir) do
+    command = "mkdir -p #{RemoteSSH.shell_escape(remote_dir)}"
+
+    case remote_cmd(brief, command) do
+      {:ok, _body} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
   defp put_positive_prompt(prompt, scene) do
     positive_prompt =

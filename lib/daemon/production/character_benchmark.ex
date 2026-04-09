@@ -101,39 +101,50 @@ defmodule Daemon.Production.CharacterBenchmark do
          {:ok, reference_pack} <- normalize_reference_pack(get_any(brief, "reference_pack", [])),
          {:ok, reference_slots} <-
            normalize_reference_slots(get_any(brief, "reference_slots", []), reference_pack),
+         :ok <- validate_reference_slot_coverage(reference_pack, reference_slots),
          {:ok, shots} <- normalize_shots(get_any(brief, "shots", @default_shots)) do
       title = get_any(brief, "title", "Character Benchmark")
       scene_defaults = normalize_map(get_any(brief, "scene_defaults", %{}))
-      reference_image = get_any(brief, "reference_image", hd(reference_pack).path)
+
+      primary_reference_label =
+        get_any(brief, "primary_reference_label", hd(reference_pack).label)
+
+      reference_image = get_any(brief, "reference_image")
+
       local_output_dir = build_local_output_dir(brief)
       output_prefix_base = get_any(brief, "output_prefix_base", slugify(title))
 
-      {:ok,
-       %{
-         title: title,
-         workflow_path: workflow_path,
-         local_output_dir: local_output_dir,
-         output_prefix_base: output_prefix_base,
-         remote_host: get_any(brief, "remote_host"),
-         remote_user: get_any(brief, "remote_user"),
-         remote_port: get_any(brief, "remote_port"),
-         remote_output_dir: get_any(brief, "remote_output_dir"),
-         render_timeout_ms: get_any(brief, "render_timeout_ms"),
-         poll_interval_ms: get_any(brief, "poll_interval_ms"),
-         output_extension: normalize_output_extension(get_any(brief, "output_extension", ".png")),
-         output_node_id: get_any(brief, "output_node_id"),
-         output_input_key: get_any(brief, "output_input_key", "filename_prefix"),
-         positive_prompt_node_id: get_any(brief, "positive_prompt_node_id"),
-         positive_prompt_input_key: get_any(brief, "positive_prompt_input_key", "text"),
-         negative_prompt_node_id: get_any(brief, "negative_prompt_node_id"),
-         negative_prompt_input_key: get_any(brief, "negative_prompt_input_key", "text"),
-         reference_image: reference_image,
-         reference_pack: reference_pack,
-         reference_slots: reference_slots,
-         shots: shots,
-         scene_defaults: scene_defaults,
-         evaluation: get_any(brief, "evaluation", @default_evaluation)
-       }}
+      with :ok <- validate_primary_reference_label(reference_pack, primary_reference_label) do
+        {:ok,
+         %{
+           title: title,
+           workflow_path: workflow_path,
+           local_output_dir: local_output_dir,
+           output_prefix_base: output_prefix_base,
+           remote_host: get_any(brief, "remote_host"),
+           remote_user: get_any(brief, "remote_user"),
+           remote_port: get_any(brief, "remote_port"),
+           remote_output_dir: get_any(brief, "remote_output_dir"),
+           render_timeout_ms: get_any(brief, "render_timeout_ms"),
+           poll_interval_ms: get_any(brief, "poll_interval_ms"),
+           output_extension:
+             normalize_output_extension(get_any(brief, "output_extension", ".png")),
+           output_node_id: get_any(brief, "output_node_id"),
+           output_input_key: get_any(brief, "output_input_key", "filename_prefix"),
+           positive_prompt_node_id: get_any(brief, "positive_prompt_node_id"),
+           positive_prompt_input_key: get_any(brief, "positive_prompt_input_key", "text"),
+           negative_prompt_node_id: get_any(brief, "negative_prompt_node_id"),
+           negative_prompt_input_key: get_any(brief, "negative_prompt_input_key", "text"),
+           primary_reference_label: primary_reference_label,
+           reference_image:
+             resolve_reference_image(reference_image, reference_pack, primary_reference_label),
+           reference_pack: reference_pack,
+           reference_slots: reference_slots,
+           shots: shots,
+           scene_defaults: scene_defaults,
+           evaluation: get_any(brief, "evaluation", @default_evaluation)
+         }}
+      end
     end
   end
 
@@ -184,7 +195,7 @@ defmodule Daemon.Production.CharacterBenchmark do
         |> Map.put("workflow_path", normalized.workflow_path)
         |> Map.put("output_prefix", output_prefix)
         |> Map.put("output_extension", normalized.output_extension)
-        |> Map.put_new("image", normalized.reference_image)
+        |> maybe_put("image", normalized.reference_image)
         |> maybe_put("positive_prompt", positive_prompt)
         |> maybe_put("node_overrides", empty_to_nil(merged_node_overrides))
       end)
@@ -318,6 +329,51 @@ defmodule Daemon.Production.CharacterBenchmark do
   defp normalize_reference_slots(_other, _reference_pack),
     do: {:error, "reference_slots must be a list"}
 
+  defp validate_reference_slot_coverage(reference_pack, reference_slots) do
+    if length(reference_pack) <= 1 do
+      :ok
+    else
+      cond do
+        reference_slots == [] ->
+          {:error, "multi-reference briefs must include reference_slots"}
+
+        true ->
+          used_labels = MapSet.new(Enum.map(reference_slots, & &1.label))
+
+          unused_labels =
+            reference_pack
+            |> Enum.map(& &1.label)
+            |> Enum.reject(&MapSet.member?(used_labels, &1))
+
+          duplicate_targets =
+            reference_slots
+            |> Enum.group_by(fn slot -> {slot.node_id, slot.input} end)
+            |> Enum.filter(fn {_target, slots} -> length(slots) > 1 end)
+            |> Enum.map(fn {{node_id, input}, _slots} -> "#{node_id}:#{input}" end)
+
+          cond do
+            unused_labels != [] ->
+              {:error,
+               "unused reference labels in reference_slots: #{Enum.join(unused_labels, ", ")}"}
+
+            duplicate_targets != [] ->
+              {:error, "duplicate reference slot targets: #{Enum.join(duplicate_targets, ", ")}"}
+
+            true ->
+              :ok
+          end
+      end
+    end
+  end
+
+  defp validate_primary_reference_label(reference_pack, primary_reference_label) do
+    if Enum.any?(reference_pack, &(&1.label == primary_reference_label)) do
+      :ok
+    else
+      {:error, "unknown primary_reference_label #{primary_reference_label}"}
+    end
+  end
+
   defp normalize_shots(shots) when is_list(shots) and shots != [] do
     normalized =
       Enum.with_index(shots, 1)
@@ -444,6 +500,7 @@ defmodule Daemon.Production.CharacterBenchmark do
       "title" => normalized.title,
       "workflow_path" => normalized.workflow_path,
       "local_output_dir" => normalized.local_output_dir,
+      "primary_reference_label" => normalized.primary_reference_label,
       "reference_image" => normalized.reference_image,
       "output_extension" => normalized.output_extension,
       "output_node_id" => normalized.output_node_id,
@@ -492,6 +549,19 @@ defmodule Daemon.Production.CharacterBenchmark do
 
   defp normalize_map(map) when is_map(map), do: map
   defp normalize_map(_other), do: %{}
+
+  defp resolve_reference_image(explicit_image, _reference_pack, _primary_reference_label)
+       when is_binary(explicit_image) and explicit_image != "" do
+    explicit_image
+  end
+
+  defp resolve_reference_image(_explicit_image, [reference], primary_reference_label)
+       when reference.label == primary_reference_label do
+    reference.path
+  end
+
+  defp resolve_reference_image(_explicit_image, _reference_pack, _primary_reference_label),
+    do: nil
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)

@@ -100,6 +100,71 @@ defmodule Daemon.Production.ComfyUISceneRunnerTest do
     end
   end
 
+  describe "patch_workflow_strict/2" do
+    test "returns an error when an override targets a missing node input" do
+      workflow = %{
+        "prompt" => %{
+          "200" => %{"inputs" => %{"image" => "anchor.png"}}
+        }
+      }
+
+      assert {:error, reason} =
+               ComfyUISceneRunner.patch_workflow_strict(workflow, %{
+                 node_overrides: %{
+                   "201" => %{"image" => "missing.png"}
+                 }
+               })
+
+      assert reason =~ "missing node"
+      assert reason =~ "201"
+    end
+  end
+
+  describe "prepare_scene_assets/1" do
+    test "rewrites local asset paths to staged remote input filenames" do
+      tmp_dir =
+        Path.join(
+          System.tmp_dir!(),
+          "comfyui_scene_assets_test_#{System.unique_integer([:positive])}"
+        )
+
+      File.mkdir_p!(tmp_dir)
+
+      anchor = Path.join(tmp_dir, "anchor.png")
+      left = Path.join(tmp_dir, "left.png")
+      voice = Path.join(tmp_dir, "voice.wav")
+
+      File.write!(anchor, "anchor")
+      File.write!(left, "left")
+      File.write!(voice, "voice")
+
+      scene = %{
+        output_prefix: "elder_front",
+        image: anchor,
+        audio: voice,
+        node_overrides: %{
+          "80" => %{"image" => anchor},
+          "81" => %{"image" => left},
+          "86" => %{"text" => "keep prompt text as-is"}
+        }
+      }
+
+      {prepared_scene, uploads} = ComfyUISceneRunner.prepare_scene_assets(scene)
+
+      assert prepared_scene.image == "elder_front__anchor.png"
+      assert prepared_scene.audio == "elder_front__voice.wav"
+      assert get_in(prepared_scene, [:node_overrides, "80", "image"]) == "elder_front__anchor.png"
+      assert get_in(prepared_scene, [:node_overrides, "81", "image"]) == "elder_front__left.png"
+      assert get_in(prepared_scene, [:node_overrides, "86", "text"]) == "keep prompt text as-is"
+
+      assert Enum.sort_by(uploads, & &1.remote_name) == [
+               %{local_path: anchor, remote_name: "elder_front__anchor.png"},
+               %{local_path: left, remote_name: "elder_front__left.png"},
+               %{local_path: voice, remote_name: "elder_front__voice.wav"}
+             ]
+    end
+  end
+
   describe "produce/1" do
     test "fails cleanly for local workflows when remote transfer fails" do
       runner = Process.whereis(ComfyUISceneRunner) || start_supervised!(ComfyUISceneRunner)

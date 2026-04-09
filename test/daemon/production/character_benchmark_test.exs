@@ -45,6 +45,36 @@ defmodule Daemon.Production.CharacterBenchmarkTest do
       assert Enum.any?(normalized.evaluation["criteria"], &(&1["key"] == "identity_match"))
       assert hd(normalized.reference_slots).label == "anchor"
     end
+
+    test "requires reference slots for true multi-reference briefs" do
+      assert {:error, reason} =
+               CharacterBenchmark.normalize_brief(%{
+                 "workflow_path" => "/tmp/flux.workflow.json",
+                 "reference_pack" => [
+                   %{"label" => "anchor", "path" => "/tmp/anchor.jpg"},
+                   %{"label" => "left", "path" => "/tmp/left.png"}
+                 ]
+               })
+
+      assert reason =~ "reference_slots"
+    end
+
+    test "rejects unused multi-reference pack entries" do
+      assert {:error, reason} =
+               CharacterBenchmark.normalize_brief(%{
+                 "workflow_path" => "/tmp/flux.workflow.json",
+                 "reference_pack" => [
+                   %{"label" => "anchor", "path" => "/tmp/anchor.jpg"},
+                   %{"label" => "left", "path" => "/tmp/left.png"}
+                 ],
+                 "reference_slots" => [
+                   %{"label" => "anchor", "node_id" => "80", "input" => "image"}
+                 ]
+               })
+
+      assert reason =~ "unused reference labels"
+      assert reason =~ "left"
+    end
   end
 
   describe "build_runner_brief/1" do
@@ -84,11 +114,11 @@ defmodule Daemon.Production.CharacterBenchmarkTest do
 
       assert runner_brief["title"] == "Elder Pack"
       assert front["workflow_path"] == "/tmp/flux.workflow.json"
-      assert front["image"] == "/tmp/anchor.jpg"
       assert front["steps"] == 24
       assert front["output_extension"] == ".png"
       assert front["negative_prompt"] == "no text"
       assert front["positive_prompt"] =~ "front-facing portrait"
+      refute Map.has_key?(front, "image")
 
       assert front["node_overrides"] == %{
                "80" => %{"image" => "/tmp/anchor.jpg"},
