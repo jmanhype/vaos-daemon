@@ -436,4 +436,13 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     refute normalized =~ "This establishes"
     refute normalized =~ "[Paper 3]"
   end
+
+  test "verification_claim_text recognizes bare Paper N references" do
+    summary =
+      "Paper 2 reports improved calibration under controlled conditions. This broader explanation goes beyond the paper and should be dropped."
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized == "Paper 2 reports improved calibration under controlled conditions."
+  end
 end

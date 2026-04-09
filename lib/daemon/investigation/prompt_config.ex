@@ -168,6 +168,9 @@ defmodule Daemon.Investigation.PromptConfig do
       - Rate the argument strength 1-10
       - Tag as [SOURCED] if backed by a paper, [REASONING] if from your analysis
       - Do NOT just write a title — write a substantive argument with evidence
+      - If you cannot cite a paper, you MUST use [REASONING], not [SOURCED]
+      - Even if the side is weak, still produce the best 3-5 arguments in the required format
+      - Do NOT add headings, preambles, or conclusions outside the numbered list
 
       ~example_format~
 

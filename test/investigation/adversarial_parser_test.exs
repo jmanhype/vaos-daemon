@@ -48,4 +48,36 @@ defmodule Daemon.Investigation.AdversarialParserTest do
              "Magnesium supplementation improved subjective sleep quality"
            )
   end
+
+  test "accepts bare Paper N references as citations" do
+    text = """
+    1. [SOURCED] (strength: 7) Paper 2 reports better sleep efficiency after supplementation in adults.
+    """
+
+    assert [
+             %{source_type: :sourced, strength: 7, paper_ref: 2}
+           ] = AdversarialParser.parse(text)
+  end
+
+  test "demotes sourced items without any paper reference to reasoning" do
+    text = """
+    1. [SOURCED] (strength: 8) This paragraph makes a claim but never cites any paper.
+    """
+
+    assert [
+             %{source_type: :reasoning, strength: 8, paper_ref: nil}
+           ] = AdversarialParser.parse(text)
+  end
+
+  test "parses strength values written as n/10" do
+    text = """
+    1. [SOURCED] (strength: 2/10) [Paper 4] Ancient thinkers entertained flat-earth cosmology as part of a broader system.
+    """
+
+    assert [
+             %{source_type: :sourced, strength: 2, paper_ref: 4, summary: summary}
+           ] = AdversarialParser.parse(text)
+
+    refute summary =~ "(strength:"
+  end
 end

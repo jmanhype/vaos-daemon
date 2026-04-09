@@ -20,9 +20,11 @@ defmodule Daemon.Investigation.AdversarialParser do
           score: float()
         }
 
-  @strict_pattern ~r/^\s*(?:\d+[\.\)]|[-*])\s*\**\[(SOURCED|REASONING)\]\**\s*\((?:strength|score)\s*:\s*(\d+)\)\s*(.+)$/im
-  @loose_pattern ~r/^\s*(?:\d+[\.\)]|[-*])\s*\**\[(SOURCED|REASONING)\]\**\s*(?:[-:]\s*|\s+)(?:\**(?:strength|score)\**\s*:\s*(\d+)\s*(?:[-:]\s*)?)?(.+)$/im
+  @strength_pattern "\\d+(?:/\\d+)?"
+  @strict_pattern ~r/^\s*(?:\d+[\.\)]|[-*])\s*\**\[(SOURCED|REASONING)\]\**\s*\((?:strength|score)\s*:\s*(#{@strength_pattern})\)\s*(.+)$/im
+  @loose_pattern ~r/^\s*(?:\d+[\.\)]|[-*])\s*\**\[(SOURCED|REASONING)\]\**\s*(?:[-:]\s*|\s+)(?:\**(?:strength|score)\**\s*:\s*(#{@strength_pattern})\s*(?:[-:]\s*)?)?(.+)$/im
   @paper_ref_pattern ~r/\[Paper\s+(\d+)\]/i
+  @bare_paper_ref_pattern ~r/\bPaper\s+(\d+)\b/i
 
   @spec parse(String.t()) :: [parsed_item()]
   def parse(text) when is_binary(text) do
@@ -71,7 +73,7 @@ defmodule Daemon.Investigation.AdversarialParser do
     text
     |> String.split(~r/\n\s*\n+/, trim: true)
     |> Enum.map(&String.trim/1)
-    |> Enum.filter(&Regex.match?(@paper_ref_pattern, &1))
+    |> Enum.filter(&(not is_nil(extract_paper_ref(&1))))
     |> Enum.map(fn paragraph ->
       summary =
         paragraph
@@ -84,24 +86,28 @@ defmodule Daemon.Investigation.AdversarialParser do
   end
 
   defp build_item(type, strength_str, summary) do
-    source_type =
-      case String.upcase(to_string(type)) do
-        "SOURCED" -> :sourced
-        _ -> :reasoning
-      end
-
     summary =
       summary
       |> to_string()
       |> String.trim()
+      |> String.replace(~r/^\*+\s*/, "")
       |> String.replace(~r/^\)\s*/, "")
       |> String.replace(~r/^\s*[-:]\s*/, "")
+
+    paper_ref = extract_paper_ref(summary)
+
+    source_type =
+      case String.upcase(to_string(type)) do
+        "SOURCED" when not is_nil(paper_ref) -> :sourced
+        "SOURCED" -> :reasoning
+        _ -> :reasoning
+      end
 
     %{
       summary: summary,
       source_type: source_type,
       strength: normalize_strength(strength_str),
-      paper_ref: extract_paper_ref(summary),
+      paper_ref: paper_ref,
       verified: false,
       verification: "pending",
       paper_type: :other,
@@ -120,15 +126,18 @@ defmodule Daemon.Investigation.AdversarialParser do
   end
 
   defp extract_paper_ref(text) do
-    case Regex.run(@paper_ref_pattern, text) do
-      [_, num] ->
-        case Integer.parse(num) do
-          {n, _} -> n
-          _ -> nil
-        end
+    [@paper_ref_pattern, @bare_paper_ref_pattern]
+    |> Enum.find_value(fn pattern ->
+      case Regex.run(pattern, text) do
+        [_, num] ->
+          case Integer.parse(num) do
+            {n, _} -> n
+            _ -> nil
+          end
 
-      _ ->
-        nil
-    end
+        _ ->
+          nil
+      end
+    end)
   end
 end

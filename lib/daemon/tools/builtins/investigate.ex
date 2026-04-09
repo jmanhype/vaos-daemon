@@ -388,7 +388,7 @@ Known failure patterns to avoid:
         arg_type: "arguments",
         example_format: example_format,
         arg_word: "argument"
-      )
+      ) <> "\n\n" <> adversarial_output_contract()
 
     against_prompt =
       PromptConfig.render(prompts["advocate_user_template"],
@@ -400,7 +400,7 @@ Known failure patterns to avoid:
         arg_type: "counterarguments",
         example_format: example_format,
         arg_word: "counterargument"
-      )
+      ) <> "\n\n" <> adversarial_output_contract()
 
     for_messages = [
       %{role: "system", content: prompts["for_system"] <> pitfall_context <> steering_context},
@@ -1474,10 +1474,13 @@ Known failure patterns to avoid:
   end
 
   defp extract_paper_ref(summary) do
-    case Regex.run(~r/\[Paper (\d+)\]/, summary) do
-      [_, num] -> String.to_integer(num)
-      _ -> nil
-    end
+    [~r/\[Paper (\d+)\]/i, ~r/\bPaper (\d+)\b/i]
+    |> Enum.find_value(fn pattern ->
+      case Regex.run(pattern, summary) do
+        [_, num] -> String.to_integer(num)
+        _ -> nil
+      end
+    end)
   end
 
   defp verify_single_citation(evidence, paper, prompts) do
@@ -3472,8 +3475,12 @@ Known failure patterns to avoid:
       paper_ref ->
         ~r/(?<=[.!?])\s+/
         |> Regex.split(summary, trim: true)
-        |> Enum.find(summary, &String.contains?(&1, "[Paper #{paper_ref}]"))
+        |> Enum.find(summary, &contains_paper_ref?(&1, paper_ref))
     end
+  end
+
+  defp contains_paper_ref?(summary, paper_ref) when is_integer(paper_ref) do
+    Regex.match?(~r/(?:\[Paper\s+#{paper_ref}\]|\bPaper\s+#{paper_ref}\b)/i, summary)
   end
 
   defp trim_after_last_quote(summary) do
@@ -3510,6 +3517,17 @@ Known failure patterns to avoid:
     |> String.replace(~r/\(\s+/, "(")
     |> String.replace(~r/\s+\)/, ")")
     |> normalize_verification_whitespace()
+  end
+
+  defp adversarial_output_contract do
+    """
+    Output contract:
+    - Return ONLY a numbered list with 3-5 items. No headings, no preamble, no conclusion.
+    - Use exactly this shape for every item: `1. [SOURCED] (strength: 8) ...` or `1. [REASONING] (strength: 3) ...`
+    - Every `[SOURCED]` item MUST include a specific citation like `[Paper 2]`. If you cannot cite a paper, use `[REASONING]` instead.
+    - If the side is weak, still provide the strongest available arguments in the required format with lower strengths.
+    - Do not say that you cannot make the case. Just output the best structured arguments available.
+    """
   end
 
   defp paper_details(all_papers) do
