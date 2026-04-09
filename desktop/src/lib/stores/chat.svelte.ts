@@ -72,7 +72,7 @@ class ChatStore {
     try {
       const res = await fetch(`${BASE}/sessions`);
       if (res.ok) {
-        const data = await res.json() as { sessions?: Session[] };
+        const data = (await res.json()) as { sessions?: Session[] };
         this.sessions = data.sessions ?? [];
       }
     } catch (e) {
@@ -213,14 +213,19 @@ class ChatStore {
   /**
    * Simple polling fallback: POST message then poll for assistant response.
    */
-  async #pollForResponse(sessionId: string, alreadySent = false): Promise<void> {
+  async #pollForResponse(
+    sessionId: string,
+    alreadySent = false,
+  ): Promise<void> {
     // POST the message only if SSE didn't already send it
     if (!alreadySent) {
       try {
         await fetch(`${BASE}/sessions/${sessionId}/message`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: this.pendingUserMessage?.content ?? "" }),
+          body: JSON.stringify({
+            message: this.pendingUserMessage?.content ?? "",
+          }),
         });
       } catch (e) {
         this.error = (e as Error).message;
@@ -246,7 +251,11 @@ class ChatStore {
           this.messages = msgs;
           this.isStreaming = false;
           this.pendingUserMessage = null;
-          this.streaming = { textBuffer: "", thinkingBuffer: "", toolCalls: [] };
+          this.streaming = {
+            textBuffer: "",
+            thinkingBuffer: "",
+            toolCalls: [],
+          };
           return;
         }
       } catch {

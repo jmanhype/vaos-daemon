@@ -4,7 +4,7 @@
    ============================================================================= */
 
 /* highlight.js syntax theme — loaded once here, used by CodeBlock.svelte */
-@import 'highlight.js/styles/github-dark.css';
+@import "highlight.js/styles/github-dark.css";
 
 /* Override hljs background so code stays transparent inside glass panels */
 .hljs {
@@ -17,134 +17,137 @@
 
 :root {
   /* Foundation text hierarchy */
-  --dt:  #fff;
+  --dt: #fff;
   --dt2: #aaa;
   --dt3: #777;
   --dt4: #555;
 
   /* Foundation background hierarchy */
-  --dbg:  #1a1a1a;
+  --dbg: #1a1a1a;
   --dbg2: #242424;
   --dbg3: #2e2e2e;
 
   /* Foundation border hierarchy */
-  --dbd:  #333;
+  --dbd: #333;
   --dbd2: #2a2a2a;
 
   /* Semantic backgrounds */
-  --bg-primary:    #0a0a0a;
-  --bg-secondary:  #141414;
-  --bg-tertiary:   #1e1e1e;
-  --bg-surface:    rgba(255, 255, 255, 0.03);
-  --bg-elevated:   rgba(255, 255, 255, 0.06);
+  --bg-primary: #0a0a0a;
+  --bg-secondary: #141414;
+  --bg-tertiary: #1e1e1e;
+  --bg-surface: rgba(255, 255, 255, 0.03);
+  --bg-elevated: rgba(255, 255, 255, 0.06);
 
   /* Borders */
   --border-default: rgba(255, 255, 255, 0.08);
-  --border-hover:   rgba(255, 255, 255, 0.15);
-  --border-focus:   rgba(255, 255, 255, 0.25);
+  --border-hover: rgba(255, 255, 255, 0.15);
+  --border-focus: rgba(255, 255, 255, 0.25);
 
   /* Text */
-  --text-primary:   #ffffff;
+  --text-primary: #ffffff;
   --text-secondary: #a0a0a0;
-  --text-tertiary:  #666666;
-  --text-muted:     #404040;
+  --text-tertiary: #666666;
+  --text-muted: #404040;
 
   /* Accent (blue — used for active states and glows) */
   --accent-primary: #3b82f6;
   --accent-success: #22c55e;
   --accent-warning: #f59e0b;
-  --accent-error:   #ef4444;
-  --accent-glow:    rgba(59, 130, 246, 0.15);
+  --accent-error: #ef4444;
+  --accent-glow: rgba(59, 130, 246, 0.15);
 
   /* Signal tier colors */
-  --tier-haiku:  #22c55e;
+  --tier-haiku: #22c55e;
   --tier-sonnet: #f59e0b;
-  --tier-opus:   #ef4444;
+  --tier-opus: #ef4444;
 
   /* Glass tokens */
-  --glass-bg:     rgba(28, 28, 30, 0.8);
+  --glass-bg: rgba(28, 28, 30, 0.8);
   --glass-border: rgba(255, 255, 255, 0.1);
   --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
-  --glass-blur:   blur(20px) saturate(180%);
+  --glass-blur: blur(20px) saturate(180%);
 
   /* Sidebar dimensions */
   --sidebar-collapsed-width: 56px;
-  --sidebar-expanded-width:  240px;
-  --sidebar-transition:      width 250ms cubic-bezier(0.4, 0, 0.2, 1);
+  --sidebar-expanded-width: 240px;
+  --sidebar-transition: width 250ms cubic-bezier(0.4, 0, 0.2, 1);
 
   /* Border radius scale */
-  --radius-xs:   4px;
-  --radius-sm:   8px;
-  --radius-md:   12px;
-  --radius-lg:   16px;
-  --radius-xl:   20px;
-  --radius-2xl:  24px;
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-2xl: 24px;
   --radius-full: 9999px;
 
   /* Shadows */
-  --shadow-sm:    0 1px 2px 0 rgba(0, 0, 0, 0.05);
-  --shadow-md:    0 4px 6px -1px rgba(0, 0, 0, 0.1);
-  --shadow-lg:    0 10px 15px -3px rgba(0, 0, 0, 0.1);
-  --shadow-xl:    0 20px 25px -5px rgba(0, 0, 0, 0.1);
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
   --shadow-glass: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
 
   /* Transitions */
-  --transition-fast:   150ms;
+  --transition-fast: 150ms;
   --transition-normal: 200ms;
-  --transition-slow:   300ms;
+  --transition-slow: 300ms;
 
   /* Z-index scale */
-  --z-dropdown:       50;
-  --z-sticky:         100;
-  --z-fixed:          200;
+  --z-dropdown: 50;
+  --z-sticky: 100;
+  --z-fixed: 200;
   --z-modal-backdrop: 300;
-  --z-modal:          400;
-  --z-popover:        500;
-  --z-tooltip:        600;
-  --z-toast:          700;
+  --z-modal: 400;
+  --z-popover: 500;
+  --z-tooltip: 600;
+  --z-toast: 700;
 
   /* Typography */
-  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', 'Segoe UI', sans-serif;
-  --font-mono: 'SF Mono', SFMono-Regular, ui-monospace, Menlo, Consolas, monospace;
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI",
+    sans-serif;
+  --font-mono:
+    "SF Mono", SFMono-Regular, ui-monospace, Menlo, Consolas, monospace;
 }
 
 /* Light theme overrides */
 :root[data-theme="light"] {
   /* Foundation text hierarchy */
-  --dt:  #111;
+  --dt: #111;
   --dt2: #555;
   --dt3: #888;
   --dt4: #aaa;
 
   /* Foundation background hierarchy */
-  --dbg:  #f5f5f5;
+  --dbg: #f5f5f5;
   --dbg2: #ebebeb;
   --dbg3: #e0e0e0;
 
   /* Foundation border hierarchy */
-  --dbd:  #d4d4d4;
+  --dbd: #d4d4d4;
   --dbd2: #e0e0e0;
 
   /* Semantic backgrounds */
-  --bg-primary:    #fafafa;
-  --bg-secondary:  #f0f0f0;
-  --bg-tertiary:   #e8e8e8;
-  --bg-surface:    rgba(0, 0, 0, 0.03);
-  --bg-elevated:   rgba(0, 0, 0, 0.05);
+  --bg-primary: #fafafa;
+  --bg-secondary: #f0f0f0;
+  --bg-tertiary: #e8e8e8;
+  --bg-surface: rgba(0, 0, 0, 0.03);
+  --bg-elevated: rgba(0, 0, 0, 0.05);
 
   /* Borders */
   --border-default: rgba(0, 0, 0, 0.1);
-  --border-hover:   rgba(0, 0, 0, 0.2);
-  --border-focus:   rgba(0, 0, 0, 0.35);
+  --border-hover: rgba(0, 0, 0, 0.2);
+  --border-focus: rgba(0, 0, 0, 0.35);
 
   /* Text */
-  --text-primary:   #111111;
+  --text-primary: #111111;
   --text-secondary: #555555;
-  --text-tertiary:  #888888;
-  --text-muted:     #bbbbbb;
+  --text-tertiary: #888888;
+  --text-muted: #bbbbbb;
 
   /* Glass tokens — light */
-  --glass-bg:     rgba(255, 255, 255, 0.75);
+  --glass-bg: rgba(255, 255, 255, 0.75);
   --glass-border: rgba(0, 0, 0, 0.1);
   --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.08);
 }
@@ -426,7 +429,12 @@ a {
 /* Fading horizontal divider */
 .glass-divider {
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.1),
+    transparent
+  );
   border: none;
   margin: 16px 0;
 }
@@ -474,7 +482,9 @@ a {
 /* Hoverable card modifier */
 .glass-hoverable {
   cursor: pointer;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 .glass-hoverable:hover {
@@ -483,11 +493,21 @@ a {
 }
 
 /* Radius modifiers */
-.glass-sm   { border-radius: var(--radius-sm); }
-.glass-md   { border-radius: var(--radius-md); }
-.glass-lg   { border-radius: var(--radius-lg); }
-.glass-xl   { border-radius: var(--radius-xl); }
-.glass-pill { border-radius: var(--radius-full); }
+.glass-sm {
+  border-radius: var(--radius-sm);
+}
+.glass-md {
+  border-radius: var(--radius-md);
+}
+.glass-lg {
+  border-radius: var(--radius-lg);
+}
+.glass-xl {
+  border-radius: var(--radius-xl);
+}
+.glass-pill {
+  border-radius: var(--radius-full);
+}
 
 /* -----------------------------------------------------------------------------
    5. Standard Card and Sidebar
@@ -549,7 +569,12 @@ a {
 }
 
 .dark-stage--radial {
-  background: radial-gradient(ellipse at 50% 0%, #1a1040 0%, #0a0a12 60%, #000 100%);
+  background: radial-gradient(
+    ellipse at 50% 0%,
+    #1a1040 0%,
+    #0a0a12 60%,
+    #000 100%
+  );
 }
 
 .dark-stage--deep {
@@ -582,15 +607,33 @@ a {
   border-width: 0;
 }
 
-.flex { display: flex; }
-.flex-col { flex-direction: column; }
-.items-center { align-items: center; }
-.justify-center { justify-content: center; }
-.justify-between { justify-content: space-between; }
-.flex-1 { flex: 1; }
-.min-w-0 { min-width: 0; }
-.w-full { width: 100%; }
-.h-full { height: 100%; }
+.flex {
+  display: flex;
+}
+.flex-col {
+  flex-direction: column;
+}
+.items-center {
+  align-items: center;
+}
+.justify-center {
+  justify-content: center;
+}
+.justify-between {
+  justify-content: space-between;
+}
+.flex-1 {
+  flex: 1;
+}
+.min-w-0 {
+  min-width: 0;
+}
+.w-full {
+  width: 100%;
+}
+.h-full {
+  height: 100%;
+}
 
 /* -----------------------------------------------------------------------------
    8. Focus Visible (Keyboard Accessibility)
@@ -606,20 +649,37 @@ a {
 ----------------------------------------------------------------------------- */
 
 @keyframes pulse-border {
-  0%, 100% { border-color: var(--dbd); }
-  50%       { border-color: var(--dbd2); }
+  0%,
+  100% {
+    border-color: var(--dbd);
+  }
+  50% {
+    border-color: var(--dbd2);
+  }
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @keyframes fade-in {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 @keyframes slide-in-left {
-  from { transform: translateX(-8px); opacity: 0; }
-  to   { transform: translateX(0);    opacity: 1; }
+  from {
+    transform: translateX(-8px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
 }

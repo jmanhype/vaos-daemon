@@ -74,46 +74,46 @@ The frontend is a compiled static SPA embedded in the Tauri shell. It communicat
 
 ## Pages
 
-| Page | Route | Description |
-|------|-------|-------------|
-| Dashboard | `/app` | System health, KPIs, active agents, recent activity |
-| Chat | `/app/chat` | Streaming chat with model selector, collapsible session history, thinking blocks |
-| Agents | `/app/agents` | Live agent dashboard, org chart, multi-agent orchestration |
-| Models | `/app/models` | Model browser, provider grouping, one-click model switch |
-| Skills | `/app/skills` | Skill marketplace, enable/disable, bulk operations |
-| Projects | `/app/projects` | Project tracking, goal trees, task linking |
-| Tasks | `/app/tasks` | Scheduled tasks, cron presets, run history |
-| Terminal | `/app/terminal` | Embedded terminal (xterm.js) |
-| Signals | `/app/signals` | Signal classification feed, stats, patterns |
-| Activity | `/app/activity` | Real-time event feed with verbosity controls |
-| Usage | `/app/usage` | Token usage, cost tracking, budget management |
-| Memory | `/app/memory` | Browse and manage structured Vault memory |
-| Approvals | `/app/approvals` | Governance approval queue |
-| Connectors | `/app/connectors` | Configure channel integrations |
-| Settings | `/app/settings` | General, Provider, Voice, Permissions, Advanced, About |
+| Page       | Route             | Description                                                                      |
+| ---------- | ----------------- | -------------------------------------------------------------------------------- |
+| Dashboard  | `/app`            | System health, KPIs, active agents, recent activity                              |
+| Chat       | `/app/chat`       | Streaming chat with model selector, collapsible session history, thinking blocks |
+| Agents     | `/app/agents`     | Live agent dashboard, org chart, multi-agent orchestration                       |
+| Models     | `/app/models`     | Model browser, provider grouping, one-click model switch                         |
+| Skills     | `/app/skills`     | Skill marketplace, enable/disable, bulk operations                               |
+| Projects   | `/app/projects`   | Project tracking, goal trees, task linking                                       |
+| Tasks      | `/app/tasks`      | Scheduled tasks, cron presets, run history                                       |
+| Terminal   | `/app/terminal`   | Embedded terminal (xterm.js)                                                     |
+| Signals    | `/app/signals`    | Signal classification feed, stats, patterns                                      |
+| Activity   | `/app/activity`   | Real-time event feed with verbosity controls                                     |
+| Usage      | `/app/usage`      | Token usage, cost tracking, budget management                                    |
+| Memory     | `/app/memory`     | Browse and manage structured Vault memory                                        |
+| Approvals  | `/app/approvals`  | Governance approval queue                                                        |
+| Connectors | `/app/connectors` | Configure channel integrations                                                   |
+| Settings   | `/app/settings`   | General, Provider, Voice, Permissions, Advanced, About                           |
 
 ---
 
 ## Keyboard Shortcuts
 
-| Shortcut | Action |
-|----------|--------|
-| Cmd+K | Command palette |
-| Cmd+1 | Dashboard |
-| Cmd+2 | Chat |
-| Cmd+3 | Agents |
-| Cmd+4 | Models |
-| Cmd+5 | Terminal |
-| Cmd+6 | Settings |
-| Cmd+7 | Connectors |
-| Cmd+8 | Activity |
-| Cmd+9 | Usage |
-| Cmd+0 | Tasks |
-| Cmd+Y | Toggle YOLO mode |
-| Cmd+\ | Toggle sidebar |
-| Cmd+, | Settings |
-| Enter | Send message |
-| Shift+Enter | New line |
+| Shortcut    | Action           |
+| ----------- | ---------------- |
+| Cmd+K       | Command palette  |
+| Cmd+1       | Dashboard        |
+| Cmd+2       | Chat             |
+| Cmd+3       | Agents           |
+| Cmd+4       | Models           |
+| Cmd+5       | Terminal         |
+| Cmd+6       | Settings         |
+| Cmd+7       | Connectors       |
+| Cmd+8       | Activity         |
+| Cmd+9       | Usage            |
+| Cmd+0       | Tasks            |
+| Cmd+Y       | Toggle YOLO mode |
+| Cmd+\       | Toggle sidebar   |
+| Cmd+,       | Settings         |
+| Enter       | Send message     |
+| Shift+Enter | New line         |
 
 ---
 
