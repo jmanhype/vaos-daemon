@@ -23,6 +23,7 @@ defmodule Daemon.Production.Supervisor do
       Daemon.Production.FilmPipeline,
       Daemon.Production.SoraPipeline,
       Daemon.Production.KlingPipeline,
+      Daemon.Production.ComfyUISceneRunner,
       Daemon.Production.FilmProducer,
       Daemon.Production.XPublisher,
       Daemon.Production.AiStudioPipeline

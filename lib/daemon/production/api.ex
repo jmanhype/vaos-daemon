@@ -2,9 +2,9 @@ defmodule Daemon.Production.API do
   @moduledoc "HTTP routes for Film Production pipeline."
   use Plug.Router
 
-  plug Plug.Parsers, parsers: [:json], json_decoder: Jason
-  plug :match
-  plug :dispatch
+  plug(Plug.Parsers, parsers: [:json], json_decoder: Jason)
+  plug(:match)
+  plug(:dispatch)
 
   post "/" do
     params = conn.body_params
@@ -28,12 +28,16 @@ defmodule Daemon.Production.API do
 
     case Daemon.Production.FilmPipeline.produce(brief) do
       :ok ->
-        send_resp(conn, 202, Jason.encode!(%{
-          status: "started",
-          title: brief.title,
-          ingredients: Map.keys(brief.ingredients),
-          scenes: length(brief.scenes)
-        }))
+        send_resp(
+          conn,
+          202,
+          Jason.encode!(%{
+            status: "started",
+            title: brief.title,
+            ingredients: Map.keys(brief.ingredients),
+            scenes: length(brief.scenes)
+          })
+        )
 
       {:error, reason} ->
         send_resp(conn, 409, Jason.encode!(%{error: inspect(reason)}))
@@ -47,6 +51,39 @@ defmodule Daemon.Production.API do
 
   post "/abort" do
     Daemon.Production.FilmPipeline.abort()
+    send_resp(conn, 200, Jason.encode!(%{status: "aborted"}))
+  end
+
+  # ── ComfyUI Scene Runner ───────────────────────────────────────────────
+
+  post "/comfyui/run" do
+    case Daemon.Production.ComfyUISceneRunner.produce(conn.body_params) do
+      {:ok, %{run_id: run_id, local_output_dir: local_output_dir}} ->
+        send_resp(
+          conn,
+          202,
+          Jason.encode!(%{
+            status: "started",
+            run_id: run_id,
+            local_output_dir: local_output_dir
+          })
+        )
+
+      {:error, :already_running} ->
+        send_resp(conn, 409, Jason.encode!(%{error: "already_running"}))
+
+      {:error, reason} ->
+        send_resp(conn, 400, Jason.encode!(%{error: inspect(reason)}))
+    end
+  end
+
+  get "/comfyui/status" do
+    status = Daemon.Production.ComfyUISceneRunner.status()
+    send_resp(conn, 200, Jason.encode!(status))
+  end
+
+  post "/comfyui/abort" do
+    Daemon.Production.ComfyUISceneRunner.abort()
     send_resp(conn, 200, Jason.encode!(%{status: "aborted"}))
   end
 
@@ -159,9 +196,9 @@ defmodule Daemon.Production.API do
     params = conn.body_params
 
     case Daemon.Production.XPublisher.post_thread(%{
-      tweets: params["tweets"] || [],
-      media_path: params["media_path"]
-    }) do
+           tweets: params["tweets"] || [],
+           media_path: params["media_path"]
+         }) do
       :ok -> send_resp(conn, 202, Jason.encode!(%{status: "started"}))
       {:error, reason} -> send_resp(conn, 409, Jason.encode!(%{error: inspect(reason)}))
     end
