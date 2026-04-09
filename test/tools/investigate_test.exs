@@ -588,6 +588,30 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     refute String.starts_with?(normalized, "how modern geodesy")
   end
 
+  test "verification_claim_text rewrites traced as-involving fragments into direct claims" do
+    summary =
+      "Modern geodesy relies on complex mathematical models and interpretive frameworks rather than direct sensory observation of Earth's shape. [Paper 12] describes geodesy as involving theoretical background, measurement principles, and evaluation methods that must be \"integrated\" to produce \"geodetic parameters\"—meaning our understanding of Earth's geometry is mediated through layered mathematical constructions that could, in principle, embed assumptions about the final shape they purport to discover."
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert String.starts_with?(normalized, "geodesy involves theoretical background")
+    assert normalized =~ "\"integrated\" to produce \"geodetic parameters\""
+    refute normalized =~ "as involving"
+  end
+
+  test "verification_claim_text prefers traced noted subclauses over measurement preambles" do
+    summary =
+      "Earth's spacetime curvature has been measured and matches the Schwarzschild metric of a spherical mass. [Paper 8] describes experiments measuring \"the Schwarzschild spacetime parameters of the Earth,\" noting that light sent from Earth to a satellite is \"redshifted and deformed due to the curvature of spacetime.\" The Schwarzschild solution specifically describes the gravitational field outside a spherically symmetric mass distribution; its successful application to Earth confirms both the planet's spheroidal geometry and its substantial mass (~5.97 × 10²⁴ kg), which produces gravitational forces that drive any sufficiently large body into hydrostatic equilibrium—a spheroidal shape."
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized ==
+             "light sent from Earth to a satellite is \"redshifted and deformed due to the curvature of spacetime.\""
+
+    refute String.starts_with?(normalized, "experiments measuring")
+    refute normalized =~ "noting that"
+  end
+
   test "verification_claim_text strips derives-that wrappers from sourced claims" do
     summary =
       "Classical geodetic theory, confirmed by centuries of observation, establishes that the Earth is an oblate spheroid. [Paper 4] explicitly derives that under gravitational theory, the Earth's surface \"ought to be of the form of an oblate spheroid of small ellipticity, having its axis of figure coincident with the axis of rotation,\" and that gravity varies along the surface according to Clairaut's Theorem."

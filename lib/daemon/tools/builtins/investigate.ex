@@ -3804,6 +3804,8 @@ Known failure patterns to avoid:
     |> strip_verification_markup()
     |> strip_leading_attribution_clause()
     |> strip_leading_reporting_clause()
+    |> rewrite_reporting_fragments()
+    |> prefer_reported_subclause()
     |> String.trim()
   end
 
@@ -4018,12 +4020,44 @@ Known failure patterns to avoid:
     |> normalize_verification_whitespace()
   end
 
+  defp rewrite_reporting_fragments(summary) do
+    case Regex.run(~r/^\s*([^,.;:]+?)\s+as\s+involving\s+(.+)$/iu, summary) do
+      [_, subject, rest] ->
+        "#{subject} involves #{rest}"
+
+      _ ->
+        summary
+    end
+    |> normalize_verification_whitespace()
+  end
+
+  defp prefer_reported_subclause(summary) do
+    case Regex.run(
+           ~r/["”]?\s*,?\s*(?:noting|showing|finding|demonstrating|indicating|observing)\s+that\s+(.+)/iu,
+           summary
+         ) do
+      [_, clause] ->
+        clause = String.trim(clause)
+
+        if String.contains?(clause, "\"") do
+          clause
+        else
+          summary
+        end
+
+      _ ->
+        summary
+    end
+    |> normalize_verification_whitespace()
+  end
+
   defp adversarial_output_contract do
     """
     Output contract:
     - Return ONLY a numbered list with 3-5 items. No headings, no preamble, no conclusion.
     - Use exactly this shape for every item: `1. [SOURCED] (strength: 8) ...` or `1. [REASONING] (strength: 3) ...`
     - Every `[SOURCED]` item MUST include a specific citation like `[Paper 2]`. If you cannot cite a paper, use `[REASONING]` instead.
+    - In the cited sentence, lead with the paper's directly supported claim or quote. Move your interpretation to a following sentence or mark it as `[REASONING]`.
     - If the side is weak, still provide the strongest available arguments in the required format with lower strengths.
     - Do not say that you cannot make the case. Just output the best structured arguments available.
     """
