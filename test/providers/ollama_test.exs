@@ -393,13 +393,45 @@ defmodule MiosaProviders.OllamaTest do
       Application.delete_env(:daemon, :ollama_url)
     end
 
-    test "returns :ok when explicit model is configured (skips detection)" do
+    test "ignores a non-Ollama default model when seeding the fallback model" do
+      previous_provider = Application.get_env(:daemon, :default_provider)
+      previous_default_model = Application.get_env(:daemon, :default_model)
+      previous_ollama_model = Application.get_env(:daemon, :ollama_model)
+      previous_ollama_url = Application.get_env(:daemon, :ollama_url)
+
+      on_exit(fn ->
+        restore_env(:default_provider, previous_provider)
+        restore_env(:default_model, previous_default_model)
+        restore_env(:ollama_model, previous_ollama_model)
+        restore_env(:ollama_url, previous_ollama_url)
+      end)
+
+      Application.put_env(:daemon, :default_provider, :zhipu)
+      Application.put_env(:daemon, :default_model, "glm-5.1")
+      Application.put_env(:daemon, :ollama_model, "qwen2.5:7b")
+      Application.put_env(:daemon, :ollama_url, "http://localhost:1")
+
+      assert :ok = Ollama.auto_detect_model()
+      assert Application.get_env(:daemon, :ollama_model) == "qwen2.5:7b"
+    end
+
+    test "returns :ok when explicit Ollama model is configured (skips detection)" do
+      previous_provider = Application.get_env(:daemon, :default_provider)
+      previous_default_model = Application.get_env(:daemon, :default_model)
+      previous_ollama_model = Application.get_env(:daemon, :ollama_model)
+
+      on_exit(fn ->
+        restore_env(:default_provider, previous_provider)
+        restore_env(:default_model, previous_default_model)
+        restore_env(:ollama_model, previous_ollama_model)
+      end)
+
+      Application.put_env(:daemon, :default_provider, :ollama)
       Application.put_env(:daemon, :default_model, "llama3.1:70b")
 
       result = Ollama.auto_detect_model()
       assert result == :ok
-    after
-      Application.delete_env(:daemon, :default_model)
+      assert Application.get_env(:daemon, :ollama_model) == "llama3.1:70b"
     end
   end
 
@@ -417,4 +449,7 @@ defmodule MiosaProviders.OllamaTest do
       assert is_binary(model) and model != ""
     end
   end
+
+  defp restore_env(key, nil), do: Application.delete_env(:daemon, key)
+  defp restore_env(key, value), do: Application.put_env(:daemon, key, value)
 end

@@ -52,8 +52,9 @@ defmodule Daemon.Providers.Ollama do
   @spec auto_detect_model() :: :ok
   def auto_detect_model do
     explicit = Application.get_env(:daemon, :default_model)
+    default_provider = Application.get_env(:daemon, :default_provider, :ollama)
 
-    if explicit && explicit != "" do
+    if (default_provider == :ollama and explicit) && explicit != "" do
       Logger.info("[Ollama] Using explicitly configured model: #{explicit}")
       Application.put_env(:daemon, :ollama_model, explicit)
       :ok
@@ -94,7 +95,10 @@ defmodule Daemon.Providers.Ollama do
   def reachable? do
     url = Application.get_env(:daemon, :ollama_url, "http://localhost:11434")
 
-    case Req.get("#{url}/api/tags", [{:receive_timeout, 2_000}, {:retry, false}] ++ auth_headers()) do
+    case Req.get(
+           "#{url}/api/tags",
+           [{:receive_timeout, 2_000}, {:retry, false}] ++ auth_headers()
+         ) do
       {:ok, %{status: 200}} -> true
       _ -> false
     end
@@ -107,7 +111,10 @@ defmodule Daemon.Providers.Ollama do
   def list_models(url \\ nil) do
     url = url || Application.get_env(:daemon, :ollama_url, "http://localhost:11434")
 
-    case Req.get("#{url}/api/tags", [{:receive_timeout, 5_000}, {:retry, false}] ++ auth_headers()) do
+    case Req.get(
+           "#{url}/api/tags",
+           [{:receive_timeout, 5_000}, {:retry, false}] ++ auth_headers()
+         ) do
       {:ok, %{status: 200, body: %{"models" => models}}} ->
         parsed =
           Enum.map(models, fn m ->
@@ -147,15 +154,17 @@ defmodule Daemon.Providers.Ollama do
 
     # 600 s — thinking models (kimi-k2.5) need up to ~300 s before producing
     # any output; 120 s was too short and caused Cortex synthesis timeouts.
-    req_opts = [
-      json: body,
-      receive_timeout: 600_000,
-      pool_timeout: 60_000,
-      retry: false
-    ] ++ auth_headers()
+    req_opts =
+      [
+        json: body,
+        receive_timeout: 600_000,
+        pool_timeout: 60_000,
+        retry: false
+      ] ++ auth_headers()
 
     try do
       req = Req.new(req_opts) |> Req.merge(url: "#{url}/api/chat")
+
       case Req.post(req) do
         {:ok, %{status: 200, body: %{"message" => %{"content" => content} = msg}}} ->
           tool_calls = parse_tool_calls(msg, model)
@@ -184,7 +193,10 @@ defmodule Daemon.Providers.Ollama do
     # Use raw :httpc for cloud URLs to bypass pool issues entirely.
     if String.starts_with?(url, "https://") do
       Logger.info("[Ollama] Cloud URL detected — using curl fallback")
-      model = Keyword.get(opts, :model) || Application.get_env(:daemon, :ollama_model, default_model())
+
+      model =
+        Keyword.get(opts, :model) || Application.get_env(:daemon, :ollama_model, default_model())
+
       tools = Keyword.get(opts, :tools, [])
 
       body_map = %{
@@ -195,21 +207,34 @@ defmodule Daemon.Providers.Ollama do
       }
 
       # Include tools if model supports them
-      body_map = if tools != [] and model_supports_tools?(model) do
-        Map.put(body_map, :tools, format_tools(tools))
-      else
-        body_map
-      end
+      body_map =
+        if tools != [] and model_supports_tools?(model) do
+          Map.put(body_map, :tools, format_tools(tools))
+        else
+          body_map
+        end
 
       body = Jason.encode!(body_map)
       api_key = Application.get_env(:daemon, :ollama_api_key, "")
-      {output, exit_code} = System.cmd("curl", [
-        "-s", "--max-time", "300",
-        "-H", "Content-Type: application/json",
-        "-H", "Authorization: Bearer #{api_key}",
-        "-d", body,
-        "#{url}/api/chat"
-      ], stderr_to_stdout: true)
+
+      {output, exit_code} =
+        System.cmd(
+          "curl",
+          [
+            "-s",
+            "--max-time",
+            "300",
+            "-H",
+            "Content-Type: application/json",
+            "-H",
+            "Authorization: Bearer #{api_key}",
+            "-d",
+            body,
+            "#{url}/api/chat"
+          ],
+          stderr_to_stdout: true
+        )
+
       case exit_code do
         0 ->
           case Jason.decode(output) do
@@ -217,15 +242,22 @@ defmodule Daemon.Providers.Ollama do
               content = get_in(resp, ["message", "content"]) || ""
               raw_tool_calls = get_in(resp, ["message", "tool_calls"]) || []
               tool_calls = parse_tool_calls(%{"tool_calls" => raw_tool_calls}, model)
-              Logger.info("[Ollama] Cloud response: #{byte_size(content)} bytes, #{length(tool_calls)} tool calls")
+
+              Logger.info(
+                "[Ollama] Cloud response: #{byte_size(content)} bytes, #{length(tool_calls)} tool calls"
+              )
+
               if content != "", do: callback.({:text_delta, content})
               callback.({:done, %{content: content, tool_calls: tool_calls}})
               :ok
+
             {:error, _} ->
               {:error, "Ollama Cloud returned non-JSON: #{String.slice(output, 0, 200)}"}
           end
+
         _ ->
-          {:error, "Ollama Cloud curl failed (exit #{exit_code}): #{String.slice(output, 0, 200)}"}
+          {:error,
+           "Ollama Cloud curl failed (exit #{exit_code}): #{String.slice(output, 0, 200)}"}
       end
     else
       chat_stream_impl(messages, callback, opts, url)
@@ -233,7 +265,6 @@ defmodule Daemon.Providers.Ollama do
   end
 
   defp chat_stream_impl(messages, callback, opts, url) do
-
     model =
       Keyword.get(opts, :model) ||
         Application.get_env(:daemon, :ollama_model, default_model())
@@ -270,6 +301,7 @@ defmodule Daemon.Providers.Ollama do
       ] ++ auth_headers()
 
     Logger.info("[Ollama] Starting chat_stream to #{url}/api/chat model=#{model}")
+
     try do
       case Req.post("#{url}/api/chat", req_opts) do
         {:ok, _resp} ->
@@ -336,7 +368,8 @@ defmodule Daemon.Providers.Ollama do
     Enum.map(messages, fn
       # Assistant messages that carry tool_calls must preserve them so that
       # the 2nd+ iteration has accurate conversation history.
-      %{role: "assistant", tool_calls: tool_calls} = msg when is_list(tool_calls) and tool_calls != [] ->
+      %{role: "assistant", tool_calls: tool_calls} = msg
+      when is_list(tool_calls) and tool_calls != [] ->
         formatted_calls =
           Enum.map(tool_calls, fn tc ->
             %{
@@ -355,6 +388,7 @@ defmodule Daemon.Providers.Ollama do
       # because that clause would silently drop tool_call_id and name.
       %{role: "tool", content: content, tool_call_id: id} = msg ->
         name = Map.get(msg, :name, "")
+
         %{
           "role" => "tool",
           "content" => to_string(content),
