@@ -12,6 +12,7 @@ defmodule Daemon.Dashboard.ServiceTest do
       assert Map.has_key?(result, :active_agents)
       assert Map.has_key?(result, :recent_activity)
       assert Map.has_key?(result, :system_health)
+      assert Map.has_key?(result, :adaptation)
     end
 
     test "kpis contains numeric values" do
@@ -40,6 +41,30 @@ defmodule Daemon.Dashboard.ServiceTest do
       assert health.backend in ["ok", "degraded", "error"]
       assert is_integer(health.memory_mb)
       assert health.memory_mb > 0
+    end
+
+    test "adaptation exposes journal, meta-state, and recent signal summaries" do
+      %{adaptation: adaptation} = Service.summary()
+
+      assert is_map(adaptation)
+      assert is_map(adaptation.journal)
+      assert adaptation.journal.status in ["running", "inactive"]
+      assert is_integer(adaptation.journal.signal_count)
+      assert is_integer(adaptation.journal.in_flight_count)
+
+      assert is_map(adaptation.meta_state)
+      assert Map.has_key?(adaptation.meta_state, :authority_domain)
+      assert Map.has_key?(adaptation.meta_state, :active_bottleneck)
+      assert Map.has_key?(adaptation.meta_state, :pivot_reason)
+      assert Map.has_key?(adaptation.meta_state, :active_steering_hypothesis)
+      assert Map.has_key?(adaptation.meta_state, :last_updated_at)
+      assert Map.has_key?(adaptation.meta_state, :last_experiment)
+      assert is_integer(adaptation.meta_state.recent_failed_count)
+
+      assert is_list(adaptation.recent_signals)
+      assert Map.has_key?(adaptation, :current_trial)
+      assert is_list(adaptation.active_promotions)
+      assert is_list(adaptation.active_suppressions)
     end
   end
 end

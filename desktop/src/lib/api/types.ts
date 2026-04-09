@@ -419,11 +419,82 @@ export interface DashboardSystemHealth {
   memory_mb: number;
 }
 
+export interface DashboardAdaptationJournal {
+  status: "running" | "inactive";
+  signal_count: number;
+  in_flight_count: number;
+}
+
+export interface DashboardAdaptationSignal {
+  domain: string | null;
+  event_type: string | null;
+  timestamp: string | null;
+  bottleneck: string | null;
+  reason: string | null;
+  outcome: string | null;
+  trigger_event: string | null;
+  context: Record<string, unknown>;
+}
+
+export interface DashboardAdaptationMetaState {
+  authority_domain: string | null;
+  active_bottleneck: string | null;
+  pivot_reason: string | null;
+  active_steering_hypothesis: string | null;
+  last_updated_at: string | null;
+  last_experiment: DashboardAdaptationSignal | null;
+  recent_failed_count: number;
+  recent_failed_adaptations: DashboardAdaptationSignal[];
+}
+
+export interface DashboardAdaptationTrial {
+  trial_id: number | null;
+  trial_type: string | null;
+  domain: string | null;
+  trigger_event: string | null;
+  status: string | null;
+  remaining_uses: number;
+  bottleneck: string | null;
+  steering: string | null;
+  created_at: string | null;
+  expires_at: string | null;
+  applied_at: string | null;
+  applied_topic: string | null;
+}
+
+export interface DashboardAdaptationPromotion {
+  trigger_event: string | null;
+  bottleneck: string | null;
+  helpful_streak: number;
+  steering: string | null;
+  promoted_at: string | null;
+  expires_at: string | null;
+}
+
+export interface DashboardAdaptationSuppression {
+  trigger_event: string | null;
+  bottleneck: string | null;
+  negative_streak: number;
+  reason: string | null;
+  suppressed_at: string | null;
+  expires_at: string | null;
+}
+
+export interface DashboardAdaptation {
+  journal: DashboardAdaptationJournal;
+  meta_state: DashboardAdaptationMetaState;
+  current_trial: DashboardAdaptationTrial | null;
+  active_promotions: DashboardAdaptationPromotion[];
+  active_suppressions: DashboardAdaptationSuppression[];
+  recent_signals: DashboardAdaptationSignal[];
+}
+
 export interface DashboardData {
   kpis: DashboardKpis;
   active_agents: DashboardAgent[];
   recent_activity: DashboardActivity[];
   system_health: DashboardSystemHealth;
+  adaptation: DashboardAdaptation;
 }
 
 // ── Budget & Cost Tracking ────────────────────────────────────────────────────

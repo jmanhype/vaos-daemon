@@ -8,6 +8,7 @@ import type {
   DashboardAgent,
   DashboardActivity,
   DashboardSystemHealth,
+  DashboardAdaptation,
 } from "$api/types";
 
 const EMPTY_KPIS: DashboardKpis = {
@@ -28,6 +29,28 @@ const EMPTY_HEALTH: DashboardSystemHealth = {
   memory_mb: 0,
 };
 
+const EMPTY_ADAPTATION: DashboardAdaptation = {
+  journal: {
+    status: "inactive",
+    signal_count: 0,
+    in_flight_count: 0,
+  },
+  meta_state: {
+    authority_domain: null,
+    active_bottleneck: null,
+    pivot_reason: null,
+    active_steering_hypothesis: null,
+    last_updated_at: null,
+    last_experiment: null,
+    recent_failed_count: 0,
+    recent_failed_adaptations: [],
+  },
+  current_trial: null,
+  active_promotions: [],
+  active_suppressions: [],
+  recent_signals: [],
+};
+
 async function fetchDashboard(): Promise<DashboardData> {
   const headers: Record<string, string> = { Accept: "application/json" };
   const token = getToken();
@@ -46,6 +69,7 @@ class DashboardStore {
   activeAgents = $state<DashboardAgent[]>([]);
   recentActivity = $state<DashboardActivity[]>([]);
   systemHealth = $state<DashboardSystemHealth>(EMPTY_HEALTH);
+  adaptation = $state<DashboardAdaptation>(EMPTY_ADAPTATION);
   loading = $state(true);
   error = $state<string | null>(null);
   lastUpdated = $state<Date | null>(null);
@@ -59,6 +83,7 @@ class DashboardStore {
       this.activeAgents = data.active_agents;
       this.recentActivity = data.recent_activity;
       this.systemHealth = data.system_health;
+      this.adaptation = data.adaptation ?? EMPTY_ADAPTATION;
       this.error = null;
     } catch (e) {
       this.error = (e as Error).message;

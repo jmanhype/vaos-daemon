@@ -13,8 +13,8 @@ defmodule Daemon.Channels.HTTP.API.DashboardRoutes do
 
   alias Daemon.Dashboard.Service
 
-  plug :match
-  plug :dispatch
+  plug(:match)
+  plug(:dispatch)
 
   get "/" do
     data = safe_summary()
@@ -30,10 +30,56 @@ defmodule Daemon.Channels.HTTP.API.DashboardRoutes do
   rescue
     e ->
       Logger.error("[Dashboard] summary failed: #{Exception.message(e)}")
-      %{kpis: %{}, active_agents: [], recent_activity: [], system_health: %{backend: "error"}}
+
+      %{
+        kpis: %{},
+        active_agents: [],
+        recent_activity: [],
+        system_health: %{backend: "error"},
+        adaptation: %{
+          journal: %{status: "inactive", signal_count: 0, in_flight_count: 0},
+          meta_state: %{
+            authority_domain: nil,
+            active_bottleneck: nil,
+            pivot_reason: nil,
+            active_steering_hypothesis: nil,
+            last_updated_at: nil,
+            last_experiment: nil,
+            recent_failed_count: 0,
+            recent_failed_adaptations: []
+          },
+          current_trial: nil,
+          active_promotions: [],
+          active_suppressions: [],
+          recent_signals: []
+        }
+      }
   catch
     :exit, reason ->
       Logger.error("[Dashboard] summary exit: #{inspect(reason)}")
-      %{kpis: %{}, active_agents: [], recent_activity: [], system_health: %{backend: "error"}}
+
+      %{
+        kpis: %{},
+        active_agents: [],
+        recent_activity: [],
+        system_health: %{backend: "error"},
+        adaptation: %{
+          journal: %{status: "inactive", signal_count: 0, in_flight_count: 0},
+          meta_state: %{
+            authority_domain: nil,
+            active_bottleneck: nil,
+            pivot_reason: nil,
+            active_steering_hypothesis: nil,
+            last_updated_at: nil,
+            last_experiment: nil,
+            recent_failed_count: 0,
+            recent_failed_adaptations: []
+          },
+          current_trial: nil,
+          active_promotions: [],
+          active_suppressions: [],
+          recent_signals: []
+        }
+      }
   end
 end

@@ -1,10 +1,11 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
-  import { dashboardStore } from '$lib/stores/dashboard.svelte';
-  import SystemHealthBar from '$lib/components/dashboard/SystemHealthBar.svelte';
-  import KpiGrid from '$lib/components/dashboard/KpiGrid.svelte';
-  import RecentActivityFeed from '$lib/components/dashboard/RecentActivityFeed.svelte';
-  import ActiveAgentsPanel from '$lib/components/dashboard/ActiveAgentsPanel.svelte';
+  import { onMount, onDestroy } from "svelte";
+  import { dashboardStore } from "$lib/stores/dashboard.svelte";
+  import SystemHealthBar from "$lib/components/dashboard/SystemHealthBar.svelte";
+  import KpiGrid from "$lib/components/dashboard/KpiGrid.svelte";
+  import RecentActivityFeed from "$lib/components/dashboard/RecentActivityFeed.svelte";
+  import ActiveAgentsPanel from "$lib/components/dashboard/ActiveAgentsPanel.svelte";
+  import AdaptationPanel from "$lib/components/dashboard/AdaptationPanel.svelte";
 
   let cleanup: (() => void) | undefined;
 
@@ -34,11 +35,12 @@
       <div class="dash-feed">
         <RecentActivityFeed activities={dashboardStore.recentActivity} />
       </div>
-      <div class="dash-agents">
+      <div class="dash-side">
         <ActiveAgentsPanel
           agents={dashboardStore.activeAgents}
           agentsTotal={dashboardStore.kpis.agents_total}
         />
+        <AdaptationPanel adaptation={dashboardStore.adaptation} />
       </div>
     </div>
   {/if}
@@ -70,8 +72,11 @@
     min-width: 0;
   }
 
-  .dash-agents {
+  .dash-side {
     min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
   }
 
   .dash-error {
