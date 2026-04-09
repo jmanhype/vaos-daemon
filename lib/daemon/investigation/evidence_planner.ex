@@ -14,12 +14,15 @@ defmodule Daemon.Investigation.EvidencePlanner do
   @type plan :: %{
           mode: atom(),
           profile: atom(),
-          probe_score: float(),
+          heuristic_score: float(),
+          probe_score: float() | nil,
+          selection_score: float(),
           rationale: String.t(),
           semantic_seed: String.t(),
           ss_queries: [query()],
           oa_queries: [query()],
-          evidence_profile: map() | nil
+          evidence_profile: map() | nil,
+          probe: map() | nil
         }
 
   @candidate_order %{
@@ -47,7 +50,7 @@ defmodule Daemon.Investigation.EvidencePlanner do
       |> Enum.map(&build_candidate(&1, topic, keyword_topic, claim_family, evidence_profile))
       |> Enum.map(&score_candidate(&1, terms, claim_family, evidence_profile))
       |> Enum.sort_by(fn candidate ->
-        {-candidate.probe_score, Map.fetch!(@candidate_order, candidate.mode)}
+        {-candidate.selection_score, Map.fetch!(@candidate_order, candidate.mode)}
       end)
       |> Enum.take(4)
 
@@ -90,15 +93,40 @@ defmodule Daemon.Investigation.EvidencePlanner do
     %{
       mode: plan.mode,
       profile: plan.profile,
-      probe_score: Float.round(plan.probe_score, 2),
+      heuristic_score: round_score(plan.heuristic_score),
+      probe_score: round_score(plan.probe_score),
+      selection_score: round_score(plan.selection_score),
       rationale: plan.rationale,
-      semantic_seed: plan.semantic_seed
+      semantic_seed: plan.semantic_seed,
+      probe: summarize_probe(plan.probe)
     }
   end
 
   @doc false
   def candidate_summaries(candidates) when is_list(candidates) do
     Enum.map(candidates, &summary/1)
+  end
+
+  @doc false
+  def apply_probe_results(candidates, probe_results) when is_list(candidates) do
+    results_by_mode =
+      Map.new(probe_results, fn result ->
+        {Map.fetch!(result, :mode), result}
+      end)
+
+    candidates =
+      candidates
+      |> Enum.map(fn candidate ->
+        apply_probe_result(candidate, Map.get(results_by_mode, candidate.mode))
+      end)
+      |> Enum.sort_by(fn candidate ->
+        {-candidate.selection_score, Map.fetch!(@candidate_order, candidate.mode)}
+      end)
+
+    %{
+      selected: List.first(candidates),
+      candidates: candidates
+    }
   end
 
   defp candidate_modes do
@@ -148,12 +176,15 @@ defmodule Daemon.Investigation.EvidencePlanner do
     %{
       mode: :measurement,
       profile: :general,
-      probe_score: 0.0,
+      heuristic_score: 0.0,
+      probe_score: nil,
+      selection_score: 0.0,
       rationale: "favor measurement and observation evidence",
       semantic_seed: semantic_seed,
       ss_queries: ss_queries,
       oa_queries: oa_queries,
-      evidence_profile: evidence_profile
+      evidence_profile: evidence_profile,
+      probe: nil
     }
   end
 
@@ -167,7 +198,9 @@ defmodule Daemon.Investigation.EvidencePlanner do
     %{
       mode: :randomized_intervention,
       profile: :clinical_intervention,
-      probe_score: 0.0,
+      heuristic_score: 0.0,
+      probe_score: nil,
+      selection_score: 0.0,
       rationale: "favor trial and placebo evidence",
       semantic_seed: keyword_topic,
       ss_queries: [
@@ -182,7 +215,8 @@ defmodule Daemon.Investigation.EvidencePlanner do
         {:placebo, "#{keyword_topic} placebo controlled trial", []},
         {:guideline, "clinical guideline #{keyword_topic}", []}
       ],
-      evidence_profile: evidence_profile
+      evidence_profile: evidence_profile,
+      probe: nil
     }
   end
 
@@ -190,7 +224,9 @@ defmodule Daemon.Investigation.EvidencePlanner do
     %{
       mode: :observational,
       profile: :health_claim,
-      probe_score: 0.0,
+      heuristic_score: 0.0,
+      probe_score: nil,
+      selection_score: 0.0,
       rationale: "favor cohort and case-control evidence",
       semantic_seed: keyword_topic,
       ss_queries: [
@@ -205,7 +241,8 @@ defmodule Daemon.Investigation.EvidencePlanner do
         {:observational, "observational study #{keyword_topic}", []},
         {:registry, "registry study #{keyword_topic}", []}
       ],
-      evidence_profile: evidence_profile
+      evidence_profile: evidence_profile,
+      probe: nil
     }
   end
 
@@ -213,7 +250,9 @@ defmodule Daemon.Investigation.EvidencePlanner do
     %{
       mode: :systematic_review,
       profile: review_profile(claim_family),
-      probe_score: 0.0,
+      heuristic_score: 0.0,
+      probe_score: nil,
+      selection_score: 0.0,
       rationale: "favor synthesis and review evidence",
       semantic_seed: keyword_topic,
       ss_queries: [
@@ -228,7 +267,8 @@ defmodule Daemon.Investigation.EvidencePlanner do
         {:umbrella, "umbrella review #{keyword_topic}", @review_opts},
         {:review, "review #{keyword_topic}", @review_opts}
       ],
-      evidence_profile: evidence_profile
+      evidence_profile: evidence_profile,
+      probe: nil
     }
   end
 
@@ -236,7 +276,9 @@ defmodule Daemon.Investigation.EvidencePlanner do
     %{
       mode: :consensus,
       profile: :general,
-      probe_score: 0.0,
+      heuristic_score: 0.0,
+      probe_score: nil,
+      selection_score: 0.0,
       rationale: "favor consensus, guidance, and authoritative summaries",
       semantic_seed: keyword_topic,
       ss_queries: [
@@ -251,7 +293,8 @@ defmodule Daemon.Investigation.EvidencePlanner do
         {:position, "position statement #{keyword_topic}", []},
         {:review, "review #{keyword_topic}", @review_opts}
       ],
-      evidence_profile: evidence_profile
+      evidence_profile: evidence_profile,
+      probe: nil
     }
   end
 
@@ -259,7 +302,9 @@ defmodule Daemon.Investigation.EvidencePlanner do
     %{
       mode: :general_empirical,
       profile: :general,
-      probe_score: 0.0,
+      heuristic_score: 0.0,
+      probe_score: nil,
+      selection_score: 0.0,
       rationale: "favor broad empirical search without committing to one evidence mode",
       semantic_seed: topic,
       ss_queries: [
@@ -274,7 +319,8 @@ defmodule Daemon.Investigation.EvidencePlanner do
         {:observation, "#{keyword_topic} direct observation", []},
         {:analysis, "#{keyword_topic} empirical test", []}
       ],
-      evidence_profile: evidence_profile
+      evidence_profile: evidence_profile,
+      probe: nil
     }
   end
 
@@ -335,7 +381,33 @@ defmodule Daemon.Investigation.EvidencePlanner do
       |> Enum.take(3)
       |> Enum.join("; ")
 
-    %{candidate | probe_score: score, rationale: rationale}
+    %{candidate | heuristic_score: score, selection_score: score, rationale: rationale}
+  end
+
+  defp apply_probe_result(candidate, nil), do: candidate
+
+  defp apply_probe_result(candidate, probe_result) do
+    empirical_score =
+      case Map.get(probe_result, :status) do
+        :ok -> Map.get(probe_result, :score)
+        _ -> nil
+      end
+
+    selection_score =
+      case empirical_score do
+        value when is_number(value) ->
+          Float.round(candidate.heuristic_score * 0.35 + value * 0.65, 2)
+
+        _ ->
+          candidate.heuristic_score
+      end
+
+    %{
+      candidate
+      | probe: probe_result,
+        probe_score: empirical_score,
+        selection_score: selection_score
+    }
   end
 
   defp rationale_parts(mode, family_profile, family_kind, terms, evidence_profile) do
@@ -396,4 +468,32 @@ defmodule Daemon.Investigation.EvidencePlanner do
       _ -> Enum.join(keywords, " ")
     end
   end
+
+  defp summarize_probe(nil), do: nil
+
+  defp summarize_probe(probe) when is_map(probe) do
+    probe
+    |> Map.take([
+      :status,
+      :reason,
+      :source,
+      :query_label,
+      :query,
+      :raw_papers,
+      :relevant_papers,
+      :groundable_papers,
+      :filtered_out,
+      :avg_directness,
+      :score
+    ])
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Map.new(fn
+      {key, value} when is_float(value) -> {key, Float.round(value, 2)}
+      pair -> pair
+    end)
+  end
+
+  defp round_score(nil), do: nil
+  defp round_score(value) when is_float(value), do: Float.round(value, 2)
+  defp round_score(value), do: value
 end

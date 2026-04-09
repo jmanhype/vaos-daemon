@@ -1263,6 +1263,10 @@ Known failure patterns to avoid:
       :evidence_plan_candidates,
       Map.get(search_plan, :evidence_plan_candidates, [])
     )
+    |> Map.put(
+      :evidence_plan_probe_selection,
+      Map.get(search_plan, :evidence_plan_probe_selection)
+    )
   end
 
   defp put_evidence_plan_metadata(metadata, _search_plan) when is_map(metadata), do: metadata
@@ -2533,6 +2537,7 @@ Known failure patterns to avoid:
   defp search_all_papers(topic, keywords, strategy, opts) do
     http_fn = literature_http_fn()
     plan = search_query_plan(topic, keywords)
+    plan = maybe_probe_search_plan(plan, strategy, http_fn)
     normalized_topic = plan.normalized_topic
     semantic_seed = semantic_search_seed(plan)
     {ss_queries, oa_queries} = {plan.ss_queries, plan.oa_queries}
@@ -2788,9 +2793,174 @@ Known failure patterns to avoid:
       profile: selected_plan.profile,
       evidence_profile: selected_plan.evidence_profile || evidence_profile,
       evidence_plan: selected_plan,
+      evidence_plan_candidate_plans: planner.candidates,
       evidence_plan_candidates: EvidencePlanner.candidate_summaries(planner.candidates),
       ss_queries: selected_plan.ss_queries,
       oa_queries: selected_plan.oa_queries
+    }
+  end
+
+  defp maybe_probe_search_plan(plan, strategy, http_fn)
+       when is_map(plan) and is_map(strategy) do
+    candidates =
+      plan
+      |> Map.get(:evidence_plan_candidate_plans, [])
+      |> Enum.take(3)
+
+    cond do
+      length(candidates) < 2 ->
+        put_probe_selection_metadata(plan, :skipped, "insufficient_candidates", [])
+
+      circuit_check(:openalex) != :ok ->
+        put_probe_selection_metadata(plan, :skipped, "openalex_unavailable", [])
+
+      true ->
+        probe_results =
+          Enum.map(candidates, fn candidate ->
+            probe_search_plan_candidate(candidate, plan.normalized_topic, strategy, http_fn)
+          end)
+
+        if Enum.any?(probe_results, &(Map.get(&1, :status) == :ok)) do
+          apply_search_plan_probe_results(plan, candidates, probe_results)
+        else
+          put_probe_selection_metadata(plan, :skipped, "probe_failed", probe_results)
+        end
+    end
+  end
+
+  @doc false
+  def apply_search_plan_probe_results(plan, shortlisted_candidates, probe_results)
+      when is_map(plan) and is_list(shortlisted_candidates) and is_list(probe_results) do
+    probed = EvidencePlanner.apply_probe_results(shortlisted_candidates, probe_results)
+    selected_plan = probed.selected
+
+    Logger.info(
+      "[investigate] Evidence-plan probe selected #{selected_plan.mode} over #{Enum.map(probed.candidates, & &1.mode) |> Enum.join(", ")}"
+    )
+
+    plan
+    |> Map.put(:profile, selected_plan.profile)
+    |> Map.put(:evidence_profile, selected_plan.evidence_profile || plan.evidence_profile)
+    |> Map.put(:evidence_plan, selected_plan)
+    |> Map.put(:evidence_plan_candidate_plans, probed.candidates)
+    |> Map.put(
+      :evidence_plan_candidates,
+      EvidencePlanner.candidate_summaries(probed.candidates)
+    )
+    |> Map.put(:ss_queries, selected_plan.ss_queries)
+    |> Map.put(:oa_queries, selected_plan.oa_queries)
+    |> put_probe_selection_metadata(:ok, nil, probe_results)
+  end
+
+  defp put_probe_selection_metadata(plan, status, reason, probe_results) do
+    probe_selection = %{
+      status: status,
+      reason: reason,
+      candidate_count: length(Map.get(plan, :evidence_plan_candidate_plans, [])),
+      shortlisted_count: length(probe_results),
+      source: :openalex
+    }
+
+    plan
+    |> Map.put(:evidence_plan_probe_selection, probe_selection)
+    |> Map.put(
+      :evidence_plan_candidates,
+      EvidencePlanner.candidate_summaries(Map.get(plan, :evidence_plan_candidate_plans, []))
+    )
+  end
+
+  defp probe_search_plan_candidate(candidate, topic, strategy, http_fn) do
+    probe_limit = min(max(strategy.per_query_limit, 1), 3)
+
+    case List.first(candidate.oa_queries || []) do
+      {label, query, opts} ->
+        search_opts = Keyword.merge([limit: probe_limit], opts)
+
+        case Literature.search_openalex(query, http_fn, search_opts) do
+          {:ok, papers} ->
+            circuit_record_success(:openalex)
+            build_probe_result(candidate, topic, label, query, papers)
+
+          {:error, reason} ->
+            circuit_record_failure(:openalex)
+
+            %{
+              mode: candidate.mode,
+              status: :error,
+              source: :openalex,
+              query_label: label,
+              query: query,
+              reason: inspect(reason)
+            }
+        end
+
+      nil ->
+        %{
+          mode: candidate.mode,
+          status: :skipped,
+          source: :openalex,
+          reason: "no_openalex_query"
+        }
+    end
+  end
+
+  defp build_probe_result(candidate, topic, query_label, query, papers) do
+    atom_papers = Enum.map(papers, &ensure_atom_keys/1)
+
+    reranked =
+      atom_papers
+      |> Literature.rank_papers(topic)
+      |> rerank_retrieval_candidates(%{
+        profile: candidate.profile,
+        normalized_topic: topic,
+        evidence_profile: candidate.evidence_profile
+      })
+
+    {relevant, dropped} =
+      filter_relevant(reranked, %{
+        profile: candidate.profile,
+        normalized_topic: topic,
+        evidence_profile: candidate.evidence_profile
+      })
+
+    top_relevant = Enum.take(relevant, 3)
+
+    groundable_papers =
+      Enum.count(top_relevant, fn paper ->
+        paper
+        |> Map.get(:abstract, "")
+        |> to_string()
+        |> String.trim() != ""
+      end)
+
+    avg_directness =
+      case top_relevant do
+        [] ->
+          0.0
+
+        list ->
+          topic_terms = distinctive_topic_terms(topic)
+
+          Enum.map(list, &retrieval_directness_score(&1, topic_terms, candidate.evidence_profile))
+          |> Enum.sum()
+          |> Kernel./(length(list))
+      end
+
+    empirical_score =
+      Float.round(length(top_relevant) * 2.5 + groundable_papers * 1.5 + avg_directness * 0.25, 2)
+
+    %{
+      mode: candidate.mode,
+      status: :ok,
+      source: :openalex,
+      query_label: query_label,
+      query: query,
+      raw_papers: length(atom_papers),
+      relevant_papers: length(top_relevant),
+      groundable_papers: groundable_papers,
+      filtered_out: dropped,
+      avg_directness: avg_directness,
+      score: empirical_score
     }
   end
 
@@ -3541,7 +3711,9 @@ Known failure patterns to avoid:
       steering: text_snapshot(Map.get(trace_context, :steering, "")),
       planning: %{
         selected: evidence_plan_trace(Map.get(trace_context, :search_plan, %{})),
-        candidates: evidence_plan_candidates_trace(Map.get(trace_context, :search_plan, %{}))
+        candidates: evidence_plan_candidates_trace(Map.get(trace_context, :search_plan, %{})),
+        probe_selection:
+          evidence_plan_probe_selection_trace(Map.get(trace_context, :search_plan, %{}))
       },
       prompts: %{
         for_system: text_snapshot(message_content(Map.get(trace_context, :for_messages, []), 0)),
@@ -3713,6 +3885,13 @@ Known failure patterns to avoid:
   end
 
   defp evidence_plan_candidates_trace(_search_plan), do: []
+
+  defp evidence_plan_probe_selection_trace(%{evidence_plan_probe_selection: probe_selection})
+       when is_map(probe_selection) do
+    probe_selection
+  end
+
+  defp evidence_plan_probe_selection_trace(_search_plan), do: %{}
 
   defp evidence_trace(evidence) when is_list(evidence) do
     Enum.map(evidence, fn ev ->

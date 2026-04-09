@@ -41,4 +41,25 @@ defmodule Daemon.Investigation.EvidencePlannerTest do
     assert planner.selected.mode == :randomized_intervention
     assert planner.selected.profile == :clinical_intervention
   end
+
+  test "apply_probe_results lets empirical probe signal overturn the heuristic prior" do
+    topic = "smoking causes lung cancer"
+    keywords = ["smoking", "lung", "cancer"]
+    terms = ["smoking", "lung", "cancer"]
+    claim_family = ClaimFamily.match(topic, keywords, terms)
+
+    planner = EvidencePlanner.plan(topic, keywords, terms, claim_family, nil)
+
+    assert planner.selected.mode == :observational
+
+    probed =
+      EvidencePlanner.apply_probe_results(planner.candidates, [
+        %{mode: :observational, status: :ok, score: 1.0, relevant_papers: 0},
+        %{mode: :systematic_review, status: :ok, score: 10.0, relevant_papers: 3}
+      ])
+
+    assert probed.selected.mode == :systematic_review
+    assert probed.selected.probe_score == 10.0
+    assert probed.selected.selection_score > probed.selected.heuristic_score
+  end
 end

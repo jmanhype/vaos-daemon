@@ -626,19 +626,40 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
             evidence_plan: %{
               mode: :measurement,
               profile: :general,
-              probe_score: 8.5,
+              heuristic_score: 8.5,
+              probe_score: 9.2,
+              selection_score: 8.96,
               rationale: "measurement/observation route",
-              semantic_seed: "earth curvature measurement"
+              semantic_seed: "earth curvature measurement",
+              probe: %{
+                status: :ok,
+                source: :openalex,
+                relevant_papers: 3,
+                score: 9.2
+              }
             },
             evidence_plan_candidates: [
               %{
                 mode: :measurement,
                 profile: :general,
-                probe_score: 8.5,
+                heuristic_score: 8.5,
+                probe_score: 9.2,
+                selection_score: 8.96,
                 rationale: "measurement/observation route",
-                semantic_seed: "earth curvature measurement"
+                semantic_seed: "earth curvature measurement",
+                probe: %{
+                  status: :ok,
+                  source: :openalex,
+                  relevant_papers: 3,
+                  score: 9.2
+                }
               }
-            ]
+            ],
+            evidence_plan_probe_selection: %{
+              status: :ok,
+              source: :openalex,
+              shortlisted_count: 1
+            }
           },
           for_messages: [
             %{content: "FOR SYSTEM PROMPT"},
@@ -687,6 +708,8 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert trace.steering.preview =~ "CORRECTIVE FOCUS"
     assert trace.planning.selected.mode == :measurement
     assert hd(trace.planning.candidates).semantic_seed == "earth curvature measurement"
+    assert trace.planning.probe_selection.status == :ok
+    assert trace.planning.selected.probe.score == 9.2
     assert trace.prompts.for_system.preview == "FOR SYSTEM PROMPT"
     assert trace.prompts.against_user.preview == "AGAINST USER PROMPT"
     assert trace.llm.for.status == "ok"
@@ -1139,6 +1162,40 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert Enum.any?(queries, &String.contains?(&1, "case-control study"))
     refute Enum.any?(queries, &String.contains?(&1, "placebo controlled trial"))
     refute Enum.any?(queries, &String.contains?(&1, "randomized controlled trial"))
+  end
+
+  test "apply_search_plan_probe_results selects only from the probed shortlist" do
+    plan =
+      Investigate.search_query_plan(
+        "smoking causes lung cancer",
+        ["smoking", "lung", "cancer"]
+      )
+
+    shortlisted =
+      plan.evidence_plan_candidate_plans
+      |> Enum.reject(&(&1.mode == :consensus))
+      |> Enum.take(3)
+
+    updated =
+      Investigate.apply_search_plan_probe_results(
+        plan,
+        shortlisted,
+        [
+          %{mode: :observational, status: :ok, score: 0.0},
+          %{mode: :systematic_review, status: :ok, score: 0.0},
+          %{mode: :general_empirical, status: :ok, score: 0.0}
+        ]
+      )
+
+    assert updated.evidence_plan.mode == :observational
+
+    assert Enum.map(updated.evidence_plan_candidates, & &1.mode) == [
+             :observational,
+             :systematic_review,
+             :general_empirical
+           ]
+
+    refute Enum.any?(updated.evidence_plan_candidates, &(&1.mode == :consensus))
   end
 
   test "rerank_retrieval_candidates demotes discourse-heavy papers for general claims" do
