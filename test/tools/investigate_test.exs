@@ -888,6 +888,87 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
              "\"the curvature of earth is ignored, which affects the measurement accuracy of the OTHR.\""
   end
 
+  test "verification_claim_text prefers quoted context sentence before reporting-only citation sentence" do
+    summary =
+      "Deformation models used to interpret GPS and InSAR observations of earthquake and volcanic processes explicitly account for \"effects of irregular surface topography and earth curvature\" as necessary corrections for accurate geophysical analysis. [Paper 1] presents mathematical frameworks including \"elastic dislocation theory in homogeneous and layered half-spaces\" that model how the Earth's surface deforms in response to faulting and magmatic activity, with predictions \"compared against field data from seismic and volcanic settings from around the world.\" The need for curvature corrections—and the success of models incorporating them—constitutes direct operational evidence that the Earth is not flat."
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized == "\"effects of irregular surface topography and earth curvature\""
+  end
+
+  test "verification_claim_text drops leading context clauses before quoted oblate-spheroid claims" do
+    summary =
+      "Gravitational measurements confirm Earth is an oblate spheroid, not a flat plane. [Paper 4] establishes that, under the theory of universal gravitation, Earth's surface should be \"of the form of an oblate spheroid of small ellipticity, having its axis of figure coincident with the axis of rotation,\" with gravity varying along the surface according to Clairaut's Theorem. This relationship between surface geometry and gravity variation has been empirically verified without requiring assumptions about Earth's interior—flat geometries produce fundamentally different gravitational signatures that contradict centuries of gravimetric observations."
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized ==
+             "Earth's surface should be of the form of an oblate spheroid of small ellipticity, having its axis of figure coincident with the axis of rotation,"
+
+    refute normalized =~ "under the theory of universal gravitation"
+  end
+
+  test "verification_claim_text prefers quoted definition bodies after define verbs" do
+    summary =
+      "The entire discipline of geodesy operates on verified measurements of Earth's three-dimensional geometry. [Paper 12] defines geodesy as the science determining \"the geometric shape of the earth and its kinematics, the variations of earth rotation, and the earth's gravity field\" using space techniques including GPS/GNSS, Satellite Laser Ranging, VLBI, and gravity mapping missions. [Paper 3] further notes that modern geodesy provides \"the foundation for high accuracy surveying and mapping\" with reference frames that serve as \"the basis for most national and regional datums\"—a globally consistent coordinate system that only works because Earth's shape is a closed spheroid."
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized ==
+             "the geometric shape of the earth and its kinematics, the variations of earth rotation, and the earth's gravity field"
+
+    refute String.starts_with?(normalized, "defines geodesy")
+  end
+
+  test "verification_claim_text strips adverbial reporting wrappers from oblate-spheroid claims" do
+    summary =
+      "Classical geodetic theory, established without any assumption about Earth's interior composition, mathematically demonstrates that the Earth's surface must be \"of the form of an oblate spheroid of small ellipticity, having its axis of figure coincident with the axis of rotation.\" [Paper 4] establishes this through Clairaut's Theorem, showing that gravity variation across the surface follows a precise mathematical law that only holds for a spheroidal body."
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized ==
+             "\"of the form of an oblate spheroid of small ellipticity, having its axis of figure coincident with the axis of rotation.\""
+
+    refute String.starts_with?(normalized, "mathematically demonstrates")
+  end
+
+  test "verification_claim_text prefers inline quoted claims before follow-up paper reporting" do
+    summary =
+      "Modern geodesy integrates multiple independent space technologies—including satellite laser ranging, very long baseline interferometry, and gravity mapping missions like GRACE—that collectively measure \"the geometric shape of the earth and its kinematics, the variations of earth rotation, and the earth's gravity field.\" [Paper 12] describes how these diverse techniques converge on a consistent three-dimensional model of Earth as a dynamic spheroidal body."
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized ==
+             "\"the geometric shape of the earth and its kinematics, the variations of earth rotation, and the earth's gravity field.\""
+
+    refute normalized =~ "Modern geodesy integrates"
+    refute normalized =~ "describes how"
+  end
+
+  test "verification_claim_text prefers later quoted definition bodies after inline paper-ref clauses" do
+    summary =
+      "Modern geodesy defines Earth's shape as a three-dimensional figure requiring multiple independent space techniques to characterize, with the Global Geodetic Observing System integrating \"all geodetic observations\" to produce consistent parameters for the \"System Earth.\" [Paper 12] states that geodesy determines \"the geometric shape of the earth and its kinematics, the variations of earth rotation, and the earth's gravity field\" using space techniques, terrestrial methods, and global reference systems."
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized ==
+             "\"the geometric shape of the earth and its kinematics, the variations of earth rotation, and the earth's gravity field\""
+
+    refute normalized =~ "all geodetic observations"
+    refute normalized =~ "System Earth"
+  end
+
+  test "verification_claim_text falls back to the substantive sentence when citation marker is isolated" do
+    summary =
+      "The International Terrestrial Reference Frame (ITRF2008) is constructed from four independent space geodetic techniques—VLBI, SLR, GPS, and DORIS—spanning 12.5 to 29 years of observations, with its origin defined as Earth's center of mass and positions defined in three-dimensional X, Y, Z coordinates. The scale agreement between VLBI and SLR solutions is 1.05 ± 0.13 ppb (approximately 6.6 mm at the equator), with origin stability at the 1 cm level over decades. This millimeter-precision three-dimensional reference frame, validated by multiple independent measurement systems, is only mathematically coherent for a roughly spherical body—such precision would be impossible on a flat plane, which lacks a center of mass toward which satellites could orbit. [Paper 10]"
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized ==
+             "This millimeter-precision three-dimensional reference frame, validated by multiple independent measurement systems, is only mathematically coherent for a roughly spherical body—such precision would be impossible on a flat plane, which lacks a center of mass toward which satellites could orbit."
+  end
+
   test "verification_claim_text drops later paper clauses from the selected citation sentence" do
     summary =
       "Local flatness approximations are routinely employed in geodetic and engineering calculations, demonstrating practical utility of flat-Earth models at certain scales. [Paper 1] describes elastic dislocation models using \"homogeneous and layered half-spaces\"—flat-plane approximations—for calculating earthquake deformations, while [Paper 12] notes that terrestrial geodetic techniques serve \"regional and local applications.\" These flat-plane mathematical frameworks produce accurate results at local scales, which is consistent with a surface that appears flat to human-scale observation."

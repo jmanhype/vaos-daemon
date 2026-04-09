@@ -3882,15 +3882,19 @@ Known failure patterns to avoid:
     |> normalize_verification_whitespace()
     |> first_citation_sentence()
     |> trim_after_other_paper_ref()
+    |> prefer_quote_after_inline_paper_definition()
+    |> prefer_quote_before_followup_reporting()
     |> trim_after_last_quote()
     |> strip_verification_markup()
     |> strip_leading_attribution_clause()
     |> strip_leading_reporting_clause()
     |> strip_subject_reporting_clause()
+    |> strip_leading_context_clause()
     |> rewrite_reporting_fragments()
     |> prefer_complete_quote_after_ellipsis()
     |> strip_drawback_wrapper_before_quote()
     |> prefer_reported_subclause()
+    |> prefer_definition_quote()
     |> prefer_subject_plus_quoted_predicate()
     |> String.trim()
   end
@@ -3993,16 +3997,78 @@ Known failure patterns to avoid:
         summary
 
       paper_ref ->
-        summary
-        |> protect_sentence_abbreviation_periods()
-        |> then(&Regex.split(~r/(?<=[.!?])\s+/, &1, trim: true))
-        |> Enum.map(&restore_sentence_abbreviation_periods/1)
-        |> Enum.find(summary, &contains_paper_ref?(&1, paper_ref))
+        sentences =
+          summary
+          |> protect_sentence_abbreviation_periods()
+          |> then(&Regex.split(~r/(?<=[.!?])\s+/, &1, trim: true))
+          |> Enum.map(&restore_sentence_abbreviation_periods/1)
+
+        sentence_index = Enum.find_index(sentences, &contains_paper_ref?(&1, paper_ref))
+
+        case sentence_index do
+          nil ->
+            summary
+
+          index ->
+            sentence = Enum.at(sentences, index, summary)
+            previous = if index > 0, do: Enum.at(sentences, index - 1), else: nil
+
+            cond do
+              citation_sentence_is_ref_only?(sentence, paper_ref) and is_binary(previous) ->
+                previous
+
+              true ->
+                preceding_quoted_context(previous, sentence, paper_ref) || sentence
+            end
+        end
     end
   end
 
   defp contains_paper_ref?(summary, paper_ref) when is_integer(paper_ref) do
     Regex.match?(~r/(?:\[Paper\s+#{paper_ref}\]|\bPaper\s+#{paper_ref}\b)/i, summary)
+  end
+
+  defp preceding_quoted_context(previous, citation_sentence, paper_ref)
+       when is_binary(previous) and is_binary(citation_sentence) do
+    cond do
+      contains_paper_ref?(previous, paper_ref) ->
+        nil
+
+      contains_any_paper_ref?(previous) ->
+        nil
+
+      not citation_sentence_reports_paper?(citation_sentence, paper_ref) ->
+        nil
+
+      true ->
+        case Regex.run(~r/["“]([^"”]+)["”]/u, previous, capture: :all_but_first) do
+          [quoted] ->
+            ~s("#{String.trim(quoted)}")
+
+          _ ->
+            nil
+        end
+    end
+  end
+
+  defp preceding_quoted_context(_, _, _), do: nil
+
+  defp contains_any_paper_ref?(summary) when is_binary(summary) do
+    Regex.match?(~r/(?:\[Paper\s+\d+\]|\bPaper\s+\d+\b)/i, summary)
+  end
+
+  defp citation_sentence_reports_paper?(sentence, paper_ref) when is_binary(sentence) do
+    Regex.match?(
+      ~r/^\s*(?:\[Paper\s+#{paper_ref}\]|\bPaper\s+#{paper_ref}\b)\s+(?:(?:explicitly|clearly|directly|specifically)\s+)?(?:#{reporting_verbs_pattern()})\b/iu,
+      sentence
+    )
+  end
+
+  defp citation_sentence_is_ref_only?(sentence, paper_ref) when is_binary(sentence) do
+    Regex.match?(
+      ~r/^\s*(?:[\[(])?\s*Paper\s+#{paper_ref}\s*(?:[\])])?\s*[.?!:;,-]*\s*$/iu,
+      sentence
+    )
   end
 
   defp protect_sentence_abbreviation_periods(summary) do
@@ -4093,15 +4159,12 @@ Known failure patterns to avoid:
   end
 
   defp strip_leading_reporting_clause(summary) do
-    reporting_verbs =
-      "describes|documents|notes|explains|reports|reported|finds|found|shows|showed|demonstrates|demonstrated|discusses|states|stated|establishes|established|derives|derived|argues|argued|observes|observed|indicates|indicated|identifies|identified|mentions|mentioned|writes|wrote|proposes|proposed|details|detailed"
-
     lead_in =
-      ~r/^\s*(?:(?:explicitly|clearly|directly|specifically)\s+)?(?:#{reporting_verbs})\s+/iu
+      ~r/^\s*(?:(?:explicitly|clearly|directly|specifically|\w+ly)\s+)?(?:#{reporting_verbs_pattern()})\s+/iu
 
     summary
     |> String.replace(
-      ~r/^\s*(?:(?:explicitly|clearly|directly|specifically)\s+)?(?:#{reporting_verbs})\s+that\s*,?\s+/iu,
+      ~r/^\s*(?:(?:explicitly|clearly|directly|specifically|\w+ly)\s+)?(?:#{reporting_verbs_pattern()})\s+that\s*,?\s+/iu,
       ""
     )
     |> String.replace(lead_in, "")
@@ -4142,15 +4205,26 @@ Known failure patterns to avoid:
   end
 
   defp strip_subject_reporting_clause(summary) when is_binary(summary) do
-    reporting_verbs =
-      "describes|documents|notes|explains|reports|reported|finds|found|shows|showed|demonstrates|demonstrated|discusses|states|stated|establishes|established|derives|derived|argues|argued|observes|observed|indicates|indicated|identifies|identified|mentions|mentioned|writes|wrote|proposes|proposed|details|detailed"
-
     summary
     |> String.replace(
-      ~r/^\s*(?:[A-Z][^,.;:"]{0,120}?)\s+(?:#{reporting_verbs})\s+that\s+/u,
+      ~r/^\s*(?:[A-Z][^.;:"]{0,180}?)\s+(?:(?:explicitly|clearly|directly|specifically|\w+ly)\s+)?(?:#{reporting_verbs_pattern()})\s+that\s+/u,
       ""
     )
     |> normalize_verification_whitespace()
+  end
+
+  defp strip_leading_context_clause(summary) when is_binary(summary) do
+    case Regex.run(
+           ~r/^\s*(?:under|within|using|with|according\s+to|based\s+on|in)\b[^,]{0,120},\s*(.+)$/iu,
+           summary,
+           capture: :all_but_first
+         ) do
+      [remainder] ->
+        normalize_verification_whitespace(remainder)
+
+      _ ->
+        summary
+    end
   end
 
   defp prefer_complete_quote_after_ellipsis(summary) when is_binary(summary) do
@@ -4187,6 +4261,73 @@ Known failure patterns to avoid:
     end
   end
 
+  defp reporting_verbs_pattern do
+    "present|presents|presented|define|defines|defined|describes|documents|notes|explains|reports|reported|finds|found|shows|showed|demonstrates|demonstrated|discusses|states|stated|establishes|established|derives|derived|argues|argued|observes|observed|indicates|indicated|identifies|identified|mentions|mentioned|writes|wrote|proposes|proposed|details|detailed"
+  end
+
+  defp prefer_quote_after_inline_paper_definition(summary) when is_binary(summary) do
+    case extract_paper_ref(summary) do
+      nil ->
+        summary
+
+      paper_ref ->
+        case Regex.run(
+               ~r/^(.*?)((?:\[Paper\s+#{paper_ref}\]|\bPaper\s+#{paper_ref}\b)[^"“”]{0,220}?\b(?:states?|defines?)\b[^"“”]{0,160}?["“]([^"”]+)["”])/iu,
+               summary,
+               capture: :all_but_first
+             ) do
+          [before_paper, _clause, quoted] ->
+            if String.contains?(before_paper, "\"") or String.contains?(before_paper, "“") do
+              ~s("#{String.trim(quoted)}")
+            else
+              summary
+            end
+
+          _ ->
+            summary
+        end
+    end
+  end
+
+  defp prefer_definition_quote(summary) when is_binary(summary) do
+    case Regex.run(~r/^(.*?)["“]([^"”]+)["”]?(.*)$/u, summary) do
+      [_, before_quote, quoted, _after_quote] ->
+        before_quote = normalize_verification_whitespace(before_quote)
+        quoted = String.trim(quoted)
+
+        if quoted != "" and
+             Regex.match?(
+               ~r/\bas\s+(?:the\s+)?(?:science|study|discipline|field|process|method|framework|system)\b/iu,
+               before_quote
+             ) do
+          quoted
+        else
+          summary
+        end
+
+      _ ->
+        summary
+    end
+  end
+
+  defp prefer_quote_before_followup_reporting(summary) when is_binary(summary) do
+    case Regex.run(~r/^(.*?)["“]([^"”]+)["”](.*)$/u, summary) do
+      [_, _before_quote, quoted, after_quote] ->
+        if quoted != "" and
+             Regex.match?(
+               ~r/^\s*(?:\[Paper\s+\d+\]|\bPaper\s+\d+\b)\s+(?:(?:explicitly|clearly|directly|specifically|\w+ly)\s+)?(?:#{reporting_verbs_pattern()})\b/iu,
+               String.trim_leading(after_quote)
+             ) do
+          ~s("#{quoted}")
+        else
+          summary
+        end
+
+      _ ->
+        summary
+    end
+  end
+
   defp prefer_subject_plus_quoted_predicate(summary) do
     case Regex.run(~r/^(.*?)["“]([^"”]+)["”]?(.*)$/u, summary) do
       [_, before_quote, quoted, _after_quote] ->
@@ -4200,7 +4341,8 @@ Known failure patterns to avoid:
 
         quoted = String.trim(quoted)
 
-        if quoted_predicate?(quoted) and subject != "" do
+        if (quoted_predicate?(quoted) or subject_completes_quoted_fragment?(subject, quoted)) and
+             subject != "" do
           "#{subject} #{quoted}"
           |> normalize_verification_whitespace()
         else
@@ -4217,6 +4359,15 @@ Known failure patterns to avoid:
       ~r/^(?:ought|is|are|was|were|has|have|had|can|could|will|would|should|must|may|might|does|do|did)\b/iu,
       String.trim_leading(quoted)
     )
+  end
+
+  defp subject_completes_quoted_fragment?(subject, quoted)
+       when is_binary(subject) and is_binary(quoted) do
+    Regex.match?(
+      ~r/\b(?:is|are|was|were|be|been|being|can|could|will|would|should|must|may|might)\s*$/iu,
+      String.trim(subject)
+    ) and
+      Regex.match?(~r/^(?:of|to|for|from|that|how|why|whether|where|when|which)\b/iu, quoted)
   end
 
   defp adversarial_output_contract do
