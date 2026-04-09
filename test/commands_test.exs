@@ -124,6 +124,11 @@ defmodule Daemon.CommandsTest do
       assert is_binary(output)
     end
 
+    test "/machines degrades gracefully when fleet registry is unavailable" do
+      {:command, output} = Commands.execute("machines", "test-session")
+      assert output =~ "Fleet: registry not available"
+    end
+
     test "/providers does not return :unknown" do
       result = Commands.execute("providers", "test-session")
       refute result == :unknown

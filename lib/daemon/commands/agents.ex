@@ -437,26 +437,7 @@ defmodule Daemon.Commands.Agents do
           end)
         end
 
-      fleet_output =
-        try do
-          agents = Daemon.Fleet.Registry.list_agents()
-          stats = Daemon.Fleet.Registry.get_stats()
-
-          if agents == [] do
-            "\nFleet: no remote agents registered"
-          else
-            agent_lines =
-              Enum.map_join(agents, "\n", fn a ->
-                status = a[:status] || "unknown"
-                id = a[:agent_id] || a[:id] || "?"
-                "  #{String.pad_trailing(to_string(id), 24)} #{status}"
-              end)
-
-            "\nFleet (#{stats.total} total, #{stats.online} online):\n#{agent_lines}"
-          end
-        rescue
-          _ -> "\nFleet: registry not available"
-        end
+      fleet_output = fleet_output()
 
       output = "Machines (skill groups):\n#{active_list}#{fleet_output}"
       {:command, output}
@@ -476,6 +457,43 @@ defmodule Daemon.Commands.Agents do
   end
 
   defp format_number(n), do: "#{n}"
+
+  defp fleet_output do
+    case fleet_snapshot() do
+      {:ok, agents, stats} ->
+        if agents == [] do
+          "\nFleet: no remote agents registered"
+        else
+          agent_lines =
+            Enum.map_join(agents, "\n", fn a ->
+              status = a[:status] || "unknown"
+              id = a[:agent_id] || a[:id] || "?"
+              "  #{String.pad_trailing(to_string(id), 24)} #{status}"
+            end)
+
+          "\nFleet (#{stats.total} total, #{stats.online} online):\n#{agent_lines}"
+        end
+
+      :unavailable ->
+        "\nFleet: registry not available"
+    end
+  end
+
+  defp fleet_snapshot do
+    case Process.whereis(Daemon.Fleet.Registry) do
+      nil ->
+        :unavailable
+
+      _pid ->
+        try do
+          {:ok, Daemon.Fleet.Registry.list_agents(), Daemon.Fleet.Registry.get_stats()}
+        rescue
+          _ -> :unavailable
+        catch
+          :exit, _ -> :unavailable
+        end
+    end
+  end
 
   # ── /strategy ──────────────────────────────────────────────────
 
