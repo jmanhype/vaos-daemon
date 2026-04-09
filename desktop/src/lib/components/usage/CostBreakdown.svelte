@@ -34,8 +34,8 @@
       <h2 class="cb-title">Cost by Model</h2>
     </header>
     {#if loading}
-      {#each [1, 2, 3] as _}
-        <div class="cb-row"><div class="cb-sk"></div><div class="cb-sk cb-sk--bar"></div><div class="cb-sk cb-sk--num"></div></div>
+      {#each [1, 2, 3] as index (index)}
+        <div class="cb-row" data-skeleton-row={index}><div class="cb-sk"></div><div class="cb-sk cb-sk--bar"></div><div class="cb-sk cb-sk--num"></div></div>
       {/each}
     {:else if byModel.length === 0}
       <p class="cb-empty">No cost data</p>
@@ -59,8 +59,8 @@
       <h2 class="cb-title">Cost by Agent</h2>
     </header>
     {#if loading}
-      {#each [1, 2, 3] as _}
-        <div class="cb-row"><div class="cb-sk"></div><div class="cb-sk cb-sk--bar"></div><div class="cb-sk cb-sk--num"></div></div>
+      {#each [1, 2, 3] as index (index)}
+        <div class="cb-row" data-skeleton-row={index}><div class="cb-sk"></div><div class="cb-sk cb-sk--bar"></div><div class="cb-sk cb-sk--num"></div></div>
       {/each}
     {:else if byAgent.length === 0}
       <p class="cb-empty">No cost data</p>

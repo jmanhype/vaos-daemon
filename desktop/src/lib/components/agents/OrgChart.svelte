@@ -30,7 +30,11 @@
 
   function toggleCollapse(name: string) {
     const next = new Set(collapsed);
-    next.has(name) ? next.delete(name) : next.add(name);
+    if (next.has(name)) {
+      next.delete(name);
+    } else {
+      next.add(name);
+    }
     collapsed = next;
   }
 

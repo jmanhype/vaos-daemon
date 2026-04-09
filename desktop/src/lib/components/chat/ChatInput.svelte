@@ -197,8 +197,6 @@
 
   <!-- Slash command autocomplete menu -->
   {#if showSlashMenu && filteredSlashCommands.length > 0}
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div class="slash-menu" role="listbox" aria-label="Slash commands">
       {#each filteredSlashCommands as cmd, i (cmd.name)}
         <button

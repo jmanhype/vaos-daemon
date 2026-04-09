@@ -171,8 +171,8 @@
   <!-- ── Loading skeleton ───────────────────────────────────────────────── -->
   {#if modelsStore.loading}
     <div class="mb-loading" aria-label="Loading models" aria-busy="true">
-      {#each [1, 2, 3] as _}
-        <div class="mb-skeleton-section glass-panel">
+      {#each [1, 2, 3] as index (index)}
+        <div class="mb-skeleton-section glass-panel" data-skeleton-section={index}>
           <div class="mb-skeleton-header"></div>
           <div class="mb-skeleton-row"></div>
           <div class="mb-skeleton-row mb-skeleton-row--short"></div>

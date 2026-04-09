@@ -13,6 +13,7 @@
 
   let detail = $state<SkillDetailType | null>(null);
   let loading = $state(true);
+  let panelEl = $state<HTMLDivElement | null>(null);
 
   $effect(() => {
     loading = true;
@@ -28,20 +29,40 @@
     user: 'User',
     evolved: 'Evolved',
   };
+
+  function handleOverlayKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape') {
+      onClose();
+    }
+  }
+
+  $effect(() => {
+    if (panelEl) {
+      requestAnimationFrame(() => panelEl?.focus());
+    }
+  });
 </script>
 
-<!-- svelte-ignore a11y_click_events_have_key_events a11y_interactive_supports_focus -->
 <div
   class="overlay"
-  role="dialog"
-  aria-label="Skill details"
-  aria-modal="true"
-  tabindex="-1"
-  onclick={onClose}
   transition:fade={{ duration: 150 }}
 >
-  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div class="panel" onclick={(e: MouseEvent) => e.stopPropagation()} transition:slide={{ axis: 'x', duration: 200 }}>
+  <button
+    type="button"
+    class="overlay-backdrop"
+    onclick={onClose}
+    aria-label="Close skill details"
+  ></button>
+  <div
+    bind:this={panelEl}
+    class="panel"
+    role="dialog"
+    aria-label="Skill details"
+    aria-modal="true"
+    tabindex="-1"
+    onkeydown={handleOverlayKeydown}
+    transition:slide={{ axis: 'x', duration: 200 }}
+  >
     <header class="panel-header">
       <h2 class="panel-title">{detail?.name || skillId}</h2>
       <button class="close-btn" onclick={onClose} aria-label="Close details">
@@ -129,13 +150,24 @@
   .overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.5);
     z-index: var(--z-modal-backdrop);
     display: flex;
     justify-content: flex-end;
   }
 
+  .overlay-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    border: none;
+    padding: 0;
+    margin: 0;
+    cursor: pointer;
+  }
+
   .panel {
+    position: relative;
+    z-index: 1;
     width: 420px;
     max-width: 90vw;
     height: 100%;

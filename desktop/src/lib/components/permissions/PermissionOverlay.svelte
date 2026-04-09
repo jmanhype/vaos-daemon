@@ -9,7 +9,6 @@
   {@const req = permissionStore.current}
 
   <!-- Backdrop -->
-  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div
     class="po-backdrop"
     aria-hidden="true"

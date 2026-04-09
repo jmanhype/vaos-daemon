@@ -14,7 +14,7 @@
     onPriorityChange?: (taskId: number, priority: string) => void;
   }
 
-  let { task, onPriorityChange: _onPriorityChange }: Props = $props();
+  let { task }: Props = $props();
 
   const priorityColor: Record<string, string> = {
     low: 'var(--accent-success)',

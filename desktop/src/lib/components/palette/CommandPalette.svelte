@@ -93,7 +93,6 @@
 </script>
 
 <!-- Backdrop -->
-<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 <div
   class="palette-backdrop"
   onclick={() => paletteStore.close()}
@@ -394,14 +393,6 @@
     background: rgba(255, 255, 255, 0.06);
     line-height: 1;
   }
-
-  .palette-item-icon--slash {
-    font-family: var(--font-mono);
-    font-size: 13px;
-    font-weight: 600;
-    color: rgba(255, 255, 255, 0.4);
-  }
-
   /* ── Item: text ───────────────────────────────────────────────────────────── */
 
   .palette-item-text {

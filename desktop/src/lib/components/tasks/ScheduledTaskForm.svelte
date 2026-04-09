@@ -49,12 +49,13 @@
 
   // ── Form state ──────────────────────────────────────────────────────────────
 
-  let name           = $state(task?.name ?? '');
-  let description    = $state(task?.description ?? '');
-  let schedule       = $state(task?.schedule ?? '');
-  let taskContent    = $state('');
+  let name = $state('');
+  let description = $state('');
+  let schedule = $state('');
+  let taskContent = $state('');
   let timeoutMinutes = $state(5);
-  let useCustomCron  = $state(false);
+  let useCustomCron = $state(false);
+  let syncedTaskId = $state<string | null>(null);
 
   const cronDescription = $derived(describeCron(schedule));
   const selectedPresetId = $derived(
@@ -68,6 +69,26 @@
   }
 
   let errors = $state<{ name?: string; schedule?: string; task?: string }>({});
+
+  $effect(() => {
+    const currentTask = task;
+    const currentTaskId = currentTask?.id ?? null;
+
+    if (syncedTaskId === currentTaskId) {
+      return;
+    }
+
+    syncedTaskId = currentTaskId;
+    name = currentTask?.name ?? '';
+    description = currentTask?.description ?? '';
+    schedule = currentTask?.schedule ?? '';
+    taskContent = '';
+    timeoutMinutes = 5;
+    useCustomCron = currentTask
+      ? !presets.some((preset) => preset.cron === currentTask.schedule.trim())
+      : false;
+    errors = {};
+  });
 
   function validate(): boolean {
     const next: typeof errors = {};
@@ -161,12 +182,16 @@
 
     <!-- Schedule -->
     <div class="stask-field" class:stask-field--error={!!errors.schedule}>
-      <label class="stask-label">
+      <span class="stask-label" id="stask-schedule-label">
         Schedule <span class="stask-required" aria-hidden="true">*</span>
-      </label>
+      </span>
 
       <!-- Preset grid -->
-      <div class="stask-preset-grid" role="radiogroup" aria-label="Schedule presets">
+      <div
+        class="stask-preset-grid"
+        role="radiogroup"
+        aria-labelledby="stask-schedule-label"
+      >
         {#each presets as preset}
           <button
             type="button"

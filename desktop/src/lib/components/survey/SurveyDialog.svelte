@@ -130,7 +130,6 @@
 </script>
 
 <!-- Backdrop -->
-<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="sd-backdrop"
   role="presentation"
@@ -149,7 +148,7 @@
     <!-- Header: progress dashes + counter -->
     <header class="sd-header">
       <div class="sd-progress" aria-hidden="true">
-        {#each survey.questions as _, i}
+        {#each survey.questions as question, i (question.text)}
           <div
             class="sd-dash"
             class:sd-dash--active={i <= currentIndex}

@@ -39,7 +39,7 @@
     dragOverColumn = columnId;
   }
 
-  function handleDragLeave(e: DragEvent, _columnId: string) {
+  function handleDragLeave(e: DragEvent) {
     const related = e.relatedTarget as Node | null;
     const el = (e.currentTarget as HTMLElement);
     if (!el.contains(related)) dragOverColumn = null;
@@ -65,7 +65,7 @@
       class="kanban-column"
       class:kanban-column--over={dragOverColumn === col.id}
       ondragover={(e) => handleDragOver(e, col.id)}
-      ondragleave={(e) => handleDragLeave(e, col.id)}
+      ondragleave={handleDragLeave}
       ondrop={(e) => handleDrop(e, col.id)}
       ondragend={handleDragEnd}
       role="group"

@@ -19,15 +19,13 @@
   const isCompleted = $derived(project.status === 'completed');
 </script>
 
-<article
+<button
+  type="button"
   class="proj-card"
   class:proj-card--active={isActive}
   class:proj-card--completed={isCompleted}
   aria-label="Project: {project.name}"
-  role="button"
-  tabindex="0"
   onclick={() => onSelect?.(project.id)}
-  onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect?.(project.id); } }}
 >
   <!-- Header row -->
   <div class="proj-header">
@@ -89,7 +87,7 @@
       <span class="proj-progress-label">{progress}%</span>
     </div>
   {/if}
-</article>
+</button>
 
 <style>
   .proj-card {
@@ -103,6 +101,10 @@
     cursor: pointer;
     transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.15s;
     outline: none;
+    width: 100%;
+    text-align: left;
+    font: inherit;
+    appearance: none;
   }
 
   .proj-card:hover {

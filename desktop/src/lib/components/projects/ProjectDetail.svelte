@@ -13,16 +13,52 @@
 
   // Inline name editing
   let editingName = $state(false);
-  let editName    = $state(project.name);
+  let editName = $state('');
+  let nameInputEl = $state<HTMLInputElement | null>(null);
 
   // Add goal form
-  let showGoalForm  = $state(false);
-  let newGoalTitle  = $state('');
+  let showGoalForm = $state(false);
+  let newGoalTitle = $state('');
   let goalFormError = $state('');
+  let goalInputEl = $state<HTMLInputElement | null>(null);
+  let pendingParentId = $state<number | null>(null);
+  let syncedProjectId = $state<number | null>(null);
 
   const goals       = $derived(projectsStore.goals);
   const isActive    = $derived(project.status === 'active');
   const isCompleted = $derived(project.status === 'completed');
+
+  $effect(() => {
+    const currentProjectId = project.id;
+    const currentProjectName = project.name;
+
+    if (syncedProjectId === currentProjectId) {
+      if (!editingName) {
+        editName = currentProjectName;
+      }
+      return;
+    }
+
+    syncedProjectId = currentProjectId;
+    editingName = false;
+    editName = currentProjectName;
+    showGoalForm = false;
+    newGoalTitle = '';
+    goalFormError = '';
+    pendingParentId = null;
+  });
+
+  $effect(() => {
+    if (editingName) {
+      requestAnimationFrame(() => nameInputEl?.focus());
+    }
+  });
+
+  $effect(() => {
+    if (showGoalForm) {
+      requestAnimationFrame(() => goalInputEl?.focus());
+    }
+  });
 
   function saveName() {
     const trimmed = editName.trim();
@@ -42,19 +78,38 @@
   async function handleAddGoal() {
     const trimmed = newGoalTitle.trim();
     if (!trimmed) { goalFormError = 'Goal title is required.'; return; }
-    await projectsStore.createGoal(project.id, { title: trimmed });
+    await projectsStore.createGoal(project.id, {
+      title: trimmed,
+      parent_id: pendingParentId ?? undefined,
+    });
     newGoalTitle = '';
     goalFormError = '';
     showGoalForm = false;
+    pendingParentId = null;
   }
 
   function handleGoalFormKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter') handleAddGoal();
-    if (e.key === 'Escape') { showGoalForm = false; newGoalTitle = ''; goalFormError = ''; }
+    if (e.key === 'Escape') {
+      closeGoalForm();
+    }
   }
 
-  function handleAddChildGoal(_parentId: number) {
+  function openGoalForm(parentId: number | null = null) {
+    pendingParentId = parentId;
     showGoalForm = true;
+    goalFormError = '';
+  }
+
+  function closeGoalForm() {
+    showGoalForm = false;
+    newGoalTitle = '';
+    goalFormError = '';
+    pendingParentId = null;
+  }
+
+  function handleAddChildGoal(parentId: number) {
+    openGoalForm(parentId);
   }
 </script>
 
@@ -85,13 +140,13 @@
     <div class="name-row">
       {#if editingName}
         <input
+          bind:this={nameInputEl}
           class="name-input"
           type="text"
           bind:value={editName}
           onblur={saveName}
           onkeydown={handleNameKeydown}
           aria-label="Edit project name"
-          autofocus
         />
       {:else}
         <button
@@ -145,7 +200,13 @@
         <h2 class="section-title" id="goals-heading">Goals</h2>
         <button
           class="section-action-btn"
-          onclick={() => { showGoalForm = !showGoalForm; }}
+          onclick={() => {
+            if (showGoalForm && pendingParentId === null) {
+              closeGoalForm();
+            } else {
+              openGoalForm();
+            }
+          }}
           aria-label="Add goal"
           aria-expanded={showGoalForm}
         >
@@ -161,6 +222,7 @@
       {#if showGoalForm}
         <div transition:slide={{ duration: 150 }} class="goal-form">
           <input
+            bind:this={goalInputEl}
             class="goal-input"
             type="text"
             bind:value={newGoalTitle}
@@ -168,13 +230,12 @@
             onkeydown={handleGoalFormKeydown}
             aria-label="New goal title"
             aria-describedby={goalFormError ? 'goal-form-err' : undefined}
-            autofocus
           />
           {#if goalFormError}
             <span id="goal-form-err" class="goal-form-error" role="alert">{goalFormError}</span>
           {/if}
           <div class="goal-form-actions">
-            <button class="goal-form-cancel" onclick={() => { showGoalForm = false; newGoalTitle = ''; goalFormError = ''; }}>
+            <button class="goal-form-cancel" onclick={closeGoalForm}>
               Cancel
             </button>
             <button class="goal-form-submit" onclick={handleAddGoal}>

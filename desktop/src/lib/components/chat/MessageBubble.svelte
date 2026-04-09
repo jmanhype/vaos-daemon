@@ -138,6 +138,7 @@
   <!-- Message content -->
   {#if message.content}
     <div class="bubble-content">
+      <!-- eslint-disable-next-line svelte/no-at-html-tags -->
       {@html renderedContent()}
       {#if isStreaming}
         <StreamingCursor />

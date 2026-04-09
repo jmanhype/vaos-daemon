@@ -233,8 +233,8 @@
       {#if loading}
         <!-- Skeleton rows -->
         <div class="ua-model-list">
-          {#each [1, 2, 3] as _}
-            <div class="ua-model-row">
+          {#each [1, 2, 3] as index (index)}
+            <div class="ua-model-row" data-skeleton-row={index}>
               <div class="ua-model-sk-name"></div>
               <div class="ua-model-bar-wrap">
                 <div class="ua-model-sk-bar"></div>

@@ -602,13 +602,17 @@
 
   function increaseFontSize() {
     fontSize = Math.min(fontSize + 1, 24);
-    term?.options && (term.options.fontSize = fontSize);
+    if (term) {
+      term.options.fontSize = fontSize;
+    }
     fitAddon?.fit();
   }
 
   function decreaseFontSize() {
     fontSize = Math.max(fontSize - 1, 9);
-    term?.options && (term.options.fontSize = fontSize);
+    if (term) {
+      term.options.fontSize = fontSize;
+    }
     fitAddon?.fit();
   }
 
@@ -646,7 +650,14 @@
 
   function handleSearchKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') { closeSearch(); return; }
-    if (e.key === 'Enter')  { e.shiftKey ? searchPrev() : searchNext(); return; }
+    if (e.key === 'Enter')  {
+      if (e.shiftKey) {
+        searchPrev();
+      } else {
+        searchNext();
+      }
+      return;
+    }
     if (e.key === 'f' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); closeSearch(); }
   }
 

@@ -201,7 +201,9 @@
     const _msgs = chatStore.messages;
     const _buf = chatStore.streaming.textBuffer;
     const _thinking = chatStore.streaming.thinkingBuffer;
-    void _msgs, _buf, _thinking;
+    void _msgs;
+    void _buf;
+    void _thinking;
 
     if (isAtBottom && viewportEl) {
       requestAnimationFrame(() => {

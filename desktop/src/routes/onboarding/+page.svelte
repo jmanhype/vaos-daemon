@@ -43,7 +43,7 @@
 
   // Focus first interactive element after transitions
   $effect(() => {
-    step; // reactive dependency — intentional read to track step changes
+    void step; // reactive dependency — intentional read to track step changes
     if (!containerRef) return;
     const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const delay = prefersReduced ? 0 : 220;

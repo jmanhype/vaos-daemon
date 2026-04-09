@@ -97,7 +97,7 @@
   <!-- ── Loading skeletons ── -->
   {#if loading && logs.length === 0}
     <div class="skeleton-list" aria-busy="true" aria-label="Loading logs">
-      {#each { length: 5 } as _, i (i)}
+      {#each [0, 1, 2, 3, 4] as i (i)}
         <div class="skeleton-row">
           <div class="skeleton skeleton-time"></div>
           <div class="skeleton skeleton-level"></div>

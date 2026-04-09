@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import type { GoalTreeNode } from '$lib/stores/projects.svelte';
+  import SelfGoalTree from './GoalTree.svelte';
 
   interface Props {
     nodes: GoalTreeNode[];
@@ -9,8 +11,65 @@
 
   let { nodes, onAddGoal, level = 0 }: Props = $props();
 
-  // Track which nodes are expanded (default all expanded)
-  let expanded = $state<Set<number>>(new Set(nodes.map((n) => n.id)));
+  function collectIds(treeNodes: GoalTreeNode[]): number[] {
+    const ids: number[] = [];
+    for (const node of treeNodes) {
+      ids.push(node.id);
+      ids.push(...collectIds(node.children));
+    }
+    return ids;
+  }
+
+  // Track which nodes are expanded (default all expanded).
+  // New nodes open by default; existing collapsed nodes stay collapsed.
+  let expanded = $state<Set<number>>(new Set());
+  let knownNodeIds = $state<Set<number>>(new Set());
+
+  $effect(() => {
+    const allIds = collectIds(nodes);
+    const currentExpanded = untrack(() => expanded);
+    const currentKnownIds = untrack(() => knownNodeIds);
+
+    if (allIds.length === 0) {
+      if (currentExpanded.size > 0) {
+        expanded = new Set();
+      }
+      if (currentKnownIds.size > 0) {
+        knownNodeIds = new Set();
+      }
+      return;
+    }
+
+    const activeIds = new Set(allIds);
+    const nextExpanded = new Set<number>();
+
+    for (const id of currentExpanded) {
+      if (activeIds.has(id)) {
+        nextExpanded.add(id);
+      }
+    }
+
+    for (const id of allIds) {
+      if (!currentKnownIds.has(id)) {
+        nextExpanded.add(id);
+      }
+    }
+
+    const initialLoad = currentKnownIds.size === 0 && currentExpanded.size === 0;
+    const expansionChanged = initialLoad
+      || nextExpanded.size !== currentExpanded.size
+      || [...nextExpanded].some((id) => !currentExpanded.has(id));
+    const knownIdsChanged = currentKnownIds.size !== allIds.length
+      || allIds.some((id) => !currentKnownIds.has(id));
+
+    if (expansionChanged) {
+      expanded = initialLoad ? new Set(allIds) : nextExpanded;
+    }
+
+    if (knownIdsChanged) {
+      knownNodeIds = new Set(allIds);
+    }
+  });
 
   function toggle(id: number) {
     const next = new Set(expanded);
@@ -51,7 +110,12 @@
     {@const isExpanded = expanded.has(node.id)}
     {@const color = statusColor(node.status)}
 
-    <li class="goal-node" role="treeitem" aria-expanded={hasChildren ? isExpanded : undefined}>
+    <li
+      class="goal-node"
+      role="treeitem"
+      aria-expanded={hasChildren ? isExpanded : undefined}
+      aria-selected={false}
+    >
       <div class="goal-row">
         <!-- Expand toggle -->
         <button
@@ -138,7 +202,7 @@
       <!-- Recursive children -->
       {#if hasChildren && isExpanded}
         <div class="goal-children">
-          <svelte:self nodes={node.children} {onAddGoal} level={level + 1} />
+          <SelfGoalTree nodes={node.children} {onAddGoal} level={level + 1} />
         </div>
       {/if}
     </li>
