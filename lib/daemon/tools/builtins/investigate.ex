@@ -47,6 +47,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
 
   alias Daemon.Investigation.{
     AdversarialParser,
+    ClaimFamily,
     Strategy,
     StrategyStore,
     SourceScoring,
@@ -73,9 +74,6 @@ defmodule Daemon.Tools.Builtins.Investigate do
   @health_claim_terms ~w(health disease diseases disorder disorders symptom symptoms
     cancer autism vaccine vaccines smoking smoker smokers lung lungs muscular strength
     training resistance cognition mortality survival risk risks pain pains)
-  @celestial_body_terms ~w(earth world globe planet planets planetary moon moons mars venus
-    mercury jupiter saturn uranus neptune)
-  @shape_property_terms ~w(flat round spherical sphere curved curvature globe globular oblate)
   @retrieval_discourse_terms ~w(misinformation disinformation journalism media communication
     discourse ideology belief beliefs denial denialism history historical philosophy
     perception attitudes social conference public commentary review survey overview)
@@ -2743,22 +2741,7 @@ Known failure patterns to avoid:
 
   @doc false
   def normalized_search_topic(topic) do
-    original =
-      topic
-      |> to_string()
-      |> String.trim()
-      |> String.trim_trailing(".")
-      |> String.trim_trailing("?")
-      |> String.trim_trailing("!")
-
-    normalized =
-      Enum.reduce(search_topic_wrappers(), original, fn pattern, acc ->
-        String.replace(acc, pattern, "")
-      end)
-      |> String.replace(~r/\s+/, " ")
-      |> String.trim()
-
-    if normalized == "", do: original, else: normalized
+    ClaimFamily.normalize_topic(topic)
   end
 
   @doc false
@@ -3065,57 +3048,10 @@ Known failure patterns to avoid:
   end
 
   defp evidence_profile_for(:general, topic, keywords) do
-    general_evidence_profile(topic, keywords)
+    ClaimFamily.evidence_profile(topic, keywords, topic_terms(topic))
   end
 
   defp evidence_profile_for(_profile, _topic, _keywords), do: nil
-
-  defp general_evidence_profile(topic, keywords) do
-    terms = topic_terms(topic)
-
-    cond do
-      planetary_shape_claim?(terms) ->
-        subject_terms =
-          terms
-          |> Enum.reject(&(&1 in @shape_property_terms))
-          |> Enum.reject(&(&1 in @search_relation_words))
-          |> Enum.filter(&(&1 in @celestial_body_terms))
-          |> Enum.uniq()
-
-        subject_query =
-          case subject_terms do
-            [] -> keyword_query_topic(topic, keywords)
-            _ -> Enum.join(subject_terms, " ")
-          end
-
-        %{
-          kind: :planetary_shape,
-          subject_terms: subject_terms,
-          semantic_seed: "#{subject_query} curvature measurement",
-          required_terms: ~w(curvature geodesy geodetic satellite orbital orbit gravity
-            circumnavigation horizon navigation surveying ellipsoid spheroid spherical),
-          stable_terms: ~w(geodesy geodetic gravity geoid ellipsoid spheroid spherical
-            curvature reference frame terrestrial gps gnss satellite orbital orbit
-            vlbi slr doris gravimetry surveying navigation),
-          direct_queries: [
-            {:curvature, "#{subject_query} curvature measurement", []},
-            {:geodesy, "#{subject_query} geodesy", []},
-            {:satellite, "#{subject_query} satellite observation", []},
-            {:gravity, "#{subject_query} gravity spheroid", []},
-            {:navigation, "#{subject_query} circumnavigation navigation", []},
-            {:surveying, "#{subject_query} geodetic surveying", []}
-          ]
-        }
-
-      true ->
-        nil
-    end
-  end
-
-  defp planetary_shape_claim?(terms) do
-    Enum.any?(terms, &(&1 in @celestial_body_terms)) and
-      Enum.any?(terms, &(&1 in @shape_property_terms))
-  end
 
   defp general_search_queries(_topic, keyword_topic, %{direct_queries: direct_queries})
        when is_list(direct_queries) and direct_queries != [] do
@@ -3223,20 +3159,6 @@ Known failure patterns to avoid:
     |> to_string()
     |> String.downcase()
     |> String.replace(~r/[^a-z0-9\s\-]/, " ")
-  end
-
-  defp search_topic_wrappers do
-    [
-      ~r/^\s*(?:cross[\s-]*check|re[\s-]*evaluate|triage)\s+(?:the\s+)?claims?\s+that\s+/i,
-      ~r/^\s*(?:cross[\s-]*check|re[\s-]*evaluate|triage)\s+(?:whether|if)\s+/i,
-      ~r/^\s*map\s+the\s+evidence\s+(?:on|for)\s+(?:the\s+)?claims?\s+that\s+/i,
-      ~r/^\s*map\s+the\s+evidence\s+(?:on|for)\s+(?:whether|if)\s+/i,
-      ~r/^\s*map\s+the\s+evidence\s+(?:on|for)\s+/i,
-      ~r/^\s*(?:cross[\s-]*check|re[\s-]*evaluate|triage)\s+/i,
-      ~r/^\s*(?:investigate|review|examine|assess|evaluate|analy[sz]e|test|check)\s+(?:the\s+)?claims?\s+that\s+/i,
-      ~r/^\s*(?:investigate|review|examine|assess|evaluate|analy[sz]e|test|check)\s+(?:whether|if)\s+/i,
-      ~r/^\s*(?:investigate|review|examine|assess|evaluate|analy[sz]e|test|check)\s+/i
-    ]
   end
 
   defp paper_search_text(paper) do
@@ -3909,6 +3831,7 @@ Known failure patterns to avoid:
     summary
     |> strip_evidence_prefix()
     |> normalize_verification_whitespace()
+    |> prefer_followup_reported_sentence()
     |> first_citation_sentence()
     |> trim_after_other_paper_ref()
     |> prefer_quote_after_inline_paper_definition()
@@ -3918,14 +3841,16 @@ Known failure patterns to avoid:
     |> strip_leading_attribution_clause()
     |> strip_leading_reporting_clause()
     |> strip_subject_reporting_clause()
+    |> strip_abstract_reporting_subject()
     |> strip_leading_context_clause()
     |> rewrite_reporting_fragments()
+    |> trim_trailing_inference_clause()
     |> prefer_complete_quote_after_ellipsis()
     |> strip_drawback_wrapper_before_quote()
     |> prefer_reported_subclause()
     |> prefer_definition_quote()
     |> prefer_subject_plus_quoted_predicate()
-    |> prefer_ought_shape_quote()
+    |> ClaimFamily.normalize_verification_claim()
     |> String.trim()
   end
 
@@ -4020,6 +3945,34 @@ Known failure patterns to avoid:
     |> String.replace(~r/\s+/, " ")
     |> String.trim()
   end
+
+  defp prefer_followup_reported_sentence(summary) when is_binary(summary) do
+    case extract_paper_ref(summary) do
+      nil ->
+        summary
+
+      paper_ref ->
+        sentences =
+          summary
+          |> protect_sentence_abbreviation_periods()
+          |> then(&Regex.split(~r/(?<=[.!?])\s+/, &1, trim: true))
+          |> Enum.map(&restore_sentence_abbreviation_periods/1)
+
+        citation_index = Enum.find_index(sentences, &contains_paper_ref?(&1, paper_ref))
+
+        candidate =
+          if is_integer(citation_index) do
+            sentences
+            |> Enum.drop(citation_index + 1)
+            |> Enum.take_while(&(not contains_any_paper_ref?(&1)))
+            |> Enum.find(&followup_reported_sentence?(&1))
+          end
+
+        candidate || summary
+    end
+  end
+
+  defp prefer_followup_reported_sentence(summary), do: summary
 
   defp first_citation_sentence(summary) do
     case extract_paper_ref(summary) do
@@ -4243,6 +4196,33 @@ Known failure patterns to avoid:
     |> normalize_verification_whitespace()
   end
 
+  defp strip_abstract_reporting_subject(summary) when is_binary(summary) do
+    summary
+    |> String.replace(
+      ~r/^\s*(?:the\s+)?(?:abstract|paper|study|article)\s+(?:(?:explicitly|clearly|directly|specifically|\w+ly)\s+)?(?:#{reporting_verbs_pattern()})\s+/iu,
+      ""
+    )
+    |> String.replace(~r/^\s*how\s+/iu, "")
+    |> normalize_verification_whitespace()
+  end
+
+  defp trim_trailing_inference_clause(summary) when is_binary(summary) do
+    if String.contains?(summary, "\"") or String.contains?(summary, "“") do
+      normalize_verification_whitespace(summary)
+    else
+      summary
+      |> String.replace(
+        ~r/,\s*(?:demonstrating|showing|meaning|indicating|implying|which\s+means|which\s+shows)\s+that\s+.+$/iu,
+        ""
+      )
+      |> String.replace(
+        ~r/\s*[—-]\s*(?:explicitly|meaning|indicating|showing|demonstrating).+$/iu,
+        ""
+      )
+      |> normalize_verification_whitespace()
+    end
+  end
+
   defp strip_leading_context_clause(summary) when is_binary(summary) do
     case Regex.run(
            ~r/^\s*(?:under|within|using|with|according\s+to|based\s+on|in)\b[^,]{0,120},\s*(.+)$/iu,
@@ -4400,18 +4380,11 @@ Known failure patterns to avoid:
       Regex.match?(~r/^(?:of|to|for|from|that|how|why|whether|where|when|which)\b/iu, quoted)
   end
 
-  defp prefer_ought_shape_quote(summary) when is_binary(summary) do
-    case Regex.run(
-           ~r/(?:^|["“])(?:the\s+[^"”]{0,80}?\s+)?ought\s+to\s+be\s+of\s+the\s+form\s+of\s+an?\s+([^"”]+)(?:["”]|$)/iu,
-           summary,
-           capture: :all_but_first
-         ) do
-      [core] ->
-        ~s("#{String.trim(core)}")
-
-      _ ->
-        summary
-    end
+  defp followup_reported_sentence?(sentence) when is_binary(sentence) do
+    Regex.match?(
+      ~r/^\s*(?:the\s+)?(?:abstract|paper|study|article)\s+(?:(?:explicitly|clearly|directly|specifically|\w+ly)\s+)?(?:#{reporting_verbs_pattern()})\b/iu,
+      sentence
+    )
   end
 
   defp adversarial_output_contract do

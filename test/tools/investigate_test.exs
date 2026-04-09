@@ -749,6 +749,44 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     refute normalized =~ "[Paper 3]"
   end
 
+  test "verification_claim_text prefers followup abstract quote after synthetic cited sentence" do
+    summary =
+      "The GRACE and GRACE Follow-On satellite gravity missions have operated continuously since 2002, successfully mapping mass transport across Earth by tracking orbital perturbations of twin satellites in three-dimensional orbits around a massive body [Paper 7]. The abstract describes how \"time-resolved satellite gravimetry has revolutionized understanding of mass transport in the Earth system,\" enabling monitoring of \"terrestrial water cycle, ice sheet and glacier mass balance, sea level change and ocean bottom pressure variations.\" These satellites orbit at approximately 400-500 km altitude, completing circuits around the entire planet."
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized ==
+             "\"time-resolved satellite gravimetry has revolutionized understanding of mass transport in the Earth system,\" enabling monitoring of \"terrestrial water cycle, ice sheet and glacier mass balance, sea level change and ocean bottom pressure variations.\""
+
+    refute normalized =~ "GRACE and GRACE Follow-On"
+    refute normalized =~ "three-dimensional orbits around a massive body"
+  end
+
+  test "verification_claim_text strips abstract-document lead and trailing inference" do
+    summary =
+      "The International Terrestrial Reference Frame ITRF2008, constructed from 29 years of VLBI observations, 26 years of SLR data, 12.5 years of GPS measurements, and 16 years of DORIS data, defines Earth's center of mass as an origin point with three-dimensional X, Y, and Z coordinates—explicitly encoding a spheroidal body in 3D space [Paper 2]. The abstract documents origin agreement between ITRF2008 and ITRF2005 at the millimeter level (differences of −0.5, −0.9, and −4.7 mm along the three axes), demonstrating that thousands of observing stations distributed across the globe consistently triangulate positions on a roughly spherical surface."
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized ==
+             "origin agreement between ITRF2008 and ITRF2005 at the millimeter level (differences of −0.5, −0.9, and −4.7 mm along the three axes)"
+
+    refute normalized =~ "The abstract documents"
+    refute normalized =~ "triangulate positions"
+  end
+
+  test "verification_claim_text prefers evidence-rich quote over mixed gravitation setup" do
+    summary =
+      "The theoretical framework of gravitation, confirmed by centuries of observation, establishes that Earth's surface must be an oblate spheroid—not any flat geometry. [Paper 8] demonstrates this rigorously, showing that without assuming Earth's original fluidity but \"merely assuming the theory of universal gravitation,\" the surface must be \"of the form of an oblate spheroid of small ellipticity, having its axis of figure coincident with the axis of rotation.\" The paper further establishes Clairaut's Theorem connecting this spheroidal form to the observed variation of gravity across the surface."
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized ==
+             "\"of the form of an oblate spheroid of small ellipticity, having its axis of figure coincident with the axis of rotation.\""
+
+    refute normalized =~ "merely assuming the theory of universal gravitation"
+  end
+
   test "verification_claim_text recognizes bare Paper N references" do
     summary =
       "Paper 2 reports improved calibration under controlled conditions. This broader explanation goes beyond the paper and should be dropped."
