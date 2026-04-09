@@ -5,6 +5,7 @@ defmodule Daemon.Investigation.ClaimFamily do
 
   The investigate loop stays generic. Claim families only provide:
   - topic wrapper normalization
+  - query-family selection
   - evidence-oriented query rewrites
   - rerank stability hints
   - narrowly scoped claim-normalization rewrites for recurring paper families
@@ -13,6 +14,12 @@ defmodule Daemon.Investigation.ClaimFamily do
   @search_relation_words ~w(cause causes caused causing improve improves improved improving
     prevent prevents prevented preventing effective effectiveness efficacy associated
     association linked links linking relation relationship claims claim whether if)
+  @clinical_intervention_terms ~w(supplement supplements supplementation treatment treatments
+    therapy therapies drug drugs medication medications placebo homeopathy dose dosing
+    intervention interventions)
+  @health_claim_terms ~w(health disease diseases disorder disorders symptom symptoms
+    cancer autism vaccine vaccines smoking smoker smokers lung lungs muscular strength
+    training resistance cognition mortality survival risk risks pain pains)
   @celestial_body_terms ~w(earth world globe planet planets planetary moon moons mars venus
     mercury jupiter saturn uranus neptune)
   @shape_property_terms ~w(flat round spherical sphere curved curvature globe globular oblate)
@@ -34,7 +41,57 @@ defmodule Daemon.Investigation.ClaimFamily do
 
   @family_specs [
     %{
+      kind: :clinical_intervention,
+      profile: :clinical_intervention,
+      required_term_sets: [@clinical_intervention_terms, @health_claim_terms],
+      query_templates: %{
+        ss: [
+          {:topic, "{topic}", []},
+          {:reviews, "systematic review {keyword_topic}",
+           [publication_types: "Review,MetaAnalysis", type: "review"]},
+          {:rct, "randomized controlled trial {keyword_topic}", []}
+        ],
+        oa: [
+          {:topic, "{topic}", []},
+          {:reviews, "systematic review {keyword_topic}",
+           [publication_types: "Review,MetaAnalysis", type: "review"]},
+          {:meta_analysis, "meta-analysis {keyword_topic}",
+           [publication_types: "Review,MetaAnalysis", type: "review"]},
+          {:cochrane, "Cochrane review {keyword_topic}",
+           [publication_types: "Review,MetaAnalysis", type: "review"]},
+          {:placebo, "{keyword_topic} placebo controlled trial", []},
+          {:guideline, "clinical guideline {keyword_topic}", []},
+          {:rct, "randomized controlled trial {keyword_topic}", []}
+        ]
+      }
+    },
+    %{
+      kind: :health_effect,
+      profile: :health_claim,
+      required_term_sets: [@health_claim_terms],
+      query_templates: %{
+        ss: [
+          {:topic, "{topic}", []},
+          {:reviews, "systematic review {keyword_topic}",
+           [publication_types: "Review,MetaAnalysis", type: "review"]},
+          {:cohort, "cohort study {keyword_topic}", []}
+        ],
+        oa: [
+          {:topic, "{topic}", []},
+          {:reviews, "systematic review {keyword_topic}",
+           [publication_types: "Review,MetaAnalysis", type: "review"]},
+          {:meta_analysis, "meta-analysis {keyword_topic}",
+           [publication_types: "Review,MetaAnalysis", type: "review"]},
+          {:cohort, "cohort study {keyword_topic}", []},
+          {:case_control, "case-control study {keyword_topic}", []},
+          {:observational, "observational study {keyword_topic}", []},
+          {:consensus, "scientific consensus {keyword_topic}", []}
+        ]
+      }
+    },
+    %{
       kind: :planetary_shape,
+      profile: :general,
       required_term_sets: [@celestial_body_terms, @shape_property_terms],
       subject_term_pool: @celestial_body_terms,
       subject_term_exclusions: @shape_property_terms ++ @search_relation_words,
@@ -68,16 +125,54 @@ defmodule Daemon.Investigation.ClaimFamily do
   end
 
   @doc false
-  def evidence_profile(topic, keywords, terms)
+  def match(topic, keywords, terms)
       when is_binary(topic) and is_list(keywords) and is_list(terms) do
     fallback_query = keyword_query_topic(topic, keywords)
+    keyword_topic = keyword_query_topic(topic, keywords)
 
     Enum.find_value(@family_specs, fn spec ->
-      build_profile(spec, terms, fallback_query)
+      build_match(spec, topic, keyword_topic, terms, fallback_query)
     end)
   end
 
+  def match(_topic, _keywords, _terms), do: nil
+
+  @doc false
+  def search_profile(topic, keywords, terms) do
+    case match(topic, keywords, terms) do
+      %{profile: profile} -> profile
+      _ -> :general
+    end
+  end
+
+  @doc false
+  def evidence_profile(topic, keywords, terms) do
+    case match(topic, keywords, terms) do
+      %{evidence_profile: evidence_profile} -> evidence_profile
+      _ -> nil
+    end
+  end
+
   def evidence_profile(_topic, _keywords, _terms), do: nil
+
+  @doc false
+  def search_queries(topic, keywords, terms, evidence_profile) do
+    keyword_topic = keyword_query_topic(topic, keywords)
+
+    case match(topic, keywords, terms) do
+      %{query_templates: query_templates} ->
+        {
+          render_query_templates(query_templates[:ss] || [], topic, keyword_topic),
+          render_query_templates(query_templates[:oa] || [], topic, keyword_topic)
+        }
+
+      %{profile: :general} ->
+        general_search_queries(topic, keyword_topic, evidence_profile)
+
+      _ ->
+        general_search_queries(topic, keyword_topic, evidence_profile)
+    end
+  end
 
   @doc false
   def normalize_verification_claim(summary) when is_binary(summary) do
@@ -94,29 +189,53 @@ defmodule Daemon.Investigation.ClaimFamily do
 
   def normalize_verification_claim(summary), do: summary
 
-  defp build_profile(spec, terms, fallback_query) do
+  defp build_match(spec, topic, keyword_topic, terms, fallback_query) do
     if matches_term_sets?(terms, spec.required_term_sets) do
-      subject_terms =
-        terms
-        |> Enum.reject(&(&1 in spec.subject_term_exclusions))
-        |> Enum.filter(&(&1 in spec.subject_term_pool))
-        |> Enum.uniq()
-
-      subject_query =
-        case subject_terms do
-          [] -> fallback_query
-          _ -> Enum.join(subject_terms, " ")
-        end
-
-      %{
-        kind: spec.kind,
-        subject_terms: subject_terms,
-        semantic_seed: render_template(spec.semantic_seed_template, subject_query),
-        required_terms: spec.required_terms,
-        stable_terms: spec.stable_terms,
-        direct_queries: render_direct_queries(spec.direct_query_templates, subject_query)
-      }
+      Map.merge(
+        %{
+          kind: spec.kind,
+          profile: spec.profile
+        },
+        build_match_payload(spec, topic, keyword_topic, terms, fallback_query)
+      )
     end
+  end
+
+  defp build_match_payload(
+         %{profile: :general} = spec,
+         _topic,
+         _keyword_topic,
+         terms,
+         fallback_query
+       ) do
+    subject_terms =
+      terms
+      |> Enum.reject(&(&1 in spec.subject_term_exclusions))
+      |> Enum.filter(&(&1 in spec.subject_term_pool))
+      |> Enum.uniq()
+
+    subject_query =
+      case subject_terms do
+        [] -> fallback_query
+        _ -> Enum.join(subject_terms, " ")
+      end
+
+    evidence_profile = %{
+      kind: spec.kind,
+      subject_terms: subject_terms,
+      semantic_seed: render_template(spec.semantic_seed_template, subject_query),
+      required_terms: spec.required_terms,
+      stable_terms: spec.stable_terms,
+      direct_queries: render_direct_queries(spec.direct_query_templates, subject_query)
+    }
+
+    %{evidence_profile: evidence_profile}
+  end
+
+  defp build_match_payload(spec, _topic, _keyword_topic, _terms, _fallback_query) do
+    %{
+      query_templates: Map.get(spec, :query_templates)
+    }
   end
 
   defp matches_term_sets?(terms, required_term_sets) do
@@ -131,8 +250,20 @@ defmodule Daemon.Investigation.ClaimFamily do
     end)
   end
 
+  defp render_query_templates(templates, topic, keyword_topic) do
+    Enum.map(templates, fn {label, query_template, opts} ->
+      {label, render_query_template(query_template, topic, keyword_topic), opts}
+    end)
+  end
+
   defp render_template(template, subject_query) do
     String.replace(template, "{subject}", subject_query)
+  end
+
+  defp render_query_template(template, topic, keyword_topic) do
+    template
+    |> String.replace("{topic}", topic)
+    |> String.replace("{keyword_topic}", keyword_topic)
   end
 
   defp keyword_query_topic(topic, keywords) do
@@ -146,7 +277,9 @@ defmodule Daemon.Investigation.ClaimFamily do
     search_text = normalize_search_text(summary)
 
     Enum.find(@family_specs, fn spec ->
-      Enum.any?(spec.verification_trigger_terms, fn trigger ->
+      spec
+      |> Map.get(:verification_trigger_terms, [])
+      |> Enum.any?(fn trigger ->
         String.contains?(search_text, normalize_search_text(trigger))
       end)
     end)
@@ -193,6 +326,39 @@ defmodule Daemon.Investigation.ClaimFamily do
     |> String.replace(~r/[^a-z0-9\s\-]/, " ")
     |> String.replace(~r/\s+/, " ")
     |> String.trim()
+  end
+
+  defp general_search_queries(_topic, keyword_topic, %{direct_queries: direct_queries})
+       when is_list(direct_queries) and direct_queries != [] do
+    ss_queries = Enum.take(direct_queries, 3)
+
+    oa_queries =
+      direct_queries ++
+        [
+          {:keywords, keyword_topic, []},
+          {:evidence, "#{keyword_topic} empirical evidence", []}
+        ]
+
+    {ss_queries, oa_queries}
+  end
+
+  defp general_search_queries(topic, keyword_topic, _evidence_profile) do
+    {
+      [
+        {:topic, topic, []},
+        {:keywords, keyword_topic, []},
+        {:evidence, "#{keyword_topic} empirical evidence", []}
+      ],
+      [
+        {:topic, topic, []},
+        {:keywords, keyword_topic, []},
+        {:evidence, "#{keyword_topic} empirical evidence", []},
+        {:observation, "#{keyword_topic} direct observation", []},
+        {:measurement, "#{keyword_topic} measurement data", []},
+        {:evaluation, "#{keyword_topic} physical evidence", []},
+        {:analysis, "#{keyword_topic} empirical test", []}
+      ]
+    }
   end
 
   defp search_topic_wrappers do

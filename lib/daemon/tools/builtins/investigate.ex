@@ -68,12 +68,6 @@ defmodule Daemon.Tools.Builtins.Investigate do
   @search_relation_words ~w(cause causes caused causing improve improves improved improving
     prevent prevents prevented preventing effective effectiveness efficacy associated
     association linked links linking relation relationship claims claim whether if)
-  @clinical_intervention_terms ~w(supplement supplements supplementation treatment treatments
-    therapy therapies drug drugs medication medications placebo homeopathy dose dosing
-    intervention interventions)
-  @health_claim_terms ~w(health disease diseases disorder disorders symptom symptoms
-    cancer autism vaccine vaccines smoking smoker smokers lung lungs muscular strength
-    training resistance cognition mortality survival risk risks pain pains)
   @retrieval_discourse_terms ~w(misinformation disinformation journalism media communication
     discourse ideology belief beliefs denial denialism history historical philosophy
     perception attitudes social conference public commentary review survey overview)
@@ -2748,15 +2742,24 @@ Known failure patterns to avoid:
   def search_query_plan(topic, keywords \\ []) do
     normalized_topic = normalized_search_topic(topic)
     normalized_keywords = search_keywords(normalized_topic, keywords)
-    profile = search_query_profile(normalized_topic, normalized_keywords)
-    evidence_profile = evidence_profile_for(profile, normalized_topic, normalized_keywords)
+    terms = topic_terms(normalized_topic)
+    claim_family = ClaimFamily.match(normalized_topic, normalized_keywords, terms)
+    profile = ClaimFamily.search_profile(normalized_topic, normalized_keywords, terms)
+    evidence_profile = ClaimFamily.evidence_profile(normalized_topic, normalized_keywords, terms)
 
     {ss_queries, oa_queries} =
-      build_search_queries(normalized_topic, normalized_keywords, profile, evidence_profile)
+      build_search_queries(
+        normalized_topic,
+        normalized_keywords,
+        terms,
+        profile,
+        evidence_profile
+      )
 
     %{
       normalized_topic: normalized_topic,
       keywords: normalized_keywords,
+      claim_family: claim_family && claim_family.kind,
       profile: profile,
       evidence_profile: evidence_profile,
       ss_queries: ss_queries,
@@ -2784,56 +2787,15 @@ Known failure patterns to avoid:
 
   # Build search queries split by API. SS gets 3 queries (rate limit safe),
   # OA gets the broader query family. Returns {ss_queries, oa_queries}.
-  defp build_search_queries(topic, keywords, profile, evidence_profile) do
+  defp build_search_queries(topic, keywords, terms, _profile, evidence_profile) do
     topic_words = topic_terms(topic) |> MapSet.new()
     keyword_topic = keyword_query_topic(topic, keywords)
 
     novel_keywords =
       Enum.reject(keywords, fn kw -> MapSet.member?(topic_words, kw) end) |> Enum.take(3)
 
-    review_opts = [publication_types: "Review,MetaAnalysis", type: "review"]
-
     {ss_queries, oa_queries} =
-      case profile do
-        :clinical_intervention ->
-          {
-            [
-              {:topic, topic, []},
-              {:reviews, "systematic review #{keyword_topic}", review_opts},
-              {:rct, "randomized controlled trial #{keyword_topic}", []}
-            ],
-            [
-              {:topic, topic, []},
-              {:reviews, "systematic review #{keyword_topic}", review_opts},
-              {:meta_analysis, "meta-analysis #{keyword_topic}", review_opts},
-              {:cochrane, "Cochrane review #{keyword_topic}", review_opts},
-              {:placebo, "#{keyword_topic} placebo controlled trial", []},
-              {:guideline, "clinical guideline #{keyword_topic}", []},
-              {:rct, "randomized controlled trial #{keyword_topic}", []}
-            ]
-          }
-
-        :health_claim ->
-          {
-            [
-              {:topic, topic, []},
-              {:reviews, "systematic review #{keyword_topic}", review_opts},
-              {:cohort, "cohort study #{keyword_topic}", []}
-            ],
-            [
-              {:topic, topic, []},
-              {:reviews, "systematic review #{keyword_topic}", review_opts},
-              {:meta_analysis, "meta-analysis #{keyword_topic}", review_opts},
-              {:cohort, "cohort study #{keyword_topic}", []},
-              {:case_control, "case-control study #{keyword_topic}", []},
-              {:observational, "observational study #{keyword_topic}", []},
-              {:consensus, "scientific consensus #{keyword_topic}", []}
-            ]
-          }
-
-        :general ->
-          general_search_queries(topic, keyword_topic, evidence_profile)
-      end
+      ClaimFamily.search_queries(topic, keywords, terms, evidence_profile)
 
     oa_queries =
       if novel_keywords != [] do
@@ -3017,73 +2979,11 @@ Known failure patterns to avoid:
     |> Enum.take(4)
   end
 
-  defp search_query_profile(topic, keywords) do
-    terms =
-      topic_terms(topic)
-      |> Kernel.++(keywords)
-      |> MapSet.new()
-
-    cond do
-      intersects_term_set?(terms, @clinical_intervention_terms) and
-          intersects_term_set?(terms, @health_claim_terms) ->
-        :clinical_intervention
-
-      intersects_term_set?(terms, @health_claim_terms) ->
-        :health_claim
-
-      true ->
-        :general
-    end
-  end
-
-  defp intersects_term_set?(term_set, candidates) do
-    Enum.any?(candidates, &MapSet.member?(term_set, &1))
-  end
-
   defp keyword_query_topic(topic, keywords) do
     case keywords do
       [] -> topic
       _ -> Enum.join(keywords, " ")
     end
-  end
-
-  defp evidence_profile_for(:general, topic, keywords) do
-    ClaimFamily.evidence_profile(topic, keywords, topic_terms(topic))
-  end
-
-  defp evidence_profile_for(_profile, _topic, _keywords), do: nil
-
-  defp general_search_queries(_topic, keyword_topic, %{direct_queries: direct_queries})
-       when is_list(direct_queries) and direct_queries != [] do
-    ss_queries = Enum.take(direct_queries, 3)
-
-    oa_queries =
-      direct_queries ++
-        [
-          {:keywords, keyword_topic, []},
-          {:evidence, "#{keyword_topic} empirical evidence", []}
-        ]
-
-    {ss_queries, oa_queries}
-  end
-
-  defp general_search_queries(topic, keyword_topic, _evidence_profile) do
-    {
-      [
-        {:topic, topic, []},
-        {:keywords, keyword_topic, []},
-        {:evidence, "#{keyword_topic} empirical evidence", []}
-      ],
-      [
-        {:topic, topic, []},
-        {:keywords, keyword_topic, []},
-        {:evidence, "#{keyword_topic} empirical evidence", []},
-        {:observation, "#{keyword_topic} direct observation", []},
-        {:measurement, "#{keyword_topic} measurement data", []},
-        {:evaluation, "#{keyword_topic} physical evidence", []},
-        {:analysis, "#{keyword_topic} empirical test", []}
-      ]
-    }
   end
 
   defp distinctive_topic_terms(topic) do

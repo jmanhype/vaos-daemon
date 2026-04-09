@@ -1056,6 +1056,7 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
 
     assert plan.normalized_topic == "the earth is flat"
     assert plan.profile == :general
+    assert plan.claim_family == :planetary_shape
     assert plan.evidence_profile.kind == :planetary_shape
 
     ss_queries = Enum.map(plan.ss_queries, fn {_label, query, _opts} -> query end)
@@ -1084,6 +1085,7 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
       )
 
     assert plan.profile == :clinical_intervention
+    assert plan.claim_family == :clinical_intervention
 
     queries =
       Enum.map(plan.ss_queries ++ plan.oa_queries, fn {_label, query, _opts} -> query end)
@@ -1101,6 +1103,7 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
       )
 
     assert plan.profile == :health_claim
+    assert plan.claim_family == :health_effect
 
     queries =
       Enum.map(plan.ss_queries ++ plan.oa_queries, fn {_label, query, _opts} -> query end)
