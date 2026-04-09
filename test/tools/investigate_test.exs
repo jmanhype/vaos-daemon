@@ -122,6 +122,25 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert Investigate.parse_verification_response(response) == {:verified, :other}
   end
 
+  test "parse_verification_response infers verdict from reasoning-heavy zhipu output without final label" do
+    response = """
+    This is a strict classification task. I need to classify the paper based on the provided title, abstract, and claim.
+
+    Looking at the abstract, this claim appears to be directly stated: "it has been shewn that the surface ought to be of the form of an oblate spheroid..."
+    """
+
+    assert Investigate.parse_verification_response(response) == {:verified, :other}
+  end
+
+  test "parse_verification_response treats word-for-word match language as verified" do
+    response = """
+    3. Evaluate the claim against the abstract:
+    * The claim matches almost word-for-word with the abstract language.
+    """
+
+    assert Investigate.parse_verification_response(response) == {:verified, :other}
+  end
+
   test "preferred_utility_model prefers provider-specific active model over stale default_model" do
     Application.put_env(:daemon, :default_provider, :zhipu)
     Application.put_env(:daemon, :default_model, "glm-4.7")
@@ -664,8 +683,9 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
 
     normalized = Investigate.verification_claim_text(summary)
 
-    assert normalized =~ "under the theory of universal gravitation"
-    assert normalized =~ "\"ought to be of the form of an oblate spheroid"
+    assert normalized ==
+             "the Earth's surface ought to be of the form of an oblate spheroid of small ellipticity."
+
     refute normalized =~ "(strength: 7/10)"
     refute String.starts_with?(normalized, "1.")
   end
@@ -707,9 +727,11 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
 
     normalized = Investigate.verification_claim_text(summary)
 
-    assert normalized =~ "under the theory of universal gravitation"
-    assert normalized =~ "\"ought to be of the form of an oblate spheroid"
-    assert normalized =~ "\"gravity ought to vary along the surface according to a simple law\""
+    assert normalized ==
+             "the Earth's surface ought to be of the form of an oblate spheroid of small ellipticity, having its axis of figure coincident with the axis of rotation,"
+
+    refute normalized =~ "under the theory of universal gravitation"
+    refute normalized =~ "gravity ought to vary along the surface according to a simple law"
     refute String.starts_with?(normalized, "establishes that ")
   end
 
@@ -719,8 +741,10 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
 
     normalized = Investigate.verification_claim_text(summary)
 
-    assert normalized =~ "under gravitational theory"
-    assert normalized =~ "\"ought to be of the form of an oblate spheroid"
+    assert normalized ==
+             "the Earth's surface ought to be of the form of an oblate spheroid of small ellipticity, having its axis of figure coincident with the axis of rotation,"
+
+    refute normalized =~ "under gravitational theory"
     refute String.starts_with?(normalized, "explicitly states that")
   end
 
@@ -765,8 +789,10 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
 
     normalized = Investigate.verification_claim_text(summary)
 
-    assert normalized =~ "under gravitational theory"
-    assert normalized =~ "\"ought to be of the form of an oblate spheroid"
+    assert normalized ==
+             "the Earth's surface ought to be of the form of an oblate spheroid of small ellipticity, having its axis of figure coincident with the axis of rotation,"
+
+    refute normalized =~ "under gravitational theory"
     refute String.starts_with?(normalized, "explicitly derives that")
   end
 

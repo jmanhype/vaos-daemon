@@ -58,6 +58,8 @@ defmodule Daemon.Investigation.PromptConfigTest do
       assert String.contains?(template, "~paper_title~")
       assert String.contains?(template, "~paper_abstract~")
       assert String.contains?(template, "~claim~")
+      assert String.contains?(template, "first line")
+      assert String.contains?(template, "two uppercase words")
     end
   end
 
@@ -88,16 +90,18 @@ defmodule Daemon.Investigation.PromptConfigTest do
 
     test "renders the advocate template with all bindings" do
       prompts = PromptConfig.load()
-      rendered = PromptConfig.render(prompts["advocate_user_template"],
-        position: "TRUE",
-        direction: "",
-        claim: "Test claim",
-        papers_context: "Paper 1 here",
-        prior_text: "",
-        arg_type: "arguments",
-        example_format: "Example here",
-        arg_word: "argument"
-      )
+
+      rendered =
+        PromptConfig.render(prompts["advocate_user_template"],
+          position: "TRUE",
+          direction: "",
+          claim: "Test claim",
+          papers_context: "Paper 1 here",
+          prior_text: "",
+          arg_type: "arguments",
+          example_format: "Example here",
+          arg_word: "argument"
+        )
 
       assert String.contains?(rendered, "TRUE")
       assert String.contains?(rendered, "Test claim")

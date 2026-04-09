@@ -63,7 +63,12 @@ defmodule Daemon.Investigation.PromptConfig do
   @doc "Compute a short hash of the current prompt set (for feedback tracking). Deterministic across restarts."
   @spec prompt_hash(map()) :: String.t()
   def prompt_hash(prompts) when is_map(prompts) do
-    sorted = prompts |> Enum.sort_by(fn {k, _} -> k end) |> Enum.map(fn {k, v} -> [k, v] end) |> Jason.encode!()
+    sorted =
+      prompts
+      |> Enum.sort_by(fn {k, _} -> k end)
+      |> Enum.map(fn {k, v} -> [k, v] end)
+      |> Jason.encode!()
+
     :crypto.hash(:sha256, sorted)
     |> Base.encode16(case: :lower)
     |> String.slice(0, 16)
@@ -84,6 +89,7 @@ defmodule Daemon.Investigation.PromptConfig do
               :ok ->
                 Logger.debug("[prompt_config] Loaded prompts from #{path}")
                 {:ok, prompts}
+
               {:error, reason} ->
                 Logger.warning("[prompt_config] #{path} failed validation: #{reason}")
                 :error
@@ -137,10 +143,12 @@ defmodule Daemon.Investigation.PromptConfig do
         val = prompts[key]
         !is_binary(val) or String.trim(val) == ""
       end) ->
-        empty = Enum.filter(required, fn key ->
-          val = prompts[key]
-          !is_binary(val) or String.trim(val) == ""
-        end)
+        empty =
+          Enum.filter(required, fn key ->
+            val = prompts[key]
+            !is_binary(val) or String.trim(val) == ""
+          end)
+
         {:error, "Empty or non-string prompt values: #{Enum.join(empty, ", ")}"}
 
       true ->
@@ -151,8 +159,10 @@ defmodule Daemon.Investigation.PromptConfig do
   @doc "Return hardcoded default prompts. Used as fallback and by PromptSelector for the default variant."
   def hardcoded_defaults do
     %{
-      "for_system" => "You are an intellectually honest researcher making the strongest case FOR a claim. Vary your strength ratings — not every argument is equally strong.",
-      "against_system" => "You are an intellectually honest researcher making the strongest case AGAINST a claim. Vary your strength ratings — not every argument is equally strong.",
+      "for_system" =>
+        "You are an intellectually honest researcher making the strongest case FOR a claim. Vary your strength ratings — not every argument is equally strong.",
+      "against_system" =>
+        "You are an intellectually honest researcher making the strongest case AGAINST a claim. Vary your strength ratings — not every argument is equally strong.",
       "advocate_user_template" => """
       You are a researcher who genuinely believes the following claim is ~position~.
       Using the papers provided and your knowledge, make the STRONGEST possible case~direction~.
@@ -192,18 +202,20 @@ defmodule Daemon.Investigation.PromptConfig do
       You MUST cite specific papers by number [Paper N] when your arguments are based on them.\
       """,
       "verify_prompt" => """
+      Return ONLY the classification on the first line using exactly two uppercase words.
+      First word: VERIFIED / PARTIAL / UNVERIFIED
+      Second word: REVIEW / TRIAL / STUDY / OTHER
+      Do not write analysis before the first line. If needed, explanation may follow after it.
+
       Paper title: ~paper_title~
       Paper abstract: ~paper_abstract~
 
       Claim: ~claim~
 
-      Two questions:
-      1. Does this paper's abstract support the specific claim? VERIFIED / PARTIAL / UNVERIFIED
-      2. Paper type? REVIEW (systematic review/meta-analysis), TRIAL (RCT/experiment), STUDY (observational/single study), OTHER
-
-      Answer format: WORD WORD (e.g., VERIFIED REVIEW or UNVERIFIED STUDY)\
+      Example first line: VERIFIED STUDY\
       """,
-      "no_papers_fallback" => "No relevant papers found. Base your arguments on your training knowledge, but mark everything as [REASONING]."
+      "no_papers_fallback" =>
+        "No relevant papers found. Base your arguments on your training knowledge, but mark everything as [REASONING]."
     }
   end
 end

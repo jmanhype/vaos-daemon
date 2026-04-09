@@ -1603,20 +1603,24 @@ Known failure patterns to avoid:
         _ ->
           # Fallback to inline (should not happen with proper config)
           """
+          Return ONLY the classification on the first line using exactly two uppercase words.
+          First word: VERIFIED / PARTIAL / UNVERIFIED
+          Second word: REVIEW / TRIAL / STUDY / OTHER
+          Do not write analysis before the first line. If needed, explanation may follow after it.
+
           Paper title: #{title}
           Paper abstract: #{String.slice(to_string(abstract), 0, 2000)}
 
           Claim: #{claim}
 
-          Two questions:
-          1. Does this paper's abstract support the specific claim? VERIFIED / PARTIAL / UNVERIFIED
-          2. Paper type? REVIEW (systematic review/meta-analysis), TRIAL (RCT/experiment), STUDY (observational/single study), OTHER
-
-          Answer format: WORD WORD (e.g., VERIFIED REVIEW or UNVERIFIED STUDY)
+          Example first line: VERIFIED STUDY
           """
       end
 
-    messages = [%{role: "user", content: prompt}]
+    messages = [
+      %{role: "system", content: verification_system_prompt()},
+      %{role: "user", content: prompt}
+    ]
 
     model = preferred_verification_model()
     verify_opts = verification_request_opts(model)
@@ -3884,6 +3888,7 @@ Known failure patterns to avoid:
     |> strip_leading_reporting_clause()
     |> rewrite_reporting_fragments()
     |> prefer_reported_subclause()
+    |> prefer_subject_plus_quoted_predicate()
     |> String.trim()
   end
 
@@ -4129,6 +4134,38 @@ Known failure patterns to avoid:
     |> normalize_verification_whitespace()
   end
 
+  defp prefer_subject_plus_quoted_predicate(summary) do
+    case Regex.run(~r/^(.*?)["“]([^"”]+)["”]?(.*)$/u, summary) do
+      [_, before_quote, quoted, _after_quote] ->
+        subject =
+          before_quote
+          |> String.split(~r/,\s*/)
+          |> List.last()
+          |> to_string()
+          |> String.replace(~r/\b(?:and\s+that|that)\s*$/iu, "")
+          |> String.trim()
+
+        quoted = String.trim(quoted)
+
+        if quoted_predicate?(quoted) and subject != "" do
+          "#{subject} #{quoted}"
+          |> normalize_verification_whitespace()
+        else
+          summary
+        end
+
+      _ ->
+        summary
+    end
+  end
+
+  defp quoted_predicate?(quoted) when is_binary(quoted) do
+    Regex.match?(
+      ~r/^(?:ought|is|are|was|were|has|have|had|can|could|will|would|should|must|may|might|does|do|did)\b/iu,
+      String.trim_leading(quoted)
+    )
+  end
+
   defp adversarial_output_contract do
     """
     Output contract:
@@ -4219,12 +4256,7 @@ Known failure patterns to avoid:
         ],
         ~w(UNVERIFIED PARTIAL VERIFIED)
       )
-      |> case do
-        "UNVERIFIED" -> :unverified
-        "PARTIAL" -> :partial
-        "VERIFIED" -> :verified
-        _ -> :unverified
-      end
+      |> normalize_verification_keyword(response_clean)
 
     paper_type =
       response_clean
@@ -4236,13 +4268,7 @@ Known failure patterns to avoid:
         ],
         ~w(REVIEW TRIAL STUDY OTHER)
       )
-      |> case do
-        "REVIEW" -> :review
-        "TRIAL" -> :trial
-        "STUDY" -> :study
-        "OTHER" -> :other
-        _ -> :other
-      end
+      |> normalize_paper_type_keyword(response_clean)
 
     {verification, paper_type}
   end
@@ -4265,6 +4291,77 @@ Known failure patterns to avoid:
       256
     else
       64
+    end
+  end
+
+  defp verification_system_prompt do
+    """
+    You are a strict citation-verification classifier.
+    Reply with the classification on the first line using exactly two uppercase words.
+    First word must be VERIFIED, PARTIAL, or UNVERIFIED.
+    Second word must be REVIEW, TRIAL, STUDY, or OTHER.
+    Do not put analysis before the first line.
+    """
+  end
+
+  defp normalize_verification_keyword(keyword, response_clean) do
+    case keyword do
+      "UNVERIFIED" -> :unverified
+      "PARTIAL" -> :partial
+      "VERIFIED" -> :verified
+      _ -> infer_verification_from_reasoning(response_clean)
+    end
+  end
+
+  defp normalize_paper_type_keyword("REVIEW", _response_clean), do: :review
+  defp normalize_paper_type_keyword("TRIAL", _response_clean), do: :trial
+  defp normalize_paper_type_keyword("STUDY", _response_clean), do: :study
+  defp normalize_paper_type_keyword("OTHER", _response_clean), do: :other
+
+  defp normalize_paper_type_keyword(_missing, response_clean),
+    do: infer_paper_type_from_reasoning(response_clean)
+
+  defp infer_verification_from_reasoning(response_clean) when is_binary(response_clean) do
+    cond do
+      Regex.match?(
+        ~r/\b(?:DOES\s+NOT|DOESN'T|NOT)\s+(?:DIRECTLY\s+)?SUPPORT\b|\bNOT\s+SPECIFICALLY\b|\bONLY\s+UNDER\b|\bDEPENDS\s+ON\b/u,
+        response_clean
+      ) ->
+        :unverified
+
+      Regex.match?(
+        ~r/\bPARTIALLY\b|\bSUPPORTS\s+PART\b|\bSUPPORTS\s+SOME\b|\bGENERAL\s+CONNECTION\b/u,
+        response_clean
+      ) ->
+        :partial
+
+      Regex.match?(
+        ~r/\bDIRECTLY\s+SUPPORTS\b|\bDIRECTLY\s+STATED\b|\bEXPLICITLY\s+STATED\b|\bMATCHES\s+THE\s+CLAIM\b|\bMATCHES\s+ALMOST\s+WORD[-\s]?FOR[-\s]?WORD\b|\bWORD[-\s]?FOR[-\s]?WORD\b|\bAPPEARS\s+TO\s+BE\s+DIRECTLY\s+STATED\b/u,
+        response_clean
+      ) ->
+        :verified
+
+      true ->
+        :unverified
+    end
+  end
+
+  defp infer_paper_type_from_reasoning(response_clean) when is_binary(response_clean) do
+    cond do
+      Regex.match?(
+        ~r/\bSYSTEMATIC\s+REVIEW\b|\bMETA[\s-]?ANALYSIS\b|\bREVIEW\s+ARTICLE\b/u,
+        response_clean
+      ) ->
+        :review
+
+      Regex.match?(~r/\bRANDOMI[ZS]ED\b|\bTRIAL\b|\bEXPERIMENT\b/u, response_clean) ->
+        :trial
+
+      Regex.match?(~r/\bOBSERVATIONAL\b|\bSINGLE\s+STUDY\b|\bSTUDY\b/u, response_clean) ->
+        :study
+
+      true ->
+        :other
     end
   end
 
