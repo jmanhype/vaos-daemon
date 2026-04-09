@@ -459,12 +459,16 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
 
     assert plan.normalized_topic == "the earth is flat"
     assert plan.profile == :general
+    assert plan.evidence_profile.kind == :planetary_shape
 
     ss_queries = Enum.map(plan.ss_queries, fn {_label, query, _opts} -> query end)
     oa_queries = Enum.map(plan.oa_queries, fn {_label, query, _opts} -> query end)
 
-    assert "earth flat empirical evidence" in ss_queries
-    assert "earth flat physical evidence" in oa_queries
+    assert "earth curvature measurement" in ss_queries
+    assert "earth geodesy" in ss_queries
+    assert "earth satellite observation" in oa_queries
+    assert plan.evidence_profile.semantic_seed == "earth curvature measurement"
+    refute "the earth is flat" in ss_queries
     refute Enum.any?(ss_queries ++ oa_queries, &String.contains?(&1, "randomized controlled trial"))
     refute Enum.any?(ss_queries ++ oa_queries, &String.contains?(&1, "placebo controlled trial"))
     refute Enum.any?(ss_queries ++ oa_queries, &String.contains?(&1, "Cochrane review"))
@@ -506,23 +510,29 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
   end
 
   test "rerank_retrieval_candidates demotes discourse-heavy papers for general claims" do
-    plan = %{profile: :general, normalized_topic: "the earth is flat"}
+    plan =
+      Investigate.search_query_plan("examine claims that the earth is flat", ["earth", "flat"])
 
     reranked =
       Investigate.rerank_retrieval_candidates(
         [
           %{
+            title: "The Flat Transmission Spectrum of a Super-Earth Exoplanet",
+            abstract: "Atmospheric spectroscopy of an exoplanet with a flat transmission spectrum."
+          },
+          %{
             title: "Flat Earth belief and misinformation on social media",
             abstract: "A discourse analysis of ideology and public attitudes."
           },
           %{
-            title: "Satellite measurement of Earth curvature",
-            abstract: "Orbital observation data directly constrains planetary shape."
+            title: "Satellite measurement of Earth curvature from geodetic orbit data",
+            abstract: "Orbital observation and geodetic measurements constrain Earth curvature."
           }
         ],
         plan
       )
 
-    assert hd(reranked).title == "Satellite measurement of Earth curvature"
+    assert hd(reranked).title == "Satellite measurement of Earth curvature from geodetic orbit data"
+    assert Enum.at(reranked, 2).title == "Flat Earth belief and misinformation on social media"
   end
 end

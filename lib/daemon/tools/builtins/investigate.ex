@@ -72,6 +72,9 @@ defmodule Daemon.Tools.Builtins.Investigate do
   @health_claim_terms ~w(health disease diseases disorder disorders symptom symptoms
     cancer autism vaccine vaccines smoking smoker smokers lung lungs muscular strength
     training resistance cognition mortality survival risk risks pain pains)
+  @celestial_body_terms ~w(earth world globe planet planets planetary moon moons mars venus
+    mercury jupiter saturn uranus neptune)
+  @shape_property_terms ~w(flat round spherical sphere curved curvature globe globular oblate)
   @retrieval_discourse_terms ~w(misinformation disinformation journalism media communication
     discourse ideology belief beliefs denial denialism history historical philosophy
     perception attitudes social conference public commentary review survey overview)
@@ -2336,6 +2339,7 @@ Known failure patterns to avoid:
     http_fn = literature_http_fn()
     plan = search_query_plan(topic, keywords)
     normalized_topic = plan.normalized_topic
+    semantic_seed = semantic_search_seed(plan)
     {ss_queries, oa_queries} = {plan.ss_queries, plan.oa_queries}
     per_query = strategy.per_query_limit
 
@@ -2414,7 +2418,7 @@ Known failure patterns to avoid:
         Task.async(fn ->
           alias Daemon.Tools.Builtins.AlphaXivClient
 
-          case AlphaXivClient.embedding_search(normalized_topic) do
+          case AlphaXivClient.embedding_search(semantic_seed) do
             {:ok, papers} when papers != [] ->
               Logger.debug("[investigate] alphaXiv returned #{length(papers)} papers")
               {:alphaxiv, papers}
@@ -2434,7 +2438,7 @@ Known failure patterns to avoid:
         Task.async(fn ->
           alias Daemon.Tools.Builtins.HFPapersClient
 
-          case HFPapersClient.search(normalized_topic, limit: 10) do
+          case HFPapersClient.search(semantic_seed, limit: 10) do
             {:ok, papers} when papers != [] ->
               Logger.debug("[investigate] HuggingFace returned #{length(papers)} papers")
               {:huggingface, papers}
@@ -2541,7 +2545,7 @@ Known failure patterns to avoid:
     reranked = rerank_retrieval_candidates(ranked, plan)
 
     # Filter out irrelevant papers (zero topic-term overlap)
-    {relevant, dropped} = filter_relevant(reranked, normalized_topic, plan.keywords)
+    {relevant, dropped} = filter_relevant(reranked, plan)
 
     if dropped > 0 do
       Logger.info("[investigate] Filtered out #{dropped} irrelevant papers")
@@ -2581,19 +2585,25 @@ Known failure patterns to avoid:
     normalized_topic = normalized_search_topic(topic)
     normalized_keywords = search_keywords(normalized_topic, keywords)
     profile = search_query_profile(normalized_topic, normalized_keywords)
-    {ss_queries, oa_queries} = build_search_queries(normalized_topic, normalized_keywords, profile)
+    evidence_profile = evidence_profile_for(profile, normalized_topic, normalized_keywords)
+    {ss_queries, oa_queries} =
+      build_search_queries(normalized_topic, normalized_keywords, profile, evidence_profile)
 
     %{
       normalized_topic: normalized_topic,
       keywords: normalized_keywords,
       profile: profile,
+      evidence_profile: evidence_profile,
       ss_queries: ss_queries,
       oa_queries: oa_queries
     }
   end
 
   @doc false
-  def rerank_retrieval_candidates(papers, %{profile: :general, normalized_topic: topic})
+  def rerank_retrieval_candidates(
+        papers,
+        %{profile: :general, normalized_topic: topic, evidence_profile: evidence_profile}
+      )
       when is_list(papers) do
     topic_terms = distinctive_topic_terms(topic)
 
@@ -2601,7 +2611,7 @@ Known failure patterns to avoid:
     |> Enum.with_index()
     |> Enum.sort_by(
       fn {paper, index} ->
-        {-retrieval_directness_score(paper, topic_terms), index}
+        {-retrieval_directness_score(paper, topic_terms, evidence_profile), index}
       end
     )
     |> Enum.map(&elem(&1, 0))
@@ -2611,7 +2621,7 @@ Known failure patterns to avoid:
 
   # Build search queries split by API. SS gets 3 queries (rate limit safe),
   # OA gets the broader query family. Returns {ss_queries, oa_queries}.
-  defp build_search_queries(topic, keywords, profile) do
+  defp build_search_queries(topic, keywords, profile, evidence_profile) do
     topic_words = topic_terms(topic) |> MapSet.new()
     keyword_topic = keyword_query_topic(topic, keywords)
 
@@ -2659,22 +2669,7 @@ Known failure patterns to avoid:
           }
 
         :general ->
-          {
-            [
-              {:topic, topic, []},
-              {:keywords, keyword_topic, []},
-              {:evidence, "#{keyword_topic} empirical evidence", []}
-            ],
-            [
-              {:topic, topic, []},
-              {:keywords, keyword_topic, []},
-              {:evidence, "#{keyword_topic} empirical evidence", []},
-              {:observation, "#{keyword_topic} direct observation", []},
-              {:measurement, "#{keyword_topic} measurement data", []},
-              {:evaluation, "#{keyword_topic} physical evidence", []},
-              {:analysis, "#{keyword_topic} empirical test", []}
-            ]
-          }
+          general_search_queries(topic, keyword_topic, evidence_profile)
       end
 
     oa_queries =
@@ -2720,7 +2715,27 @@ Known failure patterns to avoid:
   # Requires the MOST SPECIFIC term (longest word) to appear in title or abstract.
   # This prevents generic words like "effectiveness" from matching unrelated papers
   # (e.g. "Effectiveness of treatments for firework fears in dogs").
-  defp filter_relevant(papers, topic, _keywords) do
+  defp filter_relevant(papers, %{profile: :general, normalized_topic: topic, evidence_profile: evidence_profile})
+       when is_map(evidence_profile) do
+    specific_terms = Map.get(evidence_profile, :required_terms, [])
+    subject_terms = Map.get(evidence_profile, :subject_terms, [])
+
+    {relevant, dropped} =
+      Enum.split_with(papers, fn paper ->
+        paper_text = paper_search_text(paper)
+        subject_hit = subject_terms == [] or Enum.any?(subject_terms, &String.contains?(paper_text, &1))
+        evidence_hit = Enum.any?(specific_terms, &String.contains?(paper_text, &1))
+        subject_hit and evidence_hit
+      end)
+
+    if relevant == [] do
+      filter_relevant(papers, %{normalized_topic: topic})
+    else
+      {relevant, length(dropped)}
+    end
+  end
+
+  defp filter_relevant(papers, %{normalized_topic: topic}) do
     distinctive_terms = distinctive_topic_terms(topic)
 
     # Generic modifiers that appear across many domains — never use as primary filter term
@@ -2861,6 +2876,89 @@ Known failure patterns to avoid:
     end
   end
 
+  defp evidence_profile_for(:general, topic, keywords) do
+    general_evidence_profile(topic, keywords)
+  end
+
+  defp evidence_profile_for(_profile, _topic, _keywords), do: nil
+
+  defp general_evidence_profile(topic, keywords) do
+    terms = topic_terms(topic)
+
+    cond do
+      planetary_shape_claim?(terms) ->
+        subject_terms =
+          terms
+          |> Enum.reject(&(&1 in @shape_property_terms))
+          |> Enum.reject(&(&1 in @search_relation_words))
+          |> Enum.filter(&(&1 in @celestial_body_terms))
+          |> Enum.uniq()
+
+        subject_query =
+          case subject_terms do
+            [] -> keyword_query_topic(topic, keywords)
+            _ -> Enum.join(subject_terms, " ")
+          end
+
+        %{
+          kind: :planetary_shape,
+          subject_terms: subject_terms,
+          semantic_seed: "#{subject_query} curvature measurement",
+          required_terms: ~w(curvature geodesy geodetic satellite orbital orbit gravity
+            circumnavigation horizon navigation surveying ellipsoid spheroid spherical),
+          direct_queries: [
+            {:curvature, "#{subject_query} curvature measurement", []},
+            {:geodesy, "#{subject_query} geodesy", []},
+            {:satellite, "#{subject_query} satellite observation", []},
+            {:gravity, "#{subject_query} gravity spheroid", []},
+            {:navigation, "#{subject_query} circumnavigation navigation", []},
+            {:surveying, "#{subject_query} geodetic surveying", []}
+          ]
+        }
+
+      true ->
+        nil
+    end
+  end
+
+  defp planetary_shape_claim?(terms) do
+    Enum.any?(terms, &(&1 in @celestial_body_terms)) and
+      Enum.any?(terms, &(&1 in @shape_property_terms))
+  end
+
+  defp general_search_queries(_topic, keyword_topic, %{direct_queries: direct_queries})
+       when is_list(direct_queries) and direct_queries != [] do
+    ss_queries = Enum.take(direct_queries, 3)
+
+    oa_queries =
+      direct_queries ++
+        [
+          {:keywords, keyword_topic, []},
+          {:evidence, "#{keyword_topic} empirical evidence", []}
+        ]
+
+    {ss_queries, oa_queries}
+  end
+
+  defp general_search_queries(topic, keyword_topic, _evidence_profile) do
+    {
+      [
+        {:topic, topic, []},
+        {:keywords, keyword_topic, []},
+        {:evidence, "#{keyword_topic} empirical evidence", []}
+      ],
+      [
+        {:topic, topic, []},
+        {:keywords, keyword_topic, []},
+        {:evidence, "#{keyword_topic} empirical evidence", []},
+        {:observation, "#{keyword_topic} direct observation", []},
+        {:measurement, "#{keyword_topic} measurement data", []},
+        {:evaluation, "#{keyword_topic} physical evidence", []},
+        {:analysis, "#{keyword_topic} empirical test", []}
+      ]
+    }
+  end
+
   defp distinctive_topic_terms(topic) do
     topic
     |> topic_terms()
@@ -2877,7 +2975,7 @@ Known failure patterns to avoid:
     |> Enum.reject(&(&1 in @search_relation_words))
   end
 
-  defp retrieval_directness_score(paper, topic_terms) do
+  defp retrieval_directness_score(paper, topic_terms, evidence_profile) do
     {title, abstract} =
       case paper do
         %{title: t, abstract: a} -> {t, a}
@@ -2891,9 +2989,20 @@ Known failure patterns to avoid:
     title_hits = Enum.count(topic_terms, &String.contains?(title_text, &1))
     topic_hits = Enum.count(topic_terms, &String.contains?(paper_text, &1))
     discourse_hits = Enum.count(@retrieval_discourse_terms, &String.contains?(paper_text, &1))
+    evidence_hits =
+      evidence_profile
+      |> Map.get(:required_terms, [])
+      |> Enum.count(&String.contains?(paper_text, &1))
 
-    title_hits * 4 + topic_hits * 2 - discourse_hits * 3
+    title_hits * 4 + topic_hits * 2 + evidence_hits * 3 - discourse_hits * 3
   end
+
+  defp semantic_search_seed(%{evidence_profile: %{semantic_seed: seed}})
+       when is_binary(seed) and seed != "" do
+    seed
+  end
+
+  defp semantic_search_seed(%{normalized_topic: topic}), do: topic
 
   defp normalize_search_text(text) do
     text
@@ -2908,6 +3017,17 @@ Known failure patterns to avoid:
       ~r/^\s*(?:investigate|review|examine|assess|evaluate|analy[sz]e|test|check)\s+(?:whether|if)\s+/i,
       ~r/^\s*(?:investigate|review|examine|assess|evaluate|analy[sz]e|test|check)\s+/i
     ]
+  end
+
+  defp paper_search_text(paper) do
+    {title, abstract} =
+      case paper do
+        %{title: t, abstract: a} -> {t, a}
+        %{"title" => t, "abstract" => a} -> {t, a}
+        _ -> {"", ""}
+      end
+
+    normalize_search_text("#{title} #{abstract}")
   end
 
   # Convert string-keyed papers (e.g. from alphaXiv) to atom keys for rank_papers compatibility
