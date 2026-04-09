@@ -3886,7 +3886,10 @@ Known failure patterns to avoid:
     |> strip_verification_markup()
     |> strip_leading_attribution_clause()
     |> strip_leading_reporting_clause()
+    |> strip_subject_reporting_clause()
     |> rewrite_reporting_fragments()
+    |> prefer_complete_quote_after_ellipsis()
+    |> strip_drawback_wrapper_before_quote()
     |> prefer_reported_subclause()
     |> prefer_subject_plus_quoted_predicate()
     |> String.trim()
@@ -4004,6 +4007,8 @@ Known failure patterns to avoid:
 
   defp protect_sentence_abbreviation_periods(summary) do
     summary
+    |> String.replace("...", "__VAOS_ELLIPSIS__")
+    |> String.replace("…", "__VAOS_ELLIPSIS__")
     |> String.replace(~r/\bvs\./iu, "vs__VAOS_DOT__")
     |> String.replace(~r/\be\.g\./iu, "e__VAOS_DOT__g__VAOS_DOT__")
     |> String.replace(~r/\bi\.e\./iu, "i__VAOS_DOT__e__VAOS_DOT__")
@@ -4011,7 +4016,9 @@ Known failure patterns to avoid:
   end
 
   defp restore_sentence_abbreviation_periods(summary) do
-    String.replace(summary, "__VAOS_DOT__", ".")
+    summary
+    |> String.replace("__VAOS_DOT__", ".")
+    |> String.replace("__VAOS_ELLIPSIS__", "...")
   end
 
   defp trim_after_other_paper_ref(summary) do
@@ -4132,6 +4139,52 @@ Known failure patterns to avoid:
         summary
     end
     |> normalize_verification_whitespace()
+  end
+
+  defp strip_subject_reporting_clause(summary) when is_binary(summary) do
+    reporting_verbs =
+      "describes|documents|notes|explains|reports|reported|finds|found|shows|showed|demonstrates|demonstrated|discusses|states|stated|establishes|established|derives|derived|argues|argued|observes|observed|indicates|indicated|identifies|identified|mentions|mentioned|writes|wrote|proposes|proposed|details|detailed"
+
+    summary
+    |> String.replace(
+      ~r/^\s*(?:[A-Z][^,.;:"]{0,120}?)\s+(?:#{reporting_verbs})\s+that\s+/u,
+      ""
+    )
+    |> normalize_verification_whitespace()
+  end
+
+  defp prefer_complete_quote_after_ellipsis(summary) when is_binary(summary) do
+    quotes =
+      Regex.scan(~r/["“]([^"”]+)["”]/u, summary, capture: :all_but_first)
+      |> List.flatten()
+      |> Enum.map(&String.trim/1)
+
+    case quotes do
+      [first, second | _rest] ->
+        cond do
+          String.contains?(first, "...") and second != "" ->
+            ~s("#{second}")
+
+          true ->
+            summary
+        end
+
+      _ ->
+        summary
+    end
+  end
+
+  defp strip_drawback_wrapper_before_quote(summary) when is_binary(summary) do
+    case Regex.run(
+           ~r/^\s*[^"“]*?\bsuffer(?:s|ed)?\s+from\s+(?:the\s+)?drawback\s+that\s+["“]([^"”]+)["”]/iu,
+           summary
+         ) do
+      [_, quoted] ->
+        ~s("#{String.trim(quoted)}")
+
+      _ ->
+        summary
+    end
   end
 
   defp prefer_subject_plus_quoted_predicate(summary) do

@@ -856,6 +856,38 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     refute String.starts_with?(normalized, "explicitly identifies that")
   end
 
+  test "verification_claim_text strips subject-plus-reporting wrappers before quoted claim" do
+    summary =
+      "Classical geodesy established through gravitational theory that the Earth's surface forms an oblate spheroid consistent with rotation, not a plane. Research on gravity variation demonstrates that the surface must be \"perpendicular to the direction of gravity\" and \"of the form of an oblate spheroid of small ellipticity, having its axis of figure coincident with the axis of rotation\" [Paper 3]. This shape is mathematically entailed by gravitational physics."
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized ==
+             "the surface must be \"perpendicular to the direction of gravity\" and \"of the form of an oblate spheroid of small ellipticity, having its axis of figure coincident with the axis of rotation\""
+
+    refute String.starts_with?(normalized, "Research on gravity variation demonstrates that")
+  end
+
+  test "verification_claim_text prefers complete later quote when first quoted fragment is ellipsized" do
+    summary =
+      "Earth's curvature is routinely ignored in practical mapping applications with acceptable results. [Paper 3] states that \"curvature of the Earth's surface... is often ignored when making topographic maps\" and that for the Krasnodar Territory region studied, \"the error that must be taken into account when compiling and reading maps does not exceed 3%.\""
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized ==
+             "\"the error that must be taken into account when compiling and reading maps does not exceed 3%.\""
+  end
+
+  test "verification_claim_text strips drawback wrappers before quoted clause" do
+    summary =
+      "Multiple independent engineering systems must account for Earth's curvature to function accurately. [Paper 1] explicitly develops a spherical-earth-based measurement model for over-the-horizon radar tracking, noting that flat-Earth models suffer from the drawback that \"the curvature of earth is ignored, which affects the measurement accuracy of the OTHR.\""
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized ==
+             "\"the curvature of earth is ignored, which affects the measurement accuracy of the OTHR.\""
+  end
+
   test "verification_claim_text drops later paper clauses from the selected citation sentence" do
     summary =
       "Local flatness approximations are routinely employed in geodetic and engineering calculations, demonstrating practical utility of flat-Earth models at certain scales. [Paper 1] describes elastic dislocation models using \"homogeneous and layered half-spaces\"—flat-plane approximations—for calculating earthquake deformations, while [Paper 12] notes that terrestrial geodetic techniques serve \"regional and local applications.\" These flat-plane mathematical frameworks produce accurate results at local scales, which is consistent with a surface that appears flat to human-scale observation."
