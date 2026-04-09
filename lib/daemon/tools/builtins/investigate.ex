@@ -3160,6 +3160,8 @@ Known failure patterns to avoid:
   end
 
   defp retrieval_directness_score(paper, topic_terms, evidence_profile) do
+    evidence_profile = evidence_profile || %{}
+
     {title, abstract} =
       case paper do
         %{title: t, abstract: a} -> {t, a}

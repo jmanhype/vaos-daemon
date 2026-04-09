@@ -333,6 +333,30 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
            ]
   end
 
+  test "rerank_retrieval_candidates tolerates nil evidence_profile for general plans" do
+    papers = [
+      %{
+        "title" => "Adult cognition after creatine supplementation",
+        "abstract" => "Creatine supplementation improved memory outcomes in adults."
+      },
+      %{
+        "title" => "Unrelated social discourse review",
+        "abstract" => "A review of discourse around nutrition claims."
+      }
+    ]
+
+    reranked =
+      Investigate.rerank_retrieval_candidates(papers, %{
+        profile: :general,
+        normalized_topic:
+          "does creatine supplementation improve cognitive performance in healthy adults",
+        evidence_profile: nil
+      })
+
+    assert hd(reranked)["title"] == "Adult cognition after creatine supplementation"
+    assert length(reranked) == 2
+  end
+
   test "maybe_apply_pending_trial_steering consumes a pending trial when opted in" do
     TrialStub.expect(
       "manual pilot topic",
