@@ -88,6 +88,40 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert Investigate.preferred_verification_model() == "glm-custom-verify"
   end
 
+  test "verification_request_opts defaults to a larger token budget for zhipu glm verifier models" do
+    Application.put_env(:daemon, :default_provider, :zhipu)
+    Application.delete_env(:daemon, :investigate_verify_max_tokens)
+
+    opts = Investigate.verification_request_opts("glm-4.5-flash")
+
+    assert opts[:temperature] == 0.0
+    assert opts[:model] == "glm-4.5-flash"
+    assert opts[:max_tokens] == 256
+  end
+
+  test "verification_request_opts keeps the compact default for non-zhipu verifier models" do
+    Application.put_env(:daemon, :default_provider, :ollama)
+    Application.delete_env(:daemon, :investigate_verify_max_tokens)
+
+    assert Investigate.verification_request_opts("qwen2.5:7b")[:max_tokens] == 64
+  end
+
+  test "verification_request_opts honors explicit token override" do
+    Application.put_env(:daemon, :default_provider, :zhipu)
+    Application.put_env(:daemon, :investigate_verify_max_tokens, 96)
+
+    assert Investigate.verification_request_opts("glm-4.5-flash")[:max_tokens] == 96
+  end
+
+  test "parse_verification_response extracts verdict tokens from reasoning-heavy verifier output" do
+    response = """
+    Okay, the abstract directly supports the claim, so the answer should be \"VERIFIED.\"
+    That falls under \"OTHER\" because the example is not a review, trial, or study.
+    """
+
+    assert Investigate.parse_verification_response(response) == {:verified, :other}
+  end
+
   test "preferred_utility_model prefers provider-specific active model over stale default_model" do
     Application.put_env(:daemon, :default_provider, :zhipu)
     Application.put_env(:daemon, :default_model, "glm-4.7")

@@ -1577,31 +1577,11 @@ Known failure patterns to avoid:
     messages = [%{role: "user", content: prompt}]
 
     model = preferred_verification_model()
-    verify_max_tokens = Application.get_env(:daemon, :investigate_verify_max_tokens, 64)
-    verify_opts = [temperature: 0.0, max_tokens: verify_max_tokens]
-    verify_opts = if model, do: Keyword.put(verify_opts, :model, model), else: verify_opts
+    verify_opts = verification_request_opts(model)
 
     case Providers.chat(messages, verify_opts) do
       {:ok, %{content: response}} when is_binary(response) and response != "" ->
-        response_clean = String.trim(response) |> String.upcase()
-
-        verification =
-          cond do
-            String.contains?(response_clean, "UNVERIFIED") -> :unverified
-            String.contains?(response_clean, "PARTIAL") -> :partial
-            String.contains?(response_clean, "VERIFIED") -> :verified
-            true -> :unverified
-          end
-
-        paper_type =
-          cond do
-            String.contains?(response_clean, "REVIEW") -> :review
-            String.contains?(response_clean, "TRIAL") -> :trial
-            String.contains?(response_clean, "STUDY") -> :study
-            true -> :other
-          end
-
-        {verification, paper_type}
+        parse_verification_response(response)
 
       {:ok, %{content: ""}} ->
         Logger.warning(
@@ -4092,6 +4072,64 @@ Known failure patterns to avoid:
       ModelSelection.current_model(provider)
   end
 
+  @doc false
+  def verification_request_opts(model \\ preferred_verification_model()) do
+    max_tokens =
+      case Application.get_env(:daemon, :investigate_verify_max_tokens) do
+        value when is_integer(value) and value > 0 ->
+          value
+
+        _ ->
+          default_verification_max_tokens(model, ModelSelection.current_provider())
+      end
+
+    opts = [temperature: 0.0, max_tokens: max_tokens]
+    if model, do: Keyword.put(opts, :model, model), else: opts
+  end
+
+  @doc false
+  def parse_verification_response(response) when is_binary(response) do
+    response_clean = String.trim(response) |> String.upcase()
+
+    verification =
+      response_clean
+      |> extract_keyword(
+        [
+          ~r/ANSWER\s+SHOULD\s+BE\s+["“]?(UNVERIFIED|PARTIAL|VERIFIED)\b/u,
+          ~r/CLASSIF(?:Y|IES|IED)(?:\s+IT)?\s+AS\s+["“]?(UNVERIFIED|PARTIAL|VERIFIED)\b/u
+        ],
+        ~w(UNVERIFIED PARTIAL VERIFIED)
+      )
+      |> case do
+        "UNVERIFIED" -> :unverified
+        "PARTIAL" -> :partial
+        "VERIFIED" -> :verified
+        _ -> :unverified
+      end
+
+    paper_type =
+      response_clean
+      |> extract_keyword(
+        [
+          ~r/FALLS\s+UNDER\s+["“]?(REVIEW|TRIAL|STUDY|OTHER)\b/u,
+          ~r/TYPE(?:\s+SHOULD\s+BE|\s+IS)?\s+["“]?(REVIEW|TRIAL|STUDY|OTHER)\b/u,
+          ~r/CLASSIF(?:Y|IES|IED)(?:\s+IT)?\s+AS\s+["“]?(REVIEW|TRIAL|STUDY|OTHER)\b/u
+        ],
+        ~w(REVIEW TRIAL STUDY OTHER)
+      )
+      |> case do
+        "REVIEW" -> :review
+        "TRIAL" -> :trial
+        "STUDY" -> :study
+        "OTHER" -> :other
+        _ -> :other
+      end
+
+    {verification, paper_type}
+  end
+
+  def parse_verification_response(_), do: {:unverified, :other}
+
   defp utility_tier_model(provider) when is_atom(provider) do
     try do
       Daemon.Agent.Tier.model_for(:utility, provider)
@@ -4101,6 +4139,50 @@ Known failure patterns to avoid:
   end
 
   defp utility_tier_model(_), do: nil
+
+  defp default_verification_max_tokens(model, provider) do
+    if provider == :zhipu and is_binary(model) and
+         String.starts_with?(String.downcase(model), "glm-") do
+      256
+    else
+      64
+    end
+  end
+
+  defp last_keyword(text, keywords) when is_binary(text) and is_list(keywords) do
+    pattern =
+      keywords
+      |> Enum.map(&Regex.escape/1)
+      |> Enum.join("|")
+      |> then(&~r/\b(?:#{&1})\b/u)
+
+    case Regex.scan(pattern, text) do
+      [] -> nil
+      matches -> matches |> List.last() |> List.first()
+    end
+  end
+
+  defp last_quoted_keyword(text, keywords) when is_binary(text) and is_list(keywords) do
+    pattern =
+      keywords
+      |> Enum.map(&Regex.escape/1)
+      |> Enum.join("|")
+      |> then(&~r/["“](#{&1})["”]?/u)
+
+    case Regex.scan(pattern, text) do
+      [] -> nil
+      matches -> matches |> List.last() |> List.last()
+    end
+  end
+
+  defp extract_keyword(text, patterns, keywords) when is_binary(text) do
+    Enum.find_value(patterns, fn pattern ->
+      case Regex.run(pattern, text) do
+        [_, keyword] -> keyword
+        _ -> nil
+      end
+    end) || last_quoted_keyword(text, keywords) || last_keyword(text, keywords)
+  end
 
   defp parse_adversarial_response(response, side) do
     evidence = parse_adversarial_evidence(response)
