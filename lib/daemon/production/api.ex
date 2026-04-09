@@ -2,6 +2,8 @@ defmodule Daemon.Production.API do
   @moduledoc "HTTP routes for Film Production pipeline."
   use Plug.Router
 
+  alias Daemon.Production.CharacterBenchmark
+
   plug(Plug.Parsers, parsers: [:json], json_decoder: Jason)
   plug(:match)
   plug(:dispatch)
@@ -80,6 +82,20 @@ defmodule Daemon.Production.API do
   get "/comfyui/status" do
     status = Daemon.Production.ComfyUISceneRunner.status()
     send_resp(conn, 200, Jason.encode!(status))
+  end
+
+  post "/comfyui/benchmark/run" do
+    case CharacterBenchmark.produce(conn.body_params) do
+      {:ok, result} ->
+        send_resp(
+          conn,
+          202,
+          Jason.encode!(Map.put(result, :status, "started"))
+        )
+
+      {:error, reason} ->
+        send_resp(conn, 400, Jason.encode!(%{error: inspect(reason)}))
+    end
   end
 
   post "/comfyui/abort" do

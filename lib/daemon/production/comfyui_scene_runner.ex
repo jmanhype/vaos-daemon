@@ -148,6 +148,7 @@ defmodule Daemon.Production.ComfyUISceneRunner do
       )
       |> maybe_put_input(@node_ids.negative_prompt, "text", scene[:negative_prompt])
       |> put_positive_prompt(scene)
+      |> apply_node_overrides(scene[:node_overrides])
 
     %{"prompt" => patched_prompt}
   end
@@ -336,7 +337,8 @@ defmodule Daemon.Production.ComfyUISceneRunner do
          remote_workflow_path = "/tmp/#{scene.output_prefix}.workflow.json",
          :ok <- scp_to_remote(brief, local_workflow_path, remote_workflow_path),
          {:ok, prompt_id} <- submit_remote_workflow(brief, remote_workflow_path),
-         {:ok, remote_output_path} <- wait_for_remote_output(brief, scene.output_prefix),
+         {:ok, remote_output_path} <-
+           wait_for_remote_output(brief, scene.output_prefix, scene.output_extension),
          {:ok, local_output_path} <-
            copy_remote_output(brief, remote_output_path, brief.local_output_dir) do
       {:ok,
@@ -422,19 +424,34 @@ defmodule Daemon.Production.ComfyUISceneRunner do
     end
   end
 
-  defp wait_for_remote_output(brief, output_prefix) do
+  defp wait_for_remote_output(brief, output_prefix, output_extension) do
     deadline = System.monotonic_time(:millisecond) + brief.render_timeout_ms
-    do_wait_for_remote_output(brief, output_prefix, deadline, nil, 0)
+    do_wait_for_remote_output(brief, output_prefix, output_extension, deadline, nil, 0)
   end
 
-  defp do_wait_for_remote_output(brief, output_prefix, deadline, last_size, stable_count) do
+  defp do_wait_for_remote_output(
+         brief,
+         output_prefix,
+         output_extension,
+         deadline,
+         last_size,
+         stable_count
+       ) do
     if System.monotonic_time(:millisecond) > deadline do
       {:error, "timed out waiting for remote output for #{output_prefix}"}
     else
-      case latest_remote_output(brief, output_prefix) do
+      case latest_remote_output(brief, output_prefix, output_extension) do
         {:ok, nil} ->
           Process.sleep(brief.poll_interval_ms)
-          do_wait_for_remote_output(brief, output_prefix, deadline, last_size, stable_count)
+
+          do_wait_for_remote_output(
+            brief,
+            output_prefix,
+            output_extension,
+            deadline,
+            last_size,
+            stable_count
+          )
 
         {:ok, %{path: path, size: size}} when size > 0 ->
           next_stable = if size == last_size, do: stable_count + 1, else: 1
@@ -443,12 +460,28 @@ defmodule Daemon.Production.ComfyUISceneRunner do
             {:ok, path}
           else
             Process.sleep(brief.poll_interval_ms)
-            do_wait_for_remote_output(brief, output_prefix, deadline, size, next_stable)
+
+            do_wait_for_remote_output(
+              brief,
+              output_prefix,
+              output_extension,
+              deadline,
+              size,
+              next_stable
+            )
           end
 
         {:ok, _} ->
           Process.sleep(brief.poll_interval_ms)
-          do_wait_for_remote_output(brief, output_prefix, deadline, last_size, stable_count)
+
+          do_wait_for_remote_output(
+            brief,
+            output_prefix,
+            output_extension,
+            deadline,
+            last_size,
+            stable_count
+          )
 
         {:error, reason} ->
           {:error, reason}
@@ -456,8 +489,8 @@ defmodule Daemon.Production.ComfyUISceneRunner do
     end
   end
 
-  defp latest_remote_output(brief, output_prefix) do
-    pattern = Path.join(brief.remote_output_dir, "#{output_prefix}_*.mp4")
+  defp latest_remote_output(brief, output_prefix, output_extension) do
+    pattern = Path.join(brief.remote_output_dir, "#{output_prefix}_*#{output_extension}")
 
     script = """
     python3 - <<'PY'
@@ -607,12 +640,38 @@ defmodule Daemon.Production.ComfyUISceneRunner do
          audio_vae: get_any(scene, "audio_vae"),
          audio_model: get_any(scene, "audio_model"),
          upscaler: get_any(scene, "upscaler"),
-         save_output: get_any(scene, "save_output")
+         save_output: get_any(scene, "save_output"),
+         node_overrides: get_any(scene, "node_overrides"),
+         output_extension: normalize_output_extension(get_any(scene, "output_extension", ".mp4"))
        }}
     else
       {:error, "scene #{index} is missing workflow_path"}
     end
   end
+
+  defp apply_node_overrides(prompt, nil), do: prompt
+
+  defp apply_node_overrides(prompt, overrides) when is_map(overrides) do
+    Enum.reduce(overrides, prompt, fn {node_id, inputs}, acc ->
+      node_id = to_string(node_id)
+
+      if is_map(inputs) do
+        Enum.reduce(inputs, acc, fn {input_key, value}, prompt_acc ->
+          maybe_put_input(prompt_acc, node_id, to_string(input_key), value)
+        end)
+      else
+        acc
+      end
+    end)
+  end
+
+  defp apply_node_overrides(prompt, _other), do: prompt
+
+  defp normalize_output_extension(value) when is_binary(value) and value != "" do
+    if String.starts_with?(value, "."), do: value, else: ".#{value}"
+  end
+
+  defp normalize_output_extension(_other), do: ".mp4"
 
   # ── State / manifest ───────────────────────────────────────────────────
 

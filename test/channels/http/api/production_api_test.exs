@@ -37,6 +37,15 @@ defmodule Daemon.Channels.HTTP.API.ProductionAPITest do
     end
   end
 
+  describe "POST /comfyui/benchmark/run" do
+    test "returns 400 for invalid benchmark brief" do
+      conn = json_post("/comfyui/benchmark/run", %{})
+
+      assert conn.status == 400
+      assert decode(conn)["error"] =~ "workflow_path"
+    end
+  end
+
   describe "GET /comfyui/status" do
     test "returns idle status when nothing is running" do
       conn = json_get("/comfyui/status")

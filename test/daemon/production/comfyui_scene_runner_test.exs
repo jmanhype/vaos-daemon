@@ -77,6 +77,27 @@ defmodule Daemon.Production.ComfyUISceneRunnerTest do
       assert get_in(prompt, ["5730", "inputs", "text"]) =~ "Ain't no party like a Bad Boy party."
       assert get_in(prompt, ["5731", "inputs", "text"]) == "no text"
     end
+
+    test "applies arbitrary node input overrides for custom workflows" do
+      workflow = %{
+        "prompt" => %{
+          "200" => %{"inputs" => %{"image" => "anchor.png", "text" => "old"}},
+          "201" => %{"inputs" => %{"image" => "secondary.png"}}
+        }
+      }
+
+      patched =
+        ComfyUISceneRunner.patch_workflow(workflow, %{
+          node_overrides: %{
+            "200" => %{"image" => "new_anchor.png", "text" => "new text"},
+            "201" => %{"image" => "new_secondary.png"}
+          }
+        })
+
+      assert get_in(patched, ["prompt", "200", "inputs", "image"]) == "new_anchor.png"
+      assert get_in(patched, ["prompt", "200", "inputs", "text"]) == "new text"
+      assert get_in(patched, ["prompt", "201", "inputs", "image"]) == "new_secondary.png"
+    end
   end
 
   describe "produce/1" do
