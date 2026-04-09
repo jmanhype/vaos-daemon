@@ -513,6 +513,16 @@ Known failure patterns to avoid:
           []
       end
 
+    trace_context =
+      build_trace_context(
+        topic,
+        steering,
+        for_messages,
+        against_messages,
+        for_result,
+        against_result
+      )
+
     # 8a. Build paper map for citation verification
     paper_map =
       all_papers
@@ -547,20 +557,34 @@ Known failure patterns to avoid:
         timings =
           complete_phase_timings(timings, investigation_started_ms, post_processing_started_ms)
 
+        json_metadata =
+          partial_completion_metadata(
+            topic,
+            [],
+            classified_opposing,
+            all_papers,
+            source_counts,
+            prior_strategy,
+            variant_id,
+            timings,
+            verification_stats
+          )
+
+        trace_payload =
+          build_boundary_trace(trace_context, %{
+            parsed_supporting: supporting,
+            parsed_opposing: opposing,
+            verified_supporting: [],
+            verified_opposing: classified_opposing,
+            timings: timings,
+            verification_stats: verification_stats,
+            final_metadata: json_metadata
+          })
+
         result =
           result_with_completion_artifacts(
             result,
-            partial_completion_metadata(
-              topic,
-              [],
-              classified_opposing,
-              all_papers,
-              source_counts,
-              prior_strategy,
-              variant_id,
-              timings,
-              verification_stats
-            ),
+            maybe_capture_trace(json_metadata, caller_metadata, trace_payload),
             caller_metadata
           )
 
@@ -589,20 +613,34 @@ Known failure patterns to avoid:
         timings =
           complete_phase_timings(timings, investigation_started_ms, post_processing_started_ms)
 
+        json_metadata =
+          partial_completion_metadata(
+            topic,
+            classified_supporting,
+            [],
+            all_papers,
+            source_counts,
+            prior_strategy,
+            variant_id,
+            timings,
+            verification_stats
+          )
+
+        trace_payload =
+          build_boundary_trace(trace_context, %{
+            parsed_supporting: supporting,
+            parsed_opposing: opposing,
+            verified_supporting: classified_supporting,
+            verified_opposing: [],
+            timings: timings,
+            verification_stats: verification_stats,
+            final_metadata: json_metadata
+          })
+
         result =
           result_with_completion_artifacts(
             result,
-            partial_completion_metadata(
-              topic,
-              classified_supporting,
-              [],
-              all_papers,
-              source_counts,
-              prior_strategy,
-              variant_id,
-              timings,
-              verification_stats
-            ),
+            maybe_capture_trace(json_metadata, caller_metadata, trace_payload),
             caller_metadata
           )
 
@@ -626,6 +664,7 @@ Known failure patterns to avoid:
           prior_strategy,
           prompts,
           variant_id,
+          trace_context,
           caller_metadata,
           timings,
           investigation_started_ms
@@ -656,6 +695,7 @@ Known failure patterns to avoid:
          strategy,
          prompts,
          variant_id,
+         trace_context,
          caller_metadata,
          timings,
          investigation_started_ms
@@ -1130,6 +1170,19 @@ Known failure patterns to avoid:
       emergent_questions: emergent_questions,
       variant_id: variant_id
     }
+
+    trace_payload =
+      build_boundary_trace(trace_context, %{
+        parsed_supporting: supporting_raw,
+        parsed_opposing: opposing_raw,
+        verified_supporting: verified_supporting,
+        verified_opposing: verified_opposing,
+        timings: timings,
+        verification_stats: verification_stats,
+        final_metadata: json_metadata
+      })
+
+    json_metadata = maybe_capture_trace(json_metadata, caller_metadata, trace_payload)
 
     json_result = emit_successful_investigation(json_metadata, caller_metadata, store: store)
 
@@ -3102,6 +3155,91 @@ Known failure patterns to avoid:
     result <> "\n\n<!-- VAOS_JSON:#{json_result} -->"
   end
 
+  @doc false
+  def build_boundary_trace(trace_context, attrs \\ %{})
+      when is_map(trace_context) and is_map(attrs) do
+    final_metadata = Map.get(attrs, :final_metadata, %{})
+    parsed_supporting = Map.get(attrs, :parsed_supporting, [])
+    parsed_opposing = Map.get(attrs, :parsed_opposing, [])
+    verified_supporting = Map.get(attrs, :verified_supporting, [])
+    verified_opposing = Map.get(attrs, :verified_opposing, [])
+
+    %{
+      steering: text_snapshot(Map.get(trace_context, :steering, "")),
+      prompts: %{
+        for_system: text_snapshot(message_content(Map.get(trace_context, :for_messages, []), 0)),
+        for_user: text_snapshot(message_content(Map.get(trace_context, :for_messages, []), 1)),
+        against_system:
+          text_snapshot(message_content(Map.get(trace_context, :against_messages, []), 0)),
+        against_user:
+          text_snapshot(message_content(Map.get(trace_context, :against_messages, []), 1))
+      },
+      llm: %{
+        for: normalize_chat_result(Map.get(trace_context, :for_result)),
+        against: normalize_chat_result(Map.get(trace_context, :against_result))
+      },
+      parsed: %{
+        supporting_count: length(parsed_supporting),
+        opposing_count: length(parsed_opposing),
+        supporting: evidence_trace(parsed_supporting),
+        opposing: evidence_trace(parsed_opposing)
+      },
+      verified: %{
+        supporting_count: length(verified_supporting),
+        opposing_count: length(verified_opposing),
+        supporting: evidence_trace(verified_supporting),
+        opposing: evidence_trace(verified_opposing)
+      },
+      classification: %{
+        grounded_for_count: map_value(final_metadata, :grounded_for_count) || 0,
+        grounded_against_count: map_value(final_metadata, :grounded_against_count) || 0,
+        belief_for_count: map_value(final_metadata, :belief_for_count) || 0,
+        belief_against_count: map_value(final_metadata, :belief_against_count) || 0
+      },
+      outcome: %{
+        direction: map_value(final_metadata, :direction),
+        partial: map_value(final_metadata, :partial) || false,
+        verified_for: map_value(final_metadata, :verified_for) || 0,
+        verified_against: map_value(final_metadata, :verified_against) || 0,
+        fraudulent_citations: map_value(final_metadata, :fraudulent_citations) || 0
+      },
+      timings: Map.get(attrs, :timings, %{}),
+      verification_stats: Map.get(attrs, :verification_stats, %{})
+    }
+  end
+
+  @doc false
+  def maybe_capture_trace(json_metadata, caller_metadata, trace_payload)
+      when is_map(json_metadata) and is_map(caller_metadata) and is_map(trace_payload) do
+    if trace_requested?(caller_metadata) do
+      label = trace_label(caller_metadata)
+      topic = map_value(json_metadata, :topic) || "investigation"
+
+      payload = %{
+        trace_label: label,
+        captured_at: DateTime.utc_now() |> DateTime.to_iso8601(),
+        topic: topic,
+        investigation_id: map_value(json_metadata, :investigation_id),
+        direction: map_value(json_metadata, :direction),
+        partial: map_value(json_metadata, :partial) || false,
+        trace: trace_payload
+      }
+
+      case write_trace_payload(topic, label, payload) do
+        {:ok, path} ->
+          json_metadata
+          |> Map.put(:trace_label, label)
+          |> Map.put(:trace_path, path)
+
+        {:error, reason} ->
+          Logger.warning("[investigate] Failed to persist trace payload: #{inspect(reason)}")
+          Map.put(json_metadata, :trace_error, inspect(reason))
+      end
+    else
+      json_metadata
+    end
+  end
+
   defp emit_successful_investigation(json_metadata, caller_metadata, opts \\ []) do
     json_result = Jason.encode!(json_metadata)
 
@@ -3166,6 +3304,124 @@ Known failure patterns to avoid:
     end)
   end
 
+  defp build_trace_context(
+         topic,
+         steering,
+         for_messages,
+         against_messages,
+         for_result,
+         against_result
+       ) do
+    %{
+      topic: topic,
+      steering: steering,
+      for_messages: for_messages,
+      against_messages: against_messages,
+      for_result: for_result,
+      against_result: against_result
+    }
+  end
+
+  defp evidence_trace(evidence) when is_list(evidence) do
+    Enum.map(evidence, fn ev ->
+      summary = map_value(ev, :summary)
+
+      %{
+        summary: summary,
+        paper_ref: extract_paper_ref(to_string(summary || "")),
+        score: map_value(ev, :score),
+        verified: map_value(ev, :verified),
+        verification: stringify_term(map_value(ev, :verification)),
+        paper_type: stringify_term(map_value(ev, :paper_type)),
+        source_type: stringify_term(map_value(ev, :source_type)),
+        evidence_store: stringify_term(map_value(ev, :evidence_store)),
+        citation_count: map_value(ev, :citation_count)
+      }
+      |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+      |> Map.new()
+    end)
+  end
+
+  defp normalize_chat_result({:ok, %{content: content}}) when is_binary(content) do
+    %{status: "ok", content: text_snapshot(content)}
+  end
+
+  defp normalize_chat_result({:error, reason}) do
+    %{status: "error", reason: inspect(reason)}
+  end
+
+  defp normalize_chat_result(other) do
+    %{status: "other", value: inspect(other)}
+  end
+
+  defp message_content(messages, index) when is_list(messages) and is_integer(index) do
+    case Enum.at(messages, index) do
+      %{content: content} when is_binary(content) -> content
+      %{"content" => content} when is_binary(content) -> content
+      _ -> nil
+    end
+  end
+
+  defp trace_requested?(caller_metadata) do
+    case map_value(caller_metadata, :trace_capture) do
+      true -> true
+      "true" -> true
+      _ -> false
+    end
+  end
+
+  defp trace_label(caller_metadata) do
+    case map_value(caller_metadata, :trace_label) do
+      label when is_binary(label) and label != "" -> label
+      _ -> "investigate"
+    end
+  end
+
+  defp write_trace_payload(topic, label, payload) do
+    safe_label = sanitize_trace_label(label)
+    trace_name = "vaos-investigate-trace-#{short_hash(topic)}-#{safe_label}-#{System.system_time(:millisecond)}.json"
+    path = Path.join(System.tmp_dir!(), trace_name)
+    File.write(path, Jason.encode_to_iodata!(payload, pretty: true))
+    {:ok, path}
+  rescue
+    error -> {:error, error}
+  end
+
+  defp sanitize_trace_label(label) do
+    label
+    |> String.downcase()
+    |> String.replace(~r/[^a-z0-9]+/u, "-")
+    |> String.trim("-")
+    |> case do
+      "" -> "investigate"
+      sanitized -> sanitized
+    end
+  end
+
+  defp text_snapshot(text) when is_binary(text) do
+    trimmed = String.trim(text)
+
+    %{
+      bytes: byte_size(trimmed),
+      sha256: short_hash(trimmed),
+      preview: String.slice(trimmed, 0, 800),
+      tail: tail_slice(trimmed, 240)
+    }
+  end
+
+  defp text_snapshot(nil), do: nil
+  defp text_snapshot(other), do: text_snapshot(to_string(other))
+
+  defp tail_slice(text, limit) when is_binary(text) and is_integer(limit) and limit > 0 do
+    length = String.length(text)
+
+    if length <= limit do
+      text
+    else
+      String.slice(text, length - limit, limit)
+    end
+  end
+
   defp paper_details(all_papers) do
     Enum.map(all_papers, fn p ->
       %{
@@ -3181,6 +3437,16 @@ Known failure patterns to avoid:
   defp payload_value(payload, key) when is_map(payload) do
     Map.get(payload, key) || Map.get(payload, Atom.to_string(key))
   end
+
+  defp map_value(payload, key) when is_map(payload) do
+    cond do
+      Map.has_key?(payload, key) -> Map.get(payload, key)
+      Map.has_key?(payload, Atom.to_string(key)) -> Map.get(payload, Atom.to_string(key))
+      true -> nil
+    end
+  end
+
+  defp map_value(_, _), do: nil
 
   defp stringify_term(value) when is_atom(value), do: Atom.to_string(value)
   defp stringify_term(value), do: value

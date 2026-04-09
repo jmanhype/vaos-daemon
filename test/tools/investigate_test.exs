@@ -270,4 +270,95 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
 
     assert metadata.opposing == []
   end
+
+  test "build_boundary_trace captures prompts, raw outputs, and evidence boundaries" do
+    trace =
+      Investigate.build_boundary_trace(
+        %{
+          steering:
+            "CORRECTIVE FOCUS: Quote exact abstract sentences and demote unsupported claims.",
+          for_messages: [
+            %{content: "FOR SYSTEM PROMPT"},
+            %{content: "FOR USER PROMPT"}
+          ],
+          against_messages: [
+            %{content: "AGAINST SYSTEM PROMPT"},
+            %{content: "AGAINST USER PROMPT"}
+          ],
+          for_result: {:ok, %{content: "FOR RAW OUTPUT [Paper 1]"}},
+          against_result: {:error, :rate_limited}
+        },
+        %{
+          parsed_supporting: [
+            %{summary: "Quoted result [Paper 1]"}
+          ],
+          parsed_opposing: [],
+          verified_supporting: [
+            %{
+              summary: "Quoted result [Paper 1]",
+              score: 1.6,
+              verified: true,
+              verification: "verified",
+              paper_type: :review,
+              citation_count: 12,
+              source_type: :sourced,
+              evidence_store: :grounded
+            }
+          ],
+          verified_opposing: [],
+          timings: %{total_ms: 42},
+          verification_stats: %{total_items: 1, llm_items: 1},
+          final_metadata: %{
+            direction: "supporting",
+            grounded_for_count: 1,
+            grounded_against_count: 0,
+            belief_for_count: 0,
+            belief_against_count: 0,
+            verified_for: 1,
+            verified_against: 0,
+            fraudulent_citations: 0
+          }
+        }
+      )
+
+    assert trace.steering.preview =~ "CORRECTIVE FOCUS"
+    assert trace.prompts.for_system.preview == "FOR SYSTEM PROMPT"
+    assert trace.prompts.against_user.preview == "AGAINST USER PROMPT"
+    assert trace.llm.for.status == "ok"
+    assert trace.llm.for.content.preview =~ "FOR RAW OUTPUT"
+    assert trace.llm.against.status == "error"
+    assert trace.parsed.supporting_count == 1
+    assert trace.verified.supporting_count == 1
+    assert hd(trace.verified.supporting).paper_ref == 1
+    assert hd(trace.verified.supporting).verification == "verified"
+    assert trace.classification.grounded_for_count == 1
+    assert trace.outcome.direction == "supporting"
+  end
+
+  test "maybe_capture_trace writes a trace artifact and annotates metadata" do
+    json_metadata = %{
+      topic: "the earth is flat",
+      investigation_id: "investigate:test",
+      direction: "opposing"
+    }
+
+    traced =
+      Investigate.maybe_capture_trace(
+        json_metadata,
+        %{trace_capture: true, trace_label: "steered eval"},
+        %{parsed: %{supporting_count: 0, opposing_count: 1}}
+      )
+
+    trace_path = traced.trace_path
+    on_exit(fn -> File.rm(trace_path) end)
+
+    assert traced.trace_label == "steered eval"
+    assert is_binary(trace_path)
+    assert File.exists?(trace_path)
+
+    assert {:ok, payload} = File.read(trace_path)
+    assert payload =~ "\"trace_label\": \"steered eval\""
+    assert payload =~ "\"topic\": \"the earth is flat\""
+    assert payload =~ "\"direction\": \"opposing\""
+  end
 end
