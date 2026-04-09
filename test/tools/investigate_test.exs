@@ -446,6 +446,51 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert normalized == "Paper 2 reports improved calibration under controlled conditions."
   end
 
+  test "verification_claim_text strips leading reporting verbs from sourced claims" do
+    summary =
+      "Multiple independent space geodetic techniques converge on a single three-dimensional reference frame that only makes sense for a spheroidal Earth. [Paper 10] describes ITRF2008, built from 29 years of VLBI observations, 26 years of Satellite Laser Ranging, 12.5 years of GPS, and 16 years of DORIS data, all combined into a frame whose \"origin is defined in such a way that it has zero translations and translation rates with respect to the mean Earth center of mass.\" The scale agreement between VLBI and SLR solutions is estimated at 1.05 ± 0.13 ppb, with origin accuracy at the 1 cm level."
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized =~ "ITRF2008, built from 29 years of VLBI observations"
+    assert normalized =~ "\"origin is defined in such a way that it has zero translations"
+    refute String.starts_with?(normalized, "describes ")
+  end
+
+  test "verification_claim_text strips verb-that wrappers from quoted abstract claims" do
+    summary =
+      "The Earth's oblate spheroid shape is confirmed by gravitational theory and empirical measurement. [Paper 4] establishes that under the theory of universal gravitation, the Earth's surface \"ought to be of the form of an oblate spheroid of small ellipticity, having its axis of figure coincident with the axis of rotation,\" and that \"gravity ought to vary along the surface according to a simple law\" captured by Clairaut's Theorem."
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized =~ "under the theory of universal gravitation"
+    assert normalized =~ "\"ought to be of the form of an oblate spheroid"
+    assert normalized =~ "\"gravity ought to vary along the surface according to a simple law\""
+    refute String.starts_with?(normalized, "establishes that ")
+  end
+
+  test "verification_claim_text strips adverbial reporting wrappers before quotes" do
+    summary =
+      "The Earth's figure has been theoretically and observationally established as an oblate spheroid. [Paper 4] explicitly states that, under gravitational theory, the Earth's surface \"ought to be of the form of an oblate spheroid of small ellipticity, having its axis of figure coincident with the axis of rotation,\" and that \"gravity ought to vary along the surface according to a simple law\" captured by Clairaut's Theorem."
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized =~ "under gravitational theory"
+    assert normalized =~ "\"ought to be of the form of an oblate spheroid"
+    refute String.starts_with?(normalized, "explicitly states that")
+  end
+
+  test "verification_claim_text drops leading how wrapper after citation verbs" do
+    summary =
+      "The precise operation of Global Navigation Satellite Systems depends fundamentally on satellites orbiting a spheroidal Earth. [Paper 3] describes how modern geodesy uses GNSS, Satellite Laser Ranging, and Very Long Baseline Interferometry to measure \"the geometry, orientation and gravity field of the Earth,\" with the Global Geodetic Observing System integrating all observations to produce \"geodetic parameters for monitoring the phenomena and processes within the 'System Earth'.\""
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized =~ "modern geodesy uses GNSS"
+    assert normalized =~ "\"the geometry, orientation and gravity field of the Earth,\""
+    refute String.starts_with?(normalized, "how modern geodesy")
+  end
+
   test "normalized_search_topic strips wrapper phrasing from manual eval prompts" do
     assert Investigate.normalized_search_topic("examine claims that the earth is flat") ==
              "the earth is flat"

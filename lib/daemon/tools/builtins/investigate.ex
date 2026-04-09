@@ -3692,6 +3692,7 @@ Known failure patterns to avoid:
     |> first_citation_sentence()
     |> trim_after_last_quote()
     |> strip_verification_markup()
+    |> strip_leading_reporting_clause()
     |> String.trim()
   end
 
@@ -3833,6 +3834,21 @@ Known failure patterns to avoid:
     |> String.replace(~r/\s+([,.;:!?])/, "\\1")
     |> String.replace(~r/\(\s+/, "(")
     |> String.replace(~r/\s+\)/, ")")
+    |> normalize_verification_whitespace()
+  end
+
+  defp strip_leading_reporting_clause(summary) do
+    reporting_verbs =
+      "describes|documents|notes|explains|reports|reported|finds|found|shows|showed|demonstrates|demonstrated|discusses|states|stated|establishes|established|argues|argued|observes|observed|indicates|indicated|mentions|mentioned|writes|wrote|proposes|proposed|details|detailed"
+
+    lead_in =
+      ~r/^\s*(?:(?:explicitly|clearly|directly|specifically)\s+)?(?:#{reporting_verbs})\s+/iu
+
+    summary
+    |> String.replace(~r/^\s*(?:(?:explicitly|clearly|directly|specifically)\s+)?(?:#{reporting_verbs})\s+that\s*,?\s+/iu, "")
+    |> String.replace(lead_in, "")
+    |> String.replace(~r/^\s*,\s*/, "")
+    |> String.replace(~r/^\s*how\s+/iu, "")
     |> normalize_verification_whitespace()
   end
 
