@@ -17,6 +17,10 @@ defmodule Daemon.Investigation.ClaimFamily do
   @clinical_intervention_terms ~w(supplement supplements supplementation treatment treatments
     therapy therapies drug drugs medication medications placebo homeopathy dose dosing
     intervention interventions)
+  @clinical_outcome_terms ~w(strength muscular endurance performance sleep insomnia recovery
+    cognition cognitive memory pain fatigue mood anxiety depression function functional
+    mobility balance symptoms symptom quality wellbeing well-being blood pressure glucose
+    cholesterol weight bmi)
   @health_claim_terms ~w(health disease diseases disorder disorders symptom symptoms
     cancer autism vaccine vaccines smoking smoker smokers lung lungs muscular strength
     training resistance cognition mortality survival risk risks pain pains)
@@ -43,7 +47,8 @@ defmodule Daemon.Investigation.ClaimFamily do
     %{
       kind: :clinical_intervention,
       profile: :clinical_intervention,
-      required_term_sets: [@clinical_intervention_terms, @health_claim_terms],
+      required_term_sets: [@clinical_intervention_terms],
+      any_term_sets: [@health_claim_terms, @clinical_outcome_terms],
       query_templates: %{
         ss: [
           {:topic, "{topic}", []},
@@ -188,7 +193,7 @@ defmodule Daemon.Investigation.ClaimFamily do
   def normalize_verification_claim(summary), do: summary
 
   defp build_match(spec, topic, keyword_topic, terms, fallback_query) do
-    if matches_term_sets?(terms, spec.required_term_sets) do
+    if matches_spec?(spec, terms) do
       Map.merge(
         %{
           kind: spec.kind,
@@ -236,8 +241,22 @@ defmodule Daemon.Investigation.ClaimFamily do
     }
   end
 
+  defp matches_spec?(spec, terms) do
+    matches_term_sets?(terms, Map.get(spec, :required_term_sets, [])) and
+      matches_any_term_sets?(terms, Map.get(spec, :any_term_sets))
+  end
+
   defp matches_term_sets?(terms, required_term_sets) do
     Enum.all?(required_term_sets, fn term_set ->
+      Enum.any?(terms, &(&1 in term_set))
+    end)
+  end
+
+  defp matches_any_term_sets?(_terms, nil), do: true
+  defp matches_any_term_sets?(_terms, []), do: true
+
+  defp matches_any_term_sets?(terms, any_term_sets) do
+    Enum.any?(any_term_sets, fn term_set ->
       Enum.any?(terms, &(&1 in term_set))
     end)
   end

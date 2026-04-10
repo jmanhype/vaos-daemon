@@ -38,6 +38,7 @@ defmodule Daemon.Investigation.EvidencePlanner do
   @guideline_terms ~w(guideline guidelines consensus recommendation recommendations position statement statements)
   @measurement_terms ~w(measurement measurements observe observed observation observations physical empirical curvature geodesy gravity orbit orbital satellite surveying)
   @intervention_terms ~w(intervention interventions treatment treatments therapy therapies supplement supplements supplementation placebo randomized randomised trial trials drug drugs dose dosing medication medications)
+  @clinical_outcome_terms ~w(strength muscular endurance performance sleep insomnia recovery cognition cognitive memory pain fatigue mood anxiety depression function functional mobility balance symptoms symptom quality wellbeing well-being blood pressure glucose cholesterol weight bmi)
   @health_effect_terms ~w(cause causes caused causing risk risks associated association linked links smoking smoker smokers vaccine vaccines autism cancer disease diseases mortality incidence prevalence outcome outcomes)
 
   @doc false
@@ -48,7 +49,7 @@ defmodule Daemon.Investigation.EvidencePlanner do
     candidates =
       candidate_modes()
       |> Enum.map(&build_candidate(&1, topic, keyword_topic, claim_family, evidence_profile))
-      |> Enum.map(&score_candidate(&1, terms, claim_family, evidence_profile))
+      |> Enum.map(&score_candidate(&1, topic, terms, claim_family, evidence_profile))
       |> Enum.sort_by(fn candidate ->
         {-candidate.selection_score, Map.fetch!(@candidate_order, candidate.mode)}
       end)
@@ -67,6 +68,7 @@ defmodule Daemon.Investigation.EvidencePlanner do
               claim_family,
               evidence_profile
             ),
+            topic,
             terms,
             claim_family,
             evidence_profile
@@ -330,9 +332,10 @@ defmodule Daemon.Investigation.EvidencePlanner do
 
   defp review_profile(_claim_family), do: :general
 
-  defp score_candidate(candidate, terms, claim_family, evidence_profile) do
+  defp score_candidate(candidate, topic, terms, claim_family, evidence_profile) do
     family_profile = claim_family && Map.get(claim_family, :profile)
     family_kind = claim_family && Map.get(claim_family, :kind)
+    intervention_signature = intervention_signature?(topic, terms)
 
     family_bias =
       case {candidate.mode, family_profile, family_kind} do
@@ -352,9 +355,17 @@ defmodule Daemon.Investigation.EvidencePlanner do
     lexical_bias =
       case candidate.mode do
         :measurement -> term_hits(terms, @measurement_terms) * 0.8
-        :randomized_intervention -> term_hits(terms, @intervention_terms) * 0.8
+        :randomized_intervention ->
+          term_hits(terms, @intervention_terms) * 0.8 +
+            term_hits(terms, @clinical_outcome_terms) * 0.35 +
+            if(intervention_signature, do: 1.5, else: 0.0)
+
         :observational -> term_hits(terms, @health_effect_terms) * 0.6
-        :systematic_review -> term_hits(terms, @guideline_terms ++ @health_effect_terms) * 0.2
+        :systematic_review ->
+          term_hits(terms, @guideline_terms ++ @health_effect_terms ++ @clinical_outcome_terms) *
+            0.2 +
+            if(intervention_signature, do: 0.4, else: 0.0)
+
         :consensus -> term_hits(terms, @guideline_terms) * 0.9
         :general_empirical -> max(length(terms) - 1, 0) * 0.2
       end
@@ -376,7 +387,7 @@ defmodule Daemon.Investigation.EvidencePlanner do
 
     rationale =
       candidate.mode
-      |> rationale_parts(family_profile, family_kind, terms, evidence_profile)
+      |> rationale_parts(family_profile, family_kind, topic, terms, evidence_profile)
       |> Enum.uniq()
       |> Enum.take(3)
       |> Enum.join("; ")
@@ -410,7 +421,7 @@ defmodule Daemon.Investigation.EvidencePlanner do
     }
   end
 
-  defp rationale_parts(mode, family_profile, family_kind, terms, evidence_profile) do
+  defp rationale_parts(mode, family_profile, family_kind, topic, terms, evidence_profile) do
     base =
       case mode do
         :measurement -> ["measurement/observation route"]
@@ -437,6 +448,9 @@ defmodule Daemon.Investigation.EvidencePlanner do
         mode == :randomized_intervention and term_hits(terms, @intervention_terms) > 0 ->
           ["intervention terms present"]
 
+        mode == :randomized_intervention and intervention_signature?(topic, terms) ->
+          ["intervention + outcome signature present"]
+
         mode == :observational and term_hits(terms, @health_effect_terms) > 0 ->
           ["causal/epidemiology terms present"]
 
@@ -461,6 +475,17 @@ defmodule Daemon.Investigation.EvidencePlanner do
   defp term_hits(terms, candidates) do
     Enum.count(terms, &(&1 in candidates))
   end
+
+  defp intervention_signature?(topic, terms) when is_binary(topic) and is_list(terms) do
+    term_hits(terms, @intervention_terms) > 0 and
+      (term_hits(terms, @clinical_outcome_terms) > 0 or
+         Regex.match?(
+           ~r/\b(improve|improves|improved|improving|reduce|reduces|reduced|reducing|prevent|prevents|prevented|preventing|treat|treats|treated|treating|relieve|relieves|relieved|relieving|help|helps|helped|helping|benefit|benefits|benefited|benefiting|enhance|enhances|enhanced|enhancing|increase|increases|increased|increasing|decrease|decreases|decreased|decreasing|manage|manages|managed|managing)\b/i,
+           topic
+         ))
+  end
+
+  defp intervention_signature?(_topic, _terms), do: false
 
   defp keyword_query_topic(topic, keywords) do
     case keywords do

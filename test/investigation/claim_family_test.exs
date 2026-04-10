@@ -64,6 +64,36 @@ defmodule Daemon.Investigation.ClaimFamilyTest do
     assert family.query_templates[:oa] != []
   end
 
+  test "match returns clinical-intervention family for supplementation claims with outcome terms" do
+    family =
+      ClaimFamily.match(
+        "caffeine supplementation improves endurance performance",
+        ["caffeine", "supplementation", "endurance", "performance"],
+        ["caffeine", "supplementation", "endurance", "performance"]
+      )
+
+    assert family.kind == :clinical_intervention
+    assert family.profile == :clinical_intervention
+
+    magnesium_family =
+      ClaimFamily.match(
+        "magnesium supplementation improves sleep quality in adults with insomnia",
+        ["magnesium", "supplementation", "sleep", "quality"],
+        ["magnesium", "supplementation", "sleep", "quality", "adults", "insomnia"]
+      )
+
+    assert magnesium_family.kind == :clinical_intervention
+    assert magnesium_family.profile == :clinical_intervention
+  end
+
+  test "match does not treat generic supplement information as clinical intervention" do
+    assert ClaimFamily.match(
+             "dietary supplement information for consumers",
+             ["dietary", "supplement", "information", "consumers"],
+             ["dietary", "supplement", "information", "consumers"]
+           ) == nil
+  end
+
   test "evidence_profile stays nil for unrelated general claims" do
     assert ClaimFamily.evidence_profile(
              "creatine helps cognition",

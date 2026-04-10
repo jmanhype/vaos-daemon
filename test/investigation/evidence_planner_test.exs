@@ -42,6 +42,18 @@ defmodule Daemon.Investigation.EvidencePlannerTest do
     assert planner.selected.profile == :clinical_intervention
   end
 
+  test "selects randomized-intervention route for supplementation claims without explicit training phrasing" do
+    topic = "caffeine supplementation improves endurance performance"
+    keywords = ["caffeine", "supplementation", "endurance", "performance"]
+    terms = ["caffeine", "supplementation", "endurance", "performance"]
+    claim_family = ClaimFamily.match(topic, keywords, terms)
+
+    planner = EvidencePlanner.plan(topic, keywords, terms, claim_family, nil)
+
+    assert planner.selected.mode == :randomized_intervention
+    assert planner.selected.profile == :clinical_intervention
+  end
+
   test "apply_probe_results lets empirical probe signal overturn the heuristic prior" do
     topic = "smoking causes lung cancer"
     keywords = ["smoking", "lung", "cancer"]

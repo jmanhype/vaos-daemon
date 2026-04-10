@@ -1469,6 +1469,32 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert plan.evidence_plan.mode == :observational
   end
 
+  test "search_query_plan routes supplementation-performance claims to clinical intervention" do
+    plan =
+      Investigate.search_query_plan(
+        "determine whether caffeine supplementation improves endurance performance",
+        ["caffeine", "supplementation", "endurance", "performance"]
+      )
+
+    assert plan.family_profile == :clinical_intervention
+    assert plan.profile == :clinical_intervention
+    assert plan.claim_family == :clinical_intervention
+    assert plan.evidence_plan.mode == :randomized_intervention
+  end
+
+  test "search_query_plan routes supplementation-sleep claims to clinical intervention" do
+    plan =
+      Investigate.search_query_plan(
+        "determine whether magnesium supplementation improves sleep quality in adults with insomnia",
+        ["magnesium", "supplementation", "sleep", "quality"]
+      )
+
+    assert plan.family_profile == :clinical_intervention
+    assert plan.profile == :clinical_intervention
+    assert plan.claim_family == :clinical_intervention
+    assert plan.evidence_plan.mode == :randomized_intervention
+  end
+
   test "apply_search_plan_probe_results selects only from the probed shortlist" do
     plan =
       Investigate.search_query_plan(
