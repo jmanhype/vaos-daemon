@@ -1632,6 +1632,50 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     refute normalized =~ "1-1.5 minutes"
   end
 
+  test "verification_claim_text keeps the reported result clause when the cited sentence starts with found that while" do
+    summary =
+      "The metabolic mechanism by which caffeine might enhance aerobic endurance appears to be absent in aerobically trained individuals. [Paper 7] found that while caffeine increased fat oxidation during fed-state exercise in active untrained individuals, this effect was not observed in aerobically trained participants (n=7; p = 0.27, SMD = 0.50, 95% CI = -0.39 to 1.39)."
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized =~ "this effect was not observed in aerobically trained participants"
+    refute normalized == "that"
+  end
+
+  test "verification_claim_text keeps the reported trained-subject result clause when the cited sentence starts with demonstrated that while" do
+    summary =
+      "Training status attenuates caffeine's ergogenic effects on cycling performance. [Paper 6] demonstrated that while untrained subjects improved by 5.5% ± 4.3% with caffeine in the morning, trained subjects improved only 1.0% ± 1.7%—a markedly smaller effect."
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized == "trained subjects improved only 1.0% ± 1.7%—a markedly smaller effect."
+    refute normalized == "that"
+  end
+
+  test "verification_claim_text strips possessive paper markers from cited intervention summaries" do
+    summary =
+      "The existing evidence base is limited in trained cyclists. [Paper 4]'s meta-analysis of endurance running included 254 participants, of which 167 were categorized as recreational and only 87 as trained runners."
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized ==
+             "meta-analysis of endurance running included 254 participants, of which 167 were categorized as recreational and only 87 as trained runners."
+
+    refute String.starts_with?(normalized, "'s")
+  end
+
+  test "verification_claim_text prefers the next sentence when the citation sentence is only setup context" do
+    summary =
+      "The most direct and compelling evidence comes from [Paper 1], which tested 40 male endurance-trained cyclists in a double-blind, crossover, counterbalanced design using 6 mg/kg caffeine, placebo, and no-supplement conditions. Caffeine significantly improved simulated cycling time-trial performance (29.92 ± 2.18 min) compared to both placebo (30.81 ± 2.67 min) and control (31.14 ± 2.71 min), with a highly significant P value of 0.0002. This ~1.5–2.5% improvement in a ~30-minute time trial represents a meaningful performance enhancement in competitive cycling contexts."
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized ==
+             "Caffeine significantly improved simulated cycling time-trial performance (29.92 ± 2.18 min) compared to both placebo (30.81 ± 2.67 min) and control (31.14 ± 2.71 min), with a highly significant P value of 0.0002."
+
+    refute normalized =~ "The most direct and compelling evidence comes from"
+  end
+
   test "normalized_search_topic strips wrapper phrasing from manual eval prompts" do
     assert Investigate.normalized_search_topic("examine claims that the earth is flat") ==
              "the earth is flat"

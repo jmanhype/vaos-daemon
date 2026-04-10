@@ -4859,6 +4859,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
       |> strip_evidence_prefix()
       |> normalize_verification_whitespace()
       |> prefer_followup_reported_sentence()
+      |> prefer_followup_outcome_sentence()
       |> first_citation_sentence()
       |> trim_after_other_paper_ref()
       |> trim_after_contrastive_clause()
@@ -4866,6 +4867,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
       |> prefer_quote_before_followup_reporting()
       |> trim_after_last_quote()
       |> strip_verification_markup()
+      |> prefer_contrastive_reported_result_clause()
       |> strip_leading_attribution_clause()
       |> strip_leading_reporting_clause()
       |> strip_subject_reporting_clause()
@@ -4893,7 +4895,16 @@ defmodule Daemon.Tools.Builtins.Investigate do
          ) do
       [leading, _contrast] ->
         candidate = String.trim(leading)
-        if candidate == "", do: text, else: candidate
+
+        if candidate == "" or
+             Regex.match?(
+               ~r/(?:#{reporting_verbs_pattern()})\s+that$/iu,
+               String.trim_trailing(candidate, ",")
+             ) do
+          text
+        else
+          candidate
+        end
 
       _ ->
         text
@@ -5042,6 +5053,38 @@ defmodule Daemon.Tools.Builtins.Investigate do
 
   defp prefer_followup_reported_sentence(summary), do: summary
 
+  defp prefer_followup_outcome_sentence(summary) when is_binary(summary) do
+    case extract_paper_ref(summary) do
+      nil ->
+        summary
+
+      paper_ref ->
+        sentences =
+          summary
+          |> protect_sentence_abbreviation_periods()
+          |> then(&Regex.split(~r/(?<=[.!?])\s+/, &1, trim: true))
+          |> Enum.map(&restore_sentence_abbreviation_periods/1)
+
+        citation_index = Enum.find_index(sentences, &contains_paper_ref?(&1, paper_ref))
+
+        candidate =
+          if is_integer(citation_index) do
+            citation_sentence = Enum.at(sentences, citation_index, "")
+
+            if citation_sentence_setup_only?(citation_sentence, paper_ref) do
+              sentences
+              |> Enum.drop(citation_index + 1)
+              |> Enum.take_while(&(not contains_any_paper_ref?(&1)))
+              |> Enum.find(&followup_outcome_sentence?(&1))
+            end
+          end
+
+        candidate || summary
+    end
+  end
+
+  defp prefer_followup_outcome_sentence(summary), do: summary
+
   defp first_citation_sentence(summary) do
     case extract_paper_ref(summary) do
       nil ->
@@ -5165,6 +5208,26 @@ defmodule Daemon.Tools.Builtins.Investigate do
 
   defp followup_result_sentence?(_), do: false
 
+  defp followup_outcome_sentence?(sentence) when is_binary(sentence) do
+    Regex.match?(
+      ~r/\b(?:significant(?:ly)?|improv(?:e|ed|ement)|enhanc(?:e|ed)|increas(?:e|ed)|reduc(?:e|ed)|decreas(?:e|ed)|no\s+significant|no\s+influence|no\s+difference|no\s+correlation|was\s+not\s+observed|not\s+observed|correlation|covariate)\b/iu,
+      sentence
+    )
+  end
+
+  defp followup_outcome_sentence?(_), do: false
+
+  defp citation_sentence_setup_only?(sentence, paper_ref)
+       when is_binary(sentence) and is_integer(paper_ref) do
+    contains_paper_ref?(sentence, paper_ref) and
+      Regex.match?(
+        ~r/\b(?:comes\s+from|was\s+directly\s+addressed(?:\s+and\s+refuted)?\s+by|was\s+addressed(?:\s+and\s+refuted)?\s+by|was\s+examined\s+by|was\s+investigated\s+by|was\s+evaluated\s+by|was\s+tested\s+by|titled)\b/iu,
+        sentence
+      )
+  end
+
+  defp citation_sentence_setup_only?(_, _), do: false
+
   defp protect_sentence_abbreviation_periods(summary) do
     summary
     |> String.replace("...", "__VAOS_ELLIPSIS__")
@@ -5237,13 +5300,30 @@ defmodule Daemon.Tools.Builtins.Investigate do
 
   defp strip_verification_markup(summary) do
     summary
+    |> String.replace(~r/\[Paper\s+\d+\]'s/iu, "")
+    |> String.replace(~r/\bPaper\s+\d+'s\b/iu, "")
     |> String.replace(~r/\[Paper\s+\d+\]/i, "")
     |> String.replace(~r/[*_`]+/, "")
     |> String.replace(~r/\bAccording to\s*,/i, "According to")
     |> String.replace(~r/\s+([,.;:!?])/, "\\1")
     |> String.replace(~r/\(\s+/, "(")
     |> String.replace(~r/\s+\)/, ")")
+    |> String.replace(~r/^\s*'s\s+/u, "")
     |> normalize_verification_whitespace()
+  end
+
+  defp prefer_contrastive_reported_result_clause(summary) when is_binary(summary) do
+    case Regex.run(
+           ~r/^\s*(?:(?:explicitly|clearly|directly|specifically|\w+ly)\s+)?(?:#{reporting_verbs_pattern()})\s+that\s+(?:while|whereas|although)\s+.+?,\s*(.+)$/iu,
+           summary,
+           capture: :all_but_first
+         ) do
+      [result_clause] ->
+        normalize_verification_whitespace(result_clause)
+
+      _ ->
+        summary
+    end
   end
 
   defp strip_leading_attribution_clause(summary) do
