@@ -47,7 +47,10 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
       :zhipu_model,
       :utility_model,
       :investigate_verification_model,
-      :investigate_verify_max_tokens
+      :investigate_verify_max_tokens,
+      :investigate_verify_timeout_ms,
+      :investigate_advocate_timeout_ms,
+      :investigate_verify_phase_max_timeout_ms
     ]
 
     original =
@@ -111,6 +114,12 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     Application.put_env(:daemon, :investigate_verify_max_tokens, 96)
 
     assert Investigate.verification_request_opts("glm-4.5-flash")[:max_tokens] == 96
+  end
+
+  test "verification_request_opts carries configured receive timeout" do
+    Application.put_env(:daemon, :investigate_verify_timeout_ms, 1_234)
+
+    assert Investigate.verification_request_opts("glm-4.5-flash")[:receive_timeout] == 1_234
   end
 
   test "parse_verification_response extracts verdict tokens from reasoning-heavy verifier output" do
@@ -267,6 +276,77 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
              {[:supporting], %{tag: :supporting}},
              {[:opposing], %{tag: :opposing}}
            } = Task.await(pair_task)
+  end
+
+  test "verify_citation_pairs_with_timeout/6 returns timeout metadata and marks timed-out evidence" do
+    parent = self()
+
+    build_evidence = fn summary ->
+      %{
+        summary: summary,
+        score: 0.0,
+        verified: false,
+        verification: "pending",
+        paper_type: :other,
+        citation_count: 0,
+        strength: "moderate",
+        source_quality: 0.0,
+        source_type: :sourced,
+        evidence_store: :belief
+      }
+    end
+
+    supporting = [build_evidence.("Supported outcome [Paper 1]")]
+    opposing = [build_evidence.("Opposing outcome [Paper 2]")]
+
+    verify_fun = fn evidence, _paper_map, _prompts ->
+      summary = hd(evidence).summary
+      send(parent, {:started, summary, self()})
+
+      receive do
+        {:release, ^summary} ->
+          {evidence, %{total_items: length(evidence), llm_items: length(evidence), model: "test"}}
+      end
+    end
+
+    pair_task =
+      Task.async(fn ->
+        Investigate.verify_citation_pairs_with_timeout(
+          supporting,
+          opposing,
+          %{},
+          %{},
+          20,
+          verify_fun
+        )
+      end)
+
+    assert_receive {:started, "Supported outcome [Paper 1]", supporting_pid}
+    assert_receive {:started, "Opposing outcome [Paper 2]", _opposing_pid}
+
+    send(supporting_pid, {:release, "Supported outcome [Paper 1]"})
+
+    assert {
+             {^supporting, %{total_items: 1, model: "test"}},
+             {timed_out_opposing, timed_out_stats},
+             %{phase: :citation_verification, timed_out_sides: [:opposing]}
+           } = Task.await(pair_task)
+
+    assert [
+             %{
+               summary: "Opposing outcome [Paper 2]",
+               verification: "timeout",
+               verified: false,
+               paper_type: :other
+             }
+           ] =
+             Enum.map(
+               timed_out_opposing,
+               &Map.take(&1, [:summary, :verification, :verified, :paper_type])
+             )
+
+    assert timed_out_stats.total_items == 1
+    assert timed_out_stats.llm_items == 1
   end
 
   test "run_semantic_scholar_queries stops after terminal 429 failure" do
@@ -775,7 +855,8 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
              %{profile: :clinical_intervention},
              %{
                "title" => "Creatine plus resistance training for healthy aging",
-               "abstract" => "This article discusses the role of creatine supplementation in aging.",
+               "abstract" =>
+                 "This article discusses the role of creatine supplementation in aging.",
                "publicationTypes" => ["Review"]
              }
            ) == :contextual
@@ -884,7 +965,8 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
              },
              %{profile: :clinical_intervention},
              %{
-               "title" => "Multi-ingredient pre-workout supplementation during resistance training",
+               "title" =>
+                 "Multi-ingredient pre-workout supplementation during resistance training",
                "abstract" =>
                  "Participants received a multi-ingredient pre-workout supplement containing creatine, betaine, and dendrobium extract.",
                "publicationTypes" => ["Clinical Trial"]
@@ -1000,6 +1082,31 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert trace.classification.grounded_for_count == 1
     assert trace.outcome.direction == "supporting"
     assert hd(trace.verified.supporting).verification_claim == "Quoted result"
+  end
+
+  test "build_boundary_trace includes timeout outcome metadata" do
+    trace =
+      Investigate.build_boundary_trace(
+        %{},
+        %{
+          final_metadata: %{
+            direction: "timeout",
+            timeout: %{
+              phase: "citation_verification",
+              timeout_ms: 32_000,
+              timed_out_sides: ["opposing"]
+            }
+          }
+        }
+      )
+
+    assert trace.outcome.direction == "timeout"
+
+    assert trace.outcome.timeout == %{
+             phase: "citation_verification",
+             timeout_ms: 32_000,
+             timed_out_sides: ["opposing"]
+           }
   end
 
   test "maybe_capture_trace writes a trace artifact and annotates metadata" do
