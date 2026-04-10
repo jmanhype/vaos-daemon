@@ -98,6 +98,7 @@ defmodule Daemon.Providers.Registry do
 
   Options:
     - `:provider`    — override the default provider atom
+    - `:allow_fallback` — when false, return the provider error directly
     - `:temperature` — sampling temperature (default: 0.7)
     - `:max_tokens`  — maximum tokens to generate
     - `:tools`       — list of tool definitions
@@ -314,16 +315,25 @@ defmodule Daemon.Providers.Registry do
   end
 
   defp call_with_fallback(provider, module, messages, opts) do
+    allow_fallback? = Keyword.get(opts, :allow_fallback, true)
+    provider_opts = Keyword.delete(opts, :allow_fallback)
+
     case Daemon.Providers.ConcurrencyLimiter.with_limit(fn ->
-           with_retry(fn -> apply_provider(module, messages, opts) end)
+           with_retry(fn -> apply_provider(module, messages, provider_opts) end)
          end) do
       {:ok, _} = result ->
         HealthChecker.record_success(provider)
         result
 
-      {:error, {:rate_limited, retry_after}} = _rate_err ->
+      {:error, {:rate_limited, retry_after}} = rate_err ->
         HealthChecker.record_rate_limited(provider, retry_after)
-        try_fallback_chain(provider, messages, opts, "rate-limited (HTTP 429)")
+
+        if allow_fallback? do
+          try_fallback_chain(provider, messages, provider_opts, "rate-limited (HTTP 429)")
+        else
+          Logger.warning("Provider #{provider} rate-limited; fallback disabled")
+          rate_err
+        end
 
       {:error, reason} = err ->
         HealthChecker.record_failure(provider, reason)
@@ -335,16 +345,22 @@ defmodule Daemon.Providers.Registry do
           |> filter_boot_excluded_providers()
           |> Enum.filter(&HealthChecker.is_available?/1)
 
-        if remaining_chain == [] do
-          Logger.error("Provider #{provider} failed, no fallback configured: #{reason}")
-          err
-        else
-          Logger.warning(
-            "Provider #{provider} failed: #{reason}. Trying fallback chain: #{inspect(remaining_chain)}"
-          )
+        cond do
+          not allow_fallback? ->
+            Logger.error("Provider #{provider} failed, fallback disabled: #{reason}")
+            err
 
-          fallback_opts = Keyword.delete(opts, :model)
-          chat_with_fallback(messages, remaining_chain, fallback_opts)
+          remaining_chain == [] ->
+            Logger.error("Provider #{provider} failed, no fallback configured: #{reason}")
+            err
+
+          true ->
+            Logger.warning(
+              "Provider #{provider} failed: #{reason}. Trying fallback chain: #{inspect(remaining_chain)}"
+            )
+
+            fallback_opts = Keyword.delete(provider_opts, :model)
+            chat_with_fallback(messages, remaining_chain, fallback_opts)
         end
     end
   end

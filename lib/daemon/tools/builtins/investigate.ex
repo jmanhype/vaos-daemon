@@ -456,9 +456,12 @@ Known failure patterns to avoid:
       paper_search_ms: paper_search_ms
     }
 
-    model = preferred_utility_model()
+    provider = ModelSelection.current_provider()
+    model = preferred_utility_model(provider)
 
     llm_opts = [
+      provider: provider,
+      allow_fallback: false,
       temperature: prior_strategy.adversarial_temperature,
       max_tokens: 8192,
       receive_timeout: advocate_timeout_ms()
@@ -466,8 +469,9 @@ Known failure patterns to avoid:
 
     llm_opts = if model, do: Keyword.put(llm_opts, :model, model), else: llm_opts
 
-    # Run advocates sequentially — concurrent calls trigger rate limits on some
-    # providers (Zhipu/GLM), and reasoning models need generous timeouts.
+    # Run advocates sequentially on one explicit provider/model lane. Generic
+    # registry fallback is useful elsewhere, but here it hides the real timeout
+    # boundary and can churn across providers after the primary fails.
     {for_result, for_llm_ms} =
       call_investigate_chat_phase(topic, :for_llm, for_messages, llm_opts)
 
@@ -1687,23 +1691,24 @@ Known failure patterns to avoid:
        when is_binary(topic) and is_atom(phase) and is_list(messages) and is_list(opts) do
     receive_timeout = Keyword.get(opts, :receive_timeout, advocate_timeout_ms())
     phase_timeout_ms = receive_timeout + @default_advocate_timeout_grace_ms
+    provider = Keyword.get(opts, :provider)
     model = Keyword.get(opts, :model)
 
     Logger.info(
-      "[investigate] #{phase} start topic=#{String.slice(topic, 0, 80)} model=#{model || "default"} timeout=#{phase_timeout_ms}ms"
+      "[investigate] #{phase} start topic=#{String.slice(topic, 0, 80)} provider=#{provider || "default"} model=#{model || "default"} timeout=#{phase_timeout_ms}ms"
     )
 
     case timed_task(fn -> Providers.chat(messages, opts) end, phase_timeout_ms) do
       {:ok, result, elapsed_ms} ->
         Logger.info(
-          "[investigate] #{phase} completed topic=#{String.slice(topic, 0, 80)} elapsed=#{elapsed_ms}ms status=#{chat_result_status(result)}"
+          "[investigate] #{phase} completed topic=#{String.slice(topic, 0, 80)} provider=#{provider || "default"} elapsed=#{elapsed_ms}ms status=#{chat_result_status(result)}"
         )
 
         {result, elapsed_ms}
 
       {:timeout, elapsed_ms} ->
         Logger.warning(
-          "[investigate] #{phase} timeout topic=#{String.slice(topic, 0, 80)} timeout=#{phase_timeout_ms}ms elapsed=#{elapsed_ms}ms"
+          "[investigate] #{phase} timeout topic=#{String.slice(topic, 0, 80)} provider=#{provider || "default"} timeout=#{phase_timeout_ms}ms elapsed=#{elapsed_ms}ms"
         )
 
         {{:error, {:timeout, phase, phase_timeout_ms}}, elapsed_ms}
@@ -5272,11 +5277,15 @@ Known failure patterns to avoid:
   end
 
   @doc false
-  def preferred_utility_model do
+  def preferred_utility_model(provider \\ ModelSelection.current_provider())
+
+  def preferred_utility_model(provider) when is_atom(provider) do
     Application.get_env(:daemon, :utility_model) ||
-      ModelSelection.current_model() ||
-      utility_tier_model(ModelSelection.current_provider())
+      utility_tier_model(provider) ||
+      ModelSelection.current_model(provider)
   end
+
+  def preferred_utility_model(_), do: Application.get_env(:daemon, :utility_model)
 
   @doc false
   def preferred_verification_model do

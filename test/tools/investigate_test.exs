@@ -198,13 +198,13 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert Investigate.parse_verification_response(response) == {:verified, :other}
   end
 
-  test "preferred_utility_model prefers provider-specific active model over stale default_model" do
+  test "preferred_utility_model prefers the provider utility tier over a stale reasoning model" do
     Application.put_env(:daemon, :default_provider, :zhipu)
     Application.put_env(:daemon, :default_model, "glm-4.7")
     Application.put_env(:daemon, :zhipu_model, "glm-5.1")
     Application.delete_env(:daemon, :utility_model)
 
-    assert Investigate.preferred_utility_model() == "glm-5.1"
+    assert Investigate.preferred_utility_model() == "glm-4.5-flash"
   end
 
   test "emergent_question_generation_enabled?/4 requires real evidence tension" do
