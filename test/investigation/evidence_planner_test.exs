@@ -54,6 +54,33 @@ defmodule Daemon.Investigation.EvidencePlannerTest do
     assert planner.selected.profile == :clinical_intervention
   end
 
+  test "selects randomized-intervention route for administration-style performance claims" do
+    topic =
+      "acute caffeine intake enhances endurance time-trial performance in trained cyclists and triathletes"
+
+    keywords = ["acute", "caffeine", "intake", "endurance", "time-trial", "performance"]
+
+    terms = [
+      "acute",
+      "caffeine",
+      "intake",
+      "enhances",
+      "endurance",
+      "time-trial",
+      "performance",
+      "trained",
+      "cyclists",
+      "triathletes"
+    ]
+
+    claim_family = ClaimFamily.match(topic, keywords, terms)
+
+    planner = EvidencePlanner.plan(topic, keywords, terms, claim_family, nil)
+
+    assert planner.selected.mode == :randomized_intervention
+    assert planner.selected.profile == :clinical_intervention
+  end
+
   test "randomized-intervention candidates prioritize direct trial probes before reviews" do
     topic = "acute caffeine supplementation improves endurance performance in trained cyclists"
     keywords = ["acute", "caffeine", "supplementation", "endurance", "performance"]

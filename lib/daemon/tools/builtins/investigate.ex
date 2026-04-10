@@ -4048,22 +4048,34 @@ defmodule Daemon.Tools.Builtins.Investigate do
   end
 
   defp search_keywords(topic, keywords) do
+    topic_keywords = topic_terms(topic)
+
     base_keywords =
       case keywords do
-        list when is_list(list) and list != [] -> list
-        _ -> topic_terms(topic)
+        list when is_list(list) and list != [] -> topic_keywords ++ list
+        _ -> topic_keywords
       end
 
     base_keywords
     |> Enum.map(&to_string/1)
     |> Enum.map(&String.downcase/1)
     |> Enum.reject(&(&1 in @stop_words))
-    |> Enum.reject(&(&1 in @search_relation_words))
+    |> Enum.reject(&search_relation_variant?/1)
     |> Enum.reject(&(String.length(&1) < 3))
     |> drop_search_stem_variants()
     |> Enum.uniq()
     |> Enum.take(8)
   end
+
+  defp search_relation_variant?(keyword) when is_binary(keyword) do
+    normalized_keyword = normalize_search_keyword_variant(keyword)
+
+    Enum.any?(@search_relation_words, fn relation ->
+      keyword == relation or normalized_keyword == normalize_search_keyword_variant(relation)
+    end)
+  end
+
+  defp search_relation_variant?(_keyword), do: false
 
   defp drop_search_stem_variants(keywords) when is_list(keywords) do
     Enum.reject(keywords, fn keyword ->
@@ -4074,6 +4086,22 @@ defmodule Daemon.Tools.Builtins.Investigate do
           String.length(other) - String.length(keyword) <= 4
       end)
     end)
+  end
+
+  defp normalize_search_keyword_variant(keyword) when is_binary(keyword) do
+    keyword
+    |> String.downcase()
+    |> String.replace(~r/ing$/, "")
+    |> String.replace(~r/tion$/, "t")
+    |> String.replace(~r/ness$/, "")
+    |> String.replace(~r/ment$/, "")
+    |> String.replace(~r/able$/, "")
+    |> String.replace(~r/ible$/, "")
+    |> String.replace(~r/ly$/, "")
+    |> String.replace(~r/ed$/, "")
+    |> String.replace(~r/er$/, "")
+    |> String.replace(~r/es$/, "")
+    |> String.replace(~r/s$/, "")
   end
 
   defp distinctive_topic_terms(topic) do

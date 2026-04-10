@@ -1809,6 +1809,18 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert plan.evidence_plan.mode == :randomized_intervention
   end
 
+  test "search_query_plan routes administration-style endurance claims to clinical intervention" do
+    plan =
+      Investigate.search_query_plan(
+        "assess whether acute caffeine intake enhances endurance time-trial performance in trained cyclists and triathletes"
+      )
+
+    assert plan.family_profile == :clinical_intervention
+    assert plan.profile == :clinical_intervention
+    assert plan.claim_family == :clinical_intervention
+    assert plan.evidence_plan.mode == :randomized_intervention
+  end
+
   test "search_query_plan drops stem-duplicate keywords and keeps specific intervention outcomes" do
     plan =
       Investigate.search_query_plan(
@@ -1841,6 +1853,50 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
              "trained",
              "cyclists"
            ]
+  end
+
+  test "search_query_plan prefers exact topic anchors over noisy extracted intervention keywords" do
+    topic =
+      "evaluate whether acute caffeine supplementation improves endurance time-trial performance in trained cyclists and triathletes"
+
+    noisy_keywords = [
+      "acute",
+      "caffeine",
+      "supplementation",
+      "supplementa",
+      "improves",
+      "improv",
+      "endurance",
+      "time-trial",
+      "performance",
+      "trained",
+      "cyclists",
+      "cyclist",
+      "triathletes",
+      "triathlet"
+    ]
+
+    plan = Investigate.search_query_plan(topic, noisy_keywords)
+
+    assert plan.keywords == [
+             "acute",
+             "caffeine",
+             "supplementation",
+             "endurance",
+             "time-trial",
+             "performance",
+             "trained",
+             "cyclists"
+           ]
+
+    assert plan.evidence_plan.semantic_seed ==
+             "acute caffeine supplementation endurance time-trial performance trained cyclists"
+
+    refute String.contains?(plan.evidence_plan.semantic_seed, "improv")
+
+    assert Enum.any?(plan.ss_queries, fn {_label, query, _opts} ->
+             String.contains?(query, "trained cyclists")
+           end)
   end
 
   test "apply_search_plan_probe_results selects only from the probed shortlist" do

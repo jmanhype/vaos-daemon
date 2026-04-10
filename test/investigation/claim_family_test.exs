@@ -86,6 +86,18 @@ defmodule Daemon.Investigation.ClaimFamilyTest do
     assert magnesium_family.profile == :clinical_intervention
   end
 
+  test "match returns clinical-intervention family for administration-style performance claims" do
+    family =
+      ClaimFamily.match(
+        "acute caffeine intake enhances endurance time-trial performance in trained cyclists and triathletes",
+        ["acute", "caffeine", "intake", "endurance", "time-trial", "performance"],
+        ["acute", "caffeine", "intake", "enhances", "endurance", "time-trial", "performance", "trained", "cyclists", "triathletes"]
+      )
+
+    assert family.kind == :clinical_intervention
+    assert family.profile == :clinical_intervention
+  end
+
   test "match does not treat generic supplement information as clinical intervention" do
     assert ClaimFamily.match(
              "dietary supplement information for consumers",

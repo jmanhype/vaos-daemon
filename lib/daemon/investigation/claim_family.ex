@@ -17,6 +17,8 @@ defmodule Daemon.Investigation.ClaimFamily do
   @clinical_intervention_terms ~w(supplement supplements supplementation treatment treatments
     therapy therapies drug drugs medication medications placebo homeopathy dose dosing
     intervention interventions)
+  @clinical_administration_terms ~w(intake ingestion ingest ingested consuming consume
+    consumed administration administered administering)
   @clinical_outcome_terms ~w(strength muscular endurance performance sleep insomnia recovery
     cognition cognitive memory pain fatigue mood anxiety depression function functional
     mobility balance symptoms symptom quality wellbeing well-being blood pressure glucose
@@ -242,8 +244,21 @@ defmodule Daemon.Investigation.ClaimFamily do
   end
 
   defp matches_spec?(spec, terms) do
-    matches_term_sets?(terms, Map.get(spec, :required_term_sets, [])) and
-      matches_any_term_sets?(terms, Map.get(spec, :any_term_sets))
+    if spec.kind == :clinical_intervention do
+      clinical_intervention_match?(terms, spec)
+    else
+      matches_term_sets?(terms, Map.get(spec, :required_term_sets, [])) and
+        matches_any_term_sets?(terms, Map.get(spec, :any_term_sets))
+    end
+  end
+
+  defp clinical_intervention_match?(terms, spec) do
+    explicit_intervention? = Enum.any?(terms, &(&1 in @clinical_intervention_terms))
+    administration_intervention? = Enum.any?(terms, &(&1 in @clinical_administration_terms))
+    clinical_outcome? = Enum.any?(terms, &(&1 in @clinical_outcome_terms))
+
+    (explicit_intervention? and matches_any_term_sets?(terms, Map.get(spec, :any_term_sets))) or
+      (administration_intervention? and clinical_outcome?)
   end
 
   defp matches_term_sets?(terms, required_term_sets) do

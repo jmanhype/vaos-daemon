@@ -38,6 +38,7 @@ defmodule Daemon.Investigation.EvidencePlanner do
   @guideline_terms ~w(guideline guidelines consensus recommendation recommendations position statement statements)
   @measurement_terms ~w(measurement measurements observe observed observation observations physical empirical curvature geodesy gravity orbit orbital satellite surveying)
   @intervention_terms ~w(intervention interventions treatment treatments therapy therapies supplement supplements supplementation placebo randomized randomised trial trials drug drugs dose dosing medication medications)
+  @administration_terms ~w(intake ingestion ingest ingested consume consumes consumed consuming administration administered administering)
   @clinical_outcome_terms ~w(strength muscular endurance performance sleep insomnia recovery cognition cognitive memory pain fatigue mood anxiety depression function functional mobility balance symptoms symptom quality wellbeing well-being blood pressure glucose cholesterol weight bmi)
   @health_effect_terms ~w(cause causes caused causing risk risks associated association linked links smoking smoker smokers vaccine vaccines autism cancer disease diseases mortality incidence prevalence outcome outcomes)
 
@@ -358,7 +359,7 @@ defmodule Daemon.Investigation.EvidencePlanner do
       case candidate.mode do
         :measurement -> term_hits(terms, @measurement_terms) * 0.8
         :randomized_intervention ->
-          term_hits(terms, @intervention_terms) * 0.8 +
+          term_hits(terms, @intervention_terms ++ @administration_terms) * 0.8 +
             term_hits(terms, @clinical_outcome_terms) * 0.35 +
             if(intervention_signature, do: 1.5, else: 0.0)
 
@@ -479,7 +480,7 @@ defmodule Daemon.Investigation.EvidencePlanner do
   end
 
   defp intervention_signature?(topic, terms) when is_binary(topic) and is_list(terms) do
-    term_hits(terms, @intervention_terms) > 0 and
+    term_hits(terms, @intervention_terms ++ @administration_terms) > 0 and
       (term_hits(terms, @clinical_outcome_terms) > 0 or
          Regex.match?(
            ~r/\b(improve|improves|improved|improving|reduce|reduces|reduced|reducing|prevent|prevents|prevented|preventing|treat|treats|treated|treating|relieve|relieves|relieved|relieving|help|helps|helped|helping|benefit|benefits|benefited|benefiting|enhance|enhances|enhanced|enhancing|increase|increases|increased|increasing|decrease|decreases|decreased|decreasing|manage|manages|managed|managing)\b/i,
