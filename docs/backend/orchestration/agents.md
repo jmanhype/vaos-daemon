@@ -165,3 +165,4 @@ This is built by `AgentRunner.build_environment_context/0` using `File.cwd!()` a
 - [Orchestrator](./orchestrator.md)
 - [Swarm Mode](./swarm.md)
 - [Delegation](./delegation.md)
+- [Capability Packs](./capability-packs.md)

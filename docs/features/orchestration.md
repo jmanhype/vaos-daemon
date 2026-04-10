@@ -127,6 +127,17 @@ utility:    30% of system prompt budget
 
 The Budget module tracks spend per provider, per agent, per call. If an agent exceeds its budget, it's stopped gracefully.
 
+## Capability Packs
+
+Daemon's next compounding layer is the **Capability Pack**: a reusable, verified execution asset distilled from successful work. Instead of relying only on raw memory recall, the Orchestrator can eventually reuse:
+
+- known workflow graphs
+- minimum viable context schemas
+- pack-specific verification steps
+- documented failure modes
+
+That turns completed work into future execution leverage. See [Capability Packs](../backend/orchestration/capability-packs.md).
+
 ---
 
 ## Swarm System
