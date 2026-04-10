@@ -23,19 +23,14 @@ defmodule Daemon.Tools.InvestigateAdvocateBakeoff do
   ]
 
   @default_topic "assess whether caffeine supplementation improves aerobic endurance performance in trained cyclists"
+  @stress_probe_timeout_ms 7_500
 
   def default_topic, do: @default_topic
 
   def run_topic(topic, opts \\ []) when is_binary(topic) do
     depth = Keyword.get(opts, :depth, "standard")
     steering = Keyword.get(opts, :steering, "")
-
-    timeout_ms =
-      Keyword.get(
-        opts,
-        :timeout_ms,
-        Application.get_env(:daemon, :investigate_advocate_timeout_ms, 7_500)
-      )
+    timeout_budget = resolve_timeout_budget(opts)
 
     max_lanes = Keyword.get(opts, :max_lanes, 3)
     explicit_lanes = normalize_explicit_lanes(opts)
@@ -49,12 +44,14 @@ defmodule Daemon.Tools.InvestigateAdvocateBakeoff do
 
       results =
         lanes
-        |> Enum.map(&run_lane(topic, context, &1, timeout_ms))
+        |> Enum.map(&run_lane(topic, context, &1, timeout_budget.timeout_ms))
         |> Enum.map(&summarize_lane_result/1)
 
       %{
         topic: topic,
         depth: depth,
+        timeout_ms: timeout_budget.timeout_ms,
+        timeout_mode: timeout_budget.timeout_mode,
         paper_count: length(Map.get(context, :all_papers, [])),
         source_counts: Map.get(context, :source_counts, %{}),
         evidence_plan_mode: get_in(context, [:search_plan, :evidence_plan, :mode]),
@@ -75,6 +72,23 @@ defmodule Daemon.Tools.InvestigateAdvocateBakeoff do
     end)
     |> Enum.map(&String.trim/1)
     |> Enum.reject(&(&1 == ""))
+  end
+
+  @doc false
+  def resolve_timeout_budget(opts) when is_list(opts) do
+    cond do
+      Keyword.has_key?(opts, :timeout_ms) ->
+        %{timeout_ms: Keyword.fetch!(opts, :timeout_ms), timeout_mode: "custom"}
+
+      Keyword.get(opts, :stress, false) ->
+        %{timeout_ms: @stress_probe_timeout_ms, timeout_mode: "stress_probe"}
+
+      true ->
+        %{
+          timeout_ms: Investigate.advocate_timeout_ms(),
+          timeout_mode: "production_default"
+        }
+    end
   end
 
   @doc false

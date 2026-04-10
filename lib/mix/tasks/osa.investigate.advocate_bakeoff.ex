@@ -5,6 +5,7 @@ defmodule Mix.Tasks.Osa.Investigate.AdvocateBakeoff do
   Usage:
 
       mix osa.investigate.advocate_bakeoff
+      mix osa.investigate.advocate_bakeoff --stress
       mix osa.investigate.advocate_bakeoff --topic "assess whether caffeine improves endurance"
       mix osa.investigate.advocate_bakeoff --lane openai:gpt-4o-mini --lane zhipu:glm-4.5-flash
   """
@@ -22,6 +23,7 @@ defmodule Mix.Tasks.Osa.Investigate.AdvocateBakeoff do
         strict: [
           topic: :string,
           lane: :keep,
+          stress: :boolean,
           timeout_ms: :integer,
           max_lanes: :integer,
           depth: :string,
@@ -47,14 +49,16 @@ defmodule Mix.Tasks.Osa.Investigate.AdvocateBakeoff do
 
     topic = Keyword.get(opts, :topic, InvestigateAdvocateBakeoff.default_topic())
 
-    result =
-      InvestigateAdvocateBakeoff.run_topic(
-        topic,
+    run_opts =
+      [
         lane: Keyword.get_values(opts, :lane),
-        timeout_ms: Keyword.get(opts, :timeout_ms, 7_500),
         max_lanes: Keyword.get(opts, :max_lanes, 3),
         depth: Keyword.get(opts, :depth, "standard")
-      )
+      ]
+      |> maybe_put(:stress, Keyword.get(opts, :stress, false))
+      |> maybe_put_fetch(opts, :timeout_ms)
+
+    result = InvestigateAdvocateBakeoff.run_topic(topic, run_opts)
 
     output_path = Keyword.get(opts, :output, default_output_path())
     File.write!(output_path, Jason.encode!(result, pretty: true))
@@ -71,7 +75,8 @@ defmodule Mix.Tasks.Osa.Investigate.AdvocateBakeoff do
 
   defp print_summary(result) do
     Mix.shell().info(
-      "Topic: #{result.topic} | evidence_plan=#{result.evidence_plan_mode} | papers=#{result.paper_count}"
+      "Topic: #{result.topic} | evidence_plan=#{result.evidence_plan_mode} | papers=#{result.paper_count} " <>
+        "| timeout=#{result.timeout_ms}ms (#{result.timeout_mode})"
     )
 
     Enum.each(result.lanes, fn lane ->
@@ -88,6 +93,16 @@ defmodule Mix.Tasks.Osa.Investigate.AdvocateBakeoff do
 
       winner ->
         Mix.shell().info("Winner: #{winner.lane.label}")
+    end
+  end
+
+  defp maybe_put(opts, _key, false), do: opts
+  defp maybe_put(opts, key, value), do: Keyword.put(opts, key, value)
+
+  defp maybe_put_fetch(opts, source, key) do
+    case Keyword.fetch(source, key) do
+      {:ok, value} -> Keyword.put(opts, key, value)
+      :error -> opts
     end
   end
 end

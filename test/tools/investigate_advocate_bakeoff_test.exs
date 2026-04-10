@@ -12,6 +12,32 @@ defmodule Daemon.Tools.InvestigateAdvocateBakeoffTest do
            ) == ["openai:gpt-4o-mini", "zhipu:glm-4.5-flash"]
   end
 
+  test "resolve_timeout_budget defaults to the real investigate advocate budget" do
+    original = Application.get_env(:daemon, :investigate_advocate_timeout_ms)
+    Application.put_env(:daemon, :investigate_advocate_timeout_ms, 54_321)
+
+    try do
+      assert InvestigateAdvocateBakeoff.resolve_timeout_budget([]) == %{
+               timeout_ms: 54_321,
+               timeout_mode: "production_default"
+             }
+    after
+      restore_env(:investigate_advocate_timeout_ms, original)
+    end
+  end
+
+  test "resolve_timeout_budget supports explicit stress and custom budgets" do
+    assert InvestigateAdvocateBakeoff.resolve_timeout_budget(stress: true) == %{
+             timeout_ms: 7_500,
+             timeout_mode: "stress_probe"
+           }
+
+    assert InvestigateAdvocateBakeoff.resolve_timeout_budget(timeout_ms: 12_345) == %{
+             timeout_ms: 12_345,
+             timeout_mode: "custom"
+           }
+  end
+
   test "summarize_lane_result totals success, parse, source, and latency metrics" do
     summary =
       InvestigateAdvocateBakeoff.summarize_lane_result(%{
@@ -69,4 +95,7 @@ defmodule Daemon.Tools.InvestigateAdvocateBakeoffTest do
     refute Enum.any?(failed_lanes, & &1.viable)
     assert InvestigateAdvocateBakeoff.pick_winner(failed_lanes) == nil
   end
+
+  defp restore_env(key, nil), do: Application.delete_env(:daemon, key)
+  defp restore_env(key, value), do: Application.put_env(:daemon, key, value)
 end

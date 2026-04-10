@@ -1773,7 +1773,8 @@ defmodule Daemon.Tools.Builtins.Investigate do
     }
   end
 
-  defp advocate_timeout_ms do
+  @doc false
+  def advocate_timeout_ms do
     Application.get_env(:daemon, :investigate_advocate_timeout_ms, @default_advocate_timeout_ms)
   end
 
