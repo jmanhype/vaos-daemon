@@ -16,7 +16,7 @@ Blocked by `vas-swarm-dy1` — restore the repo-level full test gate now that th
 - Targeted tests pass for the carryover fix.
 - Live validation now carries 1 probe paper into the selected `randomized_intervention` run and produces `grounded_for_count = 1`.
 - The earlier unrelated suite failures were cleared and the focused regression pack now passes.
-- The milestone is still not cleared for advancement because the latest clean `mix test` run does not terminate cleanly: `/tmp/vaos-full-3.log` shows no failure entries so far, but the runner never emits a final summary.
+- The milestone is still not cleared for advancement because the latest clean `mix test` run now exposes a remaining blocker in `Daemon.Agent.Orchestrator.SwarmModeTest` and still does not yield a clean final summary.
 
 ## Operating Rule
 

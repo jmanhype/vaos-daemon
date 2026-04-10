@@ -50,7 +50,7 @@ The rule for progress is simple:
 
 **Status note**
 - Probe-paper carryover now lands in the merged retrieval set and the live rerun no longer ends `belief_consensus_for`.
-- Do not advance to the next milestone yet: the old unrelated suite failures are fixed, but the latest clean `mix test` run still does not terminate cleanly, so the verification gate is not yet satisfied.
+- Do not advance to the next milestone yet: the old unrelated suite failures are fixed, but the latest clean `mix test` run still exposes `Daemon.Agent.Orchestrator.SwarmModeTest` and does not terminate with a clean final summary, so the verification gate is not yet satisfied.
 
 ### Task Classes
 

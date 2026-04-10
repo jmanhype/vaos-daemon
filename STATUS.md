@@ -19,15 +19,15 @@
   - `planning.selected.probe.carried_papers = 1`
 - The original unrelated suite failures were cleared, but milestone verification is still not fully green:
   - latest clean full-suite rerun advanced past the old assertion failures
-  - `/tmp/vaos-full-3.log` shows no failure entries so far
-  - `mix test` still failed verification because it never emitted `Finished in ...` and remained live for minutes after the last visible test output, with lingering localhost Ollama and HTTPS connections
+  - `/tmp/vaos-full-3.log` now pinpoints a remaining failure: `Daemon.Agent.Orchestrator.SwarmModeTest` -> `AgentPool DynamicSupervisor max_children is set to 10`
+  - the run still did not yield a clean final `Finished in ...` summary, so the repo-level gate remains unresolved
 
 ## Resume
 
 1. Read `STATUS.md`.
 2. Run `mix osa.roberto.resume`.
 3. Open `vas-swarm-dy1` and `/tmp/vaos-full-3.log`.
-4. Determine why the full suite stays alive after the last visible test activity.
+4. Fix the remaining `Daemon.Agent.Orchestrator.SwarmModeTest` failure and verify whether the runner now terminates cleanly.
 5. Re-run `mix test` until it terminates with a real summary.
 6. Once the full-suite gate is green, reopen `vas-swarm-942` and re-run live validation on the same claim family.
 7. If grounding is still thin, open the next retrieval-breadth issue.

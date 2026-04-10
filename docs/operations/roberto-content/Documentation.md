@@ -37,8 +37,8 @@ But Roberto is not content yet because the next bottleneck is still a first-orde
   - [vaos-investigate-trace-adafef1959fec23c-vas-swarm-942-live-carryover-1775850306726.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-adafef1959fec23c-vas-swarm-942-live-carryover-1775850306726.json)
 - Full suite gate:
   - the earlier unrelated failures were cleared
-  - the latest clean rerun is now blocked by late-run verification hang instead of assertion failures
-  - `/tmp/vaos-full-3.log` shows no failure entries so far, but `mix test` never reaches `Finished in ...` and stays alive with lingering localhost Ollama and HTTPS connections
+  - the latest clean rerun is now blocked by a remaining repo-level failure in `Daemon.Agent.Orchestrator.SwarmModeTest`
+  - `/tmp/vaos-full-3.log` shows `AgentPool DynamicSupervisor max_children is set to 10` as the next concrete failure and still does not reach a clean final summary
 
 ## Latest Completed Slice
 
@@ -79,12 +79,12 @@ That closes the original belief-only collapse, but milestone closure is still bl
 
 Hold `vas-swarm-942` until the repo-level verification gate is green:
 - the earlier unrelated failures are fixed
-- the remaining blocker is a full-suite run that no longer shows assertion failures but still does not terminate cleanly
+- the remaining blocker is a full-suite run that now pinpoints `Daemon.Agent.Orchestrator.SwarmModeTest` and still does not terminate cleanly
 - once the gate is green, re-run the live trace and decide whether the next bottleneck is thin direct-evidence breadth under source degradation
 
 Shortest version:
 
-`The probe-carryover repair landed, the old unrelated assertion failures were cleared, and milestone closure is now blocked by a full-suite verification hang after the last visible test output.`
+`The probe-carryover repair landed, the old unrelated assertion failures were cleared, and milestone closure is now blocked by the remaining SwarmMode full-suite failure plus incomplete final-suite termination.`
 
 ## Known Stable Wins
 
@@ -100,7 +100,7 @@ On the next session:
 1. Read this file.
 2. Run `mix osa.roberto.resume`.
 3. Open `vas-swarm-dy1` and `/tmp/vaos-full-3.log`.
-4. Make `mix test` terminate cleanly again.
+4. Fix the remaining SwarmMode full-suite failure and make `mix test` terminate cleanly again.
 5. Re-run `mix test`.
 6. Re-open `vas-swarm-942` and re-run the live trace above.
 7. If grounding is still thin, open the next retrieval-breadth issue.
