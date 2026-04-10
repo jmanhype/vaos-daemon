@@ -7,6 +7,9 @@ defmodule Daemon.Investigation.ClaimFamilyTest do
     assert ClaimFamily.normalize_topic("cross-check whether the earth is flat") ==
              "the earth is flat"
 
+    assert ClaimFamily.normalize_topic("probe whether smoking causes lung cancer") ==
+             "smoking causes lung cancer"
+
     assert ClaimFamily.normalize_topic("map the evidence on whether the earth is flat") ==
              "the earth is flat"
 

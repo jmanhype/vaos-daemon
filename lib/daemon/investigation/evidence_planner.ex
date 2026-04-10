@@ -477,6 +477,8 @@ defmodule Daemon.Investigation.EvidencePlanner do
       :status,
       :reason,
       :source,
+      :fallback_from,
+      :fallback,
       :query_label,
       :query,
       :raw_papers,

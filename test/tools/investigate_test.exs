@@ -657,7 +657,8 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
             ],
             evidence_plan_probe_selection: %{
               status: :ok,
-              source: :openalex,
+              source: :multi_source,
+              sources: [:openalex, :semantic_scholar],
               shortlisted_count: 1
             }
           },
@@ -709,6 +710,7 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert trace.planning.selected.mode == :measurement
     assert hd(trace.planning.candidates).semantic_seed == "earth curvature measurement"
     assert trace.planning.probe_selection.status == :ok
+    assert trace.planning.probe_selection.source == :multi_source
     assert trace.planning.selected.probe.score == 9.2
     assert trace.prompts.for_system.preview == "FOR SYSTEM PROMPT"
     assert trace.prompts.against_user.preview == "AGAINST USER PROMPT"
@@ -1077,6 +1079,9 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert Investigate.normalized_search_topic("examine claims that the earth is flat") ==
              "the earth is flat"
 
+    assert Investigate.normalized_search_topic("probe whether smoking causes lung cancer") ==
+             "smoking causes lung cancer"
+
     assert Investigate.normalized_search_topic("Investigate whether creatine helps cognition") ==
              "creatine helps cognition"
 
@@ -1162,6 +1167,18 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert Enum.any?(queries, &String.contains?(&1, "case-control study"))
     refute Enum.any?(queries, &String.contains?(&1, "placebo controlled trial"))
     refute Enum.any?(queries, &String.contains?(&1, "randomized controlled trial"))
+  end
+
+  test "search_query_plan preserves health-effect planning for wrapped manual prompts" do
+    plan =
+      Investigate.search_query_plan(
+        "probe whether smoking causes lung cancer",
+        ["smoking", "lung", "cancer"]
+      )
+
+    assert plan.normalized_topic == "smoking causes lung cancer"
+    assert plan.claim_family == :health_effect
+    assert plan.evidence_plan.mode == :observational
   end
 
   test "apply_search_plan_probe_results selects only from the probed shortlist" do

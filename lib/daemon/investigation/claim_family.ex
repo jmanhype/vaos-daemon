@@ -153,8 +153,6 @@ defmodule Daemon.Investigation.ClaimFamily do
     end
   end
 
-  def evidence_profile(_topic, _keywords, _terms), do: nil
-
   @doc false
   def search_queries(topic, keywords, terms, evidence_profile) do
     keyword_topic = keyword_query_topic(topic, keywords)
@@ -369,9 +367,10 @@ defmodule Daemon.Investigation.ClaimFamily do
       ~r/^\s*map\s+the\s+evidence\s+(?:on|for)\s+(?:whether|if)\s+/i,
       ~r/^\s*map\s+the\s+evidence\s+(?:on|for)\s+/i,
       ~r/^\s*(?:cross[\s-]*check|re[\s-]*evaluate|triage)\s+/i,
-      ~r/^\s*(?:investigate|review|examine|assess|evaluate|analy[sz]e|test|check)\s+(?:the\s+)?claims?\s+that\s+/i,
-      ~r/^\s*(?:investigate|review|examine|assess|evaluate|analy[sz]e|test|check)\s+(?:whether|if)\s+/i,
-      ~r/^\s*(?:investigate|review|examine|assess|evaluate|analy[sz]e|test|check)\s+/i
+      ~r/^\s*(?:investigate|review|examine|assess|evaluate|analy[sz]e|test|check|probe|verify|determine|establish)\s+(?:the\s+)?claims?\s+that\s+/i,
+      ~r/^\s*(?:investigate|review|examine|assess|evaluate|analy[sz]e|test|check|probe|verify|determine|establish)\s+(?:whether|if)\s+/i,
+      ~r/^\s*(?:find\s+out|figure\s+out)\s+(?:whether|if)\s+/i,
+      ~r/^\s*(?:investigate|review|examine|assess|evaluate|analy[sz]e|test|check|probe|verify|determine|establish)\s+/i
     ]
   end
 end

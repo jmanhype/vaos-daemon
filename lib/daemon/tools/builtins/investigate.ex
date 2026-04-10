@@ -2531,9 +2531,6 @@ Known failure patterns to avoid:
 
   def semantic_scholar_terminal_error?(_), do: false
 
-  defp search_all_papers(topic, keywords, strategy),
-    do: search_all_papers(topic, keywords, strategy, [])
-
   defp search_all_papers(topic, keywords, strategy, opts) do
     http_fn = literature_http_fn()
     plan = search_query_plan(topic, keywords)
@@ -2853,12 +2850,24 @@ Known failure patterns to avoid:
   end
 
   defp put_probe_selection_metadata(plan, status, reason, probe_results) do
+    probe_sources =
+      probe_results
+      |> Enum.map(&Map.get(&1, :source))
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+
     probe_selection = %{
       status: status,
       reason: reason,
       candidate_count: length(Map.get(plan, :evidence_plan_candidate_plans, [])),
       shortlisted_count: length(probe_results),
-      source: :openalex
+      source:
+        case probe_sources do
+          [source] -> source
+          [] -> :openalex
+          _ -> :multi_source
+        end,
+      sources: probe_sources
     }
 
     plan
@@ -2871,40 +2880,176 @@ Known failure patterns to avoid:
 
   defp probe_search_plan_candidate(candidate, topic, strategy, http_fn) do
     probe_limit = min(max(strategy.per_query_limit, 1), 3)
+    openalex_result = run_openalex_probe(candidate, topic, probe_limit, http_fn)
 
-    case List.first(candidate.oa_queries || []) do
-      {label, query, opts} ->
-        search_opts = Keyword.merge([limit: probe_limit], opts)
-
-        case Literature.search_openalex(query, http_fn, search_opts) do
-          {:ok, papers} ->
-            circuit_record_success(:openalex)
-            build_probe_result(candidate, topic, label, query, papers)
-
-          {:error, reason} ->
-            circuit_record_failure(:openalex)
-
-            %{
-              mode: candidate.mode,
-              status: :error,
-              source: :openalex,
-              query_label: label,
-              query: query,
-              reason: inspect(reason)
-            }
-        end
-
-      nil ->
-        %{
-          mode: candidate.mode,
-          status: :skipped,
-          source: :openalex,
-          reason: "no_openalex_query"
-        }
+    if strong_probe_result?(openalex_result) do
+      openalex_result
+    else
+      fallback_result = run_semantic_scholar_probe(candidate, topic, probe_limit, http_fn)
+      choose_probe_result(openalex_result, fallback_result)
     end
   end
 
-  defp build_probe_result(candidate, topic, query_label, query, papers) do
+  defp run_openalex_probe(candidate, topic, probe_limit, http_fn) do
+    if circuit_check(:openalex) != :ok do
+      %{
+        mode: candidate.mode,
+        status: :skipped,
+        source: :openalex,
+        reason: "openalex_unavailable"
+      }
+    else
+      case select_probe_query(candidate.oa_queries || []) do
+        {label, query, opts} ->
+          search_opts = Keyword.merge([limit: probe_limit], opts)
+
+          case Literature.search_openalex(query, http_fn, search_opts) do
+            {:ok, papers} ->
+              circuit_record_success(:openalex)
+              build_probe_result(:openalex, candidate, topic, label, query, papers)
+
+            {:error, reason} ->
+              circuit_record_failure(:openalex)
+
+              %{
+                mode: candidate.mode,
+                status: :error,
+                source: :openalex,
+                query_label: label,
+                query: query,
+                reason: inspect(reason)
+              }
+          end
+
+        nil ->
+          %{
+            mode: candidate.mode,
+            status: :skipped,
+            source: :openalex,
+            reason: "no_openalex_query"
+          }
+      end
+    end
+  end
+
+  defp run_semantic_scholar_probe(candidate, topic, probe_limit, http_fn) do
+    if circuit_check(:semantic_scholar) != :ok do
+      %{
+        mode: candidate.mode,
+        status: :skipped,
+        source: :semantic_scholar,
+        reason: "semantic_scholar_unavailable"
+      }
+    else
+      case select_probe_query(candidate.ss_queries || []) do
+        {label, query, opts} ->
+          search_opts =
+            Keyword.merge(
+              [
+                limit: probe_limit,
+                api_key: Application.get_env(:daemon, :semantic_scholar_api_key)
+              ],
+              opts
+            )
+
+          case Literature.search_semantic_scholar(query, http_fn, search_opts) do
+            {:ok, papers} ->
+              circuit_record_success(:semantic_scholar)
+              build_probe_result(:semantic_scholar, candidate, topic, label, query, papers)
+
+            {:error, {:semantic_scholar_failed, reason}} ->
+              if semantic_scholar_terminal_error?(reason) do
+                circuit_trip(:semantic_scholar, inspect(reason))
+              else
+                circuit_record_failure(:semantic_scholar)
+              end
+
+              %{
+                mode: candidate.mode,
+                status: :error,
+                source: :semantic_scholar,
+                query_label: label,
+                query: query,
+                reason: inspect(reason)
+              }
+
+            {:error, reason} ->
+              circuit_record_failure(:semantic_scholar)
+
+              %{
+                mode: candidate.mode,
+                status: :error,
+                source: :semantic_scholar,
+                query_label: label,
+                query: query,
+                reason: inspect(reason)
+              }
+          end
+
+        nil ->
+          %{
+            mode: candidate.mode,
+            status: :skipped,
+            source: :semantic_scholar,
+            reason: "no_semantic_scholar_query"
+          }
+      end
+    end
+  end
+
+  defp select_probe_query(queries) when is_list(queries) do
+    Enum.find(queries, fn {label, _query, _opts} -> label != :topic end) || List.first(queries)
+  end
+
+  defp strong_probe_result?(%{
+         status: :ok,
+         relevant_papers: relevant,
+         groundable_papers: groundable
+       })
+       when relevant > 0 and groundable > 0,
+       do: true
+
+  defp strong_probe_result?(_result), do: false
+
+  defp choose_probe_result(primary_result, fallback_result) do
+    cond do
+      strong_probe_result?(fallback_result) ->
+        Map.put(fallback_result, :fallback_from, Map.get(primary_result, :source))
+
+      probe_result_score(fallback_result) > probe_result_score(primary_result) ->
+        Map.put(fallback_result, :fallback_from, Map.get(primary_result, :source))
+
+      true ->
+        case fallback_result do
+          %{status: status} when status in [:ok, :error] ->
+            Map.put(primary_result, :fallback, summarize_probe_attempt(fallback_result))
+
+          _ ->
+            primary_result
+        end
+    end
+  end
+
+  defp probe_result_score(%{status: :ok, score: score}) when is_number(score), do: score
+  defp probe_result_score(_result), do: -1.0
+
+  defp summarize_probe_attempt(result) when is_map(result) do
+    result
+    |> Map.take([
+      :source,
+      :status,
+      :reason,
+      :query_label,
+      :query,
+      :score,
+      :relevant_papers,
+      :groundable_papers
+    ])
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Map.new()
+  end
+
+  defp build_probe_result(source, candidate, topic, query_label, query, papers) do
     atom_papers = Enum.map(papers, &ensure_atom_keys/1)
 
     reranked =
@@ -2952,7 +3097,7 @@ Known failure patterns to avoid:
     %{
       mode: candidate.mode,
       status: :ok,
-      source: :openalex,
+      source: source,
       query_label: query_label,
       query: query,
       raw_papers: length(atom_papers),
