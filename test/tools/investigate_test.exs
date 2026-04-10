@@ -735,6 +735,64 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
              )
   end
 
+  test "classify_timeout_evidence preserves grounded direct trial support during verification timeout" do
+    supporting = [
+      %{
+        summary:
+          "[Paper 1] provides direct experimental evidence that acute caffeine supplementation at 6 mg/kg body mass significantly improves cycling time trial performance in trained cyclists.",
+        verification_claim:
+          "acute caffeine supplementation at 6 mg/kg body mass significantly improves cycling time trial performance in trained cyclists.",
+        score: 2.2,
+        verified: true,
+        verification: "verified",
+        paper_type: :study,
+        citation_count: 165,
+        source_type: :sourced,
+        paper_ref: 1
+      }
+    ]
+
+    opposing = [
+      %{
+        summary:
+          "[Paper 1] found that blood lactate and ratings of perceived exertion were not different between trials and tertiles.",
+        verification_claim:
+          "blood lactate and ratings of perceived exertion were not different between trials and tertiles.",
+        score: 0.0,
+        verified: false,
+        verification: "timeout",
+        paper_type: :other,
+        citation_count: 165,
+        source_type: :sourced,
+        paper_ref: 1
+      }
+    ]
+
+    all_papers = [
+      %{
+        "title" =>
+          "Dispelling the myth that habitual caffeine consumption influences the performance response to acute caffeine supplementation",
+        "year" => 2017,
+        "citation_count" => 165
+      }
+    ]
+
+    {classified_supporting, classified_opposing} =
+      Investigate.classify_timeout_evidence(
+        supporting,
+        opposing,
+        all_papers,
+        Strategy.default(),
+        %{profile: :clinical_intervention}
+      )
+
+    assert [%{evidence_store: :grounded, grounding_role: :direct, verified: true}] =
+             classified_supporting
+
+    assert [%{evidence_store: :belief, verified: false, verification: "timeout"}] =
+             classified_opposing
+  end
+
   test "evidence_store_for keeps reasoning items in belief even when verification is positive" do
     store =
       Investigate.evidence_store_for(
@@ -1507,6 +1565,19 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
              "creatine supplementation during six weeks of resistance training produced significant increases in leg press 1-RM, chest press 1-RM, and total body strength in physically active young adults"
 
     refute normalized =~ "placebo group showed no significant changes"
+  end
+
+  test "verification_claim_text trims trailing trial stats from caffeine support claims" do
+    summary =
+      "A double-blind, crossover, counterbalanced study demonstrated that acute caffeine supplementation at 6 mg/kg body mass significantly improved cycling time trial performance in 40 trained male endurance cyclists compared to both placebo and no-supplement conditions (29.92 ± 2.18 min vs. 30.81 ± 2.67 min and 31.14 ± 2.71 min, respectively; P = 0.0002) [Paper 1]. This approximately 53-second improvement over placebo represents a practically meaningful enhancement in competitive cycling contexts."
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized ==
+             "acute caffeine supplementation at 6 mg/kg body mass significantly improved cycling time trial performance in 40 trained male endurance cyclists compared to both placebo and no-supplement conditions."
+
+    refute normalized =~ "29.92"
+    refute normalized =~ "P = 0.0002"
   end
 
   test "normalized_search_topic strips wrapper phrasing from manual eval prompts" do

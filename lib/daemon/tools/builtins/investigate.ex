@@ -1495,6 +1495,28 @@ defmodule Daemon.Tools.Builtins.Investigate do
     }
   end
 
+  @doc false
+  def classify_timeout_evidence(
+        verified_supporting,
+        verified_opposing,
+        all_papers,
+        %Strategy{} = strategy,
+        search_plan \\ %{}
+      )
+      when is_list(verified_supporting) and is_list(verified_opposing) and is_list(all_papers) do
+    paper_map =
+      all_papers
+      |> Enum.with_index(1)
+      |> Map.new(fn {paper, index} -> {index, paper} end)
+
+    classification_context = classification_context(search_plan)
+
+    {
+      classify_evidence_store(verified_supporting, paper_map, strategy, classification_context),
+      classify_evidence_store(verified_opposing, paper_map, strategy, classification_context)
+    }
+  end
+
   defp put_evidence_plan_metadata(metadata, %{evidence_plan: evidence_plan} = search_plan)
        when is_map(metadata) and is_map(evidence_plan) do
     metadata
@@ -1622,11 +1644,20 @@ defmodule Daemon.Tools.Builtins.Investigate do
          parsed_supporting \\ [],
          parsed_opposing \\ []
        ) do
+    {classified_supporting, classified_opposing} =
+      classify_timeout_evidence(
+        verified_supporting,
+        verified_opposing,
+        all_papers,
+        strategy,
+        Map.get(trace_context, :search_plan, %{})
+      )
+
     json_metadata =
       partial_completion_metadata(
         topic,
-        verified_supporting,
-        verified_opposing,
+        classified_supporting,
+        classified_opposing,
         all_papers,
         source_counts,
         strategy,
@@ -1642,8 +1673,8 @@ defmodule Daemon.Tools.Builtins.Investigate do
       build_boundary_trace(trace_context, %{
         parsed_supporting: parsed_supporting,
         parsed_opposing: parsed_opposing,
-        verified_supporting: verified_supporting,
-        verified_opposing: verified_opposing,
+        verified_supporting: classified_supporting,
+        verified_opposing: classified_opposing,
         timings: timings,
         verification_stats: verification_stats,
         final_metadata: json_metadata
@@ -4789,31 +4820,34 @@ defmodule Daemon.Tools.Builtins.Investigate do
 
   @doc false
   def verification_claim_text(summary) when is_binary(summary) do
-    summary
-    |> strip_evidence_prefix()
-    |> normalize_verification_whitespace()
-    |> prefer_followup_reported_sentence()
-    |> first_citation_sentence()
-    |> trim_after_other_paper_ref()
-    |> trim_after_contrastive_clause()
-    |> prefer_quote_after_inline_paper_definition()
-    |> prefer_quote_before_followup_reporting()
-    |> trim_after_last_quote()
-    |> strip_verification_markup()
-    |> strip_leading_attribution_clause()
-    |> strip_leading_reporting_clause()
-    |> strip_subject_reporting_clause()
-    |> strip_abstract_reporting_subject()
-    |> strip_leading_context_clause()
-    |> rewrite_reporting_fragments()
-    |> trim_trailing_inference_clause()
-    |> prefer_complete_quote_after_ellipsis()
-    |> strip_drawback_wrapper_before_quote()
-    |> prefer_reported_subclause()
-    |> prefer_definition_quote()
-    |> prefer_subject_plus_quoted_predicate()
-    |> ClaimFamily.normalize_verification_claim()
-    |> String.trim()
+    normalized =
+      summary
+      |> strip_evidence_prefix()
+      |> normalize_verification_whitespace()
+      |> prefer_followup_reported_sentence()
+      |> first_citation_sentence()
+      |> trim_after_other_paper_ref()
+      |> trim_after_contrastive_clause()
+      |> prefer_quote_after_inline_paper_definition()
+      |> prefer_quote_before_followup_reporting()
+      |> trim_after_last_quote()
+      |> strip_verification_markup()
+      |> strip_leading_attribution_clause()
+      |> strip_leading_reporting_clause()
+      |> strip_subject_reporting_clause()
+      |> strip_abstract_reporting_subject()
+      |> strip_leading_context_clause()
+      |> rewrite_reporting_fragments()
+      |> trim_trailing_inference_clause()
+      |> prefer_complete_quote_after_ellipsis()
+      |> strip_drawback_wrapper_before_quote()
+      |> prefer_reported_subclause()
+      |> prefer_definition_quote()
+      |> prefer_subject_plus_quoted_predicate()
+      |> ClaimFamily.normalize_verification_claim()
+      |> String.trim()
+
+    __MODULE__.trim_trailing_trial_stats_parenthetical(normalized)
   end
 
   def verification_claim_text(nil), do: ""
@@ -4826,6 +4860,31 @@ defmodule Daemon.Tools.Builtins.Investigate do
       [leading, _contrast] ->
         candidate = String.trim(leading)
         if candidate == "", do: text, else: candidate
+
+      _ ->
+        text
+    end
+  end
+
+  @doc false
+  def trim_trailing_trial_stats_parenthetical(text) when is_binary(text) do
+    case Regex.named_captures(
+           ~r/^(?<leading>.+?)\s*\((?<stats>[^)]*)\)\.?$/u,
+           text
+         ) do
+      %{"leading" => leading, "stats" => stats} when byte_size(leading) > 0 ->
+        if Regex.match?(
+             ~r/\b(significant(?:ly)?|improv(?:e|ed|ement)|increas(?:e|ed)|reduc(?:e|ed)|decreas(?:e|ed)|enhanc(?:e|ed))\b/i,
+             leading
+           ) and
+             Regex.match?(~r/(?:\bP\s*[<=>]|vs\.?|respectively|±)/iu, stats) do
+          leading
+          |> String.trim()
+          |> String.trim_trailing(",")
+          |> Kernel.<>(".")
+        else
+          text
+        end
 
       _ ->
         text
