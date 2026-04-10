@@ -71,3 +71,17 @@ Before ending a session:
 ## Current Rule
 
 Until Roberto is content, the program continues from the next first-order bottleneck. No celebratory stopping points.
+
+## Entry Points
+
+Repo-root control files mirror this stack for long-running Codex sessions:
+- [SPEC.md](/Users/speed/vaos-daemon/SPEC.md)
+- [PLAN.md](/Users/speed/vaos-daemon/PLAN.md)
+- [IMPLEMENT.md](/Users/speed/vaos-daemon/IMPLEMENT.md)
+- [STATUS.md](/Users/speed/vaos-daemon/STATUS.md)
+
+Resume command:
+
+```bash
+mix osa.roberto.resume
+```

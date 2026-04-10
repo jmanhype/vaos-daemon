@@ -77,9 +77,10 @@ Shortest version:
 On the next session:
 
 1. Read this file.
-2. Open `vas-swarm-942`.
-3. Open the trace above.
-4. Inspect how probe success is discarded before full retrieval settles.
-5. Fix the narrowest generic layer.
-6. Re-run live validation.
-7. Update this file, close/open issues, and push.
+2. Run `mix osa.roberto.resume`.
+3. Open `vas-swarm-942`.
+4. Open the trace above.
+5. Inspect how probe success is discarded before full retrieval settles.
+6. Fix the narrowest generic layer.
+7. Re-run live validation.
+8. Update this file, close/open issues, and push.
