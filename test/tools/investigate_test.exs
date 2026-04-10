@@ -1876,6 +1876,24 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert plan.evidence_plan.mode == :randomized_intervention
   end
 
+  test "search_query_plan routes administration-style outcome claims to clinical intervention" do
+    plan =
+      Investigate.search_query_plan(
+        "determine whether acute caffeine ingestion enhances cycling time-trial outcomes in trained cyclists and triathletes"
+      )
+
+    assert plan.family_profile == :clinical_intervention
+    assert plan.profile == :clinical_intervention
+    assert plan.claim_family == :clinical_intervention
+    assert plan.evidence_plan.mode == :randomized_intervention
+
+    queries =
+      Enum.map(plan.ss_queries ++ plan.oa_queries, fn {_label, query, _opts} -> query end)
+
+    assert Enum.any?(queries, &String.contains?(&1, "cycling time-trial performance"))
+    assert Enum.any?(plan.oa_queries, fn {label, _query, _opts} -> label == :performance_placebo end)
+  end
+
   test "search_query_plan drops stem-duplicate keywords and keeps specific intervention outcomes" do
     plan =
       Investigate.search_query_plan(

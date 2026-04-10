@@ -39,7 +39,13 @@ defmodule Daemon.Investigation.EvidencePlanner do
   @measurement_terms ~w(measurement measurements observe observed observation observations physical empirical curvature geodesy gravity orbit orbital satellite surveying)
   @intervention_terms ~w(intervention interventions treatment treatments therapy therapies supplement supplements supplementation placebo randomized randomised trial trials drug drugs dose dosing medication medications)
   @administration_terms ~w(intake ingestion ingest ingested consume consumes consumed consuming administration administered administering)
-  @clinical_outcome_terms ~w(strength muscular endurance performance sleep insomnia recovery cognition cognitive memory pain fatigue mood anxiety depression function functional mobility balance symptoms symptom quality wellbeing well-being blood pressure glucose cholesterol weight bmi)
+  @performance_context_terms ~w(endurance performance time-trial cycling cyclist cyclists triathlon triathlete triathletes sprint sprinting aerobic anaerobic race racing competition competitive athletic athletics sport sports exercise exercising pace pacing power output)
+  @clinical_outcome_terms ~w(strength muscular endurance performance sleep insomnia recovery
+    cognition cognitive memory pain fatigue mood anxiety depression function functional
+    mobility balance symptoms symptom quality wellbeing well-being blood pressure glucose
+    cholesterol weight bmi outcome outcomes result results race racing competition
+    competitive athletic athletics sport sports exercise exercising time-trial pace pacing
+    power output)
   @health_effect_terms ~w(cause causes caused causing risk risks associated association linked links smoking smoker smokers vaccine vaccines autism cancer disease diseases mortality incidence prevalence outcome outcomes)
 
   @doc false
@@ -198,6 +204,21 @@ defmodule Daemon.Investigation.EvidencePlanner do
          _claim_family,
          evidence_profile
        ) do
+    performance_keyword_topic = performance_query_topic(topic, keyword_topic)
+
+    performance_queries =
+      case performance_keyword_topic do
+        nil ->
+          []
+
+        expanded_topic ->
+          [
+            {:performance_placebo, "#{expanded_topic} placebo controlled trial", []},
+            {:performance_rct, "randomized controlled trial #{expanded_topic}", []},
+            {:performance_reviews, "systematic review #{expanded_topic}", @review_opts}
+          ]
+      end
+
     %{
       mode: :randomized_intervention,
       profile: :clinical_intervention,
@@ -206,20 +227,28 @@ defmodule Daemon.Investigation.EvidencePlanner do
       selection_score: 0.0,
       rationale: "favor trial and placebo evidence",
       semantic_seed: keyword_topic,
-      ss_queries: [
-        {:topic, topic, []},
-        {:rct, "randomized controlled trial #{keyword_topic}", []},
-        {:placebo, "#{keyword_topic} placebo controlled trial", []},
-        {:reviews, "systematic review #{keyword_topic}", @review_opts}
-      ],
-      oa_queries: [
-        {:topic, topic, []},
-        {:placebo, "#{keyword_topic} placebo controlled trial", []},
-        {:rct, "randomized controlled trial #{keyword_topic}", []},
-        {:reviews, "systematic review #{keyword_topic}", @review_opts},
-        {:meta_analysis, "meta-analysis #{keyword_topic}", @review_opts},
-        {:guideline, "clinical guideline #{keyword_topic}", []}
-      ],
+      ss_queries:
+        [
+          {:topic, topic, []}
+        ] ++
+          performance_queries ++
+          [
+            {:rct, "randomized controlled trial #{keyword_topic}", []},
+            {:placebo, "#{keyword_topic} placebo controlled trial", []},
+            {:reviews, "systematic review #{keyword_topic}", @review_opts}
+          ],
+      oa_queries:
+        [
+          {:topic, topic, []}
+        ] ++
+          performance_queries ++
+          [
+            {:placebo, "#{keyword_topic} placebo controlled trial", []},
+            {:rct, "randomized controlled trial #{keyword_topic}", []},
+            {:reviews, "systematic review #{keyword_topic}", @review_opts},
+            {:meta_analysis, "meta-analysis #{keyword_topic}", @review_opts},
+            {:guideline, "clinical guideline #{keyword_topic}", []}
+          ],
       evidence_profile: evidence_profile,
       probe: nil
     }
@@ -514,6 +543,39 @@ defmodule Daemon.Investigation.EvidencePlanner do
       _ -> Enum.join(keywords, " ")
     end
   end
+
+  defp performance_query_topic(topic, keyword_topic)
+       when is_binary(topic) and is_binary(keyword_topic) do
+    cond do
+      String.match?(keyword_topic, ~r/\bperformance\b/i) ->
+        nil
+
+      not performance_context_topic?(topic <> " " <> keyword_topic) ->
+        nil
+
+      not String.match?(keyword_topic, ~r/\b(outcome|outcomes|result|results)\b/i) ->
+        nil
+
+      true ->
+        keyword_topic
+        |> String.replace(~r/\b(outcome|outcomes|result|results)\b/i, "performance")
+        |> String.replace(~r/\s+/, " ")
+        |> String.trim()
+    end
+  end
+
+  defp performance_query_topic(_topic, _keyword_topic), do: nil
+
+  defp performance_context_topic?(text) when is_binary(text) do
+    text
+    |> String.downcase()
+    |> String.replace(~r/[^a-z0-9\s\-]/, " ")
+    |> String.split(~r/\s+/, trim: true)
+    |> term_hits(@performance_context_terms)
+    |> Kernel.>(0)
+  end
+
+  defp performance_context_topic?(_text), do: false
 
   defp summarize_probe(nil), do: nil
 

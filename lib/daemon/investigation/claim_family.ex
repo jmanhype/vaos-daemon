@@ -22,7 +22,9 @@ defmodule Daemon.Investigation.ClaimFamily do
   @clinical_outcome_terms ~w(strength muscular endurance performance sleep insomnia recovery
     cognition cognitive memory pain fatigue mood anxiety depression function functional
     mobility balance symptoms symptom quality wellbeing well-being blood pressure glucose
-    cholesterol weight bmi)
+    cholesterol weight bmi outcome outcomes result results race racing competition
+    competitive athletic athletics sport sports exercise exercising time-trial pace pacing
+    power output)
   @health_claim_terms ~w(health disease diseases disorder disorders symptom symptoms
     cancer autism vaccine vaccines smoking smoker smokers lung lungs muscular strength
     training resistance cognition mortality survival risk risks pain pains)

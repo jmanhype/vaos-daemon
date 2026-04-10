@@ -81,6 +81,39 @@ defmodule Daemon.Investigation.EvidencePlannerTest do
     assert planner.selected.profile == :clinical_intervention
   end
 
+  test "selects randomized-intervention route for administration-style outcome claims" do
+    topic =
+      "acute caffeine ingestion enhances cycling time-trial outcomes in trained cyclists and triathletes"
+
+    keywords = ["acute", "caffeine", "ingestion", "cycling", "time-trial", "outcomes"]
+
+    terms = [
+      "acute",
+      "caffeine",
+      "ingestion",
+      "cycling",
+      "time-trial",
+      "outcomes",
+      "trained",
+      "cyclists",
+      "triathletes"
+    ]
+
+    claim_family = ClaimFamily.match(topic, keywords, terms)
+
+    planner = EvidencePlanner.plan(topic, keywords, terms, claim_family, nil)
+
+    assert planner.selected.mode == :randomized_intervention
+    assert planner.selected.profile == :clinical_intervention
+
+    query_labels = Enum.map(planner.selected.oa_queries, &elem(&1, 0))
+    queries = Enum.map(planner.selected.oa_queries ++ planner.selected.ss_queries, &elem(&1, 1))
+
+    assert :performance_placebo in query_labels
+    assert :performance_rct in query_labels
+    assert Enum.any?(queries, &String.contains?(&1, "cycling time-trial performance"))
+  end
+
   test "randomized-intervention candidates prioritize direct trial probes before reviews" do
     topic = "acute caffeine supplementation improves endurance performance in trained cyclists"
     keywords = ["acute", "caffeine", "supplementation", "endurance", "performance"]
