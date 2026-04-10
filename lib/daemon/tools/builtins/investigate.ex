@@ -1961,25 +1961,32 @@ defmodule Daemon.Tools.Builtins.Investigate do
 
   # -- Citation Verification + Paper Type Classification ------------------
 
-  defp verify_citations(evidence_list, paper_map, prompts) do
+  @doc false
+  def verify_citations(evidence_list, paper_map, prompts) do
     # Split into items that need LLM verification and those that don't
     {need_llm, no_llm} =
       Enum.split_with(evidence_list, fn ev ->
-        match?({:ok, _}, verification_ref_status(ev.summary, paper_map))
+        llm_verification_candidate?(ev, paper_map)
       end)
 
     # Handle non-LLM items immediately
     no_llm_verified =
       Enum.map(no_llm, fn ev ->
-        case verification_ref_status(ev.summary, paper_map) do
-          :no_citation ->
+        case Map.get(ev, :source_type) do
+          type when type in [:sourced, "sourced"] ->
+            case verification_ref_status(ev.summary, paper_map) do
+              :no_citation ->
+                build_verified_evidence(ev, :no_citation, :reasoning, 0)
+
+              :invalid_ref ->
+                build_verified_evidence(ev, :invalid_ref, :other, 0)
+
+              :multiple_refs ->
+                build_verified_evidence(ev, :multiple_refs, :other, 0)
+            end
+
+          _ ->
             build_verified_evidence(ev, :no_citation, :reasoning, 0)
-
-          :invalid_ref ->
-            build_verified_evidence(ev, :invalid_ref, :other, 0)
-
-          :multiple_refs ->
-            build_verified_evidence(ev, :multiple_refs, :other, 0)
         end
       end)
 
@@ -2074,6 +2081,18 @@ defmodule Daemon.Tools.Builtins.Investigate do
   end
 
   def verification_ref_status(_summary, _paper_map), do: :no_citation
+
+  defp llm_verification_candidate?(ev, paper_map) when is_map(ev) and is_map(paper_map) do
+    case Map.get(ev, :source_type) do
+      type when type in [:sourced, "sourced"] ->
+        match?({:ok, _}, verification_ref_status(Map.get(ev, :summary, ""), paper_map))
+
+      _ ->
+        false
+    end
+  end
+
+  defp llm_verification_candidate?(_, _), do: false
 
   defp paper_refs(summary) when is_binary(summary) do
     ~r/\[Paper\s+(\d+)\]|\bPaper\s+(\d+)\b/i
@@ -5499,6 +5518,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
       end
 
     opts = [
+      allow_fallback: false,
       temperature: 0.0,
       max_tokens: max_tokens,
       receive_timeout: verification_request_timeout_ms()

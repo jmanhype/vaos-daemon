@@ -136,6 +136,7 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
 
     opts = Investigate.verification_request_opts("glm-4.5-flash")
 
+    assert opts[:allow_fallback] == false
     assert opts[:temperature] == 0.0
     assert opts[:model] == "glm-4.5-flash"
     assert opts[:max_tokens] == 256
@@ -791,6 +792,43 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
 
     assert [%{evidence_store: :belief, verified: false, verification: "timeout"}] =
              classified_opposing
+  end
+
+  test "verify_citations skips LLM verification for reasoning items even when they cite a paper" do
+    evidence = [
+      %{
+        summary:
+          "[Paper 1] may not generalize to real-world competition because race-day variability could outweigh the measured effect size.",
+        score: 0.0,
+        source_type: :reasoning,
+        verified: false,
+        verification: "no_citation",
+        paper_type: :other,
+        citation_count: 0
+      }
+    ]
+
+    paper_map = %{
+      1 => %{
+        "title" => "Caffeine paper",
+        "abstract" => "Acute caffeine improved time trial performance.",
+        "citation_count" => 12
+      }
+    }
+
+    {verified, stats} = Investigate.verify_citations(evidence, paper_map, %{})
+
+    assert [
+             %{
+               source_type: :reasoning,
+               verification: "no_citation",
+               verified: false
+             }
+           ] = verified
+
+    assert stats.total_items == 1
+    assert stats.llm_items == 0
+    assert stats.no_llm_items == 1
   end
 
   test "evidence_store_for keeps reasoning items in belief even when verification is positive" do
