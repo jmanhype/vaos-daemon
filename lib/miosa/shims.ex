@@ -1345,6 +1345,8 @@ defmodule MiosaProviders.Anthropic do
   defdelegate extract_usage(response), to: Daemon.Providers.Anthropic
   defdelegate maybe_add_thinking(body, thinking), to: Daemon.Providers.Anthropic
   defdelegate build_headers(api_key, thinking), to: Daemon.Providers.Anthropic
+  defdelegate normalize_base_url(base_url), to: Daemon.Providers.Anthropic
+  defdelegate response_error(body), to: Daemon.Providers.Anthropic
   defdelegate available_models(), to: Daemon.Providers.Anthropic
   defdelegate default_model(), to: Daemon.Providers.Anthropic
 end

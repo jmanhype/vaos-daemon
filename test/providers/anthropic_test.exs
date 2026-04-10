@@ -288,6 +288,43 @@ defmodule MiosaProviders.AnthropicTest do
     end
   end
 
+  describe "normalize_base_url/1" do
+    test "appends /v1 for z.ai anthropic proxy roots" do
+      assert Anthropic.normalize_base_url("https://api.z.ai/api/anthropic") ==
+               "https://api.z.ai/api/anthropic/v1"
+
+      assert Anthropic.normalize_base_url("https://api.z.ai/api/anthropic/") ==
+               "https://api.z.ai/api/anthropic/v1"
+    end
+
+    test "does not rewrite already-versioned z.ai paths" do
+      assert Anthropic.normalize_base_url("https://api.z.ai/api/anthropic/v1") ==
+               "https://api.z.ai/api/anthropic/v1"
+    end
+
+    test "does not rewrite standard anthropic urls" do
+      assert Anthropic.normalize_base_url("https://api.anthropic.com/v1") ==
+               "https://api.anthropic.com/v1"
+    end
+  end
+
+  describe "response_error/1" do
+    test "extracts z.ai application-level errors from 200 responses" do
+      assert Anthropic.response_error(%{
+               "code" => 500,
+               "msg" => "404 NOT_FOUND",
+               "success" => false
+             }) == "404 NOT_FOUND"
+    end
+
+    test "returns nil for successful message responses" do
+      assert Anthropic.response_error(%{
+               "content" => [%{"type" => "text", "text" => "HELLO"}],
+               "type" => "message"
+             }) == nil
+    end
+  end
+
   # ---------------------------------------------------------------------------
   # maybe_add_thinking/2
   # ---------------------------------------------------------------------------

@@ -37,7 +37,9 @@ defmodule Daemon.Providers.Anthropic do
       Keyword.get(opts, :model) ||
         Application.get_env(:daemon, :anthropic_model, default_model())
 
-    base_url = Application.get_env(:daemon, :anthropic_url, @default_url)
+    base_url =
+      Application.get_env(:daemon, :anthropic_url, @default_url)
+      |> normalize_base_url()
 
     unless api_key do
       {:error, "ANTHROPIC_API_KEY not configured"}
@@ -110,14 +112,26 @@ defmodule Daemon.Providers.Anthropic do
              receive_timeout: timeout
            ) do
         {:ok, %{status: 200, body: resp}} ->
-          content = extract_content(resp)
-          tool_calls = extract_tool_calls(resp)
-          usage = extract_usage(resp)
-          thinking_blocks = extract_thinking(resp)
+          case response_error(resp) do
+            nil ->
+              content = extract_content(resp)
+              tool_calls = extract_tool_calls(resp)
+              usage = extract_usage(resp)
+              thinking_blocks = extract_thinking(resp)
 
-          result = %{content: content, tool_calls: tool_calls, usage: usage}
-          result = if thinking_blocks != [], do: Map.put(result, :thinking_blocks, thinking_blocks), else: result
-          {:ok, result}
+              result = %{content: content, tool_calls: tool_calls, usage: usage}
+
+              result =
+                if thinking_blocks != [],
+                  do: Map.put(result, :thinking_blocks, thinking_blocks),
+                  else: result
+
+              {:ok, result}
+
+            error_msg ->
+              Logger.warning("Anthropic returned application error: #{error_msg}")
+              {:error, "Anthropic returned application error: #{error_msg}"}
+          end
 
         {:ok, %{status: 429, headers: headers, body: resp_body}} ->
           retry_after = parse_retry_after(headers)
@@ -592,6 +606,23 @@ defmodule Daemon.Providers.Anthropic do
     end)
   end
 
+  @doc "Normalize Anthropic-compatible base URLs before appending /messages."
+  def normalize_base_url(base_url) when is_binary(base_url) do
+    normalized = String.trim_trailing(base_url, "/")
+
+    case URI.parse(normalized) do
+      %URI{host: "api.z.ai", path: "/api/anthropic"} = uri ->
+        uri
+        |> Map.put(:path, "/api/anthropic/v1")
+        |> URI.to_string()
+
+      _ ->
+        normalized
+    end
+  end
+
+  def normalize_base_url(base_url), do: base_url
+
   defp extract_content(%{"content" => blocks}) when is_list(blocks) do
     blocks
     |> Enum.filter(&(&1["type"] == "text"))
@@ -641,6 +672,13 @@ defmodule Daemon.Providers.Anthropic do
 
   def extract_usage(_), do: %{}
 
+  @doc "Return an application-level error message for successful HTTP responses, if present."
+  def response_error(%{"success" => false} = body), do: extract_error(body)
+  def response_error(%{"type" => "error"} = body), do: extract_error(body)
+  def response_error(_), do: nil
+
+  defp extract_error(%{"success" => false, "msg" => msg}) when is_binary(msg), do: msg
+  defp extract_error(%{"msg" => msg}) when is_binary(msg), do: msg
   defp extract_error(%{"error" => %{"message" => msg}}), do: msg
   defp extract_error(%{"error" => msg}) when is_binary(msg), do: msg
   defp extract_error(body), do: inspect(body)
