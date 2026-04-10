@@ -1173,7 +1173,8 @@ Known failure patterns to avoid:
               strength_display: ev.strength,
               source_quality: Map.get(ev, :source_quality, 0),
               source_type: ev.source_type,
-              evidence_store: Atom.to_string(Map.get(ev, :evidence_store, :unknown))
+              evidence_store: Atom.to_string(Map.get(ev, :evidence_store, :unknown)),
+              grounding_role: stringify_term(Map.get(ev, :grounding_role))
             }
           end),
         opposing:
@@ -1188,7 +1189,8 @@ Known failure patterns to avoid:
               strength_display: ev.strength,
               source_quality: Map.get(ev, :source_quality, 0),
               source_type: ev.source_type,
-              evidence_store: Atom.to_string(Map.get(ev, :evidence_store, :unknown))
+              evidence_store: Atom.to_string(Map.get(ev, :evidence_store, :unknown)),
+              grounding_role: stringify_term(Map.get(ev, :grounding_role))
             }
           end),
         papers_found: length(all_papers),
@@ -1511,27 +1513,27 @@ Known failure patterns to avoid:
     # Split into items that need LLM verification and those that don't
     {need_llm, no_llm} =
       Enum.split_with(evidence_list, fn ev ->
-        case extract_paper_ref(ev.summary) do
-          nil -> false
-          n -> Map.has_key?(paper_map, n)
-        end
+        match?({:ok, _}, verification_ref_status(ev.summary, paper_map))
       end)
 
     # Handle non-LLM items immediately
     no_llm_verified =
       Enum.map(no_llm, fn ev ->
-        case extract_paper_ref(ev.summary) do
-          nil ->
+        case verification_ref_status(ev.summary, paper_map) do
+          :no_citation ->
             build_verified_evidence(ev, :no_citation, :reasoning, 0)
 
-          _n ->
+          :invalid_ref ->
             build_verified_evidence(ev, :invalid_ref, :other, 0)
+
+          :multiple_refs ->
+            build_verified_evidence(ev, :multiple_refs, :other, 0)
         end
       end)
 
     verification_inputs =
       Enum.map(need_llm, fn ev ->
-        paper_num = extract_paper_ref(ev.summary)
+        {:ok, paper_num} = verification_ref_status(ev.summary, paper_map)
         paper = Map.fetch!(paper_map, paper_num)
 
         %{
@@ -1604,6 +1606,34 @@ Known failure patterns to avoid:
     end)
   end
 
+  @doc false
+  def verification_ref_status(summary, paper_map)
+      when is_binary(summary) and is_map(paper_map) do
+    case paper_refs(summary) do
+      [] ->
+        :no_citation
+
+      [paper_ref] ->
+        if Map.has_key?(paper_map, paper_ref), do: {:ok, paper_ref}, else: :invalid_ref
+
+      _multiple ->
+        :multiple_refs
+    end
+  end
+
+  def verification_ref_status(_summary, _paper_map), do: :no_citation
+
+  defp paper_refs(summary) when is_binary(summary) do
+    ~r/\[Paper\s+(\d+)\]|\bPaper\s+(\d+)\b/i
+    |> Regex.scan(summary, capture: :all_but_first)
+    |> Enum.flat_map(fn
+      [num] when is_binary(num) and num != "" -> [String.to_integer(num)]
+      [first, second] -> Enum.filter([first, second], &(&1 && &1 != "")) |> Enum.map(&String.to_integer/1)
+      _ -> []
+    end)
+    |> Enum.uniq()
+  end
+
   defp verify_single_citation(evidence, paper, prompts) do
     abstract = Map.get(paper, "abstract", "") || ""
     title = Map.get(paper, "title", "") || ""
@@ -1673,6 +1703,7 @@ Known failure patterns to avoid:
         value when value in [:verified, :partial, :unverified] -> value
         :no_citation -> :unverified
         :invalid_ref -> :unverified
+        :multiple_refs -> :unverified
         _ -> :unverified
       end
 
@@ -1680,6 +1711,7 @@ Known failure patterns to avoid:
       case verification do
         :no_citation -> 0.15
         :invalid_ref -> 0.0
+        :multiple_refs -> 0.0
         _ -> compute_evidence_score(verification_atom, paper_type, citation_count)
       end
 
@@ -1811,24 +1843,72 @@ Known failure patterns to avoid:
             end
         end
 
+      grounding_role = grounding_role_for(ev)
       store = evidence_store_for(ev, source_quality, strategy)
-      Map.merge(ev, %{source_quality: source_quality, evidence_store: store})
+      Map.merge(ev, %{
+        source_quality: source_quality,
+        evidence_store: store,
+        grounding_role: grounding_role
+      })
     end)
   end
 
   @doc false
   def evidence_store_for(ev, source_quality, %Strategy{} = strategy) when is_map(ev) do
-    case Map.get(ev, :source_type) do
-      :sourced ->
+    case grounding_role_for(ev) do
+      :direct ->
         SourceScoring.classify(Map.get(ev, :verification), source_quality, strategy)
 
-      "sourced" ->
-        SourceScoring.classify(Map.get(ev, :verification), source_quality, strategy)
-
-      _ ->
+      _other ->
         :belief
     end
   end
+
+  @doc false
+  def grounding_role_for(ev) when is_map(ev) do
+    summary =
+      ev
+      |> Map.get(:summary, "")
+      |> to_string()
+      |> String.downcase()
+
+    case Map.get(ev, :source_type) do
+      type when type in [:sourced, "sourced"] ->
+        cond do
+          caveat_claim?(summary) -> :caveat
+          indirect_proxy_claim?(summary) -> :indirect
+          true -> :direct
+        end
+
+      _ ->
+        :reasoning
+    end
+  end
+
+  def grounding_role_for(_ev), do: :reasoning
+
+  defp caveat_claim?(summary) when is_binary(summary) do
+    summary =~ ~r/\bsmall sample\b/i or
+      summary =~ ~r/\bsample sizes?\b/i or
+      summary =~ ~r/\bpilot study\b/i or
+      summary =~ ~r/\bmay not replicate\b/i or
+      summary =~ ~r/\bquestions about whether results would replicate\b/i or
+      summary =~ ~r/\bgeneraliz(?:e|able|ability)\b/i or
+      summary =~ ~r/\bpublication bias\b/i or
+      summary =~ ~r/\bnarrative review\b/i or
+      summary =~ ~r/\bno new primary data\b/i
+  end
+
+  defp caveat_claim?(_summary), do: false
+
+  defp indirect_proxy_claim?(summary) when is_binary(summary) do
+    summary =~ ~r/\bmulti-ingredient\b/i or
+      summary =~ ~r/\bpre-workout supplement\b/i or
+      summary =~ ~r/\bcontaining [^.!?]{0,120}\b(?:alongside|and)\b/i or
+      summary =~ ~r/\balongside [^.!?]{0,80}\bextract\b/i
+  end
+
+  defp indirect_proxy_claim?(_summary), do: false
 
   # -- Format papers for LLM context -----------------------------------
 
@@ -2008,6 +2088,9 @@ Known failure patterns to avoid:
 
             "invalid_ref" ->
               {"INVALID REF", "(score: 0.0 -- cited paper doesn't exist)"}
+
+            "multiple_refs" ->
+              {"MULTI REF", "(score: 0.0 -- sourced item cites multiple papers)"}
 
             _ ->
               {"PENDING", "(score: #{score_str})"}
@@ -4005,7 +4088,8 @@ Known failure patterns to avoid:
         strength_display: ev.strength,
         source_quality: Map.get(ev, :source_quality, 0),
         source_type: stringify_term(Map.get(ev, :source_type)),
-        evidence_store: stringify_term(Map.get(ev, :evidence_store, :unknown))
+        evidence_store: stringify_term(Map.get(ev, :evidence_store, :unknown)),
+        grounding_role: stringify_term(Map.get(ev, :grounding_role))
       }
       |> Enum.reject(fn {_key, value} -> is_nil(value) end)
       |> Map.new()
@@ -4066,6 +4150,7 @@ Known failure patterns to avoid:
         paper_type: stringify_term(map_value(ev, :paper_type)),
         source_type: stringify_term(map_value(ev, :source_type)),
         evidence_store: stringify_term(map_value(ev, :evidence_store)),
+        grounding_role: stringify_term(map_value(ev, :grounding_role)),
         citation_count: map_value(ev, :citation_count)
       }
       |> Enum.reject(fn {_key, value} -> is_nil(value) end)

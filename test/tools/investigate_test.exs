@@ -630,6 +630,50 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert store == :belief
   end
 
+  test "verification_ref_status rejects sourced summaries that cite multiple papers" do
+    status =
+      Investigate.verification_ref_status(
+        "Both [Paper 1] and [Paper 2] reported small-sample limitations for this intervention claim.",
+        %{1 => %{"title" => "Paper 1"}, 2 => %{"title" => "Paper 2"}}
+      )
+
+    assert status == :multiple_refs
+  end
+
+  test "evidence_store_for keeps sourced caveat claims in belief even when verification is positive" do
+    store =
+      Investigate.evidence_store_for(
+        %{
+          source_type: :sourced,
+          verification: "verified",
+          summary:
+            "This study relied on a small sample size and the results may not replicate in larger trials [Paper 1]."
+        },
+        0.9,
+        Strategy.default()
+      )
+
+    assert store == :belief
+    assert Investigate.grounding_role_for(%{source_type: :sourced, summary: "small sample size may not replicate"}) == :caveat
+  end
+
+  test "evidence_store_for keeps indirect multi-ingredient sourced claims in belief" do
+    store =
+      Investigate.evidence_store_for(
+        %{
+          source_type: :sourced,
+          verification: "verified",
+          summary:
+            "A multi-ingredient pre-workout supplement containing creatine alongside betaine and dendrobium extract did not improve outcomes [Paper 3]."
+        },
+        0.9,
+        Strategy.default()
+      )
+
+    assert store == :belief
+    assert Investigate.grounding_role_for(%{source_type: :sourced, summary: "multi-ingredient pre-workout supplement containing creatine alongside betaine"}) == :indirect
+  end
+
   test "build_boundary_trace captures prompts, raw outputs, and evidence boundaries" do
     trace =
       Investigate.build_boundary_trace(
