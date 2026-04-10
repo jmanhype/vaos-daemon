@@ -287,7 +287,7 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
            )
   end
 
-  test "verify_citation_pairs/5 runs both sides concurrently and preserves tuple order" do
+  test "verify_citation_pairs/5 runs supporting then opposing and preserves tuple order" do
     parent = self()
 
     verify_fun = fn evidence, _paper_map, _prompts ->
@@ -307,10 +307,11 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
       end)
 
     assert_receive {:started, :supporting, supporting_pid}
-    assert_receive {:started, :opposing, opposing_pid}
+    refute_receive {:started, :opposing, _pid}, 50
 
-    send(opposing_pid, {:release, :opposing})
     send(supporting_pid, {:release, :supporting})
+    assert_receive {:started, :opposing, opposing_pid}
+    send(opposing_pid, {:release, :opposing})
 
     assert {
              {[:supporting], %{tag: :supporting}},
@@ -318,7 +319,7 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
            } = Task.await(pair_task)
   end
 
-  test "verify_citation_pairs_with_timeout/6 returns timeout metadata and marks timed-out evidence" do
+  test "verify_citation_pairs_with_timeout/6 spends timeout budget across serialized sides" do
     parent = self()
 
     build_evidence = fn summary ->
@@ -356,15 +357,16 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
           opposing,
           %{},
           %{},
-          20,
+          200,
           verify_fun
         )
       end)
 
     assert_receive {:started, "Supported outcome [Paper 1]", supporting_pid}
-    assert_receive {:started, "Opposing outcome [Paper 2]", _opposing_pid}
+    refute_receive {:started, "Opposing outcome [Paper 2]", _pid}, 50
 
     send(supporting_pid, {:release, "Supported outcome [Paper 1]"})
+    assert_receive {:started, "Opposing outcome [Paper 2]", _opposing_pid}
 
     assert {
              {^supporting, %{total_items: 1, model: "test"}},
@@ -1616,6 +1618,18 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
 
     refute normalized =~ "29.92"
     refute normalized =~ "P = 0.0002"
+  end
+
+  test "verification_claim_text prefers prior result sentence when citation lands on follow-up commentary" do
+    summary =
+      "Acute caffeine supplementation at 6 mg/kg body mass produced a statistically significant improvement in cycling time trial performance compared to both placebo and no-supplement conditions in trained cyclists (29.92 ± 2.18 min for caffeine vs. 30.81 ± 2.67 min for placebo and 31.14 ± 2.71 min for control; P = 0.0002). This represents a meaningful performance enhancement of approximately 1-1.5 minutes over a ~30-minute time trial, which is substantial in competitive cycling contexts where races are often decided by seconds. [Paper 1]"
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized ==
+             "Acute caffeine supplementation at 6 mg/kg body mass produced a statistically significant improvement in cycling time trial performance compared to both placebo and no-supplement conditions in trained cyclists."
+
+    refute normalized =~ "1-1.5 minutes"
   end
 
   test "normalized_search_topic strips wrapper phrasing from manual eval prompts" do

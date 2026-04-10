@@ -1822,7 +1822,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
     per_request_timeout_ms = verification_request_timeout_ms()
 
     timeout_ms =
-      max(length(supporting_raw), length(opposing_raw)) * per_request_timeout_ms +
+      (length(supporting_raw) + length(opposing_raw)) * per_request_timeout_ms +
         @default_verification_phase_grace_ms
 
     min(
@@ -5048,8 +5048,20 @@ defmodule Daemon.Tools.Builtins.Investigate do
           index ->
             sentence = Enum.at(sentences, index, summary)
             previous = if index > 0, do: Enum.at(sentences, index - 1), else: nil
+            before_previous = if index > 1, do: Enum.at(sentences, index - 2), else: nil
 
             cond do
+              is_binary(previous) and
+                  is_binary(prefer_previous_result_sentence(previous, sentence, paper_ref)) ->
+                prefer_previous_result_sentence(previous, sentence, paper_ref)
+
+              citation_sentence_is_ref_only?(sentence, paper_ref) and
+                  is_binary(previous) and
+                  followup_result_sentence?(previous) and
+                  is_binary(before_previous) and
+                  not contains_any_paper_ref?(before_previous) ->
+                before_previous
+
               citation_sentence_is_ref_only?(sentence, paper_ref) and is_binary(previous) ->
                 previous
 
@@ -5089,6 +5101,28 @@ defmodule Daemon.Tools.Builtins.Investigate do
 
   defp preceding_quoted_context(_, _, _), do: nil
 
+  defp prefer_previous_result_sentence(previous, citation_sentence, paper_ref)
+       when is_binary(previous) and is_binary(citation_sentence) do
+    cond do
+      contains_paper_ref?(previous, paper_ref) ->
+        nil
+
+      contains_any_paper_ref?(previous) ->
+        nil
+
+      not contains_paper_ref?(citation_sentence, paper_ref) ->
+        nil
+
+      not followup_result_sentence?(citation_sentence) ->
+        nil
+
+      true ->
+        previous
+    end
+  end
+
+  defp prefer_previous_result_sentence(_, _, _), do: nil
+
   defp contains_any_paper_ref?(summary) when is_binary(summary) do
     Regex.match?(~r/(?:\[Paper\s+\d+\]|\bPaper\s+\d+\b)/i, summary)
   end
@@ -5106,6 +5140,15 @@ defmodule Daemon.Tools.Builtins.Investigate do
       sentence
     )
   end
+
+  defp followup_result_sentence?(sentence) when is_binary(sentence) do
+    Regex.match?(
+      ~r/^\s*(?:this|these|it|such)\s+(?:result|results|finding|findings|effect|effects|improvement|improvements|benefit|benefits|response|responses|observation|observations|pattern|patterns|represent(?:s|ed)?|suggest(?:s|ed)?|indicat(?:es|ed)|demonstrat(?:es|ed)|show(?:s|ed)|support(?:s|ed)?|mean(?:s|t))\b/iu,
+      sentence
+    )
+  end
+
+  defp followup_result_sentence?(_), do: false
 
   defp protect_sentence_abbreviation_periods(summary) do
     summary
@@ -5762,13 +5805,9 @@ defmodule Daemon.Tools.Builtins.Investigate do
 
   def verify_citation_pairs(supporting_raw, opposing_raw, paper_map, prompts, verify_fun)
       when is_function(verify_fun, 3) do
-    # Keep each side's verifier semantics unchanged, but overlap the two independent passes.
-    supporting_task = Task.async(fn -> verify_fun.(supporting_raw, paper_map, prompts) end)
-    opposing_task = Task.async(fn -> verify_fun.(opposing_raw, paper_map, prompts) end)
-
     {
-      Task.await(supporting_task, :infinity),
-      Task.await(opposing_task, :infinity)
+      verify_fun.(supporting_raw, paper_map, prompts),
+      verify_fun.(opposing_raw, paper_map, prompts)
     }
   end
 
@@ -5809,34 +5848,30 @@ defmodule Daemon.Tools.Builtins.Investigate do
         verify_fun
       )
       when is_function(verify_fun, 3) and is_integer(timeout_ms) do
-    supporting_task = Task.async(fn -> verify_fun.(supporting_raw, paper_map, prompts) end)
-    opposing_task = Task.async(fn -> verify_fun.(opposing_raw, paper_map, prompts) end)
+    started_ms = monotonic_ms()
 
-    tasks = [
-      {:supporting, supporting_task, supporting_raw},
-      {:opposing, opposing_task, opposing_raw}
-    ]
+    {supporting_result, timed_out_sides} =
+      verify_citation_side_with_timeout(
+        :supporting,
+        supporting_raw,
+        paper_map,
+        prompts,
+        timeout_ms,
+        verify_fun,
+        started_ms
+      )
 
-    yielded =
-      tasks
-      |> Enum.map(fn {_side, task, _raw} -> task end)
-      |> Task.yield_many(timeout_ms)
-      |> Map.new(fn {task, result} -> {task.ref, result} end)
-
-    {results, timed_out_sides} =
-      Enum.map_reduce(tasks, [], fn {side, task, raw}, acc ->
-        case Map.get(yielded, task.ref) do
-          {:ok, result} ->
-            {result, acc}
-
-          nil ->
-            Task.shutdown(task, :brutal_kill)
-            {timeout_verification_result(raw), [side | acc]}
-        end
-      end)
-
-    [supporting_result, opposing_result] = results
-    timed_out_sides = Enum.reverse(timed_out_sides)
+    {opposing_result, timed_out_sides} =
+      verify_citation_side_with_timeout(
+        :opposing,
+        opposing_raw,
+        paper_map,
+        prompts,
+        timeout_ms,
+        verify_fun,
+        started_ms,
+        timed_out_sides
+      )
 
     {
       supporting_result,
@@ -5846,6 +5881,33 @@ defmodule Daemon.Tools.Builtins.Investigate do
         else: %{phase: :citation_verification, timed_out_sides: timed_out_sides}
       )
     }
+  end
+
+  defp verify_citation_side_with_timeout(
+         side,
+         raw,
+         paper_map,
+         prompts,
+         timeout_ms,
+         verify_fun,
+         started_ms,
+         timed_out_sides \\ []
+       ) do
+    remaining_timeout_ms = max(timeout_ms - elapsed_ms(started_ms), 0)
+
+    cond do
+      remaining_timeout_ms <= 0 ->
+        {timeout_verification_result(raw), timed_out_sides ++ [side]}
+
+      true ->
+        case timed_task(fn -> verify_fun.(raw, paper_map, prompts) end, remaining_timeout_ms) do
+          {:ok, result, _elapsed_ms} ->
+            {result, timed_out_sides}
+
+          {:timeout, _elapsed_ms} ->
+            {timeout_verification_result(raw), timed_out_sides ++ [side]}
+        end
+    end
   end
 
   defp timeout_verification_result(evidence_list) when is_list(evidence_list) do
