@@ -18,6 +18,29 @@ The program is back on the right route:
 
 But Roberto is not content yet because the next bottleneck is still a first-order evidence problem.
 
+## Current Slice In Progress
+
+### Active issue
+- `vas-swarm-942`
+
+### What landed
+- selected probe papers now carry into the merged retrieval corpus before dedupe/rerank/filter
+- the selected evidence-plan trace now records `probe.carried_papers`
+- targeted tests cover both corpus carryover and trace visibility
+
+### Validation
+- Tests:
+  - `mix test test/tools/investigate_test.exs` -> `100 tests, 0 failures`
+  - `mix test test/investigation/evidence_planner_test.exs` -> pass
+- Live trace:
+  - [vaos-investigate-trace-adafef1959fec23c-vas-swarm-942-live-carryover-1775850306726.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-adafef1959fec23c-vas-swarm-942-live-carryover-1775850306726.json)
+- Full suite gate:
+  - `mix test` is still blocked by unrelated existing failures outside this slice:
+    - `test/agent/loop_unit_test.exs` compile error: `cannot inject attribute @injection_patterns ... #Reference<...>`
+    - `Daemon.Intelligence.DecisionLedgerTest`: `session failure tracking cross-session isolation`
+    - `Daemon.Vault.FactExtractorTest`: `extracts deadline commitments`
+    - `Daemon.Vault.FactExtractorTest`: `extracts technical facts with 'uses'`
+
 ## Latest Completed Slice
 
 ### Closed issue
@@ -44,26 +67,24 @@ But Roberto is not content yet because the next bottleneck is still a first-orde
 
 ### Problem
 
-The probe finds the right direct-trial lane, but the full retrieval still degrades:
-- OpenAlex timed out during the full search
-- alphaXiv and HuggingFace results were noisy and heavily filtered
-- the run collapsed to two broad caffeine reviews
-- final result was `belief_consensus_for` with:
-  - `grounded_for_count = 0`
+The direct-trial carryover repair is now in place:
+- the latest live rerun stayed on `randomized_intervention`
+- the selected probe shows `carried_papers = 1`
+- the run ended `asymmetric_evidence_for` with:
+  - `grounded_for_count = 1`
   - `grounded_against_count = 0`
 
-This means the planner is now ahead of the retrieval stack. The next repair is not routing. It is preserving direct-trial corpus quality when a good probe already exists.
+That closes the original belief-only collapse, but the run is still thinly grounded under source degradation.
 
 ## What Roberto Would Do Next
 
-Work `vas-swarm-942`:
-- carry strong probe signal deeper into full retrieval
-- preserve direct-trial papers when the probe finds them
-- stop broad review papers from becoming the whole corpus when the direct-trial query was already good
+Hold `vas-swarm-942` until the repo-level verification gate is green:
+- full-suite failures outside this slice currently block milestone closure
+- once the gate is green, re-run the live trace and decide whether the next bottleneck is thin direct-evidence breadth under source degradation
 
 Shortest version:
 
-`If the probe found the right trial paper family, the full run should not fall back to generic reviews just because one source degraded.`
+`The probe-carryover repair landed, but milestone closure is blocked by unrelated full-suite failures and the degraded-source run is still thinner than Roberto wants.`
 
 ## Known Stable Wins
 
@@ -80,7 +101,7 @@ On the next session:
 2. Run `mix osa.roberto.resume`.
 3. Open `vas-swarm-942`.
 4. Open the trace above.
-5. Inspect how probe success is discarded before full retrieval settles.
-6. Fix the narrowest generic layer.
-7. Re-run live validation.
+5. Re-run `mix test` after the unrelated suite blocker is resolved or waived.
+6. Re-run the live trace above.
+7. If grounding is still thin, open the next retrieval-breadth issue.
 8. Update this file, close/open issues, and push.

@@ -48,6 +48,10 @@ The rule for progress is simple:
 **Current focus**
 - `vas-swarm-942`: recover direct trial corpus when a good probe exists but full retrieval degrades
 
+**Status note**
+- Probe-paper carryover now lands in the merged retrieval set and the live rerun no longer ends `belief_consensus_for`.
+- Do not advance to the next milestone yet: `mix test` is blocked by unrelated existing suite failures outside `vas-swarm-942`.
+
 ### Task Classes
 
 1. Planner and routing integrity

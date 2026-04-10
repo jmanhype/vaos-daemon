@@ -386,20 +386,27 @@ defmodule Daemon.Investigation.EvidencePlanner do
 
     lexical_bias =
       case candidate.mode do
-        :measurement -> term_hits(terms, @measurement_terms) * 0.8
+        :measurement ->
+          term_hits(terms, @measurement_terms) * 0.8
+
         :randomized_intervention ->
           term_hits(terms, @intervention_terms ++ @administration_terms) * 0.8 +
             term_hits(terms, @clinical_outcome_terms) * 0.35 +
             if(intervention_signature, do: 1.5, else: 0.0)
 
-        :observational -> term_hits(terms, @health_effect_terms) * 0.6
+        :observational ->
+          term_hits(terms, @health_effect_terms) * 0.6
+
         :systematic_review ->
           term_hits(terms, @guideline_terms ++ @health_effect_terms ++ @clinical_outcome_terms) *
             0.2 +
             if(intervention_signature, do: 0.4, else: 0.0)
 
-        :consensus -> term_hits(terms, @guideline_terms) * 0.9
-        :general_empirical -> max(length(terms) - 1, 0) * 0.2
+        :consensus ->
+          term_hits(terms, @guideline_terms) * 0.9
+
+        :general_empirical ->
+          max(length(terms) - 1, 0) * 0.2
       end
 
     evidence_bias =
@@ -464,7 +471,12 @@ defmodule Daemon.Investigation.EvidencePlanner do
 
   defp selection_probe_bonus(
          %{profile: :clinical_intervention, mode: :randomized_intervention},
-         %{status: :ok, query_label: query_label, relevant_papers: relevant, groundable_papers: groundable}
+         %{
+           status: :ok,
+           query_label: query_label,
+           relevant_papers: relevant,
+           groundable_papers: groundable
+         }
        )
        when query_label in [:placebo, :rct] and relevant > 0 and groundable > 0,
        do: 1.0
@@ -592,6 +604,7 @@ defmodule Daemon.Investigation.EvidencePlanner do
       :raw_papers,
       :relevant_papers,
       :groundable_papers,
+      :carried_papers,
       :filtered_out,
       :avg_directness,
       :score

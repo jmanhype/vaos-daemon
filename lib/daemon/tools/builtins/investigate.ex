@@ -2422,6 +2422,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
       end
 
     design = clinical_evidence_design(ev, paper, summary, claim_text)
+
     topic_direct? =
       clinical_topic_direct_claim?(claim_text, Map.get(classification_context, :normalized_topic))
 
@@ -3328,7 +3329,6 @@ defmodule Daemon.Tools.Builtins.Investigate do
     http_fn = literature_http_fn()
     plan = search_query_plan(topic, keywords)
     plan = maybe_probe_search_plan(plan, strategy, http_fn)
-    normalized_topic = plan.normalized_topic
     semantic_seed = semantic_search_seed(plan)
     {ss_queries, oa_queries} = {plan.ss_queries, plan.oa_queries}
     per_query = strategy.per_query_limit
@@ -3527,25 +3527,16 @@ defmodule Daemon.Tools.Builtins.Investigate do
         Enum.map(papers, &ensure_atom_keys/1)
       end)
 
-    # Dedup by title similarity (works on both atom and string keys)
-    deduped = merge_papers_raw(all_raw)
+    {sorted, retrieval_meta} =
+      finalize_retrieval_papers(all_raw, plan, strategy.top_n_papers)
 
-    # Rank by relevance BEFORE normalizing (papers have atom keys)
-    ranked = Literature.rank_papers(deduped, normalized_topic)
-    reranked = rerank_retrieval_candidates(ranked, plan)
-
-    # Filter out irrelevant papers (zero topic-term overlap)
-    {relevant, dropped} = filter_relevant(reranked, plan)
+    dropped = Map.get(retrieval_meta, :dropped, 0)
 
     if dropped > 0 do
       Logger.info("[investigate] Filtered out #{dropped} irrelevant papers")
     end
 
-    # Normalize to string-key format and take top N (tuned by strategy)
-    sorted =
-      relevant
-      |> Enum.map(&normalize_paper_format/1)
-      |> Enum.take(strategy.top_n_papers)
+    plan = put_probe_carryover_metadata(plan, Map.get(retrieval_meta, :probe_seeded_papers, 0))
 
     {sorted, source_counts, plan}
   end
@@ -3893,6 +3884,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
       source: source,
       query_label: query_label,
       query: query,
+      papers: top_relevant,
       raw_papers: length(atom_papers),
       relevant_papers: length(top_relevant),
       groundable_papers: groundable_papers,
@@ -3900,6 +3892,30 @@ defmodule Daemon.Tools.Builtins.Investigate do
       avg_directness: avg_directness,
       score: empirical_score
     }
+  end
+
+  @doc false
+  def finalize_retrieval_papers(raw_papers, plan, top_n)
+      when is_list(raw_papers) and is_map(plan) and is_integer(top_n) and top_n > 0 do
+    probe_seed_papers = probe_seed_papers(plan)
+    normalized_topic = Map.get(plan, :normalized_topic, "")
+
+    deduped = merge_papers_raw(probe_seed_papers ++ raw_papers)
+    ranked = Literature.rank_papers(deduped, normalized_topic)
+    reranked = rerank_retrieval_candidates(ranked, plan)
+    {relevant, dropped} = filter_relevant(reranked, plan)
+
+    sorted =
+      relevant
+      |> Enum.map(&normalize_paper_format/1)
+      |> Enum.take(top_n)
+
+    {sorted, %{probe_seeded_papers: length(probe_seed_papers), dropped: dropped}}
+  end
+
+  def finalize_retrieval_papers(raw_papers, plan, top_n)
+      when is_list(raw_papers) and is_map(plan) and is_integer(top_n) do
+    finalize_retrieval_papers(raw_papers, plan, max(top_n, 1))
   end
 
   @doc false
@@ -3941,6 +3957,41 @@ defmodule Daemon.Tools.Builtins.Investigate do
   defp source_category("ss_" <> _), do: :semantic_scholar
   defp source_category("oa_" <> _), do: :openalex
   defp source_category(_other), do: :other
+
+  defp probe_seed_papers(%{evidence_plan: %{probe: %{status: :ok, papers: papers}}})
+       when is_list(papers) do
+    Enum.map(papers, &ensure_atom_keys/1)
+  end
+
+  defp probe_seed_papers(_plan), do: []
+
+  defp put_probe_carryover_metadata(plan, count)
+       when is_map(plan) and is_integer(count) and count > 0 do
+    selected_mode = get_in(plan, [:evidence_plan, :mode])
+
+    updated_plan =
+      update_in(plan, [:evidence_plan, :probe], fn
+        probe when is_map(probe) -> Map.put(probe, :carried_papers, count)
+        probe -> probe
+      end)
+
+    updated_candidates =
+      updated_plan
+      |> Map.get(:evidence_plan_candidate_plans, [])
+      |> Enum.map(fn
+        %{mode: ^selected_mode, probe: probe} = candidate when is_map(probe) ->
+          put_in(candidate, [:probe, :carried_papers], count)
+
+        candidate ->
+          candidate
+      end)
+
+    updated_plan
+    |> Map.put(:evidence_plan_candidate_plans, updated_candidates)
+    |> Map.put(:evidence_plan_candidates, EvidencePlanner.candidate_summaries(updated_candidates))
+  end
+
+  defp put_probe_carryover_metadata(plan, _count) when is_map(plan), do: plan
 
   # Dedup raw papers (handles both atom-key and string-key formats)
   defp merge_papers_raw(papers) when is_list(papers) do
@@ -4130,8 +4181,9 @@ defmodule Daemon.Tools.Builtins.Investigate do
     end)
   end
 
-  defp limit_search_keywords(keywords, limit) when is_list(keywords) and length(keywords) <= limit,
-    do: keywords
+  defp limit_search_keywords(keywords, limit)
+       when is_list(keywords) and length(keywords) <= limit,
+       do: keywords
 
   defp limit_search_keywords(keywords, limit) when is_list(keywords) and limit > 2 do
     tail_count = min(2, limit - 1)
@@ -4145,7 +4197,8 @@ defmodule Daemon.Tools.Builtins.Investigate do
     |> Enum.take(limit)
   end
 
-  defp limit_search_keywords(keywords, limit) when is_list(keywords), do: Enum.take(keywords, limit)
+  defp limit_search_keywords(keywords, limit) when is_list(keywords),
+    do: Enum.take(keywords, limit)
 
   defp normalize_search_keyword_variant(keyword) when is_binary(keyword) do
     keyword
@@ -5201,9 +5254,9 @@ defmodule Daemon.Tools.Builtins.Investigate do
                 prefer_previous_result_sentence(previous, sentence, paper_ref)
 
               citation_sentence_is_ref_only?(sentence, paper_ref) and
-                  is_binary(previous) and
-                  followup_result_sentence?(previous) and
-                  is_binary(before_previous) and
+                is_binary(previous) and
+                followup_result_sentence?(previous) and
+                is_binary(before_previous) and
                   not contains_any_paper_ref?(before_previous) ->
                 before_previous
 

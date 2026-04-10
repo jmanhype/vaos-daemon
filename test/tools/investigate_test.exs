@@ -1301,6 +1301,92 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
            }
   end
 
+  test "finalize_retrieval_papers carries selected probe papers into the final corpus" do
+    topic =
+      "acute caffeine administration improves cycling time-trial outcomes in trained cyclists and triathletes"
+
+    direct_trial = %{
+      title:
+        "Acute caffeine administration improves cycling time-trial performance in trained cyclists",
+      abstract:
+        "Randomized placebo-controlled crossover trial in trained cyclists found that acute caffeine administration improved cycling time-trial performance.",
+      citation_count: 41,
+      source: :openalex,
+      authors: ["A. Author"],
+      paper_id: "trial-1",
+      url: "https://example.test/trial-1",
+      doi: "10.1000/trial-1",
+      year: 2021,
+      publication_types: ["Clinical Trial"]
+    }
+
+    broad_review = %{
+      title: "Caffeine and exercise performance: a systematic review",
+      abstract:
+        "This systematic review summarizes caffeine research across endurance and sprint exercise performance outcomes.",
+      citation_count: 311,
+      source: :semantic_scholar,
+      authors: ["R. Reviewer"],
+      paper_id: "review-1",
+      url: "https://example.test/review-1",
+      doi: "10.1000/review-1",
+      year: 2018,
+      publication_types: ["Review"]
+    }
+
+    {final_papers, meta} =
+      Investigate.finalize_retrieval_papers(
+        [broad_review],
+        %{
+          normalized_topic: topic,
+          profile: :clinical_intervention,
+          evidence_profile: nil,
+          evidence_plan: %{
+            mode: :randomized_intervention,
+            profile: :clinical_intervention,
+            probe: %{
+              status: :ok,
+              source: :openalex,
+              papers: [direct_trial]
+            }
+          }
+        },
+        5
+      )
+
+    assert meta.probe_seeded_papers == 1
+    assert Enum.any?(final_papers, &(&1["title"] == direct_trial.title))
+    assert hd(final_papers)["title"] == direct_trial.title
+  end
+
+  test "build_boundary_trace exposes carried probe paper counts" do
+    trace =
+      Investigate.build_boundary_trace(%{
+        search_plan: %{
+          evidence_plan: %{
+            mode: :randomized_intervention,
+            profile: :clinical_intervention,
+            heuristic_score: 9.0,
+            probe_score: 6.44,
+            selection_score: 7.34,
+            rationale: "trial/placebo route",
+            semantic_seed: "acute caffeine administration cycling time-trial outcomes",
+            probe: %{
+              status: :ok,
+              source: :openalex,
+              relevant_papers: 1,
+              groundable_papers: 1,
+              score: 6.44,
+              carried_papers: 1
+            }
+          },
+          evidence_plan_candidates: []
+        }
+      })
+
+    assert trace.planning.selected.probe.carried_papers == 1
+  end
+
   test "maybe_capture_trace writes a trace artifact and annotates metadata" do
     json_metadata = %{
       topic: "the earth is flat",
@@ -1891,7 +1977,10 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
       Enum.map(plan.ss_queries ++ plan.oa_queries, fn {_label, query, _opts} -> query end)
 
     assert Enum.any?(queries, &String.contains?(&1, "cycling time-trial performance"))
-    assert Enum.any?(plan.oa_queries, fn {label, _query, _opts} -> label == :performance_placebo end)
+
+    assert Enum.any?(plan.oa_queries, fn {label, _query, _opts} ->
+             label == :performance_placebo
+           end)
   end
 
   test "search_query_plan drops stem-duplicate keywords and keeps specific intervention outcomes" do
@@ -2039,7 +2128,9 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
 
     shortlisted =
       plan.evidence_plan_candidate_plans
-      |> Enum.filter(&(&1.mode in [:randomized_intervention, :systematic_review, :general_empirical]))
+      |> Enum.filter(
+        &(&1.mode in [:randomized_intervention, :systematic_review, :general_empirical])
+      )
 
     updated =
       Investigate.apply_search_plan_probe_results(
