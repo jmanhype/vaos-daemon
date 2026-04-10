@@ -573,7 +573,12 @@ Known failure patterns to avoid:
         post_processing_started_ms = monotonic_ms()
 
         classified_opposing =
-          classify_evidence_store(verified_opposing, paper_map, prior_strategy)
+          classify_evidence_store(
+            verified_opposing,
+            paper_map,
+            prior_strategy,
+            classification_context(Map.get(trace_context, :search_plan, %{}))
+          )
 
         result =
           "## Investigation: #{topic}\n\n" <>
@@ -630,7 +635,12 @@ Known failure patterns to avoid:
         post_processing_started_ms = monotonic_ms()
 
         classified_supporting =
-          classify_evidence_store(verified_supporting, paper_map, prior_strategy)
+          classify_evidence_store(
+            verified_supporting,
+            paper_map,
+            prior_strategy,
+            classification_context(Map.get(trace_context, :search_plan, %{}))
+          )
 
         result =
           "## Investigation: #{topic}\n\n" <>
@@ -759,8 +769,13 @@ Known failure patterns to avoid:
     # 9a. AEC TWO-STORE CLASSIFICATION (arxiv.org/abs/2602.03974)
     # Split into grounded (high-quality, determines verdict) and belief (context only)
     # Uses strategy's grounded_threshold and citation/publisher weights
-    classified_supporting = classify_evidence_store(verified_supporting, paper_map, strategy)
-    classified_opposing = classify_evidence_store(verified_opposing, paper_map, strategy)
+    classification_context = classification_context(search_plan)
+
+    classified_supporting =
+      classify_evidence_store(verified_supporting, paper_map, strategy, classification_context)
+
+    classified_opposing =
+      classify_evidence_store(verified_opposing, paper_map, strategy, classification_context)
 
     grounded_for = Enum.filter(classified_supporting, &(&1.evidence_store == :grounded))
     grounded_against = Enum.filter(classified_opposing, &(&1.evidence_store == :grounded))
@@ -1829,22 +1844,31 @@ Known failure patterns to avoid:
   # Classification uses BOTH LLM verification status AND source quality via
   # SourceScoring.classify/3 — unverified evidence never enters grounded.
 
-  defp classify_evidence_store(verified_evidence, paper_map, %Strategy{} = strategy) do
+  defp classify_evidence_store(
+         verified_evidence,
+         paper_map,
+         %Strategy{} = strategy,
+         classification_context
+       ) do
     Enum.map(verified_evidence, fn ev ->
-      source_quality =
+      paper =
         case ev.paper_ref do
-          nil ->
-            0.15
-
-          n ->
-            case Map.get(paper_map, n) do
-              nil -> 0.1
-              paper -> SourceScoring.score(paper, strategy)
-            end
+          nil -> nil
+          n -> Map.get(paper_map, n)
         end
 
-      grounding_role = grounding_role_for(ev)
-      store = evidence_store_for(ev, source_quality, strategy)
+      source_quality =
+        case paper do
+          nil ->
+            if is_nil(ev.paper_ref), do: 0.15, else: 0.1
+
+          paper ->
+            SourceScoring.score(paper, strategy)
+        end
+
+      grounding_role = grounding_role_for(ev, classification_context, paper)
+      store = evidence_store_for(ev, source_quality, strategy, classification_context, paper)
+
       Map.merge(ev, %{
         source_quality: source_quality,
         evidence_store: store,
@@ -1855,8 +1879,14 @@ Known failure patterns to avoid:
 
   @doc false
   def evidence_store_for(ev, source_quality, %Strategy{} = strategy) when is_map(ev) do
-    case grounding_role_for(ev) do
-      :direct ->
+    evidence_store_for(ev, source_quality, strategy, %{}, nil)
+  end
+
+  @doc false
+  def evidence_store_for(ev, source_quality, %Strategy{} = strategy, classification_context, paper)
+      when is_map(ev) and is_map(classification_context) do
+    case grounding_role_for(ev, classification_context, paper) do
+      role when role in [:direct, :synthesis] ->
         SourceScoring.classify(Map.get(ev, :verification), source_quality, strategy)
 
       _other ->
@@ -1866,18 +1896,25 @@ Known failure patterns to avoid:
 
   @doc false
   def grounding_role_for(ev) when is_map(ev) do
+    grounding_role_for(ev, %{}, nil)
+  end
+
+  def grounding_role_for(_ev), do: :reasoning
+
+  @doc false
+  def grounding_role_for(ev, classification_context, paper)
+      when is_map(ev) and is_map(classification_context) do
     summary =
       ev
       |> Map.get(:summary, "")
       |> to_string()
-      |> String.downcase()
 
     case Map.get(ev, :source_type) do
       type when type in [:sourced, "sourced"] ->
-        cond do
-          caveat_claim?(summary) -> :caveat
-          indirect_proxy_claim?(summary) -> :indirect
-          true -> :direct
+        if clinical_intervention_context?(classification_context) do
+          clinical_grounding_role(ev, paper, summary)
+        else
+          :direct
         end
 
       _ ->
@@ -1885,30 +1922,173 @@ Known failure patterns to avoid:
     end
   end
 
-  def grounding_role_for(_ev), do: :reasoning
-
-  defp caveat_claim?(summary) when is_binary(summary) do
-    summary =~ ~r/\bsmall sample\b/i or
-      summary =~ ~r/\bsample sizes?\b/i or
-      summary =~ ~r/\bpilot study\b/i or
-      summary =~ ~r/\bmay not replicate\b/i or
-      summary =~ ~r/\bquestions about whether results would replicate\b/i or
-      summary =~ ~r/\bgeneraliz(?:e|able|ability)\b/i or
-      summary =~ ~r/\bpublication bias\b/i or
-      summary =~ ~r/\bnarrative review\b/i or
-      summary =~ ~r/\bno new primary data\b/i
+  defp classification_context(%{} = search_plan) do
+    %{
+      profile: Map.get(search_plan, :profile),
+      claim_family: Map.get(search_plan, :claim_family),
+      evidence_profile: Map.get(search_plan, :evidence_profile)
+    }
   end
 
-  defp caveat_claim?(_summary), do: false
+  defp classification_context(_), do: %{}
 
-  defp indirect_proxy_claim?(summary) when is_binary(summary) do
-    summary =~ ~r/\bmulti-ingredient\b/i or
-      summary =~ ~r/\bpre-workout supplement\b/i or
-      summary =~ ~r/\bcontaining [^.!?]{0,120}\b(?:alongside|and)\b/i or
-      summary =~ ~r/\balongside [^.!?]{0,80}\bextract\b/i
+  defp clinical_intervention_context?(%{profile: profile})
+       when profile in [:clinical_intervention, "clinical_intervention"],
+       do: true
+
+  defp clinical_intervention_context?(_), do: false
+
+  defp clinical_grounding_role(ev, paper, summary) do
+    claim_text =
+      ev
+      |> Map.get(:verification_claim)
+      |> case do
+        value when is_binary(value) and value != "" -> value
+        _ -> verification_claim_text(summary)
+      end
+
+    design = clinical_evidence_design(ev, paper, summary, claim_text)
+
+    cond do
+      methodological_caveat_claim?(claim_text) -> :caveat
+      design == :combination_intervention -> :indirect
+      design == :guidance -> :contextual
+      design == :contextual_review -> :contextual
+      design == :synthesis -> :synthesis
+      true -> :direct
+    end
   end
 
-  defp indirect_proxy_claim?(_summary), do: false
+  defp clinical_evidence_design(ev, paper, summary, claim_text) do
+    paper_text = clinical_paper_text(paper)
+    publication_types = clinical_publication_types(paper)
+    title = paper_title(paper)
+    paper_type = Map.get(ev, :paper_type)
+    context_text = Enum.join([summary, claim_text], " ")
+
+    cond do
+      clinical_contextual_source?(title, paper_text, publication_types, context_text) ->
+        :contextual_review
+
+      clinical_synthesis_source?(title, paper_text, publication_types, context_text) ->
+        :synthesis
+
+      clinical_guidance_source?(title, paper_text, publication_types, context_text) -> :guidance
+      paper_type == :review -> :contextual_review
+      combination_intervention_source?(paper_text) -> :combination_intervention
+      true -> :direct
+    end
+  end
+
+  defp clinical_synthesis_source?(title, paper_text, publication_types, context_text) do
+    Enum.any?(List.wrap(publication_types), fn publication_type ->
+      publication_type
+      |> to_string()
+      |> String.downcase()
+      |> then(&(&1 in ["meta-analysis", "metaanalysis", "systematic review"]))
+    end) or
+      Regex.match?(
+        ~r/\b(systematic review|meta[\s-]?analysis|umbrella review|cochrane review)\b/i,
+        title
+      ) or
+      Regex.match?(
+        ~r/\b(systematic review|meta[\s-]?analysis|umbrella review|cochrane review)\b/i,
+        paper_text
+      ) or
+      Regex.match?(
+        ~r/\b(systematic review|meta[\s-]?analysis|umbrella review|cochrane review)\b/i,
+        context_text
+      )
+  end
+
+  defp clinical_guidance_source?(title, paper_text, publication_types, context_text) do
+    Enum.any?(List.wrap(publication_types), fn publication_type ->
+      publication_type
+      |> to_string()
+      |> String.downcase()
+      |> then(
+        &(&1 in [
+            "guideline",
+            "practice guideline",
+            "consensus",
+            "consensus development conference",
+            "recommendation statement"
+          ])
+      )
+    end) or
+      Regex.match?(
+        ~r/\b(clinical guideline|practice guideline|guideline|consensus statement|position (?:paper|statement)|recommendation statement|official statement)\b/i,
+        title
+      ) or
+      Regex.match?(
+        ~r/\b(clinical guideline|practice guideline|guideline|consensus statement|position (?:paper|statement)|recommendation statement|official statement)\b/i,
+        paper_text
+      ) or
+      Regex.match?(
+        ~r/\b(clinical guideline|practice guideline|guideline|consensus statement|position (?:paper|statement)|recommendation statement|official statement)\b/i,
+        context_text
+      )
+  end
+
+  defp clinical_contextual_source?(title, paper_text, publication_types, context_text) do
+    Enum.any?(List.wrap(publication_types), fn publication_type ->
+      publication_type
+      |> to_string()
+      |> String.downcase()
+      |> then(&(&1 in ["editorial", "comment", "letter", "news", "opinion"]))
+    end) or
+      Regex.match?(
+        ~r/\b(opinion article|opinion piece|editorial|commentary|perspective|viewpoint|narrative review|mini-review)\b/i,
+        title
+      ) or
+      Regex.match?(
+        ~r/\b(opinion article|opinion piece|editorial|commentary|perspective|viewpoint|narrative review|mini-review)\b/i,
+        paper_text
+      ) or
+      Regex.match?(
+        ~r/\b(opinion article|opinion piece|editorial|commentary|perspective|viewpoint|narrative review|mini-review)\b/i,
+        context_text
+      )
+  end
+
+  defp combination_intervention_source?(paper_text) when is_binary(paper_text) do
+    Regex.match?(
+      ~r/\b(multi-ingredient|multiingredient|pre-workout|preworkout|combination (?:supplement|therapy|treatment)|combined with|co-administered|coadministered|alongside [^.!?]{0,80}\b(?:supplement|extract|ingredient|betaine|caffeine|protein|dendrobium))\b/i,
+      paper_text
+    )
+  end
+
+  defp combination_intervention_source?(_paper_text), do: false
+
+  defp methodological_caveat_claim?(claim_text) when is_binary(claim_text) do
+    Regex.match?(
+      ~r/\b(small sample|sample size|underpowered|statistical power|may not replicate|generaliz(?:e|able|ability)|publication bias|risk of bias|no new primary data|within-group effects|between-group comparisons?)\b/i,
+      claim_text
+    )
+  end
+
+  defp methodological_caveat_claim?(_claim_text), do: false
+
+  defp clinical_paper_text(paper) when is_map(paper) do
+    [paper["title"], paper["abstract"]]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.map(&to_string/1)
+    |> Enum.join(" ")
+    |> String.downcase()
+  end
+
+  defp clinical_paper_text(_paper), do: ""
+
+  defp clinical_publication_types(paper) when is_map(paper) do
+    paper
+    |> Map.get("publicationTypes", [])
+    |> List.wrap()
+  end
+
+  defp clinical_publication_types(_paper), do: []
+
+  defp paper_title(paper) when is_map(paper), do: to_string(Map.get(paper, "title", ""))
+  defp paper_title(_paper), do: ""
 
   # -- Format papers for LLM context -----------------------------------
 

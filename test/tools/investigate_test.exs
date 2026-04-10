@@ -640,7 +640,187 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert status == :multiple_refs
   end
 
-  test "evidence_store_for keeps sourced caveat claims in belief even when verification is positive" do
+  test "grounding_role_for classifies direct clinical trial claims as direct" do
+    role =
+      Investigate.grounding_role_for(
+        %{
+          source_type: :sourced,
+          verification: "verified",
+          paper_type: :trial,
+          summary:
+            "Creatine supplementation significantly improved 1-RM strength compared with placebo [Paper 1]."
+        },
+        %{profile: :clinical_intervention},
+        %{
+          "title" => "Randomized placebo-controlled trial of creatine supplementation",
+          "abstract" =>
+            "Participants were randomized to creatine or placebo during resistance training.",
+          "publicationTypes" => ["Clinical Trial"]
+        }
+      )
+
+    assert role == :direct
+  end
+
+  test "evidence_store_for grounds systematic review synthesis in clinical mode" do
+    store =
+      Investigate.evidence_store_for(
+        %{
+          source_type: :sourced,
+          verification: "verified",
+          paper_type: :review,
+          summary:
+            "A systematic review and meta-analysis found creatine supplementation improves maximal strength outcomes [Paper 4]."
+        },
+        0.9,
+        Strategy.default(),
+        %{profile: :clinical_intervention},
+        %{
+          "title" => "Systematic review and meta-analysis of creatine supplementation",
+          "abstract" =>
+            "This systematic review and meta-analysis pooled randomized controlled trials of creatine supplementation.",
+          "publicationTypes" => ["Meta-Analysis", "Review"]
+        }
+      )
+
+    assert store == :grounded
+
+    assert Investigate.grounding_role_for(
+             %{
+               source_type: :sourced,
+               verification: "verified",
+               paper_type: :review,
+               summary:
+                 "A systematic review and meta-analysis found creatine supplementation improves maximal strength outcomes [Paper 4]."
+             },
+             %{profile: :clinical_intervention},
+             %{
+               "title" => "Systematic review and meta-analysis of creatine supplementation",
+               "abstract" =>
+                 "This systematic review and meta-analysis pooled randomized controlled trials of creatine supplementation.",
+               "publicationTypes" => ["Meta-Analysis", "Review"]
+             }
+           ) == :synthesis
+  end
+
+  test "evidence_store_for keeps contextual narrative reviews in belief for clinical mode" do
+    store =
+      Investigate.evidence_store_for(
+        %{
+          source_type: :sourced,
+          verification: "verified",
+          paper_type: :review,
+          summary:
+            "A narrative review describes creatine as one of the most effective ergogenic aids [Paper 4]."
+        },
+        0.9,
+        Strategy.default(),
+        %{profile: :clinical_intervention},
+        %{
+          "title" => "Narrative review of ergogenic aids for sport",
+          "abstract" =>
+            "This review article summarizes the literature on ergogenic aids for sport performance.",
+          "publicationTypes" => ["Review"]
+        }
+      )
+
+    assert store == :belief
+
+    assert Investigate.grounding_role_for(
+             %{
+               source_type: :sourced,
+               verification: "verified",
+               paper_type: :review,
+               summary:
+                 "A narrative review describes creatine as one of the most effective ergogenic aids [Paper 4]."
+             },
+             %{profile: :clinical_intervention},
+             %{
+               "title" => "Narrative review of ergogenic aids for sport",
+               "abstract" =>
+                 "This review article summarizes the literature on ergogenic aids for sport performance.",
+               "publicationTypes" => ["Review"]
+             }
+           ) == :contextual
+  end
+
+  test "evidence_store_for keeps opinion articles in belief for clinical mode" do
+    store =
+      Investigate.evidence_store_for(
+        %{
+          source_type: :sourced,
+          verification: "verified",
+          summary:
+            "A 2024 opinion article advocates for creatine supplementation as a safe and effective strategy for sarcopenia [Paper 1]."
+        },
+        0.9,
+        Strategy.default(),
+        %{profile: :clinical_intervention},
+        %{
+          "title" => "Creatine plus resistance training for healthy aging",
+          "abstract" => "This article discusses the role of creatine supplementation in aging.",
+          "publicationTypes" => ["Review"]
+        }
+      )
+
+    assert store == :belief
+
+    assert Investigate.grounding_role_for(
+             %{
+               source_type: :sourced,
+               verification: "verified",
+               summary:
+                 "A 2024 opinion article advocates for creatine supplementation as a safe and effective strategy for sarcopenia [Paper 1]."
+             },
+             %{profile: :clinical_intervention},
+             %{
+               "title" => "Creatine plus resistance training for healthy aging",
+               "abstract" => "This article discusses the role of creatine supplementation in aging.",
+               "publicationTypes" => ["Review"]
+             }
+           ) == :contextual
+  end
+
+  test "evidence_store_for keeps clinical guidance sources in belief for clinical mode" do
+    store =
+      Investigate.evidence_store_for(
+        %{
+          source_type: :sourced,
+          verification: "verified",
+          summary:
+            "The official 2019 position paper recommends resistance exercise and protein intake for sarcopenia management [Paper 2]."
+        },
+        0.9,
+        Strategy.default(),
+        %{profile: :clinical_intervention},
+        %{
+          "title" => "Society position paper on sarcopenia management",
+          "abstract" =>
+            "This position paper provides clinical recommendations for sarcopenia management.",
+          "publicationTypes" => ["Guideline"]
+        }
+      )
+
+    assert store == :belief
+
+    assert Investigate.grounding_role_for(
+             %{
+               source_type: :sourced,
+               verification: "verified",
+               summary:
+                 "The official 2019 position paper recommends resistance exercise and protein intake for sarcopenia management [Paper 2]."
+             },
+             %{profile: :clinical_intervention},
+             %{
+               "title" => "Society position paper on sarcopenia management",
+               "abstract" =>
+                 "This position paper provides clinical recommendations for sarcopenia management.",
+               "publicationTypes" => ["Guideline"]
+             }
+           ) == :contextual
+  end
+
+  test "evidence_store_for keeps methodological caveat claims in belief in clinical mode" do
     store =
       Investigate.evidence_store_for(
         %{
@@ -650,11 +830,28 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
             "This study relied on a small sample size and the results may not replicate in larger trials [Paper 1]."
         },
         0.9,
-        Strategy.default()
+        Strategy.default(),
+        %{profile: :clinical_intervention},
+        %{
+          "title" => "Randomized placebo-controlled trial of creatine supplementation",
+          "abstract" =>
+            "Participants were randomized to creatine or placebo during resistance training.",
+          "publicationTypes" => ["Clinical Trial"]
+        }
       )
 
     assert store == :belief
-    assert Investigate.grounding_role_for(%{source_type: :sourced, summary: "small sample size may not replicate"}) == :caveat
+
+    assert Investigate.grounding_role_for(
+             %{source_type: :sourced, summary: "small sample size may not replicate"},
+             %{profile: :clinical_intervention},
+             %{
+               "title" => "Randomized placebo-controlled trial of creatine supplementation",
+               "abstract" =>
+                 "Participants were randomized to creatine or placebo during resistance training.",
+               "publicationTypes" => ["Clinical Trial"]
+             }
+           ) == :caveat
   end
 
   test "evidence_store_for keeps indirect multi-ingredient sourced claims in belief" do
@@ -667,11 +864,32 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
             "A multi-ingredient pre-workout supplement containing creatine alongside betaine and dendrobium extract did not improve outcomes [Paper 3]."
         },
         0.9,
-        Strategy.default()
+        Strategy.default(),
+        %{profile: :clinical_intervention},
+        %{
+          "title" => "Multi-ingredient pre-workout supplementation during resistance training",
+          "abstract" =>
+            "Participants received a multi-ingredient pre-workout supplement containing creatine, betaine, and dendrobium extract.",
+          "publicationTypes" => ["Clinical Trial"]
+        }
       )
 
     assert store == :belief
-    assert Investigate.grounding_role_for(%{source_type: :sourced, summary: "multi-ingredient pre-workout supplement containing creatine alongside betaine"}) == :indirect
+
+    assert Investigate.grounding_role_for(
+             %{
+               source_type: :sourced,
+               summary:
+                 "multi-ingredient pre-workout supplement containing creatine alongside betaine"
+             },
+             %{profile: :clinical_intervention},
+             %{
+               "title" => "Multi-ingredient pre-workout supplementation during resistance training",
+               "abstract" =>
+                 "Participants received a multi-ingredient pre-workout supplement containing creatine, betaine, and dendrobium extract.",
+               "publicationTypes" => ["Clinical Trial"]
+             }
+           ) == :indirect
   end
 
   test "build_boundary_trace captures prompts, raw outputs, and evidence boundaries" do
