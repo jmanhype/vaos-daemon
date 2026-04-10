@@ -1781,6 +1781,24 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
            ]
   end
 
+  test "search_query_plan keeps participant and sport-specific outcome anchors for longer intervention topics" do
+    plan =
+      Investigate.search_query_plan(
+        "assess whether acute caffeine supplementation improves aerobic endurance performance in trained cyclists"
+      )
+
+    assert plan.keywords == [
+             "acute",
+             "caffeine",
+             "supplementation",
+             "aerobic",
+             "endurance",
+             "performance",
+             "trained",
+             "cyclists"
+           ]
+  end
+
   test "apply_search_plan_probe_results selects only from the probed shortlist" do
     plan =
       Investigate.search_query_plan(
@@ -1880,5 +1898,48 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
              "Spheroidal modes excited during the 1991 Pinatubo eruption"
 
     assert Enum.at(reranked, 2).title == "Flat Earth belief and misinformation on social media"
+  end
+
+  test "rerank_retrieval_candidates favors direct intervention papers over broad caffeine reviews" do
+    plan =
+      Investigate.search_query_plan(
+        "assess whether acute caffeine supplementation improves aerobic endurance performance in trained cyclists"
+      )
+
+    reranked =
+      Investigate.rerank_retrieval_candidates(
+        [
+          %{
+            title:
+              "Effect of Acute Caffeine Intake on Fat Oxidation Rate during Fed-State Exercise: A Systematic Review and Meta-Analysis",
+            abstract:
+              "This review synthesizes evidence on acute caffeine intake, fat oxidation, and exercise metabolism.",
+            citation_count: 52
+          },
+          %{
+            title:
+              "Acute caffeine supplementation improves cycling time trial performance in trained cyclists",
+            abstract:
+              "A randomized crossover trial found improved endurance performance during a cycling time trial in trained cyclists after acute caffeine supplementation.",
+            citation_count: 21
+          },
+          %{
+            title: "International society position stand on caffeine and exercise performance",
+            abstract:
+              "A narrative review of ergogenic mechanisms and general performance outcomes across sports.",
+            citation_count: 410
+          }
+        ],
+        plan
+      )
+
+    assert hd(reranked).title ==
+             "Acute caffeine supplementation improves cycling time trial performance in trained cyclists"
+
+    assert Enum.find_index(
+             reranked,
+             &(&1.title ==
+                 "Effect of Acute Caffeine Intake on Fat Oxidation Rate during Fed-State Exercise: A Systematic Review and Meta-Analysis")
+           ) > 0
   end
 end

@@ -54,6 +54,31 @@ defmodule Daemon.Investigation.EvidencePlannerTest do
     assert planner.selected.profile == :clinical_intervention
   end
 
+  test "randomized-intervention candidates prioritize direct trial probes before reviews" do
+    topic = "acute caffeine supplementation improves endurance performance in trained cyclists"
+    keywords = ["acute", "caffeine", "supplementation", "endurance", "performance"]
+    terms = ["acute", "caffeine", "supplementation", "endurance", "performance", "trained", "cyclists"]
+    claim_family = ClaimFamily.match(topic, keywords, terms)
+
+    planner = EvidencePlanner.plan(topic, keywords, terms, claim_family, nil)
+
+    assert planner.selected.mode == :randomized_intervention
+
+    assert Enum.map(planner.selected.ss_queries, &elem(&1, 0)) == [
+             :topic,
+             :rct,
+             :placebo,
+             :reviews
+           ]
+
+    assert Enum.take(Enum.map(planner.selected.oa_queries, &elem(&1, 0)), 4) == [
+             :topic,
+             :placebo,
+             :rct,
+             :reviews
+           ]
+  end
+
   test "apply_probe_results lets empirical probe signal overturn the heuristic prior" do
     topic = "smoking causes lung cancer"
     keywords = ["smoking", "lung", "cancer"]

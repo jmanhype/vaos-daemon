@@ -208,13 +208,15 @@ defmodule Daemon.Investigation.EvidencePlanner do
       ss_queries: [
         {:topic, topic, []},
         {:rct, "randomized controlled trial #{keyword_topic}", []},
-        {:placebo, "#{keyword_topic} placebo controlled trial", []}
+        {:placebo, "#{keyword_topic} placebo controlled trial", []},
+        {:reviews, "systematic review #{keyword_topic}", @review_opts}
       ],
       oa_queries: [
         {:topic, topic, []},
-        {:reviews, "systematic review #{keyword_topic}", @review_opts},
-        {:rct, "randomized controlled trial #{keyword_topic}", []},
         {:placebo, "#{keyword_topic} placebo controlled trial", []},
+        {:rct, "randomized controlled trial #{keyword_topic}", []},
+        {:reviews, "systematic review #{keyword_topic}", @review_opts},
+        {:meta_analysis, "meta-analysis #{keyword_topic}", @review_opts},
         {:guideline, "clinical guideline #{keyword_topic}", []}
       ],
       evidence_profile: evidence_profile,

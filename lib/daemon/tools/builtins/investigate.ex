@@ -3863,7 +3863,22 @@ defmodule Daemon.Tools.Builtins.Investigate do
   @doc false
   def rerank_retrieval_candidates(
         papers,
-        %{profile: :general, normalized_topic: topic, evidence_profile: evidence_profile}
+        %{profile: profile, normalized_topic: topic, evidence_profile: evidence_profile}
+      )
+      when profile in [:general, :clinical_intervention] and is_list(papers) do
+    topic_terms = distinctive_topic_terms(topic)
+
+    papers
+    |> Enum.with_index()
+    |> Enum.sort_by(fn {paper, index} ->
+      {-retrieval_directness_score(paper, topic_terms, evidence_profile), index}
+    end)
+    |> Enum.map(&elem(&1, 0))
+  end
+
+  def rerank_retrieval_candidates(
+        papers,
+        %{profile: :general, normalized_topic: topic}
       )
       when is_list(papers) do
     topic_terms = distinctive_topic_terms(topic)
@@ -3871,7 +3886,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
     papers
     |> Enum.with_index()
     |> Enum.sort_by(fn {paper, index} ->
-      {-retrieval_directness_score(paper, topic_terms, evidence_profile), index}
+      {-retrieval_directness_score(paper, topic_terms, nil), index}
     end)
     |> Enum.map(&elem(&1, 0))
   end
@@ -3943,7 +3958,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
 
     # Generic modifiers that appear across many domains — never use as primary filter term
     generic_modifiers =
-      ~w(effectiveness effective efficacy efficient analysis review evidence impact treatment treatments outcomes study studies comparison)
+      ~w(effectiveness effective efficacy efficient analysis review evidence impact treatment treatments outcomes study studies comparison acute chronic trained athlete athletes adult adults healthy patient patients participant participants male female men women)
 
     # Primary term: first non-generic term, or longest term as fallback
     primary_term =
@@ -4047,7 +4062,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
     |> Enum.reject(&(String.length(&1) < 3))
     |> drop_search_stem_variants()
     |> Enum.uniq()
-    |> Enum.take(6)
+    |> Enum.take(8)
   end
 
   defp drop_search_stem_variants(keywords) when is_list(keywords) do
