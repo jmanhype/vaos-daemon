@@ -1476,6 +1476,7 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
         ["caffeine", "supplementation", "endurance", "performance"]
       )
 
+    assert plan.keywords == ["caffeine", "supplementation", "endurance", "performance"]
     assert plan.family_profile == :clinical_intervention
     assert plan.profile == :clinical_intervention
     assert plan.claim_family == :clinical_intervention
@@ -1493,6 +1494,22 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert plan.profile == :clinical_intervention
     assert plan.claim_family == :clinical_intervention
     assert plan.evidence_plan.mode == :randomized_intervention
+  end
+
+  test "search_query_plan drops stem-duplicate keywords and keeps specific intervention outcomes" do
+    plan =
+      Investigate.search_query_plan(
+        "assess whether caffeine supplementation increases endurance performance in trained adults"
+      )
+
+    assert plan.keywords == [
+             "caffeine",
+             "supplementation",
+             "endurance",
+             "performance",
+             "trained",
+             "adults"
+           ]
   end
 
   test "apply_search_plan_probe_results selects only from the probed shortlist" do

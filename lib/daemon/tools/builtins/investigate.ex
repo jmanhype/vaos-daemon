@@ -67,8 +67,12 @@ defmodule Daemon.Tools.Builtins.Investigate do
     few more most other some such no nor not only own same so than too very it
     its this that these those and but or if while)
   @search_relation_words ~w(cause causes caused causing improve improves improved improving
-    prevent prevents prevented preventing effective effectiveness efficacy associated
-    association linked links linking relation relationship claims claim whether if)
+    increase increases increased increasing decrease decreases decreased decreasing
+    reduce reduces reduced reducing help helps helped helping benefit benefits
+    benefited benefiting enhance enhances enhanced enhancing manage manages managed
+    managing prevent prevents prevented preventing effective effectiveness efficacy
+    associated association linked links linking relation relationship claims claim
+    whether if)
   @retrieval_discourse_terms ~w(misinformation disinformation journalism media communication
     discourse ideology belief beliefs denial denialism history historical philosophy
     perception attitudes social conference public commentary review survey overview)
@@ -3562,7 +3566,7 @@ Known failure patterns to avoid:
     base_keywords =
       case keywords do
         list when is_list(list) and list != [] -> list
-        _ -> extract_keywords(topic)
+        _ -> topic_terms(topic)
       end
 
     base_keywords
@@ -3571,8 +3575,20 @@ Known failure patterns to avoid:
     |> Enum.reject(&(&1 in @stop_words))
     |> Enum.reject(&(&1 in @search_relation_words))
     |> Enum.reject(&(String.length(&1) < 3))
+    |> drop_search_stem_variants()
     |> Enum.uniq()
-    |> Enum.take(4)
+    |> Enum.take(6)
+  end
+
+  defp drop_search_stem_variants(keywords) when is_list(keywords) do
+    Enum.reject(keywords, fn keyword ->
+      Enum.any?(keywords, fn other ->
+        other != keyword and
+          String.length(other) > String.length(keyword) and
+          String.starts_with?(other, keyword) and
+          String.length(other) - String.length(keyword) <= 4
+      end)
+    end)
   end
 
   defp distinctive_topic_terms(topic) do
