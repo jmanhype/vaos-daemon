@@ -139,15 +139,28 @@ defmodule Daemon.Sandbox.Executor do
             Task.async(fn ->
               try do
                 {shell, shell_args} = resolve_shell()
-                env = subprocess_env()
+
+                env =
+                  subprocess_env()
                   |> Enum.map(fn {k, v} -> {String.to_charlist(k), String.to_charlist(v)} end)
 
-                port_opts = [:binary, :exit_status, :stderr_to_stdout, args: shell_args ++ [command], env: env]
-                port_opts = if cwd, do: [{:cd, String.to_charlist(cwd)} | port_opts], else: port_opts
+                port_opts = [
+                  :binary,
+                  :exit_status,
+                  :stderr_to_stdout,
+                  args: shell_args ++ [command],
+                  env: env
+                ]
+
+                port_opts =
+                  if cwd, do: [{:cd, String.to_charlist(cwd)} | port_opts], else: port_opts
 
                 port = Port.open({:spawn_executable, to_charlist(shell)}, port_opts)
-                {:os_pid, os_pid} = Port.info(port, :os_pid)
-                send(parent, {os_pid_ref, os_pid})
+
+                case Port.info(port, :os_pid) do
+                  {:os_pid, os_pid} -> send(parent, {os_pid_ref, os_pid})
+                  _ -> :ok
+                end
 
                 collect_port_output(port, [])
               rescue
@@ -156,11 +169,12 @@ defmodule Daemon.Sandbox.Executor do
             end)
 
           # Receive OS PID from the task (arrives almost immediately)
-          os_pid = receive do
-            {^os_pid_ref, pid} -> pid
-          after
-            5_000 -> nil
-          end
+          os_pid =
+            receive do
+              {^os_pid_ref, pid} -> pid
+            after
+              5_000 -> nil
+            end
 
           case Task.yield(task, timeout) || Task.shutdown(task) do
             {:ok, {output, exit_code}} ->
@@ -176,8 +190,12 @@ defmodule Daemon.Sandbox.Executor do
         end
 
       :full ->
-        Logger.warning("[Sandbox.Executor] All #{@max_concurrent_subprocesses} subprocess slots full, rejecting command")
-        {:error, "Subprocess concurrency limit reached (#{@max_concurrent_subprocesses} slots full)"}
+        Logger.warning(
+          "[Sandbox.Executor] All #{@max_concurrent_subprocesses} subprocess slots full, rejecting command"
+        )
+
+        {:error,
+         "Subprocess concurrency limit reached (#{@max_concurrent_subprocesses} slots full)"}
     end
   end
 
@@ -187,6 +205,7 @@ defmodule Daemon.Sandbox.Executor do
     receive do
       {^port, {:data, data}} ->
         collect_port_output(port, [data | acc])
+
       {^port, {:exit_status, status}} ->
         {acc |> Enum.reverse() |> IO.iodata_to_binary(), status}
     end
@@ -198,7 +217,8 @@ defmodule Daemon.Sandbox.Executor do
     Logger.warning("[Sandbox.Executor] Killing process tree (OS PID #{os_pid})")
     # Kill children first, then parent. pkill -P sends to children of the given PID.
     System.cmd("sh", ["-c", "pkill -9 -P #{os_pid} 2>/dev/null; kill -9 #{os_pid} 2>/dev/null"],
-      stderr_to_stdout: true)
+      stderr_to_stdout: true
+    )
   rescue
     _ -> :ok
   end
@@ -211,6 +231,7 @@ defmodule Daemon.Sandbox.Executor do
       :ets.new(@concurrency_table, [:named_table, :public, :set])
       :ets.insert(@concurrency_table, {:slots_used, 0})
     end
+
     :ok
   end
 
@@ -218,6 +239,7 @@ defmodule Daemon.Sandbox.Executor do
     init_concurrency_table()
     # Atomic increment — returns new value
     count = :ets.update_counter(@concurrency_table, :slots_used, {2, 1})
+
     if count > @max_concurrent_subprocesses do
       # Over limit — decrement back and reject
       :ets.update_counter(@concurrency_table, :slots_used, {2, -1})
@@ -233,6 +255,7 @@ defmodule Daemon.Sandbox.Executor do
     rescue
       ArgumentError -> :ok
     end
+
     :ok
   end
 

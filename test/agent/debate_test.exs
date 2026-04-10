@@ -18,10 +18,12 @@ defmodule Daemon.Agent.DebateTest do
     end
 
     test "run/2 is exported" do
+      assert Code.ensure_loaded?(Debate)
       assert function_exported?(Debate, :run, 2)
     end
 
     test "run/1 (default opts) is also exported" do
+      assert Code.ensure_loaded?(Debate)
       assert function_exported?(Debate, :run, 1)
     end
   end

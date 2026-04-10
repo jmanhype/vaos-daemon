@@ -45,18 +45,22 @@ defmodule Daemon.Agent.SkillEvolutionTest do
     end
 
     test "start_link/1 is exported" do
+      assert Code.ensure_loaded?(SkillEvolution)
       assert function_exported?(SkillEvolution, :start_link, 1)
     end
 
     test "stats/0 is exported" do
+      assert Code.ensure_loaded?(SkillEvolution)
       assert function_exported?(SkillEvolution, :stats, 0)
     end
 
     test "list_evolved_skills/0 is exported" do
+      assert Code.ensure_loaded?(SkillEvolution)
       assert function_exported?(SkillEvolution, :list_evolved_skills, 0)
     end
 
     test "trigger_evolution/2 is exported" do
+      assert Code.ensure_loaded?(SkillEvolution)
       assert function_exported?(SkillEvolution, :trigger_evolution, 2)
     end
 

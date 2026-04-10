@@ -12,33 +12,37 @@ defmodule Daemon.Agent.LoopUnitTest do
   # by calling the same regex logic directly.
 
   # Kept in sync with @injection_patterns in loop.ex — update both together.
-  @injection_patterns [
-    ~r/what\s+(is|are|was)\s+(your\s+)?(system\s+prompt|instructions?|rules?|configuration|directives?)/i,
-    ~r/what\s+(is|are|was)\s+the\s+(system\s+prompt|instructions?|configuration|directives?)/i,
-    ~r/(show(\s+me)?|print|display|reveal|repeat|output|tell\s+me|give\s+me|say|recite|state|list|read)\s+(your\s+)?(system\s+prompt|instructions?|full\s+prompt|prompt|initial\s+prompt|configuration)/i,
-    ~r/tell\s+me\s+.{0,30}(system\s+prompt|instructions?|rules?|prompt)\s*(word\s+for\s+word|verbatim|exactly|literally)?/i,
-    ~r/(word\s+for\s+word|verbatim|character\s+for\s+character).{0,40}(prompt|instructions?|told|rules?)/i,
-    ~r/ignore\s+all\s+(instructions?|rules?|guidelines?|context|constraints?)/i,
-    ~r/ignore\s+(all\s+)?(previous|prior|above)\s+(instructions?|prompt|context|rules?)/i,
-    ~r/repeat\s+everything\s+(above|before|prior)/i,
-    ~r/what\s+(were\s+)?(you\s+)?(told|instructed|programmed|trained|configured)\s+to/i,
-    ~r/(jailbreak|do\s+anything\s+now|developer\s+mode|prompt\s+injection)/i,
-    ~r/\byou\s+(are|were|become|act\s+as)\s+DAN\b/i,
-    ~r/\bDAN\s+(mode|protocol|activated|enabled)\b/i,
-    ~r/(pretend|act\s+as\s+if|imagine|behave\s+as\s+if)\s+.{0,40}(no\s+restrictions?|no\s+guidelines?|no\s+rules?|unrestricted|without\s+limits?|uncensored)/i,
-    ~r/(output|print|repeat|copy|write\s+out)\s+(everything|all\s+text|all\s+content)\s+(above|before|prior)/i,
-    ~r/disregard\s+(your\s+)?(previous\s+)?(instructions?|guidelines?|rules?)/i,
-    ~r/forget\s+(everything|all)\s+(you\s+)?(were\s+)?(told|instructed|programmed)/i,
-    ~r/system\s+prompt.*word\s+for\s+word/i,
-    ~r/verbatim.*(prompt|instructions?)/i,
-    ~r/(prompt|instructions?).*verbatim/i,
-    ~r/copy\s+(and\s+)?(paste|output)\s+(your\s+)?(prompt|instructions?)/i,
-    ~r/(override|bypass|circumvent|disable)\s+.{0,30}(instructions?|restrictions?|guidelines?|safety\s+filter)/i
-  ]
+  # Stored as a function instead of a module attribute because some regex
+  # references are not safely escapable when injected into function bodies.
+  defp injection_patterns do
+    [
+      ~r/what\s+(is|are|was)\s+(your\s+)?(system\s+prompt|instructions?|rules?|configuration|directives?)/i,
+      ~r/what\s+(is|are|was)\s+the\s+(system\s+prompt|instructions?|configuration|directives?)/i,
+      ~r/(show(\s+me)?|print|display|reveal|repeat|output|tell\s+me|give\s+me|say|recite|state|list|read)\s+(your\s+)?(system\s+prompt|instructions?|full\s+prompt|prompt|initial\s+prompt|configuration)/i,
+      ~r/tell\s+me\s+.{0,30}(system\s+prompt|instructions?|rules?|prompt)\s*(word\s+for\s+word|verbatim|exactly|literally)?/i,
+      ~r/(word\s+for\s+word|verbatim|character\s+for\s+character).{0,40}(prompt|instructions?|told|rules?)/i,
+      ~r/ignore\s+all\s+(instructions?|rules?|guidelines?|context|constraints?)/i,
+      ~r/ignore\s+(all\s+)?(previous|prior|above)\s+(instructions?|prompt|context|rules?)/i,
+      ~r/repeat\s+everything\s+(above|before|prior)/i,
+      ~r/what\s+(were\s+)?(you\s+)?(told|instructed|programmed|trained|configured)\s+to/i,
+      ~r/(jailbreak|do\s+anything\s+now|developer\s+mode|prompt\s+injection)/i,
+      ~r/\byou\s+(are|were|become|act\s+as)\s+DAN\b/i,
+      ~r/\bDAN\s+(mode|protocol|activated|enabled)\b/i,
+      ~r/(pretend|act\s+as\s+if|imagine|behave\s+as\s+if)\s+.{0,40}(no\s+restrictions?|no\s+guidelines?|no\s+rules?|unrestricted|without\s+limits?|uncensored)/i,
+      ~r/(output|print|repeat|copy|write\s+out)\s+(everything|all\s+text|all\s+content)\s+(above|before|prior)/i,
+      ~r/disregard\s+(your\s+)?(previous\s+)?(instructions?|guidelines?|rules?)/i,
+      ~r/forget\s+(everything|all)\s+(you\s+)?(were\s+)?(told|instructed|programmed)/i,
+      ~r/system\s+prompt.*word\s+for\s+word/i,
+      ~r/verbatim.*(prompt|instructions?)/i,
+      ~r/(prompt|instructions?).*verbatim/i,
+      ~r/copy\s+(and\s+)?(paste|output)\s+(your\s+)?(prompt|instructions?)/i,
+      ~r/(override|bypass|circumvent|disable)\s+.{0,30}(instructions?|restrictions?|guidelines?|safety\s+filter)/i
+    ]
+  end
 
   defp injection?(msg) when is_binary(msg) do
     trimmed = String.trim(msg)
-    Enum.any?(@injection_patterns, &Regex.match?(&1, trimmed))
+    Enum.any?(injection_patterns(), &Regex.match?(&1, trimmed))
   end
 
   defp injection?(_), do: false
@@ -147,13 +151,11 @@ defmodule Daemon.Agent.LoopUnitTest do
 
   defp doom_loop?(recent_failure_signatures) do
     length(recent_failure_signatures) >= 3 and
-      (
-        Enum.any?(
-          Enum.uniq(recent_failure_signatures),
-          fn sig -> Enum.count(recent_failure_signatures, &(&1 == sig)) >= 3 end
-        ) or
-          length(recent_failure_signatures) >= 6
-      )
+      (Enum.any?(
+         Enum.uniq(recent_failure_signatures),
+         fn sig -> Enum.count(recent_failure_signatures, &(&1 == sig)) >= 3 end
+       ) or
+         length(recent_failure_signatures) >= 6)
   end
 
   describe "doom loop detection — recent_failure_signatures logic" do
@@ -338,7 +340,8 @@ defmodule Daemon.Agent.LoopUnitTest do
       # because iteration=20 >= 3, giving ZERO overflow retries.
       # With overflow_retries=0 < 3, all 3 retries are available.
       assert state.overflow_retries < 3
-      assert state.iteration >= 3  # tool iterations don't affect overflow retries
+      # tool iterations don't affect overflow retries
+      assert state.iteration >= 3
     end
 
     test "overflow_retries increments independently from iteration" do
@@ -346,7 +349,8 @@ defmodule Daemon.Agent.LoopUnitTest do
       # Simulate a retry
       state = %{state | overflow_retries: state.overflow_retries + 1}
       assert state.overflow_retries == 1
-      assert state.iteration == 8  # unchanged
+      # unchanged
+      assert state.iteration == 8
       assert should_retry_overflow?(state)
     end
 
@@ -400,7 +404,8 @@ defmodule Daemon.Agent.LoopUnitTest do
   # ---------------------------------------------------------------------------
 
   describe "tool output truncation" do
-    @max_bytes 10_240  # 10 KB default
+    # 10 KB default
+    @max_bytes 10_240
 
     test "small output passes through unchanged" do
       output = String.duplicate("a", 100)
@@ -439,19 +444,23 @@ defmodule Daemon.Agent.LoopUnitTest do
       content =
         if byte_size(output) > @max_bytes do
           truncated = binary_part(output, 0, @max_bytes)
-          truncated <> "\n\n[Output truncated — #{byte_size(output)} bytes total, showing first #{@max_bytes} bytes]"
+
+          truncated <>
+            "\n\n[Output truncated — #{byte_size(output)} bytes total, showing first #{@max_bytes} bytes]"
         else
           output
         end
 
-      assert byte_size(content) > @max_bytes  # includes the notice
+      # includes the notice
+      assert byte_size(content) > @max_bytes
       assert String.contains?(content, "[Output truncated")
       assert String.contains?(content, "#{byte_size(output)} bytes total")
     end
 
     test "truncation preserves valid binary prefix" do
       # Mix of ASCII and multi-byte chars
-      output = String.duplicate("hello 🌍 ", 2000)  # ~18KB
+      # ~18KB
+      output = String.duplicate("hello 🌍 ", 2000)
       assert byte_size(output) > @max_bytes
 
       truncated = binary_part(output, 0, @max_bytes)

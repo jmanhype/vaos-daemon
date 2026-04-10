@@ -40,10 +40,12 @@ defmodule Daemon.Agent.SkillBootstrapTest do
     end
 
     test "create_and_run/2 is exported" do
+      assert Code.ensure_loaded?(SkillBootstrap)
       assert function_exported?(SkillBootstrap, :create_and_run, 2)
     end
 
     test "list_self_skills/0 is exported" do
+      assert Code.ensure_loaded?(SkillBootstrap)
       assert function_exported?(SkillBootstrap, :list_self_skills, 0)
     end
 

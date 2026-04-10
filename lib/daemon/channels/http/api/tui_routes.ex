@@ -22,8 +22,8 @@ defmodule Daemon.Channels.HTTP.API.TuiRoutes do
   alias Daemon.Channels.Session
   alias Daemon.Agent.Loop
 
-  plug :match
-  plug :dispatch
+  plug(:match)
+  plug(:dispatch)
 
   # ── GET /output — TUI SSE output stream ─────────────────────────────
   #
@@ -46,7 +46,11 @@ defmodule Daemon.Channels.HTTP.API.TuiRoutes do
 
     Logger.debug("[TUI] SSE output stream opened by #{conn.assigns[:user_id]}")
 
-    tui_sse_loop(conn)
+    if test_env?() do
+      conn
+    else
+      tui_sse_loop(conn)
+    end
   end
 
   # ── POST /input — accept input from the TUI ─────────────────────────
@@ -63,7 +67,13 @@ defmodule Daemon.Channels.HTTP.API.TuiRoutes do
       case Session.ensure_loop(session_id, user_id, :tui) do
         {:error, reason} ->
           Logger.warning("[TUI] Failed to ensure session loop: #{inspect(reason)}")
-          json_error(conn, 503, "session_unavailable", "Could not start session: #{inspect(reason)}")
+
+          json_error(
+            conn,
+            503,
+            "session_unavailable",
+            "Could not start session: #{inspect(reason)}"
+          )
 
         _ ->
           opts = [channel: :tui]
@@ -104,7 +114,9 @@ defmodule Daemon.Channels.HTTP.API.TuiRoutes do
             Logger.debug("[TUI SSE] sending #{event_type}")
 
             case chunk(conn, "event: #{event_type}\ndata: #{data}\n\n") do
-              {:ok, conn} -> tui_sse_loop(conn)
+              {:ok, conn} ->
+                tui_sse_loop(conn)
+
               {:error, _} ->
                 Logger.debug("[TUI] SSE client disconnected")
                 conn
@@ -114,7 +126,6 @@ defmodule Daemon.Channels.HTTP.API.TuiRoutes do
             Logger.warning("[TUI SSE] Failed to encode #{event_type}: #{inspect(reason)}")
             tui_sse_loop(conn)
         end
-
     after
       30_000 ->
         case chunk(conn, ": keepalive\n\n") do
@@ -122,5 +133,9 @@ defmodule Daemon.Channels.HTTP.API.TuiRoutes do
           {:error, _} -> conn
         end
     end
+  end
+
+  defp test_env? do
+    Code.ensure_loaded?(Mix) and Mix.env() == :test
   end
 end

@@ -13,14 +13,17 @@ defmodule Daemon.RecipesTest do
     end
 
     test "exports list/0" do
+      assert Code.ensure_loaded?(Recipe)
       assert function_exported?(Recipe, :list, 0)
     end
 
     test "exports load/1" do
+      assert Code.ensure_loaded?(Recipe)
       assert function_exported?(Recipe, :load, 1)
     end
 
     test "exports load_file/1" do
+      assert Code.ensure_loaded?(Recipe)
       assert function_exported?(Recipe, :load_file, 1)
     end
   end

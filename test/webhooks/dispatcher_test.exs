@@ -86,8 +86,12 @@ defmodule Daemon.Webhooks.DispatcherTest do
 
   describe "register/3, unregister/1, list/0" do
     setup do
-      # Start the dispatcher for each test
-      start_supervised!(Dispatcher)
+      case Process.whereis(Dispatcher) do
+        nil -> start_supervised!(Dispatcher)
+        _pid -> :ok
+      end
+
+      Dispatcher.clear()
       :ok
     end
 

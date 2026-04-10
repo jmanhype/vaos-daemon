@@ -9,12 +9,14 @@ Close the current first-order integrity bottleneck before moving on.
 ## Active Issue
 
 `vas-swarm-942` — Recover direct trial corpus for clinical intervention runs when a good performance/placebo probe exists but the full retrieval stack degrades.
+Blocked by `vas-swarm-dy1` — restore the repo-level full test gate now that the earlier unrelated assertion failures are fixed.
 
 ## Verification Status
 
 - Targeted tests pass for the carryover fix.
 - Live validation now carries 1 probe paper into the selected `randomized_intervention` run and produces `grounded_for_count = 1`.
-- `mix test` is still blocked by unrelated existing failures outside this slice, so the milestone is not yet cleared for advancement.
+- The earlier unrelated suite failures were cleared and the focused regression pack now passes.
+- The milestone is still not cleared for advancement because the latest clean `mix test` run does not terminate cleanly: `/tmp/vaos-full-3.log` shows no failure entries so far, but the runner never emits a final summary.
 
 ## Operating Rule
 

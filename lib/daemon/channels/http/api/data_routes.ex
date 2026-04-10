@@ -84,7 +84,7 @@ defmodule Daemon.Channels.HTTP.API.DataRoutes do
   # ── GET /jobs — scheduler jobs ─────────────────────────────────────
 
   get "/jobs" do
-    jobs = Scheduler.list_jobs()
+    jobs = list_scheduler_jobs()
 
     body =
       Jason.encode!(%{
@@ -434,6 +434,18 @@ defmodule Daemon.Channels.HTTP.API.DataRoutes do
   defp parse_sort_atom("recency"), do: :recency
   defp parse_sort_atom("importance"), do: :importance
   defp parse_sort_atom(_), do: :relevance
+
+  defp list_scheduler_jobs do
+    if Process.whereis(Scheduler) do
+      GenServer.call(Scheduler, :list_jobs, 100)
+    else
+      []
+    end
+  rescue
+    _ -> []
+  catch
+    :exit, _ -> []
+  end
 
   # Persist provider/model selection to ~/.daemon/config.json so it survives restarts.
   # Reads existing config (if any), merges the two keys, and writes back atomically.

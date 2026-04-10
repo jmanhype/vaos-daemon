@@ -2,7 +2,7 @@
 
 **Created**: 2026-04-10
 **Epic**: `vas-swarm-jji`
-**Current Active Issue**: `vas-swarm-942`
+**Current Active Issue**: `vas-swarm-dy1`
 
 ## Overview
 
@@ -50,7 +50,7 @@ The rule for progress is simple:
 
 **Status note**
 - Probe-paper carryover now lands in the merged retrieval set and the live rerun no longer ends `belief_consensus_for`.
-- Do not advance to the next milestone yet: `mix test` is blocked by unrelated existing suite failures outside `vas-swarm-942`.
+- Do not advance to the next milestone yet: the old unrelated suite failures are fixed, but the latest clean `mix test` run still does not terminate cleanly, so the verification gate is not yet satisfied.
 
 ### Task Classes
 

@@ -58,14 +58,17 @@ defmodule Daemon.Agent.Scheduler.HeartbeatExecutorTest do
     end
 
     test "exports execute/2" do
+      assert Code.ensure_loaded?(HeartbeatExecutor)
       assert function_exported?(HeartbeatExecutor, :execute, 2)
     end
 
     test "exports get_run/1" do
+      assert Code.ensure_loaded?(HeartbeatExecutor)
       assert function_exported?(HeartbeatExecutor, :get_run, 1)
     end
 
     test "exports list_runs/2" do
+      assert Code.ensure_loaded?(HeartbeatExecutor)
       assert function_exported?(HeartbeatExecutor, :list_runs, 2)
     end
   end

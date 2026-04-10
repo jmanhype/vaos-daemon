@@ -18,11 +18,24 @@ defmodule Daemon.Agents.PersonasTest do
 
   describe "behaviour compliance" do
     test "every persona exports the required callbacks" do
-      required = [:name, :description, :tier, :role, :system_prompt, :skills, :triggers, :territory, :escalate_to]
+      required = [
+        :name,
+        :description,
+        :tier,
+        :role,
+        :system_prompt,
+        :skills,
+        :triggers,
+        :territory,
+        :escalate_to
+      ]
+
       for mod <- @persona_modules do
+        assert Code.ensure_loaded?(mod), "#{mod} failed to load"
+
         for cb <- required do
-          assert function_exported?(mod, cb, 0), 
-            "#{mod} is missing #{cb}/0"
+          assert function_exported?(mod, cb, 0),
+                 "#{mod} is missing #{cb}/0"
         end
       end
     end
@@ -60,8 +73,9 @@ defmodule Daemon.Agents.PersonasTest do
     test "every persona returns a valid tier atom" do
       for mod <- @persona_modules do
         tier = mod.tier()
+
         assert tier in @valid_tiers,
-          "#{mod}.tier/0 returned #{inspect(tier)}, expected one of #{inspect(@valid_tiers)}"
+               "#{mod}.tier/0 returned #{inspect(tier)}, expected one of #{inspect(@valid_tiers)}"
       end
     end
   end

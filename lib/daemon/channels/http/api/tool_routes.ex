@@ -23,8 +23,8 @@ defmodule Daemon.Channels.HTTP.API.ToolRoutes do
   alias Daemon.Commands
   alias Daemon.Agent.Orchestrator, as: TaskOrchestrator
 
-  plug :match
-  plug :dispatch
+  plug(:match)
+  plug(:dispatch)
 
   # ── GET / ─────────────────────────────────────────────────────────
   # Handles GET /tools, GET /skills, GET /commands after prefix strip.
@@ -56,7 +56,8 @@ defmodule Daemon.Channels.HTTP.API.ToolRoutes do
             Jason.encode!(%{
               status: "created",
               name: name,
-              message: "Skill '#{name}' created and registered at ~/.daemon/skills/#{name}/SKILL.md"
+              message:
+                "Skill '#{name}' created and registered at ~/.daemon/skills/#{name}/SKILL.md"
             })
 
           conn
@@ -239,10 +240,17 @@ defmodule Daemon.Channels.HTTP.API.ToolRoutes do
       |> Enum.filter(fn item -> item.score > 0.0 end)
 
     skill_results =
-      Tools.search(q)
-      |> Enum.map(fn {name, description, score} ->
-        %{type: "skill", name: name, description: description, category: "skill", score: score}
+      Tools.list_skills()
+      |> Enum.map(fn skill ->
+        name = Map.get(skill, :name, "")
+        description = Map.get(skill, :description, "")
+        category = Map.get(skill, :category, "skill")
+        triggers = Map.get(skill, :triggers, [])
+        score = fuzzy_skill_score(name, description, triggers, q_lower)
+
+        %{type: "skill", name: name, description: description, category: category, score: score}
       end)
+      |> Enum.filter(fn item -> item.score > 0.0 end)
 
     all =
       (command_results ++ skill_results)
@@ -267,5 +275,27 @@ defmodule Daemon.Channels.HTTP.API.ToolRoutes do
       String.contains?(desc_lower, q_lower) -> 0.3
       true -> 0.0
     end
+  end
+
+  defp fuzzy_skill_score(name, description, triggers, q_lower) do
+    max(
+      fuzzy_score(name, description, q_lower),
+      trigger_score(triggers, q_lower)
+    )
+  end
+
+  defp trigger_score(triggers, q_lower) do
+    triggers
+    |> Enum.map(&to_string/1)
+    |> Enum.map(&String.downcase/1)
+    |> Enum.map(fn trigger ->
+      cond do
+        trigger == q_lower -> 0.95
+        String.starts_with?(trigger, q_lower) -> 0.75
+        String.contains?(trigger, q_lower) -> 0.55
+        true -> 0.0
+      end
+    end)
+    |> Enum.max(fn -> 0.0 end)
   end
 end

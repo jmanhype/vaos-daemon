@@ -43,6 +43,12 @@ defmodule Daemon.Webhooks.Dispatcher do
     GenServer.call(__MODULE__, {:unregister, id})
   end
 
+  @doc "Clear all registered webhooks."
+  @spec clear() :: :ok
+  def clear do
+    GenServer.call(__MODULE__, :clear)
+  end
+
   @doc "List all registered webhooks (secret is never exposed)."
   @spec list() :: [map()]
   def list do
@@ -84,9 +90,18 @@ defmodule Daemon.Webhooks.Dispatcher do
 
   def handle_call({:unregister, id}, _from, state) do
     case :ets.lookup(@table, id) do
-      [] -> {:reply, {:error, :not_found}, state}
-      _ -> :ets.delete(@table, id); {:reply, :ok, state}
+      [] ->
+        {:reply, {:error, :not_found}, state}
+
+      _ ->
+        :ets.delete(@table, id)
+        {:reply, :ok, state}
     end
+  end
+
+  def handle_call(:clear, _from, state) do
+    :ets.delete_all_objects(@table)
+    {:reply, :ok, state}
   end
 
   @impl true
@@ -116,12 +131,17 @@ defmodule Daemon.Webhooks.Dispatcher do
 
   defp deliver_with_retry(entry, event, attempts \\ 3) do
     case deliver(entry, event) do
-      :ok -> :ok
+      :ok ->
+        :ok
+
       {:error, _} when attempts > 1 ->
         Process.sleep(1000 * (4 - attempts))
         deliver_with_retry(entry, event, attempts - 1)
+
       {:error, reason} ->
-        Logger.warning("[Webhooks] permanently failed delivery to #{entry.url}: #{inspect(reason)}")
+        Logger.warning(
+          "[Webhooks] permanently failed delivery to #{entry.url}: #{inspect(reason)}"
+        )
     end
   end
 
@@ -131,7 +151,11 @@ defmodule Daemon.Webhooks.Dispatcher do
     headers = build_headers(json, entry.secret)
     req_headers = Enum.map(headers, fn {k, v} -> {to_string(k), to_string(v)} end)
 
-    case Req.post(url, body: json, headers: [{"content-type", "application/json"} | req_headers], receive_timeout: 5_000) do
+    case Req.post(url,
+           body: json,
+           headers: [{"content-type", "application/json"} | req_headers],
+           receive_timeout: 5_000
+         ) do
       {:ok, %Req.Response{status: status}} when status in 200..299 -> :ok
       {:ok, %Req.Response{status: status}} -> {:error, "HTTP #{status}"}
       {:error, reason} -> {:error, inspect(reason)}
@@ -150,11 +174,14 @@ defmodule Daemon.Webhooks.Dispatcher do
     case URI.parse(url) do
       %URI{scheme: scheme, host: host} when scheme in ["http", "https"] and not is_nil(host) ->
         host_lower = String.downcase(host)
-        not (host_lower in @blocked_hosts) and
+
+        host_lower not in @blocked_hosts and
           not String.starts_with?(host_lower, "169.254.") and
           not String.starts_with?(host_lower, "10.") and
           not String.starts_with?(host_lower, "192.168.")
-      _ -> false
+
+      _ ->
+        false
     end
   end
 

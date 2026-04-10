@@ -2,7 +2,7 @@
 
 **Last updated**: 2026-04-10
 **Epic**: `vas-swarm-jji`
-**Current active issue**: `vas-swarm-942`
+**Current active issue**: `vas-swarm-dy1`
 **Latest functional checkpoint before this doc stack**: `b75a63f`
 
 ## Objective
@@ -21,7 +21,7 @@ But Roberto is not content yet because the next bottleneck is still a first-orde
 ## Current Slice In Progress
 
 ### Active issue
-- `vas-swarm-942`
+- `vas-swarm-dy1`
 
 ### What landed
 - selected probe papers now carry into the merged retrieval corpus before dedupe/rerank/filter
@@ -32,14 +32,13 @@ But Roberto is not content yet because the next bottleneck is still a first-orde
 - Tests:
   - `mix test test/tools/investigate_test.exs` -> `100 tests, 0 failures`
   - `mix test test/investigation/evidence_planner_test.exs` -> pass
+  - `mix test test/agent/treasury_alerts_test.exs test/tools/synthesizer_test.exs test/providers/registry_fallback_test.exs test/vault/fact_store_test.exs test/webhooks/dispatcher_test.exs test/channels/http/api/command_palette_test.exs` -> `101 tests, 0 failures`
 - Live trace:
   - [vaos-investigate-trace-adafef1959fec23c-vas-swarm-942-live-carryover-1775850306726.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-adafef1959fec23c-vas-swarm-942-live-carryover-1775850306726.json)
 - Full suite gate:
-  - `mix test` is still blocked by unrelated existing failures outside this slice:
-    - `test/agent/loop_unit_test.exs` compile error: `cannot inject attribute @injection_patterns ... #Reference<...>`
-    - `Daemon.Intelligence.DecisionLedgerTest`: `session failure tracking cross-session isolation`
-    - `Daemon.Vault.FactExtractorTest`: `extracts deadline commitments`
-    - `Daemon.Vault.FactExtractorTest`: `extracts technical facts with 'uses'`
+  - the earlier unrelated failures were cleared
+  - the latest clean rerun is now blocked by late-run verification hang instead of assertion failures
+  - `/tmp/vaos-full-3.log` shows no failure entries so far, but `mix test` never reaches `Finished in ...` and stays alive with lingering localhost Ollama and HTTPS connections
 
 ## Latest Completed Slice
 
@@ -63,7 +62,7 @@ But Roberto is not content yet because the next bottleneck is still a first-orde
 ## Current Bottleneck
 
 ### Active issue
-- `vas-swarm-942`
+- `vas-swarm-dy1`
 
 ### Problem
 
@@ -74,17 +73,18 @@ The direct-trial carryover repair is now in place:
   - `grounded_for_count = 1`
   - `grounded_against_count = 0`
 
-That closes the original belief-only collapse, but the run is still thinly grounded under source degradation.
+That closes the original belief-only collapse, but milestone closure is still blocked at the repo verification layer.
 
 ## What Roberto Would Do Next
 
 Hold `vas-swarm-942` until the repo-level verification gate is green:
-- full-suite failures outside this slice currently block milestone closure
+- the earlier unrelated failures are fixed
+- the remaining blocker is a full-suite run that no longer shows assertion failures but still does not terminate cleanly
 - once the gate is green, re-run the live trace and decide whether the next bottleneck is thin direct-evidence breadth under source degradation
 
 Shortest version:
 
-`The probe-carryover repair landed, but milestone closure is blocked by unrelated full-suite failures and the degraded-source run is still thinner than Roberto wants.`
+`The probe-carryover repair landed, the old unrelated assertion failures were cleared, and milestone closure is now blocked by a full-suite verification hang after the last visible test output.`
 
 ## Known Stable Wins
 
@@ -99,9 +99,9 @@ On the next session:
 
 1. Read this file.
 2. Run `mix osa.roberto.resume`.
-3. Open `vas-swarm-942`.
-4. Open the trace above.
-5. Re-run `mix test` after the unrelated suite blocker is resolved or waived.
-6. Re-run the live trace above.
+3. Open `vas-swarm-dy1` and `/tmp/vaos-full-3.log`.
+4. Make `mix test` terminate cleanly again.
+5. Re-run `mix test`.
+6. Re-open `vas-swarm-942` and re-run the live trace above.
 7. If grounding is still thin, open the next retrieval-breadth issue.
 8. Update this file, close/open issues, and push.

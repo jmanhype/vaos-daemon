@@ -358,14 +358,19 @@ defmodule Daemon.Tools.Builtins.ShellExecuteTest do
     end
 
     test "nonexistent cwd returns error" do
-      assert {:error, msg} = ShellExecute.execute(%{"command" => "pwd", "cwd" => "/tmp/osa_nonexistent_dir_999"})
+      assert {:error, msg} =
+               ShellExecute.execute(%{
+                 "command" => "pwd",
+                 "cwd" => "/tmp/osa_nonexistent_dir_999"
+               })
+
       assert msg =~ "cwd does not exist"
     end
 
     test "empty cwd falls back to default workspace" do
       assert {:ok, output} = ShellExecute.execute(%{"command" => "pwd", "cwd" => ""})
       trimmed = String.trim(output)
-      assert trimmed =~ ~r/.osa\/workspace/i
+      assert trimmed =~ ~r/.daemon\/workspace/i
     end
 
     test "parameters schema includes cwd" do

@@ -11,7 +11,7 @@ defmodule MiosaProviders.RegistryFallbackTest do
       _pid -> :ok
     end
 
-    case Process.whereis(Registry) do
+    case Process.whereis(Daemon.Providers.Registry) do
       nil -> start_supervised!(Registry)
       _pid -> :ok
     end

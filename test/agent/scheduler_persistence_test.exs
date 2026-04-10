@@ -17,22 +17,27 @@ defmodule Daemon.Agent.Scheduler.SQLiteStoreTest do
     end
 
     test "init/0 is exported" do
+      assert Code.ensure_loaded?(SQLiteStore)
       assert function_exported?(SQLiteStore, :init, 0)
     end
 
     test "save_job/1 is exported" do
+      assert Code.ensure_loaded?(SQLiteStore)
       assert function_exported?(SQLiteStore, :save_job, 1)
     end
 
     test "load_all_jobs/0 is exported" do
+      assert Code.ensure_loaded?(SQLiteStore)
       assert function_exported?(SQLiteStore, :load_all_jobs, 0)
     end
 
     test "delete_job/1 is exported" do
+      assert Code.ensure_loaded?(SQLiteStore)
       assert function_exported?(SQLiteStore, :delete_job, 1)
     end
 
     test "update_job/2 is exported" do
+      assert Code.ensure_loaded?(SQLiteStore)
       assert function_exported?(SQLiteStore, :update_job, 2)
     end
   end

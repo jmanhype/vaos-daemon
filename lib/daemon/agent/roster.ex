@@ -89,7 +89,6 @@ defmodule Daemon.Agent.Roster do
           end)
           |> Map.new()
 
-
   # ── Role Prompts (single source of truth) ────────────────────────
   # 17 roles: 8 original swarm roles + 9 agent-dispatch roles.
   # Orchestrator, Swarm.Worker, and Swarm.Planner all delegate here.
@@ -368,11 +367,21 @@ defmodule Daemon.Agent.Roster do
 
   @doc "Get all agent definitions (compiled + SDK-defined)."
   @spec all() :: %{String.t() => agent_def()}
-  def all, do: Map.merge(@agents, sdk_agents())
+  def all do
+    @agents
+    |> Map.merge(sdk_agents())
+    |> Map.new(fn {name, agent} -> {name, hydrate_prompt(agent)} end)
+  end
 
   @doc "Get agent by name (checks compiled first, then SDK)."
   @spec get(String.t()) :: agent_def() | nil
-  def get(name), do: Map.get(@agents, name) || Map.get(sdk_agents(), name)
+  def get(name) do
+    (@agents[name] || sdk_agents()[name])
+    |> case do
+      nil -> nil
+      agent -> hydrate_prompt(agent)
+    end
+  end
 
   @doc "List all agent names."
   @spec list_names() :: [String.t()]
@@ -443,11 +452,18 @@ defmodule Daemon.Agent.Roster do
   @spec prompt(String.t()) :: String.t() | nil
   def prompt(name) do
     case get(name) do
-      nil -> nil
-      %{module: mod} -> mod.system_prompt()
+      nil ->
+        nil
+
+      %{module: mod} ->
+        mod.system_prompt()
+
       # SDK/dynamic agents that pre-date this change may carry :prompt directly.
       agent ->
-        Logger.warning("[Roster] agent #{inspect(Map.get(agent, :name))} has no :module key, falling back to :prompt")
+        Logger.warning(
+          "[Roster] agent #{inspect(Map.get(agent, :name))} has no :module key, falling back to :prompt"
+        )
+
         Map.get(agent, :prompt)
     end
   end
@@ -665,4 +681,8 @@ defmodule Daemon.Agent.Roster do
   defp tier_priority(:elite), do: 0
   defp tier_priority(:specialist), do: 1
   defp tier_priority(:utility), do: 2
+
+  defp hydrate_prompt(%{module: mod} = agent), do: Map.put(agent, :prompt, mod.system_prompt())
+  defp hydrate_prompt(%{prompt: prompt} = agent) when is_binary(prompt), do: agent
+  defp hydrate_prompt(agent), do: agent
 end

@@ -25,10 +25,12 @@ defmodule Daemon.Agent.ReplayTest do
     end
 
     test "replay/2 is exported" do
+      assert Code.ensure_loaded?(Replay)
       assert function_exported?(Replay, :replay, 2)
     end
 
     test "replay/1 is exported (default opts)" do
+      assert Code.ensure_loaded?(Replay)
       assert function_exported?(Replay, :replay, 1)
     end
   end

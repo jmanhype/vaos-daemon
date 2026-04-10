@@ -13,14 +13,17 @@ defmodule Daemon.CommandsTest do
     end
 
     test "exports execute/2" do
+      assert Code.ensure_loaded?(Commands)
       assert function_exported?(Commands, :execute, 2)
     end
 
     test "exports list_commands/0" do
+      assert Code.ensure_loaded?(Commands)
       assert function_exported?(Commands, :list_commands, 0)
     end
 
     test "exports register/3" do
+      assert Code.ensure_loaded?(Commands)
       assert function_exported?(Commands, :register, 3)
     end
   end

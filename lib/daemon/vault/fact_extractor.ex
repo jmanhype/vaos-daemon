@@ -33,7 +33,8 @@ defmodule Daemon.Vault.FactExtractor do
 
   @pattern_sources [
     # Decisions (protocol layer)
-    {:decision, {~S"(?:decided|chose|agreed|picked|selected)\s+(?:to\s+)?(.{10,120})", "i"}, 0.85},
+    {:decision, {~S"(?:decided|chose|agreed|picked|selected)\s+(?:to\s+)?(.{10,120})", "i"},
+     0.85},
     {:decision, {~S"(?:going with|we(?:'ll| will) use|switching to)\s+(.{5,100})", "i"}, 0.8},
 
     # Preferences (protocol layer)
@@ -41,7 +42,7 @@ defmodule Daemon.Vault.FactExtractor do
     {:preference, {~S"(?:style|convention|standard):\s*(.{5,100})", "i"}, 0.8},
 
     # Facts / technical (axiomatic layer)
-    {:fact, {~S"(?:runs on|built with|powered by|requires)\s+(.{5,80})", "i"}, 0.8},
+    {:fact, {~S"(?:runs on|built with|powered by|requires|uses)\s+(.{5,80})", "i"}, 0.8},
     {:fact, {~S"(?:version|v)\s*(\d+\.\d+(?:\.\d+)?)", "i"}, 0.9},
     {:fact, {~S"(?:port|listens? on)\s+(\d{2,5})", "i"}, 0.85},
     {:fact, {~S"(?:endpoint|url|api):\s*((?:https?:\/\/|\/)[^\s]{5,100})", "i"}, 0.8},
@@ -53,6 +54,7 @@ defmodule Daemon.Vault.FactExtractor do
 
     # Commitments (protocol layer)
     {:commitment, {~S"(?:promised|committed|will deliver|deadline)\s+(.{10,100})", "i"}, 0.85},
+    {:commitment, {~S"(?:needs?|must)\s+to\s+be\s+done\s+by\s+(.{5,80})", "i"}, 0.8},
 
     # Relationships (axiomatic layer)
     {:relationship, {~S"(?:owner|maintainer|lead|responsible):\s*(.{3,60})", "i"}, 0.8},
@@ -130,11 +132,14 @@ defmodule Daemon.Vault.FactExtractor do
   defp compiled_patterns do
     case :persistent_term.get({__MODULE__, :patterns}, nil) do
       nil ->
-        patterns = Enum.map(@pattern_sources, fn {type, {src, opts}, confidence} ->
-          {type, Regex.compile!(src, opts), confidence}
-        end)
+        patterns =
+          Enum.map(@pattern_sources, fn {type, {src, opts}, confidence} ->
+            {type, Regex.compile!(src, opts), confidence}
+          end)
+
         :persistent_term.put({__MODULE__, :patterns}, patterns)
         patterns
+
       patterns ->
         patterns
     end

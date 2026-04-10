@@ -26,7 +26,7 @@ defmodule Daemon.Vault.FactStore do
   @doc "Store a new fact. Supersedes any existing fact with the same type+value."
   @spec store(map()) :: :ok
   def store(fact) when is_map(fact) do
-    GenServer.cast(__MODULE__, {:store, fact})
+    GenServer.call(__MODULE__, {:store, fact})
   end
 
   @doc "Get all active (non-superseded) facts."
@@ -89,7 +89,7 @@ defmodule Daemon.Vault.FactStore do
   end
 
   @impl true
-  def handle_cast({:store, fact}, state) do
+  def handle_call({:store, fact}, _from, state) do
     fact_id = generate_id()
     now = DateTime.utc_now() |> DateTime.to_iso8601()
 
@@ -109,7 +109,7 @@ defmodule Daemon.Vault.FactStore do
     # Append to JSONL
     append_jsonl(state.jsonl_path, enriched)
 
-    {:noreply, state}
+    {:reply, :ok, state}
   end
 
   @impl true
@@ -134,14 +134,18 @@ defmodule Daemon.Vault.FactStore do
             {:ok, fact} ->
               id = fact["id"] || generate_id()
               # Convert string keys to atom keys for internal consistency
-              atom_fact = for {k, v} <- fact, into: %{} do
-        atom_key = try do
-          String.to_existing_atom(k)
-        rescue
-          ArgumentError -> k
-        end
-        {atom_key, v}
-      end
+              atom_fact =
+                for {k, v} <- fact, into: %{} do
+                  atom_key =
+                    try do
+                      String.to_existing_atom(k)
+                    rescue
+                      ArgumentError -> k
+                    end
+
+                  {atom_key, v}
+                end
+
               :ets.insert(table, {id, atom_fact})
 
             {:error, _} ->

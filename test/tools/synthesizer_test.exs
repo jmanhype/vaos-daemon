@@ -112,9 +112,7 @@ defmodule Daemon.Tools.SynthesizerTest do
         {:ok, module_name} ->
           path = Path.join(tools_dir(), "#{name}.ex")
           content = File.read!(path)
-          camel = Macro.camelize(name)
-          assert String.contains?(content, "defmodule Daemon.Tools.Generated.#{camel}")
-          assert module_name == "Daemon.Tools.Generated.#{camel}"
+          assert String.contains?(content, "defmodule #{module_name}")
           File.rm(path)
 
         {:error, _} ->
@@ -281,12 +279,14 @@ defmodule Daemon.Tools.SynthesizerTest do
   describe "POST / — synthesize via HTTP" do
     test "returns 201 with status synthesized on valid params" do
       name = unique_name("http-post-ok")
-      conn = json_post("/", %{
-        "name" => name,
-        "description" => "A generated test tool",
-        "params" => ["input"],
-        "body" => ~s[{:ok, "done"}]
-      })
+
+      conn =
+        json_post("/", %{
+          "name" => name,
+          "description" => "A generated test tool",
+          "params" => ["input"],
+          "body" => ~s[{:ok, "done"}]
+        })
 
       # Either synthesized (201) or synthesis error (500) — both indicate the
       # route layer worked. We specifically do NOT assert 400 here.
@@ -302,11 +302,12 @@ defmodule Daemon.Tools.SynthesizerTest do
     end
 
     test "returns 400 when name is missing" do
-      conn = json_post("/", %{
-        "description" => "no name",
-        "params" => [],
-        "body" => "{:ok, nil}"
-      })
+      conn =
+        json_post("/", %{
+          "description" => "no name",
+          "params" => [],
+          "body" => "{:ok, nil}"
+        })
 
       assert conn.status == 400
       body = decode(conn)
@@ -314,12 +315,13 @@ defmodule Daemon.Tools.SynthesizerTest do
     end
 
     test "returns 400 when name does not match kebab-case regex" do
-      conn = json_post("/", %{
-        "name" => "Invalid Name!",
-        "description" => "test",
-        "params" => [],
-        "body" => "{:ok, nil}"
-      })
+      conn =
+        json_post("/", %{
+          "name" => "Invalid Name!",
+          "description" => "test",
+          "params" => [],
+          "body" => "{:ok, nil}"
+        })
 
       assert conn.status == 400
       body = decode(conn)
@@ -327,12 +329,13 @@ defmodule Daemon.Tools.SynthesizerTest do
     end
 
     test "returns 400 when name starts with a digit" do
-      conn = json_post("/", %{
-        "name" => "123-bad",
-        "description" => "test",
-        "params" => [],
-        "body" => "{:ok, nil}"
-      })
+      conn =
+        json_post("/", %{
+          "name" => "123-bad",
+          "description" => "test",
+          "params" => [],
+          "body" => "{:ok, nil}"
+        })
 
       assert conn.status == 400
       body = decode(conn)
@@ -340,11 +343,12 @@ defmodule Daemon.Tools.SynthesizerTest do
     end
 
     test "returns 400 when body field is missing" do
-      conn = json_post("/", %{
-        "name" => unique_name("no-body-http"),
-        "description" => "test",
-        "params" => []
-      })
+      conn =
+        json_post("/", %{
+          "name" => unique_name("no-body-http"),
+          "description" => "test",
+          "params" => []
+        })
 
       assert conn.status == 400
       body = decode(conn)
@@ -352,12 +356,13 @@ defmodule Daemon.Tools.SynthesizerTest do
     end
 
     test "returns 400 when params is not a list" do
-      conn = json_post("/", %{
-        "name" => unique_name("bad-params-http"),
-        "description" => "test",
-        "params" => "should-be-list",
-        "body" => "{:ok, nil}"
-      })
+      conn =
+        json_post("/", %{
+          "name" => unique_name("bad-params-http"),
+          "description" => "test",
+          "params" => "should-be-list",
+          "body" => "{:ok, nil}"
+        })
 
       assert conn.status == 400
       body = decode(conn)

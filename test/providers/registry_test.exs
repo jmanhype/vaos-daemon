@@ -12,18 +12,22 @@ defmodule MiosaProviders.RegistryTest do
     end
 
     test "exports list_providers/0" do
+      assert Code.ensure_loaded?(Registry)
       assert function_exported?(Registry, :list_providers, 0)
     end
 
     test "exports provider_info/1" do
+      assert Code.ensure_loaded?(Registry)
       assert function_exported?(Registry, :provider_info, 1)
     end
 
     test "exports chat/2" do
+      assert Code.ensure_loaded?(Registry)
       assert function_exported?(Registry, :chat, 2)
     end
 
     test "exports provider_configured?/1" do
+      assert Code.ensure_loaded?(Registry)
       assert function_exported?(Registry, :provider_configured?, 1)
     end
   end

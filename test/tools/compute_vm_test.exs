@@ -168,7 +168,6 @@ defmodule Daemon.Tools.Builtins.ComputeVmTest do
 
   # ── Integration tests (require MIDAEMON_COMPUTE_URL to be set) ─────────
 
-  @tag :integration
   describe "integration — full lifecycle" do
     setup do
       if is_nil(System.get_env("MIDAEMON_COMPUTE_URL")) do
@@ -178,6 +177,7 @@ defmodule Daemon.Tools.Builtins.ComputeVmTest do
       end
     end
 
+    @tag :integration
     test "create / wait_ready / exec / write_file / read_file / snapshot / destroy" do
       # Create
       assert {:ok, create_msg} =
@@ -188,7 +188,11 @@ defmodule Daemon.Tools.Builtins.ComputeVmTest do
 
       # Wait for ready
       assert {:ok, ready_msg} =
-               ComputeVm.execute(%{"operation" => "wait_ready", "vm_id" => vm_id, "timeout" => 60})
+               ComputeVm.execute(%{
+                 "operation" => "wait_ready",
+                 "vm_id" => vm_id,
+                 "timeout" => 60
+               })
 
       assert ready_msg =~ vm_id
 
@@ -253,6 +257,7 @@ defmodule Daemon.Tools.Builtins.ComputeVmTest do
       assert destroy_msg =~ "destroyed"
     end
 
+    @tag :integration
     test "create with wait: true returns ready VM" do
       assert {:ok, msg} =
                ComputeVm.execute(%{

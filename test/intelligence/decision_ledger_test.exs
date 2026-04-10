@@ -16,18 +16,23 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
     iteration = Keyword.get(opts, :iteration, 0)
     session_id = Keyword.get(opts, :session_id, "test")
 
-    send(pid, {:tool_outcome, %{
-      name: tool_name,
-      args: args_hint,
-      success: success,
-      duration_ms: duration,
-      result: result,
-      session_id: session_id,
-      iteration: iteration
-    }})
+    send(
+      pid,
+      {:tool_outcome,
+       %{
+         name: tool_name,
+         args: args_hint,
+         success: success,
+         duration_ms: duration,
+         result: result,
+         session_id: session_id,
+         iteration: iteration
+       }}
+    )
 
-    # Give GenServer time to process
-    :timer.sleep(10)
+    # Deterministic synchronization barrier: wait until the GenServer
+    # has processed the async outcome before the test inspects ETS/state.
+    :sys.get_state(pid)
   end
 
   # ── GenServer lifecycle ──────────────────────────────────────────────────
@@ -92,11 +97,15 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
     end
 
     test "file_read + absolute lib/ path → lib/" do
-      assert DecisionLedger.derive_context("file_read", "/Users/speed/Projects/vaos-daemon/lib/daemon/agent.ex") == "lib/"
+      assert DecisionLedger.derive_context(
+               "file_read",
+               "/Users/speed/Projects/vaos-daemon/lib/daemon/agent.ex"
+             ) == "lib/"
     end
 
     test "file_edit + absolute test/ path → test/" do
-      assert DecisionLedger.derive_context("file_edit", "/home/user/project/test/some_test.exs") == "test/"
+      assert DecisionLedger.derive_context("file_edit", "/home/user/project/test/some_test.exs") ==
+               "test/"
     end
 
     test "file_read + config/ path → config/" do
@@ -150,7 +159,8 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
       {pid, table, _pairs, _failures} = start_test_ledger()
 
       simulate_outcome(pid, "web_fetch", "https://example.com", false,
-        result: "Error: 429 rate limit")
+        result: "Error: 429 rate limit"
+      )
 
       [{_key, pattern}] = :ets.tab2list(table)
       assert pattern.failure_count == 1
@@ -197,8 +207,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
       {pid, table, _pairs, _failures} = start_test_ledger()
 
       for i <- 1..5 do
-        simulate_outcome(pid, "web_fetch", "https://example.com", false,
-          result: "Error: #{i}")
+        simulate_outcome(pid, "web_fetch", "https://example.com", false, result: "Error: #{i}")
       end
 
       [{_key, pattern}] = :ets.tab2list(table)
@@ -285,13 +294,19 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
       :timer.sleep(5)
       send(pid, {:tool_call_end, %{name: "shell_execute", duration_ms: 250, session_id: "test"}})
       :timer.sleep(5)
-      send(pid, {:tool_outcome, %{
-        name: "shell_execute",
-        args: "git log",
-        success: true,
-        result: "commit abc123",
-        session_id: "test"
-      }})
+
+      send(
+        pid,
+        {:tool_outcome,
+         %{
+           name: "shell_execute",
+           args: "git log",
+           success: true,
+           result: "commit abc123",
+           session_id: "test"
+         }}
+      )
+
       :timer.sleep(15)
 
       [{_key, pattern}] = :ets.tab2list(table)
@@ -385,8 +400,11 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
       {pid, _table, pairs, _failures} = start_test_ledger()
 
       simulate_outcome(pid, "file_read", "lib/foo.ex", true, iteration: 1)
+
       simulate_outcome(pid, "file_edit", "lib/foo.ex", false,
-        iteration: 2, result: "Error: file not found")
+        iteration: 2,
+        result: "Error: file not found"
+      )
 
       [{_key, pair}] = :ets.tab2list(pairs)
       assert pair.success_count == 0
@@ -412,7 +430,10 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
       end
 
       pair_entries = :ets.tab2list(pairs)
-      git_pair = Enum.find(pair_entries, fn {k, _} -> k == "shell_execute:git->shell_execute:git" end)
+
+      git_pair =
+        Enum.find(pair_entries, fn {k, _} -> k == "shell_execute:git->shell_execute:git" end)
+
       assert git_pair != nil
       {_, p} = git_pair
       assert p.success_count == 5
@@ -473,9 +494,24 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
       {pid, _table, _pairs, _failures} = start_test_ledger()
 
       # Simulate 3 parallel file_read calls with unique tool_call_ids
-      send(pid, {:tool_call_start, %{name: "file_read", args: "lib/a.ex", session_id: "test", tool_call_id: "call_aaa"}})
-      send(pid, {:tool_call_start, %{name: "file_read", args: "lib/b.ex", session_id: "test", tool_call_id: "call_bbb"}})
-      send(pid, {:tool_call_start, %{name: "file_read", args: "lib/c.ex", session_id: "test", tool_call_id: "call_ccc"}})
+      send(
+        pid,
+        {:tool_call_start,
+         %{name: "file_read", args: "lib/a.ex", session_id: "test", tool_call_id: "call_aaa"}}
+      )
+
+      send(
+        pid,
+        {:tool_call_start,
+         %{name: "file_read", args: "lib/b.ex", session_id: "test", tool_call_id: "call_bbb"}}
+      )
+
+      send(
+        pid,
+        {:tool_call_start,
+         %{name: "file_read", args: "lib/c.ex", session_id: "test", tool_call_id: "call_ccc"}}
+      )
+
       :timer.sleep(10)
 
       state = :sys.get_state(pid)
@@ -486,9 +522,24 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
       assert Map.has_key?(state.pending_calls, {"test", "call_ccc"})
 
       # Complete all 3
-      send(pid, {:tool_call_end, %{name: "file_read", duration_ms: 50, session_id: "test", tool_call_id: "call_aaa"}})
-      send(pid, {:tool_call_end, %{name: "file_read", duration_ms: 100, session_id: "test", tool_call_id: "call_bbb"}})
-      send(pid, {:tool_call_end, %{name: "file_read", duration_ms: 150, session_id: "test", tool_call_id: "call_ccc"}})
+      send(
+        pid,
+        {:tool_call_end,
+         %{name: "file_read", duration_ms: 50, session_id: "test", tool_call_id: "call_aaa"}}
+      )
+
+      send(
+        pid,
+        {:tool_call_end,
+         %{name: "file_read", duration_ms: 100, session_id: "test", tool_call_id: "call_bbb"}}
+      )
+
+      send(
+        pid,
+        {:tool_call_end,
+         %{name: "file_read", duration_ms: 150, session_id: "test", tool_call_id: "call_ccc"}}
+      )
+
       :timer.sleep(10)
 
       # Each should have captured its own duration
@@ -504,7 +555,11 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
       {pid, _table, _pairs, _failures} = start_test_ledger()
 
       # Events without tool_call_id should fall back to name (backward compat)
-      send(pid, {:tool_call_start, %{name: "shell_execute", args: "git status", session_id: "test"}})
+      send(
+        pid,
+        {:tool_call_start, %{name: "shell_execute", args: "git status", session_id: "test"}}
+      )
+
       :timer.sleep(10)
 
       state = :sys.get_state(pid)
@@ -561,9 +616,14 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
 
       # Session A has failures
       simulate_outcome(pid, "web_fetch", "https://example.com", false,
-        session_id: "session_a", result: "Error: 429")
+        session_id: "session_a",
+        result: "Error: 429"
+      )
+
       simulate_outcome(pid, "web_fetch", "https://example.com", false,
-        session_id: "session_a", result: "Error: 429")
+        session_id: "session_a",
+        result: "Error: 429"
+      )
 
       # Session B has no failures for this tool
       simulate_outcome(pid, "web_fetch", "https://example.com", true, session_id: "session_b")
@@ -573,6 +633,7 @@ defmodule Daemon.Intelligence.DecisionLedgerTest do
         [{_, stats}] ->
           assert stats.consecutive == 2
           assert stats.total_failures == 2
+
         _ ->
           flunk("Expected failure entry for session_a")
       end

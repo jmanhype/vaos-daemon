@@ -164,51 +164,130 @@ defmodule MiosaSignal.CloudEvent do
 
   def new(attrs) when is_map(attrs) do
     %__MODULE__{
-      specversion: Map.get(attrs, :specversion, "1.0"),
-      type: Map.get(attrs, :type, "unknown"),
-      source: Map.get(attrs, :source, "daemon"),
-      subject: Map.get(attrs, :subject),
-      id: Map.get(attrs, :id, generate_id()),
-      time: Map.get(attrs, :time, DateTime.utc_now() |> DateTime.to_iso8601()),
-      datacontenttype: Map.get(attrs, :datacontenttype, "application/json"),
-      data: Map.get(attrs, :data)
+      specversion: get_attr(attrs, :specversion, "1.0"),
+      type: fetch_required!(attrs, :type),
+      source: fetch_required!(attrs, :source),
+      subject: get_attr(attrs, :subject),
+      id: get_attr(attrs, :id, generate_id()),
+      time: get_attr(attrs, :time, DateTime.utc_now() |> DateTime.to_iso8601()),
+      datacontenttype: get_attr(attrs, :datacontenttype, "application/json"),
+      data: get_attr(attrs, :data)
     }
   end
 
-  def new(_), do: new(%{})
+  def new(_), do: raise(ArgumentError, "cloud event attrs must be a map")
 
-  def encode(%__MODULE__{} = event), do: {:ok, Jason.encode!(Map.from_struct(event))}
-  def encode(_), do: {:error, :invalid_event}
+  def encode(%__MODULE__{} = event) do
+    cond do
+      is_nil(event.type) ->
+        {:error, "type is required"}
+
+      is_nil(event.source) ->
+        {:error, "source is required"}
+
+      true ->
+        payload =
+          event
+          |> Map.from_struct()
+          |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+          |> Map.new()
+
+        {:ok, Jason.encode!(payload)}
+    end
+  end
+
+  def encode(_), do: {:error, "invalid cloud event"}
 
   def decode(json) when is_binary(json) do
     case Jason.decode(json) do
-      {:ok, map} ->
-        {:ok, new(map |> Enum.into(%{}, fn {k, v} -> {String.to_existing_atom(k), v} end))}
+      {:ok, map} when is_map(map) ->
+        cond do
+          is_nil(get_attr(map, :type)) -> {:error, "type is required"}
+          is_nil(get_attr(map, :source)) -> {:error, "source is required"}
+          true -> {:ok, new(map)}
+        end
 
       error ->
         error
     end
   rescue
-    _ -> {:error, :decode_failed}
+    _ -> {:error, "invalid json"}
   end
 
-  def decode(_), do: {:error, :invalid_input}
+  def decode(_), do: {:error, "invalid input"}
 
   def from_bus_event(%{} = event) do
+    event_name =
+      get_attr(event, :event) ||
+        get_attr(event, :type) ||
+        "event"
+
+    session_id = get_attr(event, :session_id, "unknown")
+    subject = get_attr(event, :subject)
+
+    data =
+      event
+      |> Map.drop([:event, "event", :session_id, "session_id", :subject, "subject"])
+
     new(%{
-      type: to_string(Map.get(event, :event_type, Map.get(event, :type, "bus.event"))),
-      source: "daemon.bus",
-      data: event
+      type: normalize_type(event_name),
+      source: "urn:osa:agent:#{session_id || "unknown"}",
+      subject: subject,
+      data: data
     })
   end
 
-  def from_bus_event(_), do: new(%{type: "bus.event", source: "daemon.bus"})
+  def from_bus_event(_), do: new(%{type: "com.osa.event", source: "urn:osa:agent:unknown"})
 
-  def to_bus_event(%__MODULE__{} = event), do: event.data || %{}
+  def to_bus_event(%__MODULE__{} = event) do
+    event_name =
+      event.type
+      |> to_string()
+      |> String.replace_prefix("com.osa.", "")
+      |> String.to_atom()
+
+    base =
+      %{event: event_name, source: event.source}
+      |> maybe_put(:subject, event.subject)
+
+    case event.data do
+      %{} = data -> Map.merge(base, data)
+      nil -> base
+      data -> Map.put(base, :data, data)
+    end
+  end
+
   def to_bus_event(_), do: %{}
 
-  defp generate_id,
-    do: :crypto.strong_rand_bytes(8) |> Base.hex_encode32(case: :lower, padding: false)
+  defp fetch_required!(attrs, key) do
+    case get_attr(attrs, key) do
+      nil -> raise(KeyError, key: key, term: attrs)
+      value -> value
+    end
+  end
+
+  defp get_attr(attrs, key, default \\ nil) do
+    Map.get(attrs, key, Map.get(attrs, Atom.to_string(key), default))
+  end
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  defp normalize_type(type) when is_atom(type), do: "com.osa.#{type}"
+
+  defp normalize_type(type) when is_binary(type) do
+    if String.starts_with?(type, "com.osa.") do
+      type
+    else
+      "com.osa.#{type}"
+    end
+  end
+
+  defp generate_id do
+    timestamp = System.system_time(:microsecond)
+    suffix = :crypto.strong_rand_bytes(6) |> Base.url_encode64(padding: false)
+    "evt_#{timestamp}_#{suffix}"
+  end
 end
 
 defmodule MiosaSignal.Classifier do
@@ -514,46 +593,169 @@ defmodule MiosaMemory.Injector do
 
   @type injection_context :: map()
 
+  @always_inject [
+    {:project_info, :workspace, 1.0},
+    {:user_preference, :global, 0.95}
+  ]
+
+  @language_keywords %{
+    ".ex" => ~w(elixir phoenix genserver ecto plug liveview mix supervisor),
+    ".go" => ~w(go golang goroutine channel interface struct package),
+    ".js" => ~w(javascript js react node npm async await),
+    ".ts" => ~w(typescript ts interface type generic),
+    ".py" => ~w(python django flask pytest pandas)
+  }
+
   @doc "Filter taxonomy entries relevant to the given context."
   def inject_relevant(entries, context) when is_list(entries) do
-    task = Map.get(context, :task, "")
+    max_entries = Map.get(context, :max_entries, 10)
+    max_tokens = Map.get(context, :max_tokens, :infinity)
 
-    if task == "" do
-      Enum.take(entries, 5)
-    else
-      task_words =
-        task
-        |> String.downcase()
-        |> String.split(~r/\s+/, trim: true)
-        |> MapSet.new()
-
-      entries
-      |> Enum.filter(fn entry ->
-        content = Map.get(entry, :content, "") |> String.downcase()
-        content_words = String.split(content, ~r/\s+/, trim: true) |> MapSet.new()
-        overlap = MapSet.intersection(task_words, content_words) |> MapSet.size()
-        overlap >= 1
-      end)
-      |> Enum.take(10)
-    end
+    entries
+    |> Enum.map(&score_entry(&1, context))
+    |> Enum.reject(&(&1.relevance_score <= 0.0))
+    |> Enum.sort_by(& &1.relevance_score, :desc)
+    |> take_with_budget(max_entries, max_tokens)
   end
 
   def inject_relevant(_, _), do: []
 
   @doc "Format injected entries for inclusion in a prompt."
-  def format_for_prompt([]), do: nil
+  def format_for_prompt([]), do: ""
 
   def format_for_prompt(entries) when is_list(entries) do
     entries
     |> Enum.map(fn entry ->
       content = Map.get(entry, :content, inspect(entry))
       category = Map.get(entry, :category, :general)
-      "- [#{category}] #{content}"
+      scope = Map.get(entry, :scope, :workspace)
+      "- [#{category}] [#{scope}] #{content}"
     end)
     |> Enum.join("\n")
   end
 
-  def format_for_prompt(_), do: nil
+  def format_for_prompt(_), do: ""
+
+  defp score_entry(entry, context) do
+    score =
+      entry
+      |> always_inject_score()
+      |> Kernel.+(scope_score(entry, context))
+      |> Kernel.+(file_score(Map.get(entry, :content, ""), Map.get(context, :files, [])))
+      |> Kernel.+(keyword_score(Map.get(entry, :content, ""), Map.get(context, :task_type)))
+      |> Kernel.+(keyword_overlap_score(Map.get(entry, :content, ""), Map.get(context, :task)))
+      |> Kernel.+(keyword_overlap_score(Map.get(entry, :content, ""), Map.get(context, :error)))
+      |> min(1.0)
+
+    Map.put(entry, :relevance_score, score)
+  end
+
+  defp always_inject_score(entry) do
+    category = Map.get(entry, :category)
+    scope = Map.get(entry, :scope)
+
+    Enum.find_value(@always_inject, 0.0, fn
+      {^category, ^scope, score} -> score
+      _ -> false
+    end)
+  end
+
+  defp scope_score(entry, context) do
+    case {Map.get(entry, :scope), Map.get(entry, :metadata, %{}), Map.get(context, :session_id)} do
+      {:global, _, _} -> 0.15
+      {:workspace, _, _} -> 0.1
+      {:session, %{session_id: session_id}, session_id} when is_binary(session_id) -> 0.55
+      {:session, _, nil} -> 0.02
+      {:session, _, _} -> 0.0
+      _ -> 0.0
+    end
+  end
+
+  defp file_score(_content, []), do: 0.0
+
+  defp file_score(content, files) when is_list(files) do
+    content_downcase = String.downcase(content)
+
+    Enum.reduce(files, 0.0, fn file, acc ->
+      basename = file |> Path.basename() |> String.downcase()
+      ext = Path.extname(file)
+
+      basename_score =
+        if basename != "" and String.contains?(content_downcase, basename) do
+          0.45
+        else
+          0.0
+        end
+
+      language_score =
+        @language_keywords
+        |> Map.get(ext, [])
+        |> Enum.any?(fn keyword -> String.contains?(content_downcase, keyword) end)
+        |> if(do: 0.35, else: 0.0)
+
+      max(acc, basename_score + language_score)
+    end)
+  end
+
+  defp keyword_score(_content, nil), do: 0.0
+
+  defp keyword_score(content, keyword) when is_binary(keyword) do
+    if String.contains?(String.downcase(content), String.downcase(keyword)) do
+      0.35
+    else
+      0.0
+    end
+  end
+
+  defp keyword_overlap_score(_content, nil), do: 0.0
+
+  defp keyword_overlap_score(content, text) when is_binary(text) do
+    overlap =
+      content
+      |> keywords()
+      |> MapSet.intersection(keywords(text))
+      |> MapSet.size()
+
+    min(overlap * 0.15, 0.45)
+  end
+
+  defp keywords(text) do
+    text
+    |> String.downcase()
+    |> String.split(~r/[^a-z0-9_\.]+/, trim: true)
+    |> Enum.reject(&(String.length(&1) < 3))
+    |> MapSet.new()
+  end
+
+  defp take_with_budget(entries, max_entries, max_tokens) do
+    {selected, _tokens} =
+      Enum.reduce_while(entries, {[], 0}, fn entry, {acc, used_tokens} ->
+        next_count = length(acc) + 1
+        next_tokens = used_tokens + estimate_tokens(entry)
+
+        cond do
+          next_count > max_entries ->
+            {:halt, {acc, used_tokens}}
+
+          max_tokens != :infinity and next_tokens > max_tokens and acc != [] ->
+            {:halt, {acc, used_tokens}}
+
+          true ->
+            {:cont, {[entry | acc], next_tokens}}
+        end
+      end)
+
+    Enum.reverse(selected)
+  end
+
+  defp estimate_tokens(entry) do
+    entry
+    |> Map.get(:content, "")
+    |> String.length()
+    |> Kernel./(4)
+    |> Float.ceil()
+    |> trunc()
+  end
 end
 
 defmodule MiosaMemory.Taxonomy do
@@ -562,10 +764,29 @@ defmodule MiosaMemory.Taxonomy do
   """
 
   @type t :: map()
-  @type category :: :pattern | :solution | :fact | :preference | :general
+  @type category ::
+          :pattern
+          | :solution
+          | :fact
+          | :preference
+          | :project_info
+          | :user_preference
+          | :context
+          | :lesson
+          | :general
   @type scope :: :workspace | :session | :global
 
-  @categories [:pattern, :solution, :fact, :preference, :general]
+  @categories [
+    :pattern,
+    :solution,
+    :fact,
+    :preference,
+    :project_info,
+    :user_preference,
+    :context,
+    :lesson,
+    :general
+  ]
   @scopes [:workspace, :session, :global]
 
   def new(content, opts \\ []) do
@@ -573,6 +794,8 @@ defmodule MiosaMemory.Taxonomy do
       content: to_string(content),
       category: Keyword.get(opts, :category, :general),
       scope: Keyword.get(opts, :scope, :workspace),
+      metadata: Keyword.get(opts, :metadata, %{}),
+      relevance_score: Keyword.get(opts, :relevance_score, 0.0),
       created_at: DateTime.utc_now(),
       accessed_at: DateTime.utc_now()
     }
@@ -719,11 +942,20 @@ defmodule MiosaBudget.Budget do
 
   @daily_default_usd 50.0
   @monthly_default_usd 200.0
+  @per_call_default_usd 5.0
+
+  @pricing %{
+    anthropic: %{input_per_million: 3.0, output_per_million: 15.0},
+    openai: %{input_per_million: 5.0, output_per_million: 15.0},
+    ollama: %{input_per_million: 0.0, output_per_million: 0.0},
+    default: %{input_per_million: 1.0, output_per_million: 3.0}
+  }
 
   # Public API
 
   def start_link(opts \\ []) do
-    GenServer.start_link(__MODULE__, :ok, Keyword.put_new(opts, :name, __MODULE__))
+    {name_opts, init_opts} = Keyword.split(opts, [:name])
+    GenServer.start_link(__MODULE__, init_opts, Keyword.put_new(name_opts, :name, __MODULE__))
   end
 
   def child_spec(opts) do
@@ -747,9 +979,10 @@ defmodule MiosaBudget.Budget do
     GenServer.cast(__MODULE__, {:record_cost, provider, model, tokens_in, tokens_out, session_id})
   end
 
-  def calculate_cost(_provider, tokens_in, tokens_out) do
-    # Conservative flat rate: $0.000003 per token (~$3/M blended)
-    (tokens_in + tokens_out) * 0.000003
+  def calculate_cost(provider, tokens_in, tokens_out) do
+    pricing = Map.get(@pricing, provider, @pricing.default)
+
+    (tokens_in * pricing.input_per_million + tokens_out * pricing.output_per_million) / 1_000_000
   end
 
   def reset_daily do
@@ -763,12 +996,28 @@ defmodule MiosaBudget.Budget do
   # GenServer callbacks
 
   @impl true
-  def init(:ok) do
+  def init(opts) when is_list(opts) do
     state = %{
       daily_spent: 0.0,
       monthly_spent: 0.0,
-      daily_limit: Application.get_env(:daemon, :daily_budget_usd, @daily_default_usd),
-      monthly_limit: Application.get_env(:daemon, :monthly_budget_usd, @monthly_default_usd),
+      daily_limit:
+        Keyword.get(
+          opts,
+          :daily_limit,
+          Application.get_env(:daemon, :daily_budget_usd, @daily_default_usd)
+        ),
+      monthly_limit:
+        Keyword.get(
+          opts,
+          :monthly_limit,
+          Application.get_env(:daemon, :monthly_budget_usd, @monthly_default_usd)
+        ),
+      per_call_limit:
+        Keyword.get(
+          opts,
+          :per_call_limit,
+          Application.get_env(:daemon, :per_call_budget_usd, @per_call_default_usd)
+        ),
       entries: [],
       daily_reset_at: tomorrow_midnight(),
       monthly_reset_at: next_month_midnight()
@@ -776,6 +1025,8 @@ defmodule MiosaBudget.Budget do
 
     {:ok, state}
   end
+
+  def init(:ok), do: init([])
 
   @impl true
   def handle_call(:check_budget, _from, state) do
@@ -800,6 +1051,7 @@ defmodule MiosaBudget.Budget do
     status = %{
       daily_limit: state.daily_limit,
       monthly_limit: state.monthly_limit,
+      per_call_limit: state.per_call_limit,
       daily_spent: state.daily_spent,
       monthly_spent: state.monthly_spent,
       daily_remaining: max(0.0, state.daily_limit - state.daily_spent),
@@ -1141,9 +1393,23 @@ defmodule MiosaTools.Instruction do
   def normalize({_tool, _params, context}) when not is_map(context),
     do: {:error, "context must be a map"}
 
-  def normalize(%__MODULE__{} = inst), do: {:ok, inst}
+  def normalize(%__MODULE__{} = inst) do
+    cond do
+      not is_binary(inst.tool) or String.trim(inst.tool) == "" ->
+        {:error, "tool name cannot be empty"}
 
-  def normalize(_), do: {:error, "unsupported instruction format"}
+      not is_map(inst.params) ->
+        {:error, "params must be a map"}
+
+      not is_map(inst.context) ->
+        {:error, "context must be a map"}
+
+      true ->
+        {:ok, inst}
+    end
+  end
+
+  def normalize(other), do: {:error, "Cannot normalize #{inspect(other)}"}
 
   @spec normalize!(term()) :: t()
   def normalize!(input) do
@@ -1170,11 +1436,18 @@ defmodule MiosaTools.Middleware do
 
   @callback call(Instruction.t(), next :: (Instruction.t() -> any()), opts :: keyword()) :: any()
 
-  @spec execute(Instruction.t(), [module()], (Instruction.t() -> any())) :: any()
+  @spec execute(Instruction.t(), [module() | {module(), keyword()}], (Instruction.t() -> any())) ::
+          any()
   def execute(%Instruction{} = inst, [], executor), do: executor.(inst)
 
   def execute(%Instruction{} = inst, [mw | rest], executor) do
-    mw.call(inst, fn updated -> execute(updated, rest, executor) end, [])
+    {module, opts} =
+      case mw do
+        {module, opts} when is_list(opts) -> {module, opts}
+        module -> {module, []}
+      end
+
+    module.call(inst, fn updated -> execute(updated, rest, executor) end, opts)
   end
 
   defmodule Validation do
@@ -1183,13 +1456,19 @@ defmodule MiosaTools.Middleware do
 
     @impl true
     def call(instruction, next, opts) do
-      required = Keyword.get(opts, :required, [])
-      missing = Enum.reject(required, &Map.has_key?(instruction.params, &1))
+      cond do
+        String.trim(instruction.tool) == "" ->
+          {:error, "tool name is required"}
 
-      if missing == [] do
-        next.(instruction)
-      else
-        {:error, "missing required params: #{Enum.join(missing, ", ")}"}
+        true ->
+          required = Keyword.get(opts, :required, [])
+          missing = Enum.reject(required, &Map.has_key?(instruction.params, &1))
+
+          if missing == [] do
+            next.(instruction)
+          else
+            {:error, "missing required params: #{Enum.join(missing, ", ")}"}
+          end
       end
     end
   end
@@ -1202,12 +1481,8 @@ defmodule MiosaTools.Middleware do
     def call(instruction, next, _opts) do
       start = System.monotonic_time(:microsecond)
       result = next.(instruction)
-      elapsed = System.monotonic_time(:microsecond) - start
-
-      case result do
-        {:ok, val} -> {:ok, val, elapsed}
-        other -> other
-      end
+      _elapsed = System.monotonic_time(:microsecond) - start
+      result
     end
   end
 
@@ -1220,7 +1495,7 @@ defmodule MiosaTools.Middleware do
     def call(instruction, next, _opts) do
       Logger.debug("[MiosaTools] executing #{instruction.tool}")
       result = next.(instruction)
-      Logger.debug("[MiosaTools] #{instruction.tool} → #{inspect(result)}")
+      Logger.debug("[MiosaTools] #{instruction.tool} -> #{inspect(result)}")
       result
     end
   end
@@ -1235,17 +1510,18 @@ defmodule MiosaTools.Pipeline do
 
   alias MiosaTools.Instruction
 
-  @spec pipe([term()], keyword()) :: {:ok, map()} | {:error, String.t()}
+  @spec pipe([term()], keyword()) :: {:ok, map()} | {:error, any()}
   def pipe(instructions, opts \\ []) do
     executor = Keyword.get(opts, :executor, fn _tool, params -> {:ok, params} end)
+    transform = Keyword.get(opts, :transform, fn result, params -> Map.merge(params, result) end)
 
     Enum.reduce_while(instructions, {:ok, %{}}, fn raw, {:ok, acc} ->
       case Instruction.normalize(raw) do
         {:ok, inst} ->
-          merged = Map.merge(acc, inst.params)
+          params = Map.merge(acc, inst.params)
 
-          case executor.(inst.tool, merged) do
-            {:ok, result} -> {:cont, {:ok, result}}
+          case executor.(inst.tool, params) do
+            {:ok, result} -> {:cont, {:ok, transform.(result, params)}}
             {:error, _} = err -> {:halt, err}
           end
 
@@ -1255,32 +1531,29 @@ defmodule MiosaTools.Pipeline do
     end)
   end
 
-  @spec parallel([term()], keyword()) :: {:ok, [map()]} | {:error, String.t()}
+  @spec parallel([term()], keyword()) :: {:ok, map()} | {:error, map()}
   def parallel(instructions, opts \\ []) do
     executor = Keyword.get(opts, :executor, fn _tool, params -> {:ok, params} end)
 
-    tasks =
-      Enum.map(instructions, fn raw ->
-        Task.async(fn ->
-          case Instruction.normalize(raw) do
-            {:ok, inst} -> executor.(inst.tool, inst.params)
-            err -> err
-          end
-        end)
-      end)
+    instructions
+    |> Task.async_stream(&run_parallel_instruction(&1, executor), timeout: 30_000, ordered: true)
+    |> Enum.reduce({%{}, %{}}, fn
+      {:ok, {:ok, tool, result}}, {results, errors} ->
+        {Map.put(results, tool, result), errors}
 
-    results = Task.await_many(tasks, 30_000)
+      {:ok, {:error, tool, error}}, {results, errors} ->
+        {results, Map.put(errors, tool, error)}
 
-    errors = Enum.filter(results, &match?({:error, _}, &1))
-
-    if errors == [] do
-      {:ok, Enum.map(results, fn {:ok, v} -> v end)}
-    else
-      {:error, Enum.map(errors, fn {:error, e} -> e end)}
+      {:exit, error}, {results, errors} ->
+        {results, Map.put(errors, "task_exit", error)}
+    end)
+    |> case do
+      {results, errors} when map_size(errors) == 0 -> {:ok, results}
+      {_results, errors} -> {:error, errors}
     end
   end
 
-  @spec fallback([term()], keyword()) :: {:ok, map()} | {:error, String.t()}
+  @spec fallback([term()], keyword()) :: {:ok, map()} | {:error, any()}
   def fallback(instructions, opts \\ []) do
     executor = Keyword.get(opts, :executor, fn _tool, params -> {:ok, params} end)
 
@@ -1298,22 +1571,59 @@ defmodule MiosaTools.Pipeline do
     end)
   end
 
-  @spec retry(term(), keyword()) :: {:ok, map()} | {:error, String.t()}
+  @spec retry(term(), keyword()) :: {:ok, map()} | {:error, any()}
   def retry(instruction, opts \\ []) do
     executor = Keyword.get(opts, :executor, fn _tool, params -> {:ok, params} end)
-    attempts = Keyword.get(opts, :attempts, 3)
+    max_attempts = Keyword.get(opts, :max_attempts, 3)
+    base_backoff = Keyword.get(opts, :base_backoff, 10)
+    max_backoff = Keyword.get(opts, :max_backoff, base_backoff)
+    should_retry = Keyword.get(opts, :should_retry, fn _error -> true end)
 
-    case Instruction.normalize(instruction) do
-      {:error, _} = err ->
-        err
+    with {:ok, inst} <- Instruction.normalize(instruction) do
+      do_retry(inst, executor, should_retry, 1, max_attempts, base_backoff, max_backoff)
+    end
+  end
 
+  defp run_parallel_instruction(raw, executor) do
+    case Instruction.normalize(raw) do
       {:ok, inst} ->
-        Enum.reduce_while(1..attempts, {:error, "not attempted"}, fn _i, _acc ->
-          case executor.(inst.tool, inst.params) do
-            {:ok, _} = ok -> {:halt, ok}
-            {:error, _} = err -> {:cont, err}
-          end
-        end)
+        case executor.(inst.tool, inst.params) do
+          {:ok, result} -> {:ok, inst.tool, result}
+          {:error, error} -> {:error, inst.tool, error}
+        end
+
+      {:error, error} ->
+        {:error, inspect(raw), error}
+    end
+  end
+
+  defp do_retry(inst, executor, should_retry, attempt, max_attempts, base_backoff, max_backoff) do
+    case executor.(inst.tool, inst.params) do
+      {:ok, _} = ok ->
+        ok
+
+      {:error, error} = failure ->
+        cond do
+          attempt >= max_attempts ->
+            failure
+
+          not should_retry.(error) ->
+            failure
+
+          true ->
+            backoff = min(trunc(base_backoff * :math.pow(2, attempt - 1)), max_backoff)
+            Process.sleep(backoff)
+
+            do_retry(
+              inst,
+              executor,
+              should_retry,
+              attempt + 1,
+              max_attempts,
+              base_backoff,
+              max_backoff
+            )
+        end
     end
   end
 end

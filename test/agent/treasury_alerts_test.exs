@@ -2,25 +2,6 @@ defmodule Daemon.Agent.TreasuryAlertsTest do
   use ExUnit.Case, async: false
 
   alias Daemon.Agent.Treasury
-  alias Daemon.Events.Bus
-
-  setup do
-    # Subscribe to system events so we can catch budget alerts
-    Bus.subscribe(:system_event)
-    :ok
-  end
-
-  defp drain_events(acc \\ []) do
-    receive do
-      {:event, :system_event, payload} -> drain_events([payload | acc])
-    after
-      50 -> Enum.reverse(acc)
-    end
-  end
-
-  defp alert_events(events) do
-    Enum.filter(events, fn e -> e[:event] == :budget_alert end)
-  end
 
   describe "maybe_emit_budget_alerts/3" do
     # We test the behaviour indirectly by inspecting the struct fields
@@ -34,10 +15,11 @@ defmodule Daemon.Agent.TreasuryAlertsTest do
 
     test "no alert emitted when below 80%" do
       # Simulate state with low spend relative to limit
-      state = struct(Treasury, %{
-        daily_alert_sent: MapSet.new(),
-        monthly_alert_sent: MapSet.new()
-      })
+      state =
+        struct(Treasury, %{
+          daily_alert_sent: MapSet.new(),
+          monthly_alert_sent: MapSet.new()
+        })
 
       # Call private function via module reflection isn't possible from tests,
       # but we can verify the MapSet stays empty for low spend:

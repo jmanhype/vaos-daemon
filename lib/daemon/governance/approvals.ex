@@ -29,17 +29,17 @@ defmodule Daemon.Governance.Approvals do
   @type t :: %__MODULE__{}
 
   schema "approvals" do
-    field :type, :string
-    field :status, :string, default: "pending"
-    field :title, :string
-    field :description, :string
-    field :requested_by, :string
-    field :resolved_by, :string
-    field :resolved_at, :utc_datetime
-    field :decision_notes, :string
-    field :context, :map, default: %{}
-    field :related_entity_type, :string
-    field :related_entity_id, :string
+    field(:type, :string)
+    field(:status, :string, default: "pending")
+    field(:title, :string)
+    field(:description, :string)
+    field(:requested_by, :string)
+    field(:resolved_by, :string)
+    field(:resolved_at, :utc_datetime)
+    field(:decision_notes, :string)
+    field(:context, :map, default: %{})
+    field(:related_entity_type, :string)
+    field(:related_entity_id, :string)
     timestamps()
   end
 
@@ -62,6 +62,7 @@ defmodule Daemon.Governance.Approvals do
     |> validate_required(@required)
     |> validate_inclusion(:type, @valid_types)
     |> validate_inclusion(:status, @valid_statuses)
+    |> update_change(:context, &stringify_map_keys/1)
   end
 
   @spec create(map()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
@@ -70,6 +71,8 @@ defmodule Daemon.Governance.Approvals do
     |> changeset(attrs)
     |> Repo.insert()
   end
+
+  def get(nil), do: {:error, :not_found}
 
   @spec get(term()) :: {:ok, t()} | {:error, :not_found}
   def get(id) do
@@ -80,7 +83,10 @@ defmodule Daemon.Governance.Approvals do
   end
 
   @spec resolve(term(), String.t(), String.t() | nil, String.t()) ::
-          {:ok, t()} | {:error, :not_found} | {:error, :already_resolved} | {:error, Ecto.Changeset.t()}
+          {:ok, t()}
+          | {:error, :not_found}
+          | {:error, :already_resolved}
+          | {:error, Ecto.Changeset.t()}
   def resolve(id, decision, notes, resolved_by) when decision in @resolve_decisions do
     with {:ok, approval} <- get(id),
          :ok <- check_pending(approval) do
@@ -103,7 +109,12 @@ defmodule Daemon.Governance.Approvals do
     |> Repo.all()
   end
 
-  @spec list_all(map()) :: %{approvals: [t()], total: non_neg_integer(), page: pos_integer(), per_page: pos_integer()}
+  @spec list_all(map()) :: %{
+          approvals: [t()],
+          total: non_neg_integer(),
+          page: pos_integer(),
+          per_page: pos_integer()
+        }
   def list_all(filters \\ %{}) do
     page = Map.get(filters, :page, 1)
     per_page = Map.get(filters, :per_page, 20)
@@ -144,4 +155,16 @@ defmodule Daemon.Governance.Approvals do
   defp apply_filter(query, _field, nil), do: query
   defp apply_filter(query, :status, value), do: where(query, [a], a.status == ^value)
   defp apply_filter(query, :type, value), do: where(query, [a], a.type == ^value)
+
+  defp stringify_map_keys(nil), do: %{}
+
+  defp stringify_map_keys(map) when is_map(map) do
+    Map.new(map, fn
+      {key, value} when is_atom(key) -> {Atom.to_string(key), stringify_map_keys(value)}
+      {key, value} -> {to_string(key), stringify_map_keys(value)}
+    end)
+  end
+
+  defp stringify_map_keys(list) when is_list(list), do: Enum.map(list, &stringify_map_keys/1)
+  defp stringify_map_keys(value), do: value
 end

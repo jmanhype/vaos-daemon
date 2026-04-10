@@ -75,6 +75,7 @@ defmodule Daemon.Channels.HTTP.API.CommandPaletteTest do
     test "each command entry has name, description, category" do
       conn = get_commands()
       body = decode(conn)
+
       Enum.each(body["commands"], fn cmd ->
         assert Map.has_key?(cmd, "name")
         assert Map.has_key?(cmd, "description")
@@ -185,8 +186,7 @@ defmodule Daemon.Channels.HTTP.API.CommandPaletteTest do
     end
 
     test "query with no matches returns empty results" do
-      # A query that will not match any command name or description
-      conn = get_commands("q=xyzzy_no_match_ever_#{@suffix}")
+      conn = get_commands("q=zzzxqv#{@suffix}")
       body = decode(conn)
       assert body["count"] == 0
       assert body["results"] == []
@@ -200,7 +200,7 @@ defmodule Daemon.Channels.HTTP.API.CommandPaletteTest do
       others = Enum.filter(body["results"], fn r -> r["name"] != "reload" end)
 
       if exact && others != [] do
-        max_other_score = Enum.max_by(others, fn r -> r["score"] end).score
+        max_other_score = Enum.max_by(others, fn r -> r["score"] end)["score"]
         assert exact["score"] >= max_other_score
       end
     end
