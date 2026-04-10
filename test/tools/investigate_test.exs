@@ -616,6 +616,20 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
              )
   end
 
+  test "evidence_store_for keeps reasoning items in belief even when verification is positive" do
+    store =
+      Investigate.evidence_store_for(
+        %{
+          source_type: :reasoning,
+          verification: "verified"
+        },
+        0.9,
+        Strategy.default()
+      )
+
+    assert store == :belief
+  end
+
   test "build_boundary_trace captures prompts, raw outputs, and evidence boundaries" do
     trace =
       Investigate.build_boundary_trace(
@@ -1073,6 +1087,18 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert normalized =~ "ITRF2005 vs. ITRF2008"
     assert normalized =~ "−4.7 mm)."
     refute normalized =~ "striving to increase the level of accuracy"
+  end
+
+  test "verification_claim_text trims contrastive placebo tail from clinical support claims" do
+    summary =
+      "A randomized controlled trial demonstrated that creatine supplementation during six weeks of resistance training produced significant increases in leg press 1-RM, chest press 1-RM, and total body strength in physically active young adults, while the placebo group showed no significant changes in these measures [Paper 1]. This is a direct experimental demonstration that creatine enhances strength gains from resistance training compared to an equivalent training protocol without supplementation."
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized ==
+             "creatine supplementation during six weeks of resistance training produced significant increases in leg press 1-RM, chest press 1-RM, and total body strength in physically active young adults"
+
+    refute normalized =~ "placebo group showed no significant changes"
   end
 
   test "normalized_search_topic strips wrapper phrasing from manual eval prompts" do

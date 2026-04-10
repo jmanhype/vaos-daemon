@@ -1811,9 +1811,23 @@ Known failure patterns to avoid:
             end
         end
 
-      store = SourceScoring.classify(ev.verification, source_quality, strategy)
+      store = evidence_store_for(ev, source_quality, strategy)
       Map.merge(ev, %{source_quality: source_quality, evidence_store: store})
     end)
+  end
+
+  @doc false
+  def evidence_store_for(ev, source_quality, %Strategy{} = strategy) when is_map(ev) do
+    case Map.get(ev, :source_type) do
+      :sourced ->
+        SourceScoring.classify(Map.get(ev, :verification), source_quality, strategy)
+
+      "sourced" ->
+        SourceScoring.classify(Map.get(ev, :verification), source_quality, strategy)
+
+      _ ->
+        :belief
+    end
   end
 
   # -- Format papers for LLM context -----------------------------------
@@ -4079,6 +4093,7 @@ Known failure patterns to avoid:
     |> prefer_followup_reported_sentence()
     |> first_citation_sentence()
     |> trim_after_other_paper_ref()
+    |> trim_after_contrastive_clause()
     |> prefer_quote_after_inline_paper_definition()
     |> prefer_quote_before_followup_reporting()
     |> trim_after_last_quote()
@@ -4101,6 +4116,19 @@ Known failure patterns to avoid:
 
   def verification_claim_text(nil), do: ""
   def verification_claim_text(other), do: verification_claim_text(to_string(other))
+
+  defp trim_after_contrastive_clause(text) when is_binary(text) do
+    case Regex.run(~r/^(.*?)(?:,\s*|\s+)(while|whereas|although)\b/i, text,
+           capture: :all_but_first
+         ) do
+      [leading, _contrast] ->
+        candidate = String.trim(leading)
+        if candidate == "", do: text, else: candidate
+
+      _ ->
+        text
+    end
+  end
 
   defp message_content(messages, index) when is_list(messages) and is_integer(index) do
     case Enum.at(messages, index) do
