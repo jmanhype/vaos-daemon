@@ -538,10 +538,16 @@ defmodule Daemon.Tools.Builtins.Investigate do
 
   def preferred_advocate_model(provider) when is_atom(provider) do
     Application.get_env(:daemon, :investigate_advocate_model) ||
-      preferred_utility_model(provider)
+      default_advocate_model(provider)
   end
 
   def preferred_advocate_model(_), do: Application.get_env(:daemon, :investigate_advocate_model)
+
+  defp default_advocate_model(:zhipu) do
+    Application.get_env(:daemon, :investigate_zhipu_advocate_model, "glm-5.1")
+  end
+
+  defp default_advocate_model(provider), do: preferred_utility_model(provider)
 
   @doc false
   def advocate_request_opts(provider, model, temperature)
