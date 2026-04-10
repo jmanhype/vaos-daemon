@@ -401,10 +401,19 @@ defmodule Daemon.Investigation.EvidencePlanner do
   defp apply_probe_result(candidate, nil), do: candidate
 
   defp apply_probe_result(candidate, probe_result) do
-    empirical_score =
+    raw_empirical_score =
       case Map.get(probe_result, :status) do
         :ok -> Map.get(probe_result, :score)
         _ -> nil
+      end
+
+    empirical_score =
+      case raw_empirical_score do
+        value when is_number(value) ->
+          Float.round(value + selection_probe_bonus(candidate, probe_result), 2)
+
+        _ ->
+          raw_empirical_score
       end
 
     selection_score =
@@ -419,10 +428,19 @@ defmodule Daemon.Investigation.EvidencePlanner do
     %{
       candidate
       | probe: probe_result,
-        probe_score: empirical_score,
+        probe_score: raw_empirical_score,
         selection_score: selection_score
     }
   end
+
+  defp selection_probe_bonus(
+         %{profile: :clinical_intervention, mode: :randomized_intervention},
+         %{status: :ok, query_label: query_label, relevant_papers: relevant, groundable_papers: groundable}
+       )
+       when query_label in [:placebo, :rct] and relevant > 0 and groundable > 0,
+       do: 1.0
+
+  defp selection_probe_bonus(_candidate, _probe_result), do: 0.0
 
   defp rationale_parts(mode, family_profile, family_kind, topic, terms, evidence_profile) do
     base =

@@ -73,6 +73,12 @@ defmodule Daemon.Tools.Builtins.Investigate do
     managing prevent prevents prevented preventing effective effectiveness efficacy
     associated association linked links linking relation relationship claims claim
     whether if)
+  @clinical_topic_anchor_stop_words ~w(acute trained training adult adults healthy patient patients
+    participant participants male female men women effect effects outcome outcomes quality
+    performance function functional intake ingestion ingest ingested consume consumes consumed
+    consuming administration administered administering supplement supplements supplementation
+    treatment treatments therapy therapies drug drugs medication medications placebo randomized
+    randomised trial trials controlled compare compared control controls)
   @retrieval_discourse_terms ~w(misinformation disinformation journalism media communication
     discourse ideology belief beliefs denial denialism history historical philosophy
     perception attitudes social conference public commentary review survey overview)
@@ -2379,7 +2385,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
     case Map.get(ev, :source_type) do
       type when type in [:sourced, "sourced"] ->
         if clinical_intervention_context?(classification_context) do
-          clinical_grounding_role(ev, paper, summary)
+          clinical_grounding_role(ev, paper, summary, classification_context)
         else
           :direct
         end
@@ -2393,7 +2399,8 @@ defmodule Daemon.Tools.Builtins.Investigate do
     %{
       profile: Map.get(search_plan, :profile),
       claim_family: Map.get(search_plan, :claim_family),
-      evidence_profile: Map.get(search_plan, :evidence_profile)
+      evidence_profile: Map.get(search_plan, :evidence_profile),
+      normalized_topic: Map.get(search_plan, :normalized_topic)
     }
   end
 
@@ -2405,7 +2412,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
 
   defp clinical_intervention_context?(_), do: false
 
-  defp clinical_grounding_role(ev, paper, summary) do
+  defp clinical_grounding_role(ev, paper, summary, classification_context) do
     claim_text =
       ev
       |> Map.get(:verification_claim)
@@ -2415,12 +2422,15 @@ defmodule Daemon.Tools.Builtins.Investigate do
       end
 
     design = clinical_evidence_design(ev, paper, summary, claim_text)
+    topic_direct? =
+      clinical_topic_direct_claim?(claim_text, Map.get(classification_context, :normalized_topic))
 
     cond do
       methodological_caveat_claim?(claim_text) -> :caveat
       design == :combination_intervention -> :indirect
       design == :guidance -> :contextual
       design == :contextual_review -> :contextual
+      not topic_direct? -> :indirect
       design == :synthesis -> :synthesis
       true -> :direct
     end
@@ -2542,6 +2552,38 @@ defmodule Daemon.Tools.Builtins.Investigate do
   end
 
   defp methodological_caveat_claim?(_claim_text), do: false
+
+  defp clinical_topic_direct_claim?(claim_text, normalized_topic)
+       when is_binary(claim_text) and is_binary(normalized_topic) do
+    anchors = clinical_topic_anchor_terms(normalized_topic)
+
+    case anchors do
+      [] ->
+        true
+
+      terms ->
+        claim_text_normalized = normalize_search_text(claim_text)
+
+        matched_count =
+          terms
+          |> Enum.uniq()
+          |> Enum.count(&String.contains?(claim_text_normalized, &1))
+
+        required_matches = if length(terms) >= 3, do: 2, else: 1
+        matched_count >= required_matches
+    end
+  end
+
+  defp clinical_topic_direct_claim?(_claim_text, _normalized_topic), do: true
+
+  defp clinical_topic_anchor_terms(normalized_topic) when is_binary(normalized_topic) do
+    normalized_topic
+    |> topic_terms()
+    |> Enum.reject(&(&1 in @clinical_topic_anchor_stop_words))
+    |> Enum.reject(&search_relation_variant?/1)
+    |> Enum.reject(&(String.length(&1) < 4))
+    |> Enum.uniq()
+  end
 
   defp clinical_paper_text(paper) when is_map(paper) do
     [paper["title"], paper["abstract"]]
@@ -4064,7 +4106,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
     |> Enum.reject(&(String.length(&1) < 3))
     |> drop_search_stem_variants()
     |> Enum.uniq()
-    |> Enum.take(8)
+    |> limit_search_keywords(8)
   end
 
   defp search_relation_variant?(keyword) when is_binary(keyword) do
@@ -4087,6 +4129,23 @@ defmodule Daemon.Tools.Builtins.Investigate do
       end)
     end)
   end
+
+  defp limit_search_keywords(keywords, limit) when is_list(keywords) and length(keywords) <= limit,
+    do: keywords
+
+  defp limit_search_keywords(keywords, limit) when is_list(keywords) and limit > 2 do
+    tail_count = min(2, limit - 1)
+    head_count = max(limit - tail_count, 0)
+
+    {head_source, tail} = Enum.split(keywords, length(keywords) - tail_count)
+    head = Enum.take(head_source, head_count)
+
+    (head ++ tail)
+    |> Enum.uniq()
+    |> Enum.take(limit)
+  end
+
+  defp limit_search_keywords(keywords, limit) when is_list(keywords), do: Enum.take(keywords, limit)
 
   defp normalize_search_keyword_variant(keyword) when is_binary(keyword) do
     keyword

@@ -910,7 +910,11 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
                summary:
                  "A systematic review and meta-analysis found creatine supplementation improves maximal strength outcomes [Paper 4]."
              },
-             %{profile: :clinical_intervention},
+             %{
+               profile: :clinical_intervention,
+               normalized_topic:
+                 "creatine supplementation improves maximal strength outcomes during resistance training"
+             },
              %{
                "title" => "Systematic review and meta-analysis of creatine supplementation",
                "abstract" =>
@@ -918,6 +922,57 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
                "publicationTypes" => ["Meta-Analysis", "Review"]
              }
            ) == :synthesis
+  end
+
+  test "grounding_role_for demotes indirect clinical proxy claims without topic anchors" do
+    assert Investigate.grounding_role_for(
+             %{
+               source_type: :sourced,
+               verification: "verified",
+               paper_type: :other,
+               verification_claim:
+                 "Even at low doses caffeine has been shown to be ergogenic in exercise situations, with effects including improved vigilance, alertness, and cognitive processes during and after exercise.",
+               summary:
+                 "Even at low doses caffeine has been shown to be ergogenic in exercise situations, with effects including improved vigilance, alertness, and cognitive processes during and after exercise [Paper 2]. These central nervous system-mediated cognitive benefits are particularly relevant to endurance time-trial performance in trained cyclists and triathletes."
+             },
+             %{
+               profile: :clinical_intervention,
+               normalized_topic:
+                 "acute caffeine intake improves endurance time-trial performance in trained cyclists and triathletes"
+             },
+             %{
+               "title" => "Exercise and sport performance with low doses of caffeine",
+               "abstract" =>
+                 "Low doses of caffeine can improve vigilance, alertness, and cognitive processes during exercise.",
+               "publicationTypes" => ["Review"]
+             }
+           ) == :indirect
+  end
+
+  test "grounding_role_for demotes cross-supplement interaction caveats in clinical mode" do
+    assert Investigate.grounding_role_for(
+             %{
+               source_type: :sourced,
+               verification: "verified",
+               paper_type: :review,
+               verification_claim:
+                 "it is possible that the effects of supplementation with beetroot juice can be undermined by interaction with other supplements such as caffeine.",
+               summary:
+                 "[Paper 5] raises the concern that beetroot juice can be undermined by interaction with other supplements such as caffeine."
+             },
+             %{
+               profile: :clinical_intervention,
+               normalized_topic:
+                 "acute caffeine intake improves endurance time-trial performance in trained cyclists and triathletes"
+             },
+             %{
+               "title" =>
+                 "Effects of Beetroot Juice Supplementation on Cardiorespiratory Endurance in Athletes. A Systematic Review",
+               "abstract" =>
+                 "This systematic review notes that beetroot juice effects may be undermined by interaction with other supplements such as caffeine.",
+               "publicationTypes" => ["Review"]
+             }
+           ) == :indirect
   end
 
   test "evidence_store_for keeps contextual narrative reviews in belief for clinical mode" do
@@ -1885,17 +1940,42 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
              "endurance",
              "time-trial",
              "performance",
-             "trained",
-             "cyclists"
+             "cyclists",
+             "triathletes"
            ]
 
     assert plan.evidence_plan.semantic_seed ==
-             "acute caffeine supplementation endurance time-trial performance trained cyclists"
+             "acute caffeine supplementation endurance time-trial performance cyclists triathletes"
 
     refute String.contains?(plan.evidence_plan.semantic_seed, "improv")
 
     assert Enum.any?(plan.ss_queries, fn {_label, query, _opts} ->
-             String.contains?(query, "trained cyclists")
+             String.contains?(query, "cyclists triathletes")
+           end)
+  end
+
+  test "search_query_plan preserves tail population anchors when truncating longer intervention topics" do
+    plan =
+      Investigate.search_query_plan(
+        "test whether acute caffeine intake boosts endurance time-trial results in trained cyclists and triathletes"
+      )
+
+    assert plan.keywords == [
+             "acute",
+             "caffeine",
+             "intake",
+             "boosts",
+             "endurance",
+             "time-trial",
+             "cyclists",
+             "triathletes"
+           ]
+
+    assert plan.evidence_plan.semantic_seed ==
+             "acute caffeine intake boosts endurance time-trial cyclists triathletes"
+
+    assert Enum.any?(plan.ss_queries, fn {_label, query, _opts} ->
+             String.contains?(query, "cyclists triathletes")
            end)
   end
 
@@ -1931,6 +2011,54 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
            ]
 
     refute Enum.any?(updated.evidence_plan_candidates, &(&1.mode == :consensus))
+  end
+
+  test "apply_search_plan_probe_results keeps intervention plans on the direct-trial lane when probes find direct evidence" do
+    plan =
+      Investigate.search_query_plan(
+        "evaluate whether acute caffeine intake improves cycling time-trial performance in trained cyclists and triathletes"
+      )
+
+    shortlisted =
+      plan.evidence_plan_candidate_plans
+      |> Enum.filter(&(&1.mode in [:randomized_intervention, :systematic_review, :general_empirical]))
+
+    updated =
+      Investigate.apply_search_plan_probe_results(
+        plan,
+        shortlisted,
+        [
+          %{
+            mode: :systematic_review,
+            status: :ok,
+            score: 10.15,
+            relevant_papers: 2,
+            groundable_papers: 2,
+            query_label: :reviews
+          },
+          %{
+            mode: :randomized_intervention,
+            status: :ok,
+            score: 7.94,
+            relevant_papers: 1,
+            groundable_papers: 1,
+            query_label: :placebo
+          },
+          %{
+            mode: :general_empirical,
+            status: :ok,
+            score: 7.94,
+            relevant_papers: 1,
+            groundable_papers: 1,
+            query_label: :keywords
+          }
+        ]
+      )
+
+    assert updated.evidence_plan.mode == :randomized_intervention
+    assert hd(updated.evidence_plan_candidates).mode == :randomized_intervention
+    assert hd(updated.evidence_plan_candidates).probe_score == 7.94
+    assert hd(updated.evidence_plan_candidates).selection_score > 8.5
   end
 
   test "rerank_retrieval_candidates demotes discourse-heavy papers for general claims" do
