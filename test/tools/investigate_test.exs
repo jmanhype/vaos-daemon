@@ -46,6 +46,8 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
       :default_model,
       :zhipu_model,
       :utility_model,
+      :investigate_advocate_provider,
+      :investigate_advocate_model,
       :investigate_verification_model,
       :investigate_verify_max_tokens,
       :investigate_verify_timeout_ms,
@@ -80,6 +82,22 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     Application.delete_env(:daemon, :investigate_verification_model)
 
     assert Investigate.preferred_verification_model() == "glm-4.5-flash"
+  end
+
+  test "preferred_advocate_provider honors explicit override" do
+    Application.put_env(:daemon, :default_provider, :zhipu)
+    Application.put_env(:daemon, :investigate_advocate_provider, :openai)
+
+    assert Investigate.preferred_advocate_provider() == :openai
+  end
+
+  test "preferred_advocate_model honors explicit model override" do
+    Application.put_env(:daemon, :default_provider, :zhipu)
+    Application.put_env(:daemon, :investigate_advocate_provider, :openai)
+    Application.put_env(:daemon, :investigate_advocate_model, "gpt-4o-mini")
+
+    assert Investigate.preferred_advocate_model() == "gpt-4o-mini"
+    assert Investigate.preferred_advocate_model(:openai) == "gpt-4o-mini"
   end
 
   test "preferred_verification_model honors explicit override" do

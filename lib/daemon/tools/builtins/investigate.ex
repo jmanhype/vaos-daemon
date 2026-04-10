@@ -213,6 +213,49 @@ defmodule Daemon.Tools.Builtins.Investigate do
   defp merge_manual_steering(existing, ""), do: existing
   defp merge_manual_steering(existing, trial_steering), do: existing <> "\n\n" <> trial_steering
 
+  @doc false
+  def prepare_advocate_bakeoff(topic, depth \\ "standard", steering \\ "")
+
+  def prepare_advocate_bakeoff(topic, depth, steering)
+      when is_binary(topic) and is_binary(depth) and is_binary(steering) do
+    investigation_started_ms = monotonic_ms()
+
+    runtime = ensure_investigate_preflight_runtime()
+    {prompts, variant_id} = select_prompt_variant()
+    prior_strategy = load_prior_strategy(topic)
+
+    advocate_context =
+      prepare_advocate_context(
+        topic,
+        steering,
+        prior_strategy,
+        prompts,
+        investigation_started_ms,
+        runtime
+      )
+
+    {:ok,
+     Map.merge(advocate_context, %{
+       depth: depth,
+       prompt_variant_id: variant_id,
+       prior_strategy: prior_strategy,
+       prompts: prompts
+     })}
+  rescue
+    error -> {:error, Exception.message(error)}
+  end
+
+  def prepare_advocate_bakeoff(topic, depth, steering) do
+    {:error,
+     "invalid advocate bakeoff inputs: #{inspect(%{topic: topic, depth: depth, steering: steering})}"}
+  end
+
+  @doc false
+  def run_advocate_chat_phase(topic, phase, messages, opts)
+      when is_binary(topic) and is_atom(phase) and is_list(messages) and is_list(opts) do
+    call_investigate_chat_phase(topic, phase, messages, opts)
+  end
+
   defp run_investigation(topic, depth, steering, caller_metadata) do
     # DecisionJournal dedup — check if this investigation conflicts with in-flight work
     source = Map.get(caller_metadata, :source_module, :investigation)
@@ -261,90 +304,14 @@ defmodule Daemon.Tools.Builtins.Investigate do
     end
   end
 
-  defp do_run_investigation(topic, depth, steering, caller_metadata) do
-    investigation_started_ms = monotonic_ms()
-
+  defp ensure_investigate_preflight_runtime do
     :inets.start()
     :ssl.start()
     ensure_circuit_table()
+
     alphaxiv_enabled? = Daemon.Tools.Builtins.AlphaXivClient.auth_available?()
+    maybe_start_alphaxiv(alphaxiv_enabled?)
 
-    # Start alphaXiv MCP in an unlinked process — the MCP client crash-loops
-    # on auth failure (401) and sends EXIT to linked callers, killing the pipeline.
-    # Trap exits for the duration of the start, then restore.
-    old_trap = Process.flag(:trap_exit, true)
-
-    try do
-      if alphaxiv_enabled? do
-        Daemon.Tools.Builtins.AlphaXivClient.start_link()
-
-        # Drain any immediate EXIT from the MCP client crashing during handshake
-        receive do
-          {:EXIT, _pid, reason} ->
-            Logger.warning("[investigate] alphaXiv MCP crashed during init: #{inspect(reason)}")
-        after
-          2_000 -> :ok
-        end
-      else
-        Logger.info("[investigate] alphaXiv auth missing — skipping MCP startup")
-      end
-    catch
-      :exit, reason ->
-        Logger.warning("[investigate] alphaXiv MCP unavailable: #{inspect(reason)}")
-    after
-      Process.flag(:trap_exit, old_trap)
-    end
-
-    # 0. Create scorer cache ETS table upfront (owned by caller, visible to child tasks)
-    ensure_scorer_cache()
-
-    # 1. Start the real epistemic ledger GenServer
-    ensure_ledger_started()
-
-    # 1a. CrashLearner is now supervised by AgentServices — just verify it's alive
-    unless GenServer.whereis(:daemon_crash_learner) do
-      Logger.warning("[investigate] CrashLearner not running — crash reporting will be skipped")
-    end
-
-    # 1b. Load prompt templates via Thompson Sampling selector
-    {prompts, variant_id} =
-      try do
-        PromptSelector.select()
-      rescue
-        _ -> {PromptConfig.load(), "default"}
-      end
-
-    # 2. Extract search keywords from a normalized factual topic so wrapper
-    # phrasing like "examine claims that ..." does not pollute retrieval.
-    search_topic = normalized_search_topic(topic)
-    keywords = extract_keywords(search_topic)
-
-    # 2a. Load prior winning strategy for search/LLM params (scoring params tuned later by optimizer)
-    #     Fallback chain: topic-specific → _global (Retrospector-optimized) → defaults
-    prior_strategy =
-      case StrategyStore.load_best(topic) do
-        {:ok, strategy} ->
-          Logger.info(
-            "[investigate] Loaded prior strategy (gen #{strategy.generation}) for search params"
-          )
-
-          strategy
-
-        :error ->
-          case StrategyStore.load_best("_global") do
-            {:ok, strategy} ->
-              Logger.info(
-                "[investigate] Loaded _global strategy (gen #{strategy.generation}) from Retrospector"
-              )
-
-              strategy
-
-            :error ->
-              Strategy.default()
-          end
-      end
-
-    # 3. Prior knowledge search — fetch prior EVIDENCE, not conclusions
     case ensure_store_started() do
       :ok ->
         :ok
@@ -353,15 +320,88 @@ defmodule Daemon.Tools.Builtins.Investigate do
         Logger.warning("[investigate] Knowledge store unavailable: #{inspect(reason)}")
     end
 
+    unless GenServer.whereis(:daemon_crash_learner) do
+      Logger.warning("[investigate] CrashLearner not running — crash reporting will be skipped")
+    end
+
+    %{alphaxiv_enabled?: alphaxiv_enabled?}
+  end
+
+  defp maybe_start_alphaxiv(false) do
+    Logger.info("[investigate] alphaXiv auth missing — skipping MCP startup")
+    :ok
+  end
+
+  defp maybe_start_alphaxiv(true) do
+    old_trap = Process.flag(:trap_exit, true)
+
+    try do
+      Daemon.Tools.Builtins.AlphaXivClient.start_link()
+
+      receive do
+        {:EXIT, _pid, reason} ->
+          Logger.warning("[investigate] alphaXiv MCP crashed during init: #{inspect(reason)}")
+      after
+        2_000 -> :ok
+      end
+    catch
+      :exit, reason ->
+        Logger.warning("[investigate] alphaXiv MCP unavailable: #{inspect(reason)}")
+    after
+      Process.flag(:trap_exit, old_trap)
+    end
+  end
+
+  defp select_prompt_variant do
+    try do
+      PromptSelector.select()
+    rescue
+      _ -> {PromptConfig.load(), "default"}
+    end
+  end
+
+  defp load_prior_strategy(topic) do
+    case StrategyStore.load_best(topic) do
+      {:ok, strategy} ->
+        Logger.info(
+          "[investigate] Loaded prior strategy (gen #{strategy.generation}) for search params"
+        )
+
+        strategy
+
+      :error ->
+        case StrategyStore.load_best("_global") do
+          {:ok, strategy} ->
+            Logger.info(
+              "[investigate] Loaded _global strategy (gen #{strategy.generation}) from Retrospector"
+            )
+
+            strategy
+
+          :error ->
+            Strategy.default()
+        end
+    end
+  end
+
+  defp prepare_advocate_context(
+         topic,
+         steering,
+         prior_strategy,
+         prompts,
+         investigation_started_ms,
+         runtime
+       )
+       when is_binary(topic) and is_map(prior_strategy) and is_map(prompts) and is_map(runtime) do
+    search_topic = normalized_search_topic(topic)
+    keywords = extract_keywords(search_topic)
     store = store_ref()
     prior_evidence = fetch_prior_evidence_by_keywords(store, keywords)
 
-    # 4. MULTI-SOURCE PAPER SEARCH: Semantic Scholar + OpenAlex + alphaXiv (parallel)
-    #    Uses prior strategy's top_n_papers and per_query_limit for tuned search breadth
     {{all_papers, source_counts, search_plan}, paper_search_ms} =
       timed(fn ->
         search_all_papers(search_topic, keywords, prior_strategy,
-          alphaxiv_enabled?: alphaxiv_enabled?
+          alphaxiv_enabled?: Map.get(runtime, :alphaxiv_enabled?, false)
         )
       end)
 
@@ -369,19 +409,58 @@ defmodule Daemon.Tools.Builtins.Investigate do
       "[investigate] Papers: #{length(all_papers)} total (#{inspect(source_counts)}) via evidence_plan=#{search_plan.evidence_plan.mode}"
     )
 
-    # 5. Format papers context for LLM prompts
     papers_context = format_papers(all_papers, prompts)
+    prior_text = prior_evidence_text(prior_evidence)
+    pitfall_context = build_pitfall_context()
 
-    # 6. Prior evidence context (evidence only, no conclusions)
-    prior_text =
-      if prior_evidence == [] do
-        ""
-      else
-        "\n\nPreviously investigated evidence on related topics:\n" <>
-          Enum.join(prior_evidence, "\n") <> "\n"
-      end
+    steering_context =
+      if(is_binary(steering) and steering != "", do: "\n\n" <> steering, else: "")
 
-    # 6a. Fetch known failure pitfalls from CrashLearner
+    {for_messages, against_messages} =
+      build_advocate_messages(
+        topic,
+        prompts,
+        papers_context,
+        prior_text,
+        pitfall_context,
+        steering_context
+      )
+
+    provider = preferred_advocate_provider()
+    model = preferred_advocate_model(provider)
+
+    %{
+      topic: topic,
+      search_topic: search_topic,
+      keywords: keywords,
+      all_papers: all_papers,
+      source_counts: source_counts,
+      prior_evidence: prior_evidence,
+      store: store,
+      search_plan: search_plan,
+      for_messages: for_messages,
+      against_messages: against_messages,
+      llm_opts:
+        advocate_request_opts(
+          provider,
+          model,
+          prior_strategy.adversarial_temperature
+        ),
+      timings: %{
+        preflight_ms: max(0, elapsed_ms(investigation_started_ms) - paper_search_ms),
+        paper_search_ms: paper_search_ms
+      }
+    }
+  end
+
+  defp prior_evidence_text([]), do: ""
+
+  defp prior_evidence_text(prior_evidence) when is_list(prior_evidence) do
+    "\n\nPreviously investigated evidence on related topics:\n" <>
+      Enum.join(prior_evidence, "\n") <> "\n"
+  end
+
+  defp build_pitfall_context do
     pitfalls =
       try do
         {:ok, plist} = CrashLearner.get_pitfalls(:daemon_crash_learner)
@@ -390,28 +469,22 @@ defmodule Daemon.Tools.Builtins.Investigate do
         _ -> []
       end
 
-    pitfall_context =
-      if pitfalls != [] do
-        text = Enum.map(pitfalls, fn p -> "- #{p.summary}" end) |> Enum.join("
-")
-        "
+    if pitfalls != [] do
+      text = Enum.map(pitfalls, fn p -> "- #{p.summary}" end) |> Enum.join("\n")
+      "\n\nKnown failure patterns to avoid:\n#{text}\n"
+    else
+      ""
+    end
+  end
 
-Known failure patterns to avoid:
-#{text}
-"
-      else
-        ""
-      end
-
-    # 6b. Steering context from ActiveLearner bottleneck diagnosis
-    steering_context =
-      if is_binary(steering) and steering != "" do
-        "\n\n" <> steering
-      else
-        ""
-      end
-
-    # 7. TWO ADVERSARIAL LLM CALLS (sequential for rate-limit safety)
+  defp build_advocate_messages(
+         topic,
+         prompts,
+         papers_context,
+         prior_text,
+         pitfall_context,
+         steering_context
+       ) do
     example_format = prompts["example_format"]
 
     for_prompt =
@@ -451,23 +524,74 @@ Known failure patterns to avoid:
       %{role: "user", content: against_prompt}
     ]
 
-    timings = %{
-      preflight_ms: max(0, elapsed_ms(investigation_started_ms) - paper_search_ms),
-      paper_search_ms: paper_search_ms
-    }
+    {for_messages, against_messages}
+  end
 
-    provider = ModelSelection.current_provider()
-    model = preferred_utility_model(provider)
+  @doc false
+  def preferred_advocate_provider do
+    Application.get_env(:daemon, :investigate_advocate_provider) ||
+      ModelSelection.current_provider()
+  end
 
-    llm_opts = [
+  @doc false
+  def preferred_advocate_model(provider \\ preferred_advocate_provider())
+
+  def preferred_advocate_model(provider) when is_atom(provider) do
+    Application.get_env(:daemon, :investigate_advocate_model) ||
+      preferred_utility_model(provider)
+  end
+
+  def preferred_advocate_model(_), do: Application.get_env(:daemon, :investigate_advocate_model)
+
+  @doc false
+  def advocate_request_opts(provider, model, temperature)
+      when is_atom(provider) and is_number(temperature) do
+    opts = [
       provider: provider,
       allow_fallback: false,
-      temperature: prior_strategy.adversarial_temperature,
+      temperature: temperature,
       max_tokens: 8192,
       receive_timeout: advocate_timeout_ms()
     ]
 
-    llm_opts = if model, do: Keyword.put(llm_opts, :model, model), else: llm_opts
+    if model, do: Keyword.put(opts, :model, model), else: opts
+  end
+
+  defp do_run_investigation(topic, depth, steering, caller_metadata) do
+    investigation_started_ms = monotonic_ms()
+
+    runtime = ensure_investigate_preflight_runtime()
+
+    # 0. Create scorer cache ETS table upfront (owned by caller, visible to child tasks)
+    ensure_scorer_cache()
+
+    # 1. Start the real epistemic ledger GenServer
+    ensure_ledger_started()
+
+    # 1b. Load prompt templates via Thompson Sampling selector
+    {prompts, variant_id} = select_prompt_variant()
+    prior_strategy = load_prior_strategy(topic)
+
+    %{
+      all_papers: all_papers,
+      source_counts: source_counts,
+      keywords: keywords,
+      prior_evidence: prior_evidence,
+      store: store,
+      for_messages: for_messages,
+      against_messages: against_messages,
+      llm_opts: llm_opts,
+      search_plan: search_plan,
+      timings: timings
+    } =
+      prepare_advocate_context(
+        topic,
+        steering,
+        prior_strategy,
+        prompts,
+        investigation_started_ms,
+        runtime
+      )
 
     # Run advocates sequentially on one explicit provider/model lane. Generic
     # registry fallback is useful elsewhere, but here it hides the real timeout
