@@ -73,7 +73,7 @@ keys, code examples.
 | [Tools](backend/tools/) | 6 | 32 built-in tools — file ops, shell, git, web, memory, intelligence. Registry, middleware, custom tools |
 | [Channels](backend/channels/) | 12 | 12 chat channels — CLI, HTTP, Telegram, Discord, Slack, WhatsApp, Signal, Matrix, Email, QQ, DingTalk, Feishu |
 | [Memory](backend/memory/) | 7 | 5-layer memory — store, episodic, learning, knowledge graph, cortex, taxonomy |
-| [Orchestration](backend/orchestration/) | 6 | Multi-agent coordination — orchestrator, agent roster, swarm mode, fleet, delegation, capability packs |
+| [Orchestration](backend/orchestration/) | 5 | Multi-agent coordination — orchestrator, agent roster, swarm mode, fleet, delegation |
 | [Events](backend/events/) | 3 | goldrush event bus, OSCP protocol, telemetry metrics |
 | [Infrastructure](backend/infrastructure/) | 6 | Sandbox, MCP, sidecar, scheduler, security, intelligence |
 | [Platform](backend/platform/) | 4 | Multi-tenant — auth, tenants, AMQP, instances |
