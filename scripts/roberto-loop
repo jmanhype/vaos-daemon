@@ -2,4 +2,33 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-exec mix osa.roberto.resume "$@"
+
+cmd="${1:-run}"
+
+case "$cmd" in
+  run|codex)
+    shift || true
+    exec mix osa.roberto.codex "$@"
+    ;;
+  resume)
+    shift || true
+    exec mix osa.roberto.resume "$@"
+    ;;
+  prompt)
+    shift || true
+    exec mix osa.roberto.codex --prompt-only "$@"
+    ;;
+  help|-h|--help)
+    cat <<'EOF'
+Usage:
+  scripts/roberto-loop            # launch a Codex Roberto slice
+  scripts/roberto-loop resume     # print the current Roberto resume summary
+  scripts/roberto-loop prompt     # print the generated Codex prompt
+
+All other arguments are forwarded to the corresponding Mix task.
+EOF
+    ;;
+  *)
+    exec mix osa.roberto.codex "$@"
+    ;;
+esac

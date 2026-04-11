@@ -98,9 +98,11 @@ The queue order is intentional:
 ## Resume
 
 1. Read `STATUS.md`.
-2. Run `mix osa.roberto.resume`.
+2. Run `scripts/roberto-loop`.
 3. Open `vas-swarm-9m7` for blocker context only.
 4. Resume implementation from `vas-swarm-jji.3`.
 5. Use the `vas-swarm-jji.2` trace plus the `vas-swarm-9m7` traces as evidence for why the remaining profile / verifier drift needs correction.
 6. Record any unrelated inherited suite failures under `vas-swarm-dy1` without blocking `investigate` work.
 7. Update status docs, Beads, commit, and push.
+
+If you only need the summary snapshot without launching a Codex slice, run `mix osa.roberto.resume`.

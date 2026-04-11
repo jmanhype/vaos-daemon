@@ -80,7 +80,13 @@ Repo-root control files mirror this stack for long-running Codex sessions:
 - [IMPLEMENT.md](/Users/speed/vaos-daemon/IMPLEMENT.md)
 - [STATUS.md](/Users/speed/vaos-daemon/STATUS.md)
 
-Resume command:
+Primary launch command:
+
+```bash
+scripts/roberto-loop
+```
+
+Summary-only fallback:
 
 ```bash
 mix osa.roberto.resume

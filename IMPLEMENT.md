@@ -13,5 +13,11 @@
 ## Resume Command
 
 ```bash
+scripts/roberto-loop
+```
+
+Summary-only fallback:
+
+```bash
 mix osa.roberto.resume
 ```

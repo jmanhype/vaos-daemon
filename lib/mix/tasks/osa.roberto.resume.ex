@@ -33,9 +33,7 @@ defmodule Mix.Tasks.Osa.Roberto.Resume do
     issue_output = beads_show(summary.current_issue)
 
     if opts[:json] do
-      Mix.shell().info(
-        Jason.encode!(Map.put(summary, :issue_output, issue_output), pretty: true)
-      )
+      Mix.shell().info(Jason.encode!(Map.put(summary, :issue_output, issue_output), pretty: true))
     else
       print_summary(summary, issue_output)
     end
@@ -83,13 +81,6 @@ defmodule Mix.Tasks.Osa.Roberto.Resume do
   defp beads_show(nil), do: nil
 
   defp beads_show(issue_id) do
-    bash = System.find_executable("bash") || "/bin/bash"
-
-    case System.cmd(bash, ["scripts/bd-safe", "show", issue_id], stderr_to_stdout: true) do
-      {output, 0} -> String.trim(output)
-      {output, _code} -> "Failed to load issue #{issue_id}: #{String.trim(output)}"
-    end
-  rescue
-    _ -> "Failed to execute scripts/bd-safe show #{issue_id}"
+    RobertoLoop.issue_output(issue_id)
   end
 end

@@ -125,9 +125,11 @@ Shortest version:
 On the next session:
 
 1. Read this file.
-2. Run `mix osa.roberto.resume`.
+2. Run `scripts/roberto-loop`.
 3. Open `vas-swarm-9m7` for blocker context.
 4. Resume from `vas-swarm-jji.3` with the current understanding that the live boundary is profile-conditioned behavior, not planner/retrieval routing.
 5. Use the `vas-swarm-jji.2` trace plus the three blocker traces above as evidence for why the remaining profile / verifier drift needs to be removed.
 6. Record unrelated suite failures under `vas-swarm-dy1` without blocking `investigate` milestone advancement.
 7. Update this file, close/open issues, and push.
+
+If you only need the summary snapshot without launching a Codex slice, run `mix osa.roberto.resume`.

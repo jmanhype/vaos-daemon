@@ -48,7 +48,9 @@ defmodule Daemon.Operations.RobertoLoopTest do
   end
 
   test "resume_summary reports missing control files" do
-    base = System.tmp_dir!() |> Path.join("roberto-loop-missing-#{System.unique_integer([:positive])}")
+    base =
+      System.tmp_dir!() |> Path.join("roberto-loop-missing-#{System.unique_integer([:positive])}")
+
     File.mkdir_p!(base)
     File.write!(Path.join(base, "STATUS.md"), "# STATUS\n")
 
@@ -56,5 +58,56 @@ defmodule Daemon.Operations.RobertoLoopTest do
 
     assert summary.missing_files != []
     refute RobertoLoop.complete?(summary)
+  end
+
+  test "codex_prompt synthesizes a runnable Codex slice prompt" do
+    base =
+      System.tmp_dir!() |> Path.join("roberto-loop-prompt-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(Path.join(base, "docs/operations/roberto-content"))
+
+    for file <- ~w(SPEC.md PLAN.md IMPLEMENT.md STATUS.md) do
+      File.write!(Path.join(base, file), "# #{file}\n")
+    end
+
+    File.write!(
+      Path.join(base, "STATUS.md"),
+      """
+      # STATUS
+
+      **Canonical status**: [docs/operations/roberto-content/Documentation.md](docs/operations/roberto-content/Documentation.md)
+      **Epic**: `vas-swarm-jji`
+      **Current active issue**: `vas-swarm-jji.3`
+      **Latest trace**: [trace](#{base}/trace.json)
+      **Next Roberto step**: Replace the profile contract.
+
+      ## Resume
+
+      1. Read this file.
+      2. Resume from `vas-swarm-jji.3`.
+      """
+    )
+
+    for file <- ~w(Prompt.md Plan.md Implement.md Documentation.md) do
+      File.write!(
+        Path.join(base, "docs/operations/roberto-content/#{file}"),
+        "# #{file}\n"
+      )
+    end
+
+    prompt =
+      RobertoLoop.codex_prompt(base,
+        issue_output:
+          "vas-swarm-jji.3: Replace family-specific verifier salvage with generic cited-claim extraction"
+      )
+
+    assert prompt =~ "You are resuming the Roberto long-horizon hardening program"
+    assert prompt =~ "Current active issue: vas-swarm-jji.3"
+    assert prompt =~ "Latest trace: #{base}/trace.json"
+    assert prompt =~ "Next Roberto step: Replace the profile contract."
+    assert prompt =~ Path.join(base, "STATUS.md")
+    assert prompt =~ Path.join(base, "docs/operations/roberto-content/Documentation.md")
+    assert prompt =~ "Current Beads issue:"
+    assert prompt =~ "vas-swarm-jji.3: Replace family-specific verifier salvage"
   end
 end
