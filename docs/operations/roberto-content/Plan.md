@@ -61,7 +61,8 @@ Strategic correction:
 - The next investigate bottleneck is live verifier determinism on the recurring earth-shape evidence core.
 - `vas-swarm-jji.1` is complete: planner mode selection no longer depends on `ClaimFamily`.
 - `vas-swarm-jji.2` is complete: retrieval no longer depends on family-shaped evidence profiles or query templates in the investigate core.
-- `vas-swarm-jji.3` is active: verification normalization still depends on family-shaped salvage.
+- `vas-swarm-jji.3` is active: repo audit shows the remaining live drift is profile-conditioned grounding / verification behavior plus wrapper-normalization debt.
+- Current issue wording lags the call graph slightly: `ClaimFamily.normalize_verification_claim/1` no longer appears to be the production investigate boundary; the concrete next cut is the `profile` contract.
 - Repo-history audit shows the remaining full-suite failures live in pre-takeover Roberto/PAMF2-era surfaces outside the `investigate` tool path.
 - Those inherited repo-wide failures are tracked as background debt in `vas-swarm-dy1` and are non-blocking unless they intersect `investigate`, `evidence_planner`, or directly coupled verification/retrieval code touched by this milestone.
 
@@ -99,13 +100,13 @@ Strategic correction:
 
 1. `vas-swarm-jji.1` — completed: remove `ClaimFamily` from planner selection path
 2. `vas-swarm-jji.2` — completed: replace family-shaped retrieval hints with generic evidence signatures
-3. `vas-swarm-jji.3` — active: replace family-specific verifier salvage with generic cited-claim extraction
+3. `vas-swarm-jji.3` — active: replace profile-conditioned verifier / grounding behavior with generic capability-driven cited-claim extraction
 4. Track any surviving family logic as temporary debt with a deletion path
 
 **Validation**
 - Planner mode selection no longer depends on family-conditioned scoring
 - Retrieval query generation and rerank/directness logic no longer depend on `ClaimFamily`
-- Verification normalization no longer depends on `ClaimFamily`
+- Verification / grounding behavior no longer depends on family-like `profile` labels or `ClaimFamily` entry points in the core path
 - Diff review shows logic moved toward evidence operations, not added topic lists
 - Representative non-earth empirical claims still route correctly
 

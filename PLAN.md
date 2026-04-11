@@ -4,20 +4,20 @@
 
 ## Current Milestone
 
-Remove family-conditioned routing from the `investigate` core path, then remove family-conditioned verifier salvage while keeping `vas-swarm-9m7` recorded as blocker evidence only.
+Remove the last family-conditioned behavior from the `investigate` core by replacing `profile`-driven grounding / verification logic with generic capability-driven cited-claim extraction, while keeping `vas-swarm-9m7` recorded as blocker evidence only.
 
 ## Active Issue
 
 `vas-swarm-jji.3` — Replace family-specific verifier salvage with generic cited-claim extraction.
 `vas-swarm-dy1` remains open as inherited repo debt. For this Roberto program, it is non-blocking unless a failing test touches `investigate` or its directly coupled planning/verification path.
-Current state: `vas-swarm-jji.1` and `vas-swarm-jji.2` are complete and closed; `vas-swarm-jji.3` is now active. `vas-swarm-9m7` stays paused as blocker evidence after three live validation attempts failed to produce a stable recurring grounded core.
+Current state: `vas-swarm-jji.1` and `vas-swarm-jji.2` are complete and closed; `vas-swarm-jji.3` is now active. Repo audit shows the live boundary is `profile`-conditioned behavior, not planner/retrieval routing or a direct production call to `ClaimFamily.normalize_verification_claim/1`. `vas-swarm-9m7` stays paused as blocker evidence after three live validation attempts failed to produce a stable recurring grounded core.
 
 ## Strategic Queue
 
 The next long-horizon tasks for the durable epistemic engine are:
 - `vas-swarm-jji.1` — completed: remove `ClaimFamily` from planner selection path
 - `vas-swarm-jji.2` — completed: replace family-shaped retrieval hints with generic evidence signatures
-- `vas-swarm-jji.3` — active: replace family-specific verifier salvage with generic cited-claim extraction
+- `vas-swarm-jji.3` — active: replace profile-conditioned verifier / grounding behavior with generic capability-driven cited-claim extraction
 - `vas-swarm-jji.4` — add non-paper evidence operations to the planner
 
 Sequence:
@@ -45,7 +45,12 @@ Sequence:
   - `EvidencePlanner` now builds generic retrieval profiles from operation signatures for query generation, rerank/directness scoring, and relevant-paper filtering
   - `mix test test/investigation/evidence_planner_test.exs test/tools/investigate_test.exs` -> `114 tests, 0 failures`
   - live validation trace [vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-jji-2-live-curvature-1775881600133.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-jji-2-live-curvature-1775881600133.json) selected `measurement` with generic `planning.signatures`; later citation verification degraded under provider timeout / HTTP 429 noise
-- Next investigate bottleneck is `vas-swarm-9m7`: recurring earth-shape direct-evidence papers survive selection, but verification outcomes still flip between grounded and belief across reruns
+- Harness audit (2026-04-11):
+  - `mix test test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs test/tools/investigate_test.exs` -> `126 tests, 0 failures`
+  - `ClaimFamily.normalize_topic/1` remains live for wrapper cleanup
+  - `ClaimFamily.normalize_verification_claim/1` does not appear on the production investigate path
+  - the remaining meaningful family-conditioned behavior is `profile`-based branching in `investigate` / `EvidencePlanner`, which is the concrete next cut under `vas-swarm-jji.3`
+- Next investigate bottleneck remains the blocker recorded by `vas-swarm-9m7`: recurring earth-shape direct-evidence papers survive selection, but verification outcomes still flip between grounded and belief across reruns
 - `vas-swarm-9m7` progress before the pause:
   - claim-family / verification-claim compaction was extended for the recurring earth-shape wrappers
   - `mix test test/intelligence/decision_ledger_test.exs test/intelligence/decision_journal_persistence_test.exs test/intelligence/runtime_ledger_isolation_test.exs test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs --seed 0` -> `160 tests, 0 failures`
@@ -64,4 +69,4 @@ After each slice:
 4. ask what Roberto would do next
 5. continue if the next bottleneck is already clear
 6. if three live attempts fail to verify the current milestone, mark the blocker clearly and pause instead of advancing
-7. do not extend `ClaimFamily` as a core abstraction; either delete family-shaped logic or isolate it as explicit temporary debt
+7. do not extend `ClaimFamily` or family-like `profile` contracts as core abstractions; either delete that logic or isolate it as explicit temporary debt
