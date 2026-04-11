@@ -47,7 +47,6 @@ defmodule Daemon.Tools.Builtins.Investigate do
 
   alias Daemon.Investigation.{
     AdversarialParser,
-    ClaimFamily,
     EvidencePlanner,
     Strategy,
     StrategyStore,
@@ -3748,7 +3747,37 @@ defmodule Daemon.Tools.Builtins.Investigate do
 
   @doc false
   def normalized_search_topic(topic) do
-    ClaimFamily.normalize_topic(topic)
+    original =
+      topic
+      |> to_string()
+      |> String.trim()
+      |> String.trim_trailing(".")
+      |> String.trim_trailing("?")
+      |> String.trim_trailing("!")
+
+    normalized =
+      Enum.reduce(search_topic_wrappers(), original, fn pattern, acc ->
+        String.replace(acc, pattern, "")
+      end)
+      |> String.replace(~r/\s+/, " ")
+      |> String.trim()
+
+    if normalized == "", do: original, else: normalized
+  end
+
+  defp search_topic_wrappers do
+    [
+      ~r/^\s*(?:cross[\s-]*check|re[\s-]*evaluate|triage)\s+(?:the\s+)?claims?\s+that\s+/i,
+      ~r/^\s*(?:cross[\s-]*check|re[\s-]*evaluate|triage)\s+(?:whether|if)\s+/i,
+      ~r/^\s*map\s+the\s+evidence\s+(?:on|for)\s+(?:the\s+)?claims?\s+that\s+/i,
+      ~r/^\s*map\s+the\s+evidence\s+(?:on|for)\s+(?:whether|if)\s+/i,
+      ~r/^\s*map\s+the\s+evidence\s+(?:on|for)\s+/i,
+      ~r/^\s*(?:cross[\s-]*check|re[\s-]*evaluate|triage)\s+/i,
+      ~r/^\s*(?:investigate|review|examine|assess|evaluate|analy[sz]e|test|check|probe|verify|determine|establish)\s+(?:the\s+)?claims?\s+that\s+/i,
+      ~r/^\s*(?:investigate|review|examine|assess|evaluate|analy[sz]e|test|check|probe|verify|determine|establish)\s+(?:whether|if)\s+/i,
+      ~r/^\s*(?:find\s+out|figure\s+out)\s+(?:whether|if)\s+/i,
+      ~r/^\s*(?:investigate|review|examine|assess|evaluate|analy[sz]e|test|check|probe|verify|determine|establish)\s+/i
+    ]
   end
 
   @doc false

@@ -2,7 +2,7 @@
 
 **Created**: 2026-04-10
 **Epic**: `vas-swarm-jji`
-**Current Active Issue**: `vas-swarm-jji.5` (in progress)
+**Current Active Issue**: `vas-swarm-jji.6` (in progress)
 **Recorded blocker issue**: `vas-swarm-9m7` (blocked)
 
 ## Overview
@@ -63,8 +63,8 @@ Strategic correction:
 - `vas-swarm-jji.2` is complete: retrieval no longer depends on family-shaped evidence profiles or query templates in the investigate core.
 - `vas-swarm-jji.3` is complete: the live `profile`-conditioned grounding branch is gone and cited-claim extraction is now generic on the production investigate path.
 - `vas-swarm-jji.4` is complete: the planner can now select a generic non-paper `artifact_reference` path with explicit trace provenance.
-- `ClaimFamily.normalize_topic/1` remains wrapper-normalization debt and is now the next narrow generic seam to retire.
-- `vas-swarm-jji.5` is active: remove the surviving wrapper-normalization seam without reintroducing topic-family routing.
+- `vas-swarm-jji.5` is complete: production investigate no longer depends on `ClaimFamily.normalize_topic/1`.
+- `vas-swarm-jji.6` is active: keep retrieval-ops-only `artifact_reference` runs local by suppressing external paper-search bleed exposed by the wrapped docs/code trace.
 - Repo-history audit shows the remaining full-suite failures live in pre-takeover Roberto/PAMF2-era surfaces outside the `investigate` tool path.
 - Those inherited repo-wide failures are tracked as background debt in `vas-swarm-dy1` and are non-blocking unless they intersect `investigate`, `evidence_planner`, or directly coupled verification/retrieval code touched by this milestone.
 
@@ -86,6 +86,10 @@ Strategic correction:
    - explicit timeouts
    - explicit rate-limit degradation
    - trace capture on partial or failed runs
+
+5. Non-paper source isolation
+   - keep retrieval-ops-only local artifact plans from automatically launching external paper search
+   - preserve explicit provenance for local docs/code evidence without mixed-source contamination
 
 **Validation**
 - Focused tests for the changed layer
@@ -122,7 +126,7 @@ Strategic correction:
 2. Delete heuristics that duplicate evidence-mode behavior
 3. Convert surviving heuristics into generic evidence-operation rules where possible
 4. Open explicit debt issues for anything that must remain temporarily
-5. `vas-swarm-jji.5` — active: retire the surviving `ClaimFamily.normalize_topic/1` wrapper-normalization seam from the production investigate path
+5. `vas-swarm-jji.5` — completed: retire the surviving `ClaimFamily.normalize_topic/1` wrapper-normalization seam from the production investigate path
 
 **Validation**
 - Diff review shows logic moved toward evidence operations, not added topic lists
@@ -135,18 +139,20 @@ Strategic correction:
 ### Tasks
 
 1. `vas-swarm-jji.4` — completed: add a generic non-paper artifact/reference evidence operation to the planner
-2. Define evidence operations beyond papers
+2. `vas-swarm-jji.6` — active: keep retrieval-ops-only `artifact_reference` investigations local unless mixed-source retrieval is explicit
+3. Define evidence operations beyond papers
    - docs/specs
    - code/repos
    - benchmarks
    - standards
 
-3. Add at least one non-paper adapter path to the planner
-4. Validate on one empirical claim and one docs/code question
+4. Add at least one non-paper adapter path to the planner
+5. Validate on one empirical claim and one docs/code question
 
 **Validation**
 - one mixed-source live investigation path exists
 - provenance remains explicit
+- retrieval-ops-only docs/code validations do not consult external paper sources unless requested
 
 ## Milestone 5: Roberto Content Check
 

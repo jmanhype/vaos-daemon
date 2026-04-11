@@ -2,9 +2,9 @@
 
 **Canonical status**: [docs/operations/roberto-content/Documentation.md](docs/operations/roberto-content/Documentation.md)
 **Epic**: `vas-swarm-jji`
-**Current active issue**: `vas-swarm-jji.5`
-**Latest trace**: [vaos-investigate-trace-d3720298d454cb3c-vas-swarm-jji-4-docs-testenv-1775942835911.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-d3720298d454cb3c-vas-swarm-jji-4-docs-testenv-1775942835911.json)
-**Next Roberto step**: Retire the surviving `ClaimFamily.normalize_topic/1` wrapper-normalization seam from the production investigate path while keeping `vas-swarm-9m7` recorded only as blocker evidence.
+**Current active issue**: `vas-swarm-jji.6`
+**Latest trace**: [vaos-investigate-trace-aec23c8ca5850790-vas-swarm-jji-5-docs-wrapper-1775943904289.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-aec23c8ca5850790-vas-swarm-jji-5-docs-wrapper-1775943904289.json)
+**Next Roberto step**: Keep `retrieval_ops`-only `artifact_reference` investigate runs local by skipping external paper search unless mixed-source retrieval is explicit, while keeping `vas-swarm-9m7` recorded only as blocker evidence.
 
 ## Verification Status
 
@@ -73,15 +73,27 @@
     - docs/code trace [vaos-investigate-trace-d3720298d454cb3c-vas-swarm-jji-4-docs-testenv-1775942835911.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-d3720298d454cb3c-vas-swarm-jji-4-docs-testenv-1775942835911.json) completed end to end under `MIX_ENV=test` to avoid a local `8089` port collision, selected `artifact_reference`, emitted `retrieval_ops = [%{operation: :local_artifact_search, source: :local_repo, scope: ["docs"]}]`, and finished with `direction = asymmetric_evidence_for`, `grounded_for_count = 1`, `grounded_against_count = 0`
     - the docs/code trace records explicit non-paper provenance, including `source = local_repo`, `source_kind = artifact_doc`, and `provenance = %{operation: "local_artifact_search", path: "docs/operations/roberto-content/Documentation.md", scope: ["docs"]}`
     - empirical trace [vaos-investigate-trace-e5e4f891f0c3d92b-vas-swarm-jji-4-empirical-1775942606636.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-e5e4f891f0c3d92b-vas-swarm-jji-4-empirical-1775942606636.json) still selected `measurement` and completed with `direction = supporting`, `grounded_for_count = 1`, and `grounded_against_count = 1`
+- `vas-swarm-jji.5` closed:
+  - production `investigate` no longer depends on `ClaimFamily.normalize_topic/1`
+  - generic wrapper stripping now lives in `Daemon.Tools.Builtins.Investigate.normalized_search_topic/1`, and `ClaimFamily` no longer owns the search-topic seam
+  - targeted investigate-path verification passed:
+    - `mix test test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs` -> `131 tests, 0 failures`
+  - live wrapped docs/code validation completed:
+    - trace [vaos-investigate-trace-aec23c8ca5850790-vas-swarm-jji-5-docs-wrapper-1775943904289.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-aec23c8ca5850790-vas-swarm-jji-5-docs-wrapper-1775943904289.json) completed end to end under `MIX_ENV=test`
+    - the selected plan stayed on `artifact_reference`
+    - `planning.selected.retrieval_ops = [%{operation: :local_artifact_search, source: :local_repo, scope: ["docs", "code"], query: "the repository documentation says Documentation.md is the canonical Roberto status file"}]`, proving the wrapped claim normalized onto the generic local-artifact query
+    - the trace again recorded explicit local provenance for `STATUS.md`, `docs/operations/roberto-content/Documentation.md`, and `lib/daemon/operations/roberto_loop.ex`
+    - the same trace exposed the next bottleneck: even `retrieval_ops`-only `artifact_reference` runs still consulted HuggingFace/external sources, which is now tracked as `vas-swarm-jji.6`
 - Harness audit (2026-04-11):
   - targeted audit verification passed:
     - `mix test test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs test/tools/investigate_test.exs` -> `126 tests, 0 failures`
   - current runtime picture:
-    - `ClaimFamily.normalize_topic/1` remains live for wrapper cleanup
+    - `ClaimFamily.normalize_topic/1` no longer appears on the production investigate path
     - `ClaimFamily.normalize_verification_claim/1` does not appear on the production investigate path
-    - the `profile`-conditioned grounding branch in `investigate` has now been removed from the live path
-  - implication after `vas-swarm-jji.3`:
-    - wrapper cleanup in `ClaimFamily.normalize_topic/1` remains debt, but the next long-horizon step has shifted to non-paper evidence operations rather than more family/profile salvage
+    - the `profile`-conditioned grounding branch in `investigate` remains absent from the live path
+  - implication after `vas-swarm-jji.5`:
+    - wrapper cleanup debt has been retired from the live path
+    - the next long-horizon step is keeping `retrieval_ops`-only `artifact_reference` runs local without adding new family/profile salvage
 - Recorded blocker context:
   - `vas-swarm-9m7` remains blocked after three live validation attempts
   - its role is now evidentiary, not active implementation scope
@@ -112,7 +124,8 @@
 - `vas-swarm-jji.2` — completed: replace family-shaped retrieval hints with generic evidence signatures
 - `vas-swarm-jji.3` — completed: replace profile-conditioned verifier / grounding behavior with generic capability-driven cited-claim extraction
 - `vas-swarm-jji.4` — completed: add a generic non-paper artifact/reference evidence operation with explicit provenance
-- `vas-swarm-jji.5` — active: retire the surviving `ClaimFamily.normalize_topic/1` wrapper-normalization seam from the production investigate path
+- `vas-swarm-jji.5` — completed: retire the surviving `ClaimFamily.normalize_topic/1` wrapper-normalization seam from the production investigate path
+- `vas-swarm-jji.6` — active: keep `retrieval_ops`-only `artifact_reference` investigate runs local by suppressing external paper search bleed
 
 The queue order is intentional:
 - planner agnosticism first
@@ -124,8 +137,8 @@ The queue order is intentional:
 1. Read `STATUS.md`.
 2. Run `scripts/roberto-loop`.
 3. Open `vas-swarm-9m7` for blocker context only.
-4. Resume implementation from `vas-swarm-jji.5`.
-5. Use the `vas-swarm-jji.4` docs/code and empirical traces plus the `vas-swarm-9m7` traces as evidence for why the next cut is generic wrapper-normalization cleanup rather than more source-family salvage.
+4. Resume implementation from `vas-swarm-jji.6`.
+5. Use the `vas-swarm-jji.5` wrapped docs/code trace plus the `vas-swarm-jji.4` docs/code and empirical traces as evidence for why the next cut is external-search containment on retrieval-ops-only artifact plans rather than more source-family salvage.
 6. Record any unrelated inherited suite failures under `vas-swarm-dy1` without blocking `investigate` work.
 7. Update status docs, Beads, commit, and push.
 

@@ -3,20 +3,6 @@ defmodule Daemon.Investigation.ClaimFamilyTest do
 
   alias Daemon.Investigation.ClaimFamily
 
-  test "normalize_topic strips manual-eval wrappers" do
-    assert ClaimFamily.normalize_topic("cross-check whether the earth is flat") ==
-             "the earth is flat"
-
-    assert ClaimFamily.normalize_topic("probe whether smoking causes lung cancer") ==
-             "smoking causes lung cancer"
-
-    assert ClaimFamily.normalize_topic("map the evidence on whether the earth is flat") ==
-             "the earth is flat"
-
-    assert ClaimFamily.normalize_topic("Investigate whether creatine helps cognition") ==
-             "creatine helps cognition"
-  end
-
   test "evidence_profile returns declarative planetary-shape retrieval hints" do
     profile =
       ClaimFamily.evidence_profile(

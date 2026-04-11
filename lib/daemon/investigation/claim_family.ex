@@ -4,7 +4,6 @@ defmodule Daemon.Investigation.ClaimFamily do
   verification-claim normalization.
 
   The investigate loop stays generic. Claim families only provide:
-  - topic wrapper normalization
   - query-family selection
   - evidence-oriented query rewrites
   - rerank stability hints
@@ -112,26 +111,6 @@ defmodule Daemon.Investigation.ClaimFamily do
       verification_trigger_terms: @planetary_shape_verification_triggers
     }
   ]
-
-  @doc false
-  def normalize_topic(topic) do
-    original =
-      topic
-      |> to_string()
-      |> String.trim()
-      |> String.trim_trailing(".")
-      |> String.trim_trailing("?")
-      |> String.trim_trailing("!")
-
-    normalized =
-      Enum.reduce(search_topic_wrappers(), original, fn pattern, acc ->
-        String.replace(acc, pattern, "")
-      end)
-      |> String.replace(~r/\s+/, " ")
-      |> String.trim()
-
-    if normalized == "", do: original, else: normalized
-  end
 
   @doc false
   def match(topic, keywords, terms)
@@ -477,18 +456,4 @@ defmodule Daemon.Investigation.ClaimFamily do
     }
   end
 
-  defp search_topic_wrappers do
-    [
-      ~r/^\s*(?:cross[\s-]*check|re[\s-]*evaluate|triage)\s+(?:the\s+)?claims?\s+that\s+/i,
-      ~r/^\s*(?:cross[\s-]*check|re[\s-]*evaluate|triage)\s+(?:whether|if)\s+/i,
-      ~r/^\s*map\s+the\s+evidence\s+(?:on|for)\s+(?:the\s+)?claims?\s+that\s+/i,
-      ~r/^\s*map\s+the\s+evidence\s+(?:on|for)\s+(?:whether|if)\s+/i,
-      ~r/^\s*map\s+the\s+evidence\s+(?:on|for)\s+/i,
-      ~r/^\s*(?:cross[\s-]*check|re[\s-]*evaluate|triage)\s+/i,
-      ~r/^\s*(?:investigate|review|examine|assess|evaluate|analy[sz]e|test|check|probe|verify|determine|establish)\s+(?:the\s+)?claims?\s+that\s+/i,
-      ~r/^\s*(?:investigate|review|examine|assess|evaluate|analy[sz]e|test|check|probe|verify|determine|establish)\s+(?:whether|if)\s+/i,
-      ~r/^\s*(?:find\s+out|figure\s+out)\s+(?:whether|if)\s+/i,
-      ~r/^\s*(?:investigate|review|examine|assess|evaluate|analy[sz]e|test|check|probe|verify|determine|establish)\s+/i
-    ]
-  end
 end

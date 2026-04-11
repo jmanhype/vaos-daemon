@@ -2127,6 +2127,23 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
            ] = plan.evidence_plan.retrieval_ops
   end
 
+  test "search_query_plan keeps artifact retrieval on wrapped repository documentation claims" do
+    plan =
+      Investigate.search_query_plan(
+        "verify whether the repository documentation says Documentation.md is the canonical Roberto status file",
+        ["repository", "documentation", "Documentation.md", "status"]
+      )
+
+    assert plan.normalized_topic ==
+             "the repository documentation says Documentation.md is the canonical Roberto status file"
+
+    assert plan.family_profile == nil
+    assert plan.profile == :artifact_reference
+    assert plan.claim_family == nil
+    assert plan.evidence_plan.mode == :artifact_reference
+    assert plan.evidence_signatures.artifact_reference_signature
+  end
+
   test "prepare_advocate_bakeoff uses local artifact sources for repository documentation claims" do
     assert {:ok, context} =
              Investigate.prepare_advocate_bakeoff(
