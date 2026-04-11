@@ -1173,6 +1173,14 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
           steering:
             "CORRECTIVE FOCUS: Quote exact abstract sentences and demote unsupported claims.",
           search_plan: %{
+            evidence_signatures: %{
+              measurement_signature: true,
+              physical_geometry_signature: true,
+              intervention_signature: false,
+              health_effect_signature: false,
+              review_signature: false,
+              consensus_signature: false
+            },
             evidence_plan: %{
               mode: :measurement,
               profile: :general,
@@ -1259,6 +1267,8 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert trace.steering.preview =~ "CORRECTIVE FOCUS"
     assert trace.planning.selected.mode == :measurement
     assert hd(trace.planning.candidates).semantic_seed == "earth curvature measurement"
+    assert trace.planning.signatures.measurement_signature
+    assert trace.planning.signatures.physical_geometry_signature
     assert trace.planning.probe_selection.status == :ok
     assert trace.planning.probe_selection.source == :multi_source
     assert trace.planning.selected.probe.score == 9.2
@@ -1909,10 +1919,12 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
       Investigate.search_query_plan("examine claims that the earth is flat", ["earth", "flat"])
 
     assert plan.normalized_topic == "the earth is flat"
-    assert plan.family_profile == :general
+    assert plan.family_profile == nil
     assert plan.profile == :general
-    assert plan.claim_family == :planetary_shape
+    assert plan.claim_family == nil
     assert plan.evidence_plan.mode == :measurement
+    assert plan.evidence_signatures.measurement_signature
+    assert plan.evidence_signatures.physical_geometry_signature
     assert plan.evidence_profile.kind == :planetary_shape
     assert Enum.any?(plan.evidence_plan_candidates, &(&1.mode == :measurement))
 
@@ -1941,10 +1953,11 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
         ["creatine", "supplementation", "muscular", "strength"]
       )
 
-    assert plan.family_profile == :clinical_intervention
+    assert plan.family_profile == nil
     assert plan.profile == :clinical_intervention
-    assert plan.claim_family == :clinical_intervention
+    assert plan.claim_family == nil
     assert plan.evidence_plan.mode == :randomized_intervention
+    assert plan.evidence_signatures.intervention_signature
 
     queries =
       Enum.map(plan.ss_queries ++ plan.oa_queries, fn {_label, query, _opts} -> query end)
@@ -1961,10 +1974,11 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
         ["vaccines", "autism"]
       )
 
-    assert plan.family_profile == :health_claim
+    assert plan.family_profile == nil
     assert plan.profile == :health_claim
-    assert plan.claim_family == :health_effect
+    assert plan.claim_family == nil
     assert plan.evidence_plan.mode == :observational
+    assert plan.evidence_signatures.health_effect_signature
 
     queries =
       Enum.map(plan.ss_queries ++ plan.oa_queries, fn {_label, query, _opts} -> query end)
@@ -1983,8 +1997,9 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
       )
 
     assert plan.normalized_topic == "smoking causes lung cancer"
-    assert plan.claim_family == :health_effect
+    assert plan.claim_family == nil
     assert plan.evidence_plan.mode == :observational
+    assert plan.evidence_signatures.health_effect_signature
   end
 
   test "search_query_plan routes supplementation-performance claims to clinical intervention" do
@@ -1995,9 +2010,9 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
       )
 
     assert plan.keywords == ["caffeine", "supplementation", "endurance", "performance"]
-    assert plan.family_profile == :clinical_intervention
+    assert plan.family_profile == nil
     assert plan.profile == :clinical_intervention
-    assert plan.claim_family == :clinical_intervention
+    assert plan.claim_family == nil
     assert plan.evidence_plan.mode == :randomized_intervention
   end
 
@@ -2008,9 +2023,9 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
         ["magnesium", "supplementation", "sleep", "quality"]
       )
 
-    assert plan.family_profile == :clinical_intervention
+    assert plan.family_profile == nil
     assert plan.profile == :clinical_intervention
-    assert plan.claim_family == :clinical_intervention
+    assert plan.claim_family == nil
     assert plan.evidence_plan.mode == :randomized_intervention
   end
 
@@ -2020,9 +2035,9 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
         "assess whether acute caffeine intake enhances endurance time-trial performance in trained cyclists and triathletes"
       )
 
-    assert plan.family_profile == :clinical_intervention
+    assert plan.family_profile == nil
     assert plan.profile == :clinical_intervention
-    assert plan.claim_family == :clinical_intervention
+    assert plan.claim_family == nil
     assert plan.evidence_plan.mode == :randomized_intervention
   end
 
@@ -2032,10 +2047,11 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
         "determine whether acute caffeine ingestion enhances cycling time-trial outcomes in trained cyclists and triathletes"
       )
 
-    assert plan.family_profile == :clinical_intervention
+    assert plan.family_profile == nil
     assert plan.profile == :clinical_intervention
-    assert plan.claim_family == :clinical_intervention
+    assert plan.claim_family == nil
     assert plan.evidence_plan.mode == :randomized_intervention
+    assert plan.evidence_signatures.intervention_signature
 
     queries =
       Enum.map(plan.ss_queries ++ plan.oa_queries, fn {_label, query, _opts} -> query end)

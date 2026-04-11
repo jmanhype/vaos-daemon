@@ -1527,6 +1527,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
        when is_map(metadata) and is_map(evidence_plan) do
     metadata
     |> Map.put(:evidence_plan, EvidencePlanner.summary(evidence_plan))
+    |> Map.put(:evidence_signatures, Map.get(search_plan, :evidence_signatures, %{}))
     |> Map.put(
       :evidence_plan_candidates,
       Map.get(search_plan, :evidence_plan_candidates, [])
@@ -3551,27 +3552,19 @@ defmodule Daemon.Tools.Builtins.Investigate do
     normalized_topic = normalized_search_topic(topic)
     normalized_keywords = search_keywords(normalized_topic, keywords)
     terms = topic_terms(normalized_topic)
-    claim_family = ClaimFamily.match(normalized_topic, normalized_keywords, terms)
-    family_profile = ClaimFamily.search_profile(normalized_topic, normalized_keywords, terms)
     evidence_profile = ClaimFamily.evidence_profile(normalized_topic, normalized_keywords, terms)
 
-    planner =
-      EvidencePlanner.plan(
-        normalized_topic,
-        normalized_keywords,
-        terms,
-        claim_family,
-        evidence_profile
-      )
+    planner = EvidencePlanner.plan(normalized_topic, normalized_keywords, terms, evidence_profile)
 
     selected_plan = planner.selected
 
     %{
       normalized_topic: normalized_topic,
       keywords: normalized_keywords,
-      claim_family: claim_family && claim_family.kind,
-      family_profile: family_profile,
+      claim_family: nil,
+      family_profile: nil,
       profile: selected_plan.profile,
+      evidence_signatures: Map.get(planner, :evidence_signatures, %{}),
       evidence_profile: selected_plan.evidence_profile || evidence_profile,
       evidence_plan: selected_plan,
       evidence_plan_candidate_plans: planner.candidates,
@@ -4775,6 +4768,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
       planning: %{
         selected: evidence_plan_trace(Map.get(trace_context, :search_plan, %{})),
         candidates: evidence_plan_candidates_trace(Map.get(trace_context, :search_plan, %{})),
+        signatures: evidence_plan_signatures_trace(Map.get(trace_context, :search_plan, %{})),
         probe_selection:
           evidence_plan_probe_selection_trace(Map.get(trace_context, :search_plan, %{}))
       },
@@ -4950,6 +4944,13 @@ defmodule Daemon.Tools.Builtins.Investigate do
   end
 
   defp evidence_plan_candidates_trace(_search_plan), do: []
+
+  defp evidence_plan_signatures_trace(%{evidence_signatures: signatures})
+       when is_map(signatures) do
+    signatures
+  end
+
+  defp evidence_plan_signatures_trace(_search_plan), do: %{}
 
   defp evidence_plan_probe_selection_trace(%{evidence_plan_probe_selection: probe_selection})
        when is_map(probe_selection) do

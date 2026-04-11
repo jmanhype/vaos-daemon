@@ -2,8 +2,8 @@
 
 **Created**: 2026-04-10
 **Epic**: `vas-swarm-jji`
-**Current Active Issue**: `vas-swarm-9m7` (blocked)
-**Next corrective issue**: `vas-swarm-jji.1`
+**Current Active Issue**: `vas-swarm-jji.2` (in progress)
+**Recorded blocker issue**: `vas-swarm-9m7` (blocked)
 
 ## Overview
 
@@ -59,6 +59,8 @@ Strategic correction:
 - `vas-swarm-tgf` is complete: repeated traced runs no longer timeout in `:investigate_ledger`.
 - `vas-swarm-9m7` is paused after three live attempts failed to prove a stable recurring grounded core.
 - The next investigate bottleneck is live verifier determinism on the recurring earth-shape evidence core.
+- `vas-swarm-jji.1` is complete: planner mode selection no longer depends on `ClaimFamily`.
+- `vas-swarm-jji.2` is active: retrieval still depends on family-shaped evidence profiles and query templates.
 - Repo-history audit shows the remaining full-suite failures live in pre-takeover Roberto/PAMF2-era surfaces outside the `investigate` tool path.
 - Those inherited repo-wide failures are tracked as background debt in `vas-swarm-dy1` and are non-blocking unless they intersect `investigate`, `evidence_planner`, or directly coupled verification/retrieval code touched by this milestone.
 
@@ -94,13 +96,14 @@ Strategic correction:
 
 ### Tasks
 
-1. `vas-swarm-jji.1` — remove `ClaimFamily` from planner selection path
-2. `vas-swarm-jji.2` — replace family-shaped retrieval hints with generic evidence signatures
+1. `vas-swarm-jji.1` — completed: remove `ClaimFamily` from planner selection path
+2. `vas-swarm-jji.2` — active: replace family-shaped retrieval hints with generic evidence signatures
 3. `vas-swarm-jji.3` — replace family-specific verifier salvage with generic cited-claim extraction
 4. Track any surviving family logic as temporary debt with a deletion path
 
 **Validation**
 - Planner mode selection no longer depends on family-conditioned scoring
+- Retrieval query generation and rerank/directness logic no longer depend on `ClaimFamily`
 - Diff review shows logic moved toward evidence operations, not added topic lists
 - Representative non-earth empirical claims still route correctly
 

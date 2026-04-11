@@ -11,6 +11,14 @@ defmodule Daemon.Investigation.EvidencePlanner do
   """
 
   @type query :: {atom(), String.t(), keyword()}
+  @type evidence_signatures :: %{
+          measurement_signature: boolean(),
+          physical_geometry_signature: boolean(),
+          intervention_signature: boolean(),
+          health_effect_signature: boolean(),
+          review_signature: boolean(),
+          consensus_signature: boolean()
+        }
   @type plan :: %{
           mode: atom(),
           profile: atom(),
@@ -37,6 +45,8 @@ defmodule Daemon.Investigation.EvidencePlanner do
   @review_opts [publication_types: "Review,MetaAnalysis", type: "review"]
   @guideline_terms ~w(guideline guidelines consensus recommendation recommendations position statement statements)
   @measurement_terms ~w(measurement measurements observe observed observation observations physical empirical curvature geodesy gravity orbit orbital satellite surveying)
+  @shape_geometry_terms ~w(flat round spherical sphere spheroid oblate prolate curved curvature geometry geometric geodesy geodetic ellipsoid ellipsoidal globe globular)
+  @physical_subject_terms ~w(earth planet planets moon moons mars venus mercury jupiter saturn uranus neptune world worlds globe globes body bodies surface surfaces)
   @intervention_terms ~w(intervention interventions treatment treatments therapy therapies supplement supplements supplementation placebo randomized randomised trial trials drug drugs dose dosing medication medications)
   @administration_terms ~w(intake ingestion ingest ingested consume consumes consumed consuming administration administered administering)
   @performance_context_terms ~w(endurance performance time-trial cycling cyclist cyclists triathlon triathlete triathletes sprint sprinting aerobic anaerobic race racing competition competitive athletic athletics sport sports exercise exercising pace pacing power output)
@@ -47,16 +57,26 @@ defmodule Daemon.Investigation.EvidencePlanner do
     competitive athletic athletics sport sports exercise exercising time-trial pace pacing
     power output)
   @health_effect_terms ~w(cause causes caused causing risk risks associated association linked links smoking smoker smokers vaccine vaccines autism cancer disease diseases mortality incidence prevalence outcome outcomes)
+  @causal_terms ~w(cause causes caused causing risk risks associated association linked links mortality incidence prevalence)
 
   @doc false
-  def plan(topic, keywords, terms, claim_family, evidence_profile)
+  def plan(topic, keywords, terms)
+      when is_binary(topic) and is_list(keywords) and is_list(terms) do
+    plan(topic, keywords, terms, nil)
+  end
+
+  @doc false
+  def plan(topic, keywords, terms, evidence_profile)
       when is_binary(topic) and is_list(keywords) and is_list(terms) do
     keyword_topic = keyword_query_topic(topic, keywords)
+    evidence_signatures = infer_evidence_signatures(topic, terms)
 
     candidates =
       candidate_modes()
-      |> Enum.map(&build_candidate(&1, topic, keyword_topic, claim_family, evidence_profile))
-      |> Enum.map(&score_candidate(&1, topic, terms, claim_family, evidence_profile))
+      |> Enum.map(
+        &build_candidate(&1, topic, keyword_topic, evidence_profile, evidence_signatures)
+      )
+      |> Enum.map(&score_candidate(&1, topic, terms, evidence_signatures))
       |> Enum.sort_by(fn candidate ->
         {-candidate.selection_score, Map.fetch!(@candidate_order, candidate.mode)}
       end)
@@ -72,13 +92,12 @@ defmodule Daemon.Investigation.EvidencePlanner do
               :general_empirical,
               topic,
               keyword_topic,
-              claim_family,
-              evidence_profile
+              evidence_profile,
+              evidence_signatures
             ),
             topic,
             terms,
-            claim_family,
-            evidence_profile
+            evidence_signatures
           )
 
         candidate ->
@@ -87,14 +106,31 @@ defmodule Daemon.Investigation.EvidencePlanner do
 
     %{
       selected: selected,
-      candidates: candidates
+      candidates: candidates,
+      evidence_signatures: evidence_signatures
     }
   end
 
-  def plan(topic, keywords, _terms, _claim_family, _evidence_profile) do
+  def plan(topic, keywords, _terms, evidence_profile) do
     keyword_topic = keyword_query_topic(topic, keywords)
-    selected = build_candidate(:general_empirical, topic, keyword_topic, nil, nil)
-    %{selected: selected, candidates: [selected]}
+    evidence_signatures = infer_evidence_signatures(topic, [])
+
+    selected =
+      build_candidate(
+        :general_empirical,
+        topic,
+        keyword_topic,
+        evidence_profile,
+        evidence_signatures
+      )
+
+    %{selected: selected, candidates: [selected], evidence_signatures: evidence_signatures}
+  end
+
+  @doc false
+  def plan(topic, keywords, terms, _claim_family, evidence_profile)
+      when is_binary(topic) and is_list(keywords) and is_list(terms) do
+    plan(topic, keywords, terms, evidence_profile)
   end
 
   @doc false
@@ -149,7 +185,7 @@ defmodule Daemon.Investigation.EvidencePlanner do
     ]
   end
 
-  defp build_candidate(:measurement, topic, keyword_topic, _claim_family, evidence_profile) do
+  defp build_candidate(:measurement, topic, keyword_topic, evidence_profile, _evidence_signatures) do
     {ss_queries, oa_queries, semantic_seed} =
       case evidence_profile do
         %{direct_queries: direct_queries, semantic_seed: seed}
@@ -201,8 +237,8 @@ defmodule Daemon.Investigation.EvidencePlanner do
          :randomized_intervention,
          topic,
          keyword_topic,
-         _claim_family,
-         evidence_profile
+         evidence_profile,
+         _evidence_signatures
        ) do
     performance_keyword_topic = performance_query_topic(topic, keyword_topic)
 
@@ -254,7 +290,13 @@ defmodule Daemon.Investigation.EvidencePlanner do
     }
   end
 
-  defp build_candidate(:observational, topic, keyword_topic, _claim_family, evidence_profile) do
+  defp build_candidate(
+         :observational,
+         topic,
+         keyword_topic,
+         evidence_profile,
+         _evidence_signatures
+       ) do
     %{
       mode: :observational,
       profile: :health_claim,
@@ -280,10 +322,16 @@ defmodule Daemon.Investigation.EvidencePlanner do
     }
   end
 
-  defp build_candidate(:systematic_review, topic, keyword_topic, claim_family, evidence_profile) do
+  defp build_candidate(
+         :systematic_review,
+         topic,
+         keyword_topic,
+         evidence_profile,
+         evidence_signatures
+       ) do
     %{
       mode: :systematic_review,
-      profile: review_profile(claim_family),
+      profile: review_profile(evidence_signatures),
       heuristic_score: 0.0,
       probe_score: nil,
       selection_score: 0.0,
@@ -306,7 +354,7 @@ defmodule Daemon.Investigation.EvidencePlanner do
     }
   end
 
-  defp build_candidate(:consensus, topic, keyword_topic, _claim_family, evidence_profile) do
+  defp build_candidate(:consensus, topic, keyword_topic, evidence_profile, _evidence_signatures) do
     %{
       mode: :consensus,
       profile: :general,
@@ -332,7 +380,13 @@ defmodule Daemon.Investigation.EvidencePlanner do
     }
   end
 
-  defp build_candidate(:general_empirical, topic, keyword_topic, _claim_family, evidence_profile) do
+  defp build_candidate(
+         :general_empirical,
+         topic,
+         keyword_topic,
+         evidence_profile,
+         _evidence_signatures
+       ) do
     %{
       mode: :general_empirical,
       profile: :general,
@@ -358,30 +412,42 @@ defmodule Daemon.Investigation.EvidencePlanner do
     }
   end
 
-  defp review_profile(%{profile: profile})
-       when profile in [:clinical_intervention, :health_claim],
-       do: profile
+  defp review_profile(%{intervention_signature: true}), do: :clinical_intervention
+  defp review_profile(%{health_effect_signature: true}), do: :health_claim
 
-  defp review_profile(_claim_family), do: :general
+  defp review_profile(_evidence_signatures), do: :general
 
-  defp score_candidate(candidate, topic, terms, claim_family, evidence_profile) do
-    family_profile = claim_family && Map.get(claim_family, :profile)
-    family_kind = claim_family && Map.get(claim_family, :kind)
-    intervention_signature = intervention_signature?(topic, terms)
+  defp score_candidate(candidate, topic, terms, evidence_signatures) do
+    intervention_signature = Map.get(evidence_signatures, :intervention_signature, false)
 
-    family_bias =
-      case {candidate.mode, family_profile, family_kind} do
-        {:randomized_intervention, :clinical_intervention, _} -> 5.0
-        {:systematic_review, :clinical_intervention, _} -> 4.0
-        {:observational, :clinical_intervention, _} -> 1.5
-        {:observational, :health_claim, _} -> 5.0
-        {:systematic_review, :health_claim, _} -> 3.5
-        {:consensus, :health_claim, _} -> 2.5
-        {:measurement, :general, :planetary_shape} -> 5.5
-        {:general_empirical, :general, :planetary_shape} -> 2.5
-        {:consensus, :general, :planetary_shape} -> 1.5
-        {:general_empirical, _, _} -> 2.0
-        _ -> 0.5
+    generic_bias =
+      case candidate.mode do
+        :measurement ->
+          if(Map.get(evidence_signatures, :measurement_signature, false), do: 5.5, else: 0.5)
+
+        :randomized_intervention ->
+          if(intervention_signature, do: 5.0, else: 0.5)
+
+        :observational ->
+          if(Map.get(evidence_signatures, :health_effect_signature, false), do: 5.0, else: 0.5)
+
+        :systematic_review ->
+          cond do
+            intervention_signature -> 4.0
+            Map.get(evidence_signatures, :health_effect_signature, false) -> 3.5
+            Map.get(evidence_signatures, :review_signature, false) -> 2.0
+            true -> 0.5
+          end
+
+        :consensus ->
+          cond do
+            Map.get(evidence_signatures, :consensus_signature, false) -> 3.0
+            Map.get(evidence_signatures, :health_effect_signature, false) -> 2.5
+            true -> 0.5
+          end
+
+        :general_empirical ->
+          2.0
       end
 
     lexical_bias =
@@ -409,24 +475,11 @@ defmodule Daemon.Investigation.EvidencePlanner do
           max(length(terms) - 1, 0) * 0.2
       end
 
-    evidence_bias =
-      cond do
-        candidate.mode == :measurement and is_map(evidence_profile) and
-            Map.get(evidence_profile, :direct_queries, []) != [] ->
-          2.0
-
-        candidate.mode == :measurement and is_map(evidence_profile) ->
-          1.0
-
-        true ->
-          0.0
-      end
-
-    score = Float.round(1.0 + family_bias + lexical_bias + evidence_bias, 2)
+    score = Float.round(1.0 + generic_bias + lexical_bias, 2)
 
     rationale =
       candidate.mode
-      |> rationale_parts(family_profile, family_kind, topic, terms, evidence_profile)
+      |> rationale_parts(topic, terms, evidence_signatures)
       |> Enum.uniq()
       |> Enum.take(3)
       |> Enum.join("; ")
@@ -483,7 +536,7 @@ defmodule Daemon.Investigation.EvidencePlanner do
 
   defp selection_probe_bonus(_candidate, _probe_result), do: 0.0
 
-  defp rationale_parts(mode, family_profile, family_kind, topic, terms, evidence_profile) do
+  defp rationale_parts(mode, topic, terms, evidence_signatures) do
     base =
       case mode do
         :measurement -> ["measurement/observation route"]
@@ -494,12 +547,26 @@ defmodule Daemon.Investigation.EvidencePlanner do
         :general_empirical -> ["broad empirical route"]
       end
 
-    family_hint =
-      case {family_profile, family_kind} do
-        {:clinical_intervention, _} -> ["claim looks like an intervention question"]
-        {:health_claim, _} -> ["claim looks like an exposure/outcome question"]
-        {:general, :planetary_shape} -> ["topic exposes direct measurement hooks"]
-        _ -> []
+    signature_hint =
+      cond do
+        mode == :measurement and Map.get(evidence_signatures, :physical_geometry_signature, false) ->
+          ["physical geometry signature present"]
+
+        mode == :measurement and Map.get(evidence_signatures, :measurement_signature, false) ->
+          ["physical measurement signature present"]
+
+        mode == :randomized_intervention and
+            Map.get(evidence_signatures, :intervention_signature, false) ->
+          ["intervention + outcome signature present"]
+
+        mode == :observational and Map.get(evidence_signatures, :health_effect_signature, false) ->
+          ["exposure/outcome signature present"]
+
+        mode == :consensus and Map.get(evidence_signatures, :consensus_signature, false) ->
+          ["consensus/guideline signature present"]
+
+        true ->
+          []
       end
 
     lexical_hint =
@@ -523,20 +590,76 @@ defmodule Daemon.Investigation.EvidencePlanner do
           []
       end
 
-    evidence_hint =
-      if mode == :measurement and is_map(evidence_profile) and
-           Map.get(evidence_profile, :direct_queries, []) != [] do
-        ["existing direct-evidence seed available"]
-      else
-        []
-      end
-
-    base ++ family_hint ++ lexical_hint ++ evidence_hint
+    base ++ signature_hint ++ lexical_hint
   end
 
   defp term_hits(terms, candidates) do
     Enum.count(terms, &(&1 in candidates))
   end
+
+  defp infer_evidence_signatures(topic, terms) when is_binary(topic) and is_list(terms) do
+    intervention_signature = intervention_signature?(topic, terms)
+    health_effect_signature = health_effect_signature?(topic, terms, intervention_signature)
+    physical_geometry_signature = physical_geometry_signature?(terms)
+
+    %{
+      measurement_signature:
+        term_hits(terms, @measurement_terms) > 0 or physical_geometry_signature,
+      physical_geometry_signature: physical_geometry_signature,
+      intervention_signature: intervention_signature,
+      health_effect_signature: health_effect_signature,
+      review_signature: review_signature?(topic, terms),
+      consensus_signature: consensus_signature?(topic, terms)
+    }
+  end
+
+  defp infer_evidence_signatures(_topic, _terms) do
+    %{
+      measurement_signature: false,
+      physical_geometry_signature: false,
+      intervention_signature: false,
+      health_effect_signature: false,
+      review_signature: false,
+      consensus_signature: false
+    }
+  end
+
+  defp health_effect_signature?(topic, terms, intervention_signature)
+       when is_binary(topic) and is_list(terms) do
+    not intervention_signature and
+      (term_hits(terms, @causal_terms) > 0 or
+         term_hits(terms, @health_effect_terms) >= 2 or
+         Regex.match?(
+           ~r/\b(cause|causes|caused|causing|risk|risks|linked|association|associated|increase|increases|decrease|decreases)\b/i,
+           topic
+         ))
+  end
+
+  defp health_effect_signature?(_topic, _terms, _intervention_signature), do: false
+
+  defp physical_geometry_signature?(terms) when is_list(terms) do
+    term_hits(terms, @shape_geometry_terms) > 0 and
+      term_hits(terms, @physical_subject_terms ++ @measurement_terms) > 0
+  end
+
+  defp physical_geometry_signature?(_terms), do: false
+
+  defp review_signature?(topic, terms) when is_binary(topic) and is_list(terms) do
+    term_hits(terms, @guideline_terms) > 0 or
+      Regex.match?(
+        ~r/\b(review|reviews|meta-analysis|meta analysis|umbrella review)\b/i,
+        topic
+      )
+  end
+
+  defp review_signature?(_topic, _terms), do: false
+
+  defp consensus_signature?(topic, terms) when is_binary(topic) and is_list(terms) do
+    term_hits(terms, @guideline_terms) > 0 or
+      Regex.match?(~r/\b(consensus|guideline|position statement|recommendation)\b/i, topic)
+  end
+
+  defp consensus_signature?(_topic, _terms), do: false
 
   defp intervention_signature?(topic, terms) when is_binary(topic) and is_list(terms) do
     term_hits(terms, @intervention_terms ++ @administration_terms) > 0 and
