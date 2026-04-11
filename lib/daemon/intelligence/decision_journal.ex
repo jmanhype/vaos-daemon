@@ -18,6 +18,7 @@ defmodule Daemon.Intelligence.DecisionJournal do
   use GenServer
   require Logger
 
+  alias Daemon.Intelligence.RuntimeLedger
   alias Vaos.Ledger.Epistemic.Ledger, as: EpistemicLedger
 
   @pr_poll_interval_ms :timer.hours(1)
@@ -28,7 +29,6 @@ defmodule Daemon.Intelligence.DecisionJournal do
   @default_adaptation_freshness_ms :timer.minutes(30)
   @persistence_dir Path.expand("~/.daemon/intelligence")
   @persistence_file "decision_journal.json"
-  @ledger_name :investigate_ledger
   @knowledge_store "osa_default"
 
   # ── Public API ────────────────────────────────────────────
@@ -557,32 +557,8 @@ defmodule Daemon.Intelligence.DecisionJournal do
 
   # ── ALCOA Provenance ──────────────────────────────────────
 
-  @ledger_path Path.join(System.user_home!(), ".openclaw/investigate_ledger.json")
-
   defp ensure_ledger_started do
-    case Process.whereis(@ledger_name) do
-      pid when is_pid(pid) ->
-        :ok
-
-      nil ->
-        case EpistemicLedger.start_link(path: @ledger_path, name: @ledger_name) do
-          {:ok, _pid} ->
-            Logger.info("[DecisionJournal] Started EpistemicLedger (#{@ledger_name})")
-            :ok
-
-          {:error, {:already_started, _pid}} ->
-            :ok
-
-          {:error, reason} ->
-            Logger.warning(
-              "[DecisionJournal] Failed to start EpistemicLedger: #{inspect(reason)}"
-            )
-
-            {:error, reason}
-        end
-    end
-  rescue
-    _ -> {:error, :start_failed}
+    RuntimeLedger.ensure_started()
   end
 
   defp create_provenance_claim(source_module, action_type, context) do
@@ -604,7 +580,7 @@ defmodule Daemon.Intelligence.DecisionJournal do
             to_string(action_type)
           ]
         ],
-        @ledger_name
+        RuntimeLedger.name()
       )
 
     case claim do
@@ -621,7 +597,7 @@ defmodule Daemon.Intelligence.DecisionJournal do
             confidence: 0.8,
             source_type: "observation"
           ],
-          @ledger_name
+          RuntimeLedger.name()
         )
 
         id
@@ -659,7 +635,7 @@ defmodule Daemon.Intelligence.DecisionJournal do
         confidence: 0.9,
         source_type: "observation"
       ],
-      @ledger_name
+      RuntimeLedger.name()
     )
   rescue
     _ -> :ok

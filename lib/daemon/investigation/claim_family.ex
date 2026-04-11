@@ -186,8 +186,12 @@ defmodule Daemon.Investigation.ClaimFamily do
     case family_for_verification(summary) do
       %{verification_normalizer: :planetary_shape} ->
         summary
+        |> prefer_center_of_mass_reference_frame()
         |> prefer_gravitation_shape_quote()
         |> prefer_ought_shape_quote()
+        |> rewrite_shape_subject_as_quote()
+        |> prefer_split_shape_quote()
+        |> prefer_shape_quote_after_connection()
 
       _ ->
         summary
@@ -352,6 +356,84 @@ defmodule Daemon.Investigation.ClaimFamily do
   end
 
   defp prefer_gravitation_shape_quote(summary), do: summary
+
+  defp prefer_center_of_mass_reference_frame(summary) when is_binary(summary) do
+    case Regex.run(
+           ~r/\bdefines?\s+(Earth(?:'s)?\s+(?:geometry|origin)\s+with\s+respect\s+to)\s+["“]([^"”]*mean Earth center of mass[^"”]*)["”]/iu,
+           summary,
+           capture: :all_but_first
+         ) do
+      [subject, quoted] ->
+        "#{String.trim(subject)} #{String.trim(quoted)}"
+
+      _ ->
+        summary
+    end
+  end
+
+  defp prefer_center_of_mass_reference_frame(summary), do: summary
+
+  defp rewrite_shape_subject_as_quote(summary) when is_binary(summary) do
+    case Regex.run(
+           ~r/^\s*([^"“”]{1,80}?)\s+as\s+["“]([^"”]*oblate spheroid[^"”]*)["”](?:\s*[—-].*)?$/iu,
+           summary,
+           capture: :all_but_first
+         ) do
+      [subject, quoted] ->
+        subject =
+          subject
+          |> String.trim()
+          |> String.trim_trailing(",")
+
+        quoted =
+          quoted
+          |> String.trim()
+          |> String.trim_trailing(".")
+
+        if subject != "" and Regex.match?(~r/\b(?:earth|surface|planet|globe|body)\b/iu, subject) do
+          "#{subject} is #{quoted}"
+        else
+          summary
+        end
+
+      _ ->
+        summary
+    end
+  end
+
+  defp rewrite_shape_subject_as_quote(summary), do: summary
+
+  defp prefer_split_shape_quote(summary) when is_binary(summary) do
+    case Regex.run(
+           ~r/\bthe\s+form\s+of\s+["“]([^"”]*oblate spheroid[^"”]*)["”]\s+with\s+(?:its\s+)?["“]([^"”]*axis of figure coincident[^"”]*)["”]/iu,
+           summary,
+           capture: :all_but_first
+         ) do
+      [shape, axis_clause] ->
+        ~s("the form of #{String.trim(shape)} with its #{String.trim(axis_clause)}")
+
+      _ ->
+        summary
+    end
+  end
+
+  defp prefer_split_shape_quote(summary), do: summary
+
+  defp prefer_shape_quote_after_connection(summary) when is_binary(summary) do
+    case Regex.run(
+           ~r/^\s*[^"“”]{0,220}?\b(?:connecting|connects?|connected|linking|links?|linked)\s+(?:it|this|that|them)\s+to\s+["“]([^"”]*oblate spheroid[^"”]*)["”]\.?$/iu,
+           summary,
+           capture: :all_but_first
+         ) do
+      [quoted] ->
+        ~s("#{String.trim(quoted)}")
+
+      _ ->
+        summary
+    end
+  end
+
+  defp prefer_shape_quote_after_connection(summary), do: summary
 
   defp normalize_search_text(text) do
     text

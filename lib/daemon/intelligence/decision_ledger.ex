@@ -15,6 +15,7 @@ defmodule Daemon.Intelligence.DecisionLedger do
   use GenServer
   require Logger
 
+  alias Daemon.Intelligence.RuntimeLedger
   alias Vaos.Ledger.Epistemic.Ledger, as: EpistemicLedger
 
   @ets_table :daemon_decision_ledger
@@ -32,8 +33,6 @@ defmodule Daemon.Intelligence.DecisionLedger do
   @max_context_pairs 4
   @sync_interval_ms 60_000
   @knowledge_store "osa_default"
-  @ledger_name :investigate_ledger
-
   # Tools that read/write knowledge or memory — excluded to prevent feedback loops
   @meta_tools ~w(knowledge memory_recall memory_save knowledge_query knowledge_assert)
 
@@ -274,7 +273,8 @@ defmodule Daemon.Intelligence.DecisionLedger do
        ets_table: table_name,
        pairs_table: pairs_name,
        failures_table: failures_name,
-       test_mode: test_mode
+       test_mode: test_mode,
+       runtime_ledger?: Keyword.get(opts, :runtime_ledger, not test_mode)
      }}
   end
 
@@ -631,7 +631,7 @@ defmodule Daemon.Intelligence.DecisionLedger do
       [{_, pattern}] ->
         total = pattern.success_count + pattern.failure_count
 
-        if total >= @min_observations do
+        if total >= @min_observations and state.runtime_ledger? do
           case Map.get(state.claim_cache, pattern_key) do
             nil ->
               # Create new claim
@@ -663,18 +663,18 @@ defmodule Daemon.Intelligence.DecisionLedger do
     total = pattern.success_count + pattern.failure_count
     rate = Float.round(pattern.success_count / total * 100, 1)
 
-    claim =
-      EpistemicLedger.add_claim(
-        [
-          title: "Tool #{tool_name} reliability in #{context_type}",
-          statement: "#{tool_name} has #{rate}% success in #{context_type} (n=#{total})",
-          tags: ["decision_ledger", "tool_reliability", tool_name]
-        ],
-        @ledger_name
-      )
-
-    case claim do
-      %{id: id} -> id
+    with :ok <- RuntimeLedger.ensure_started(),
+         %{id: id} <-
+           EpistemicLedger.add_claim(
+             [
+               title: "Tool #{tool_name} reliability in #{context_type}",
+               statement: "#{tool_name} has #{rate}% success in #{context_type} (n=#{total})",
+               tags: ["decision_ledger", "tool_reliability", tool_name]
+             ],
+             RuntimeLedger.name()
+           ) do
+      id
+    else
       _ -> nil
     end
   rescue
@@ -687,17 +687,19 @@ defmodule Daemon.Intelligence.DecisionLedger do
     {direction, strength} =
       if success, do: {:support, 0.7}, else: {:contradict, 0.6}
 
-    EpistemicLedger.add_evidence(
-      [
-        claim_id: claim_id,
-        summary: "Tool execution #{if success, do: "succeeded", else: "failed"}",
-        direction: direction,
-        strength: strength,
-        confidence: strength,
-        source_type: "observation"
-      ],
-      @ledger_name
-    )
+    with :ok <- RuntimeLedger.ensure_started() do
+      EpistemicLedger.add_evidence(
+        [
+          claim_id: claim_id,
+          summary: "Tool execution #{if success, do: "succeeded", else: "failed"}",
+          direction: direction,
+          strength: strength,
+          confidence: strength,
+          source_type: "observation"
+        ],
+        RuntimeLedger.name()
+      )
+    end
   rescue
     _ -> :ok
   catch

@@ -5018,6 +5018,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
       |> prefer_complete_quote_after_ellipsis()
       |> strip_drawback_wrapper_before_quote()
       |> prefer_reported_subclause()
+      |> prefer_reporting_object_plus_quoted_fragment()
       |> prefer_definition_quote()
       |> prefer_subject_plus_quoted_predicate()
       |> ClaimFamily.normalize_verification_claim()
@@ -5649,6 +5650,42 @@ defmodule Daemon.Tools.Builtins.Investigate do
       _ ->
         summary
     end
+  end
+
+  defp prefer_reporting_object_plus_quoted_fragment(summary) when is_binary(summary) do
+    case Regex.run(
+           ~r/^.*\b(?:#{reporting_verbs_pattern()})\s+(?:that\s+)?([^"“”]{1,120}?)["“]([^"”]+)["”]\.?$/iu,
+           summary,
+           capture: :all_but_first
+         ) do
+      [object_phrase, quoted] ->
+        object_phrase =
+          object_phrase
+          |> String.replace(~r/\b(?:which|that)\s*$/iu, "")
+          |> normalize_verification_whitespace()
+
+        quoted = String.trim(quoted)
+
+        if object_phrase != "" and
+             not Regex.match?(~r/[,;:]/u, object_phrase) and
+             quoted_fragment_continues_object?(quoted) do
+          "#{object_phrase} #{quoted}"
+          |> normalize_verification_whitespace()
+          |> String.trim_trailing(".")
+        else
+          summary
+        end
+
+      _ ->
+        summary
+    end
+  end
+
+  defp quoted_fragment_continues_object?(quoted) when is_binary(quoted) do
+    Regex.match?(
+      ~r/^(?:with\s+respect\s+to|between|of|for|from|under|within|across|through|using|via|regarding|concerning|consistent\s+with|coincident\s+with)\b/iu,
+      String.trim_leading(quoted)
+    )
   end
 
   defp prefer_quote_before_followup_reporting(summary) when is_binary(summary) do

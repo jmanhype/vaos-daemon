@@ -1665,6 +1665,70 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     refute String.starts_with?(normalized, "defines geodesy")
   end
 
+  test "verification_claim_text compacts traced Earth-center reference-frame claims around quoted nuclei" do
+    summary =
+      "Multiple independent space geodetic techniques—VLBI, SLR, GPS, and DORIS—have been combined over decades of observations to construct the International Terrestrial Reference Frame (ITRF2008), which defines the Earth's origin \"with respect to the mean Earth center of mass\" [Paper 2]."
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized == "the Earth's origin with respect to the mean Earth center of mass"
+  end
+
+  test "verification_claim_text compacts traced quoted relation fragments after reporting verbs" do
+    summary =
+      "Gravity measurements across Earth's surface confirm the predicted oblate spheroid shape through Clairaut's Theorem, which establishes the numerical relation \"between the ellipticity and the ratio between polar and equatorial gravity\" [Paper 8]."
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized ==
+             "the numerical relation between the ellipticity and the ratio between polar and equatorial gravity"
+  end
+
+  test "verification_claim_text rewrites traced subject-as shape quotes into direct claims" do
+    summary =
+      "Horizon observations are fundamentally inadequate for determining Earth's shape because the curvature of an Earth-sized spheroid is too subtle to be detected by the unaided human eye at terrestrial elevations. [Paper 8] explicitly describes the Earth as \"of the form of an oblate spheroid of small ellipticity\"—the operative word being \"small,\" which explains why local horizon appearances can misleadingly suggest flatness even on a curved surface."
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized == "the Earth is of the form of an oblate spheroid of small ellipticity"
+    refute normalized =~ "operative word being"
+  end
+
+  test "verification_claim_text prefers traced shape quotes after connecting-it-to wrappers" do
+    summary =
+      "The relationship between gravitational variation and surface geometry provides definitive evidence of Earth's spheroidal shape that no horizon observation can refute. [Paper 8] establishes that gravity variation along Earth's surface follows mathematical laws—specifically Clairaut's Theorem—connecting it to \"the form of an oblate spheroid of small ellipticity, having its axis of figure coincident with the axis of rotation.\""
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized ==
+             "\"the form of an oblate spheroid of small ellipticity, having its axis of figure coincident with the axis of rotation.\""
+
+    refute normalized =~ "connecting it to"
+    refute normalized =~ "Clairaut's Theorem"
+  end
+
+  test "verification_claim_text compacts traced Earth-center clauses even with later quoted distractors" do
+    summary =
+      "The International Terrestrial Reference Frame (ITRF2008), constructed from 12.5 to 29 years of observations across four independent space geodetic techniques (VLBI, SLR, GPS, and DORIS), defines Earth's geometry with respect to \"the mean Earth center of mass\" along X, Y, and Z axes with millimeter-level precision and evaluates scale accuracy explicitly \"at the equator\"—a geometric feature that only exists on a rotating spheroidal body, not a flat plane [Paper 2]."
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized == "Earth's geometry with respect to the mean Earth center of mass"
+    refute normalized =~ "at the equator"
+  end
+
+  test "verification_claim_text compacts traced split spheroid quotes into one verifier claim" do
+    summary =
+      "The variation of gravity across Earth's surface follows mathematical relationships—specifically Clairaut's Theorem—that connect gravity variation to the form of \"an oblate spheroid\" with its \"axis of figure coincident with the axis of rotation\" [Paper 8]."
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized ==
+             "\"the form of an oblate spheroid with its axis of figure coincident with the axis of rotation\""
+
+    refute normalized =~ "Clairaut's Theorem"
+  end
+
   test "verification_claim_text strips adverbial reporting wrappers from oblate-spheroid claims" do
     summary =
       "Classical geodetic theory, established without any assumption about Earth's interior composition, mathematically demonstrates that the Earth's surface must be \"of the form of an oblate spheroid of small ellipticity, having its axis of figure coincident with the axis of rotation.\" [Paper 4] establishes this through Clairaut's Theorem, showing that gravity variation across the surface follows a precise mathematical law that only holds for a spheroidal body."

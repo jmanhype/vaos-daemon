@@ -2,33 +2,65 @@
 
 **Canonical status**: [docs/operations/roberto-content/Documentation.md](docs/operations/roberto-content/Documentation.md)
 **Epic**: `vas-swarm-jji`
-**Current active issue**: `vas-swarm-dy1`
-**Latest trace**: [vaos-investigate-trace-adafef1959fec23c-vas-swarm-942-live-carryover-1775850306726.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-adafef1959fec23c-vas-swarm-942-live-carryover-1775850306726.json)
-**Next Roberto step**: Hold `vas-swarm-942` until the repo-level full-suite gate completes cleanly again; the remaining blocker is a late-run `mix test` hang after the unrelated assertion failures were cleared.
+**Current active issue**: `vas-swarm-9m7`
+**Latest trace**: [vaos-investigate-trace-26a15ca058e69445-vas-swarm-9m7-live-3-1775866106501.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-26a15ca058e69445-vas-swarm-9m7-live-3-1775866106501.json)
+**Next Roberto step**: Pause on `vas-swarm-9m7` until live verification is made deterministic enough to judge the recurring earth-shape core. Targeted investigate-path tests are green, but three live reruns still diverged because provider timeout/rate-limit noise and wrapper drift changed which refs survived verification.
 
 ## Verification Status
 
-- Carryover fix landed: selected probe papers now seed the merged retrieval corpus.
-- Targeted tests passed:
-  - `mix test test/tools/investigate_test.exs` -> `100 tests, 0 failures`
-  - `mix test test/investigation/evidence_planner_test.exs` -> pass
-  - `mix test test/agent/treasury_alerts_test.exs test/tools/synthesizer_test.exs test/providers/registry_fallback_test.exs test/vault/fact_store_test.exs test/webhooks/dispatcher_test.exs test/channels/http/api/command_palette_test.exs` -> `101 tests, 0 failures`
-- Live validation improved:
-  - `direction = asymmetric_evidence_for`
-  - `grounded_for_count = 1`
-  - `planning.selected.probe.carried_papers = 1`
-- The original unrelated suite failures were cleared, but milestone verification is still not fully green:
-  - latest clean full-suite rerun advanced past the old assertion failures
-  - `/tmp/vaos-full-3.log` now pinpoints a remaining failure: `Daemon.Agent.Orchestrator.SwarmModeTest` -> `AgentPool DynamicSupervisor max_children is set to 10`
-  - the run still did not yield a clean final `Finished in ...` summary, so the repo-level gate remains unresolved
+- `vas-swarm-942` closed:
+  - carryover fix landed: selected probe papers now seed the merged retrieval corpus
+  - targeted tests passed:
+    - `mix test test/tools/investigate_test.exs` -> `100 tests, 0 failures`
+    - `mix test test/investigation/evidence_planner_test.exs` -> `8 tests, 0 failures`
+  - live validation improved:
+    - `direction = asymmetric_evidence_for`
+    - `grounded_for_count = 1`
+    - `planning.selected.probe.carried_papers = 1`
+- `vas-swarm-tgf` closed:
+  - decision telemetry now writes to a dedicated runtime ledger instead of sharing `:investigate_ledger`
+  - `DecisionLedger` now starts its own runtime ledger instead of piggybacking on investigate ledger lifecycle
+  - regression coverage added for runtime-ledger isolation
+  - targeted investigate-path verification passed:
+    - `mix test test/intelligence/decision_ledger_test.exs test/intelligence/decision_journal_persistence_test.exs test/intelligence/runtime_ledger_isolation_test.exs test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs` -> `154 tests, 0 failures`
+  - live repeated-run validation passed:
+    - four traced earth-shape wrapper runs completed without `GenServer.call(:investigate_ledger, {:add_evidence, ...}, 5000)` timing out
+    - traces:
+      - [vaos-investigate-trace-933bc72a8e647f60-vas-swarm-tgf-live-batch-1-1775864497841.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-933bc72a8e647f60-vas-swarm-tgf-live-batch-1-1775864497841.json)
+      - [vaos-investigate-trace-b3f6795f46baf623-vas-swarm-tgf-live-batch-2-1775864610783.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-b3f6795f46baf623-vas-swarm-tgf-live-batch-2-1775864610783.json)
+      - [vaos-investigate-trace-ae47836c2550010b-vas-swarm-tgf-live-batch-3-1775864721930.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-ae47836c2550010b-vas-swarm-tgf-live-batch-3-1775864721930.json)
+      - [vaos-investigate-trace-ced8169044ad7a49-vas-swarm-tgf-live-batch-4-1775864863691.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-ced8169044ad7a49-vas-swarm-tgf-live-batch-4-1775864863691.json)
+- New active investigate issue:
+  - `vas-swarm-9m7` — recurring earth-shape direct-evidence papers now recur at selection time, but verification outcomes still flip run to run so the stable core does not stay grounded
+  - current state: blocked after three live validation attempts
+  - what landed before the pause:
+    - `verification_claim_text` / claim-family compaction now has focused regressions for:
+      - quoted Earth-center reference-frame fragments
+      - quoted relation fragments after reporting verbs
+      - `subject as "quote"` shape wrappers
+      - `connecting it to "quote"` shape wrappers
+      - Earth-center clauses with later quoted distractors
+      - split spheroid quotes like `"an oblate spheroid"` + `"axis of figure coincident ..."`
+    - targeted investigate-path verification passed:
+      - `mix test test/intelligence/decision_ledger_test.exs test/intelligence/decision_journal_persistence_test.exs test/intelligence/runtime_ledger_isolation_test.exs test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs --seed 0` -> `160 tests, 0 failures`
+  - why it is blocked:
+    - live trace [vaos-investigate-trace-26a15ca058e69445-vas-swarm-9m7-live-3-1775866106501.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-26a15ca058e69445-vas-swarm-9m7-live-3-1775866106501.json) shows one recurring opposing ref grounded (`paper_ref=8`) but `paper_ref=2` still belief-only
+    - live trace [vaos-investigate-trace-65d0265bdc0cbfe6-vas-swarm-9m7-live-4-1775866396092.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-65d0265bdc0cbfe6-vas-swarm-9m7-live-4-1775866396092.json) drifted onto unrelated black-hole horizon literature, so it is not a valid earth-shape recurrence artifact
+    - live trace [vaos-investigate-trace-b3f6795f46baf623-vas-swarm-9m7-live-5-1775866601837.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-b3f6795f46baf623-vas-swarm-9m7-live-5-1775866601837.json) hit verifier timeouts/rate limits and ended with no recurring opposing refs grounded
+    - net: the claim-shaping boundary improved, but live verification is still too unstable to prove a stable grounded overlap for recurring refs `2/7/8`
+- Repo-history audit:
+  - the remaining full-suite failures are in pre-takeover Roberto/PAMF2-era surfaces
+  - they do not intersect `investigate` or the completed `vas-swarm-942` retrieval carryover path
+- Policy update:
+  - repo-wide inherited full-suite failures are recorded as background debt in `vas-swarm-dy1`
+  - they do not block Roberto `investigate` milestones unless they touch `investigate`, `evidence_planner`, or directly coupled verification/retrieval code, or are introduced by the current work
 
 ## Resume
 
 1. Read `STATUS.md`.
 2. Run `mix osa.roberto.resume`.
-3. Open `vas-swarm-dy1` and `/tmp/vaos-full-3.log`.
-4. Fix the remaining `Daemon.Agent.Orchestrator.SwarmModeTest` failure and verify whether the runner now terminates cleanly.
-5. Re-run `mix test` until it terminates with a real summary.
-6. Once the full-suite gate is green, reopen `vas-swarm-942` and re-run live validation on the same claim family.
-7. If grounding is still thin, open the next retrieval-breadth issue.
-8. Update status docs, Beads, commit, and push.
+3. Open `vas-swarm-9m7`.
+4. Start from the blocker traces for `vas-swarm-9m7`, not from the older ledger failure.
+5. Decide whether the next narrow step is provider/fallback stabilization or a more deterministic live-validation harness for recurring refs `2/7/8`.
+6. Record any unrelated inherited suite failures under `vas-swarm-dy1` without blocking `investigate` work.
+7. Update status docs, Beads, commit, and push.

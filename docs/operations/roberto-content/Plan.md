@@ -2,7 +2,7 @@
 
 **Created**: 2026-04-10
 **Epic**: `vas-swarm-jji`
-**Current Active Issue**: `vas-swarm-dy1`
+**Current Active Issue**: `vas-swarm-9m7` (blocked)
 
 ## Overview
 
@@ -46,11 +46,16 @@ The rule for progress is simple:
 **Goal**: Eliminate known trust-breaking failures in the current literature-centered pipeline.
 
 **Current focus**
-- `vas-swarm-942`: recover direct trial corpus when a good probe exists but full retrieval degrades
+- `vas-swarm-9m7`: stabilize verification outcomes for recurring earth-shape direct-evidence papers
 
 **Status note**
 - Probe-paper carryover now lands in the merged retrieval set and the live rerun no longer ends `belief_consensus_for`.
-- Do not advance to the next milestone yet: the old unrelated suite failures are fixed, but the latest clean `mix test` run still exposes `Daemon.Agent.Orchestrator.SwarmModeTest` and does not terminate with a clean final summary, so the verification gate is not yet satisfied.
+- `vas-swarm-942` is complete and closed.
+- `vas-swarm-tgf` is complete: repeated traced runs no longer timeout in `:investigate_ledger`.
+- `vas-swarm-9m7` is paused after three live attempts failed to prove a stable recurring grounded core.
+- The next investigate bottleneck is live verifier determinism on the recurring earth-shape evidence core.
+- Repo-history audit shows the remaining full-suite failures live in pre-takeover Roberto/PAMF2-era surfaces outside the `investigate` tool path.
+- Those inherited repo-wide failures are tracked as background debt in `vas-swarm-dy1` and are non-blocking unless they intersect `investigate`, `evidence_planner`, or directly coupled verification/retrieval code touched by this milestone.
 
 ### Task Classes
 
@@ -74,7 +79,9 @@ The rule for progress is simple:
 **Validation**
 - Focused tests for the changed layer
 - One live trace on the exact or semantically equivalent claim
+- Record unrelated inherited suite failures as background debt instead of treating them as `investigate` blockers
 - Beads update naming the next bottleneck
+- If three live attempts still fail to verify the same milestone, record the blocker and pause instead of advancing
 
 ## Milestone 2: Reduce Heuristic Debt
 
