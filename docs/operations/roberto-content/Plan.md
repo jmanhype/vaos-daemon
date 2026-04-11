@@ -3,6 +3,7 @@
 **Created**: 2026-04-10
 **Epic**: `vas-swarm-jji`
 **Current Active Issue**: `vas-swarm-9m7` (blocked)
+**Next corrective issue**: `vas-swarm-jji.1`
 
 ## Overview
 
@@ -13,6 +14,10 @@ The rule for progress is simple:
 - fix the narrowest generic layer that explains it
 - validate with tests and a live rerun
 - derive the next bottleneck from evidence
+
+Strategic correction:
+- `ClaimFamily` is now treated as transitional heuristic debt, not target architecture
+- no more extending family-shaped planner/retrieval/verifier logic unless it is explicitly temporary and tracked for deletion
 
 ## Milestone 0: Durable Memory
 
@@ -83,7 +88,23 @@ The rule for progress is simple:
 - Beads update naming the next bottleneck
 - If three live attempts still fail to verify the same milestone, record the blocker and pause instead of advancing
 
-## Milestone 2: Reduce Heuristic Debt
+## Milestone 2: Remove Family-Conditioned Routing
+
+**Goal**: Re-center `investigate` on a durable epistemic engine by removing family dependence from the core path.
+
+### Tasks
+
+1. `vas-swarm-jji.1` — remove `ClaimFamily` from planner selection path
+2. `vas-swarm-jji.2` — replace family-shaped retrieval hints with generic evidence signatures
+3. `vas-swarm-jji.3` — replace family-specific verifier salvage with generic cited-claim extraction
+4. Track any surviving family logic as temporary debt with a deletion path
+
+**Validation**
+- Planner mode selection no longer depends on family-conditioned scoring
+- Diff review shows logic moved toward evidence operations, not added topic lists
+- Representative non-earth empirical claims still route correctly
+
+## Milestone 3: Reduce Heuristic Debt
 
 **Goal**: Remove or shrink topic-shaped special cases that do not generalize.
 
@@ -98,26 +119,27 @@ The rule for progress is simple:
 - Diff review shows logic moved toward evidence operations, not added topic lists
 - Representative non-caffeine claims still route correctly
 
-## Milestone 3: Broaden Source Coverage
+## Milestone 4: Broaden Source Coverage
 
 **Goal**: Start closing the gap between a literature-centered investigator and a more general epistemic engine.
 
 ### Tasks
 
-1. Define evidence operations beyond papers
+1. `vas-swarm-jji.4` — add non-paper evidence operations to the planner
+2. Define evidence operations beyond papers
    - docs/specs
    - code/repos
    - benchmarks
    - standards
 
-2. Add at least one non-paper adapter path to the planner
-3. Validate on one empirical claim and one docs/code question
+3. Add at least one non-paper adapter path to the planner
+4. Validate on one empirical claim and one docs/code question
 
 **Validation**
 - one mixed-source live investigation path exists
 - provenance remains explicit
 
-## Milestone 4: Roberto Content Check
+## Milestone 5: Roberto Content Check
 
 **Goal**: Decide whether the remaining work is second-order.
 

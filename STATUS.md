@@ -4,7 +4,7 @@
 **Epic**: `vas-swarm-jji`
 **Current active issue**: `vas-swarm-9m7`
 **Latest trace**: [vaos-investigate-trace-26a15ca058e69445-vas-swarm-9m7-live-3-1775866106501.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-26a15ca058e69445-vas-swarm-9m7-live-3-1775866106501.json)
-**Next Roberto step**: Pause on `vas-swarm-9m7` until live verification is made deterministic enough to judge the recurring earth-shape core. Targeted investigate-path tests are green, but three live reruns still diverged because provider timeout/rate-limit noise and wrapper drift changed which refs survived verification.
+**Next Roberto step**: Treat `vas-swarm-9m7` as the blocker evidence that exposed family-layer drift. Do not add more family-specific salvage; resume the durable epistemic engine path from `vas-swarm-jji.1`.
 
 ## Verification Status
 
@@ -55,12 +55,24 @@
   - repo-wide inherited full-suite failures are recorded as background debt in `vas-swarm-dy1`
   - they do not block Roberto `investigate` milestones unless they touch `investigate`, `evidence_planner`, or directly coupled verification/retrieval code, or are introduced by the current work
 
+## Long-Horizon Queue
+
+- `vas-swarm-jji.1` — remove `ClaimFamily` from planner selection path
+- `vas-swarm-jji.2` — replace family-shaped retrieval hints with generic evidence signatures
+- `vas-swarm-jji.3` — replace family-specific verifier salvage with generic cited-claim extraction
+- `vas-swarm-jji.4` — add non-paper evidence operations to the durable epistemic engine
+
+The queue order is intentional:
+- planner agnosticism first
+- retrieval/verifier generalization second
+- source broadening after the family-conditioned path is no longer steering the engine
+
 ## Resume
 
 1. Read `STATUS.md`.
 2. Run `mix osa.roberto.resume`.
-3. Open `vas-swarm-9m7`.
-4. Start from the blocker traces for `vas-swarm-9m7`, not from the older ledger failure.
-5. Decide whether the next narrow step is provider/fallback stabilization or a more deterministic live-validation harness for recurring refs `2/7/8`.
+3. Open `vas-swarm-9m7` for blocker context only.
+4. Resume implementation from `vas-swarm-jji.1`.
+5. Use the `vas-swarm-9m7` traces as evidence for why planner/family drift needs correction.
 6. Record any unrelated inherited suite failures under `vas-swarm-dy1` without blocking `investigate` work.
 7. Update status docs, Beads, commit, and push.

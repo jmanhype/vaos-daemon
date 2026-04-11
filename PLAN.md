@@ -4,13 +4,26 @@
 
 ## Current Milestone
 
-Close the current first-order integrity bottleneck before moving on.
+Keep the current first-order blocker recorded, but queue the corrective path toward a durable epistemic engine.
 
 ## Active Issue
 
 `vas-swarm-9m7` — Stabilize verification outcomes for recurring earth-shape direct-evidence papers.
 `vas-swarm-dy1` remains open as inherited repo debt. For this Roberto program, it is non-blocking unless a failing test touches `investigate` or its directly coupled planning/verification path.
 Current state: `vas-swarm-9m7` is paused/blocked after three live validation attempts failed to produce a stable recurring grounded core.
+
+## Strategic Queue
+
+The next long-horizon tasks for the durable epistemic engine are:
+- `vas-swarm-jji.1` — remove `ClaimFamily` from planner selection path
+- `vas-swarm-jji.2` — replace family-shaped retrieval hints with generic evidence signatures
+- `vas-swarm-jji.3` — replace family-specific verifier salvage with generic cited-claim extraction
+- `vas-swarm-jji.4` — add non-paper evidence operations to the planner
+
+Sequence:
+- preserve `vas-swarm-9m7` as the blocker trace that exposed the drift
+- do not add more family-specific `planetary_shape` salvage unless it is temporary debt
+- resume the corrective path from `vas-swarm-jji.1`
 
 ## Verification Status
 
@@ -41,3 +54,4 @@ After each slice:
 4. ask what Roberto would do next
 5. continue if the next bottleneck is already clear
 6. if three live attempts fail to verify the current milestone, mark the blocker clearly and pause instead of advancing
+7. do not extend `ClaimFamily` as a core abstraction; either delete family-shaped logic or isolate it as explicit temporary debt
