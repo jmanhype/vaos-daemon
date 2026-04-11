@@ -82,6 +82,9 @@ defmodule Daemon.Tools.Builtins.Investigate do
   @retrieval_discourse_terms ~w(misinformation disinformation journalism media communication
     discourse ideology belief beliefs denial denialism history historical philosophy
     perception attitudes social conference public commentary review survey overview)
+  @artifact_doc_globs ["*.md", "*.txt", "docs/**/*.md", "docs/**/*.txt"]
+  @artifact_code_globs ["lib/**/*.ex", "lib/**/*.exs", "test/**/*.ex", "test/**/*.exs"]
+  @artifact_excerpt_max_bytes 2_000
 
   # AEC Two-Store Architecture (arxiv.org/abs/2602.03974)
   # Grounded store: high-quality sources that can determine the verdict
@@ -706,6 +709,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
         topic,
         steering,
         search_plan,
+        all_papers,
         for_messages,
         against_messages,
         for_result,
@@ -3353,6 +3357,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
     plan = search_query_plan(topic, keywords)
     plan = maybe_probe_search_plan(plan, strategy, http_fn)
     semantic_seed = semantic_search_seed(plan)
+    retrieval_op_results = run_retrieval_ops(plan, topic)
     {ss_queries, oa_queries} = {plan.ss_queries, plan.oa_queries}
     per_query = strategy.per_query_limit
     alphaxiv_enabled? = Keyword.get(opts, :alphaxiv_enabled?, true)
@@ -3535,7 +3540,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
       end
     end
 
-    results = ss_results ++ async_results
+    results = retrieval_op_results ++ ss_results ++ async_results
 
     # Collect source counts
     source_counts =
@@ -3564,6 +3569,183 @@ defmodule Daemon.Tools.Builtins.Investigate do
     {sorted, source_counts, plan}
   end
 
+  defp run_retrieval_ops(%{retrieval_ops: ops}, topic)
+       when is_list(ops) and is_binary(topic) do
+    Enum.flat_map(ops, fn op ->
+      case run_retrieval_op(op, topic) do
+        {source, items} when is_atom(source) and is_list(items) and items != [] ->
+          [{source, items}]
+
+        _ ->
+          []
+      end
+    end)
+  end
+
+  defp run_retrieval_ops(%{evidence_plan: %{retrieval_ops: ops}}, topic)
+       when is_list(ops) and is_binary(topic) do
+    run_retrieval_ops(%{retrieval_ops: ops}, topic)
+  end
+
+  defp run_retrieval_ops(_plan, _topic), do: []
+
+  defp run_retrieval_op(%{operation: :local_artifact_search} = op, topic)
+       when is_binary(topic) do
+    scope = Map.get(op, :scope, [:docs, :code])
+    limit = Map.get(op, :limit, 5)
+    keywords = Map.get(op, :keywords, []) |> normalize_artifact_keywords(topic)
+    root = File.cwd!()
+
+    artifacts =
+      root
+      |> local_artifact_paths(scope)
+      |> Enum.map(&rank_local_artifact(&1, root, keywords, scope))
+      |> Enum.reject(&is_nil/1)
+      |> Enum.sort_by(fn artifact -> {-artifact.score, artifact.path} end)
+      |> Enum.take(limit)
+      |> Enum.map(&local_artifact_source(&1, scope))
+
+    {:local_repo, artifacts}
+  end
+
+  defp run_retrieval_op(_op, _topic), do: nil
+
+  defp normalize_artifact_keywords(keywords, topic) when is_list(keywords) and is_binary(topic) do
+    case Enum.reject(keywords, &(not is_binary(&1) or String.trim(&1) == "")) do
+      [] -> distinctive_topic_terms(topic)
+      list -> list
+    end
+  end
+
+  defp normalize_artifact_keywords(_keywords, topic), do: distinctive_topic_terms(topic)
+
+  defp local_artifact_paths(root, scope) when is_binary(root) and is_list(scope) do
+    doc_paths =
+      if :docs in scope do
+        @artifact_doc_globs
+        |> Enum.flat_map(&Path.wildcard(Path.join(root, &1)))
+      else
+        []
+      end
+
+    code_paths =
+      if :code in scope do
+        @artifact_code_globs
+        |> Enum.flat_map(&Path.wildcard(Path.join(root, &1)))
+      else
+        []
+      end
+
+    (doc_paths ++ code_paths)
+    |> Enum.uniq()
+    |> Enum.reject(&String.contains?(&1, "/_build/"))
+    |> Enum.reject(&String.contains?(&1, "/deps/"))
+    |> Enum.reject(&String.contains?(&1, "/.git/"))
+  end
+
+  defp rank_local_artifact(path, root, keywords, scope)
+       when is_binary(path) and is_binary(root) and is_list(keywords) do
+    with {:ok, content} <- File.read(path) do
+      relative_path = Path.relative_to(path, root)
+      path_text = normalize_search_text(relative_path)
+      content_text = normalize_search_text(String.slice(content, 0, 12_000))
+      path_hits = Enum.count(keywords, &String.contains?(path_text, &1))
+      content_hits = Enum.count(keywords, &String.contains?(content_text, &1))
+
+      extension_bonus =
+        cond do
+          artifact_doc_file?(relative_path) and :docs in scope -> 1.5
+          artifact_code_file?(relative_path) and :code in scope -> 1.5
+          true -> 0.5
+        end
+
+      score = path_hits * 2.5 + content_hits * 1.0 + extension_bonus
+
+      if score > 0 do
+        %{
+          path: relative_path,
+          score: score,
+          snippet: artifact_excerpt(content, keywords),
+          kind: artifact_source_kind(relative_path)
+        }
+      end
+    else
+      _ -> nil
+    end
+  end
+
+  defp rank_local_artifact(_path, _root, _keywords, _scope), do: nil
+
+  defp artifact_excerpt(content, keywords) when is_binary(content) and is_list(keywords) do
+    lines = String.split(content, "\n")
+
+    matched_line_numbers =
+      lines
+      |> Enum.with_index(1)
+      |> Enum.filter(fn {line, _line_no} ->
+        normalized = normalize_search_text(line)
+        Enum.any?(keywords, &String.contains?(normalized, &1))
+      end)
+      |> Enum.map(&elem(&1, 1))
+
+    selected_line_numbers =
+      case matched_line_numbers do
+        [] ->
+          1..min(length(lines), 10) |> Enum.to_list()
+
+        list ->
+          list
+          |> Enum.take(3)
+          |> Enum.flat_map(fn line_no ->
+            max(line_no - 1, 1)..min(line_no + 1, length(lines)) |> Enum.to_list()
+          end)
+          |> Enum.uniq()
+      end
+
+    lines
+    |> Enum.with_index(1)
+    |> Enum.filter(fn {_line, line_no} -> line_no in selected_line_numbers end)
+    |> Enum.map_join("\n", fn {line, line_no} -> "L#{line_no}: #{String.trim(line)}" end)
+    |> String.slice(0, @artifact_excerpt_max_bytes)
+  end
+
+  defp artifact_excerpt(content, _keywords) when is_binary(content) do
+    content
+    |> String.slice(0, @artifact_excerpt_max_bytes)
+    |> String.trim()
+  end
+
+  defp local_artifact_source(%{path: path, snippet: snippet, kind: kind}, scope) do
+    %{
+      "title" => path,
+      "abstract" => snippet,
+      "year" => "local",
+      "citation_count" => 0,
+      "citationCount" => 0,
+      "source" => "local_repo",
+      "paper_id" => path,
+      "url" => path,
+      "publicationTypes" => ["Repository Artifact"],
+      "source_kind" => kind,
+      "provenance" => %{
+        "path" => path,
+        "operation" => "local_artifact_search",
+        "scope" => Enum.map(scope, &Atom.to_string/1)
+      }
+    }
+  end
+
+  defp artifact_source_kind(path) when is_binary(path) do
+    cond do
+      artifact_doc_file?(path) -> "artifact_doc"
+      artifact_code_file?(path) -> "artifact_code"
+      true -> "artifact"
+    end
+  end
+
+  defp artifact_doc_file?(path), do: Path.extname(path) in [".md", ".txt"]
+  defp artifact_code_file?(path), do: Path.extname(path) in [".ex", ".exs"]
+
   @doc false
   def normalized_search_topic(topic) do
     ClaimFamily.normalize_topic(topic)
@@ -3589,6 +3771,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
       evidence_plan: selected_plan,
       evidence_plan_candidate_plans: planner.candidates,
       evidence_plan_candidates: EvidencePlanner.candidate_summaries(planner.candidates),
+      retrieval_ops: Map.get(selected_plan, :retrieval_ops, []),
       ss_queries: selected_plan.ss_queries,
       oa_queries: selected_plan.oa_queries
     }
@@ -3602,6 +3785,9 @@ defmodule Daemon.Tools.Builtins.Investigate do
       |> Enum.take(3)
 
     cond do
+      retrieval_ops_only_plan?(plan) ->
+        put_probe_selection_metadata(plan, :skipped, "retrieval_ops_only", [])
+
       length(candidates) < 2 ->
         put_probe_selection_metadata(plan, :skipped, "insufficient_candidates", [])
 
@@ -3621,6 +3807,16 @@ defmodule Daemon.Tools.Builtins.Investigate do
         end
     end
   end
+
+  defp retrieval_ops_only_plan?(%{} = plan) do
+    selected_plan = Map.get(plan, :evidence_plan, %{})
+    retrieval_ops = Map.get(selected_plan, :retrieval_ops, [])
+
+    retrieval_ops != [] and Map.get(plan, :ss_queries, []) == [] and
+      Map.get(plan, :oa_queries, []) == []
+  end
+
+  defp retrieval_ops_only_plan?(_plan), do: false
 
   @doc false
   def apply_search_plan_probe_results(plan, shortlisted_candidates, probe_results)
@@ -3948,6 +4144,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
   def rerank_retrieval_candidates(papers, _plan) when is_list(papers), do: papers
 
   # Categorize source labels into summary keys
+  defp source_category("local_repo"), do: :local_repo
   defp source_category("alphaxiv"), do: :alphaxiv
   defp source_category("huggingface"), do: :huggingface
   defp source_category("ss_" <> _), do: :semantic_scholar
@@ -4083,7 +4280,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
   # Normalize Literature module structs (atom keys) to the string-key format
   # used throughout investigate.ex
   defp normalize_paper_format(%{title: t, source: src} = paper) do
-    %{
+    base = %{
       "title" => to_string(t || "Unknown"),
       "abstract" => to_string(paper[:abstract] || ""),
       "year" => to_string(paper[:year] || "unknown"),
@@ -4101,6 +4298,10 @@ defmodule Daemon.Tools.Builtins.Investigate do
       "doi" => to_string(paper[:doi] || ""),
       "publicationTypes" => paper[:publication_types] || []
     }
+
+    base
+    |> maybe_put_string_field("source_kind", paper[:source_kind])
+    |> maybe_put_map_field("provenance", paper[:provenance])
   end
 
   # Already string-keyed (from alphaXiv, HuggingFace, or legacy formats)
@@ -4307,7 +4508,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
   defp ensure_atom_keys(%{title: _} = paper), do: paper
 
   defp ensure_atom_keys(%{"title" => _} = paper) do
-    %{
+    base = %{
       title: paper["title"] || "",
       abstract: paper["abstract"] || "",
       year: parse_year(paper["year"]),
@@ -4319,12 +4520,17 @@ defmodule Daemon.Tools.Builtins.Investigate do
       doi: paper["doi"] || nil,
       publication_types: paper["publicationTypes"] || []
     }
+
+    base
+    |> maybe_put_atom_field(:source_kind, paper["source_kind"])
+    |> maybe_put_map_atom_field(:provenance, paper["provenance"])
   end
 
   defp ensure_atom_keys(other), do: other
 
   # Safe atom conversion for known source values
   defp safe_to_atom(s) when is_atom(s), do: s
+  defp safe_to_atom("local_repo"), do: :local_repo
   defp safe_to_atom("semantic_scholar"), do: :semantic_scholar
   defp safe_to_atom("openalex"), do: :openalex
   defp safe_to_atom("alphaxiv"), do: :alphaxiv
@@ -4342,6 +4548,20 @@ defmodule Daemon.Tools.Builtins.Investigate do
   end
 
   defp parse_year(_), do: nil
+
+  defp maybe_put_string_field(map, _key, nil), do: map
+  defp maybe_put_string_field(map, key, value), do: Map.put(map, key, to_string(value))
+
+  defp maybe_put_map_field(map, _key, value) when value in [nil, %{}], do: map
+  defp maybe_put_map_field(map, key, value) when is_map(value), do: Map.put(map, key, value)
+  defp maybe_put_map_field(map, _key, _value), do: map
+
+  defp maybe_put_atom_field(map, _key, nil), do: map
+  defp maybe_put_atom_field(map, key, value), do: Map.put(map, key, value)
+
+  defp maybe_put_map_atom_field(map, _key, value) when value in [nil, %{}], do: map
+  defp maybe_put_map_atom_field(map, key, value) when is_map(value), do: Map.put(map, key, value)
+  defp maybe_put_map_atom_field(map, _key, _value), do: map
 
   # HTTP adapter for vaos-ledger Literature module — uses Req
   # - OpenAlex polite pool: injects mailto param for faster server routing
@@ -4775,6 +4995,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
         probe_selection:
           evidence_plan_probe_selection_trace(Map.get(trace_context, :search_plan, %{}))
       },
+      sources: consulted_sources_trace(Map.get(trace_context, :consulted_sources, [])),
       prompts: %{
         for_system: text_snapshot(message_content(Map.get(trace_context, :for_messages, []), 0)),
         for_user: text_snapshot(message_content(Map.get(trace_context, :for_messages, []), 1)),
@@ -4919,6 +5140,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
          topic,
          steering,
          search_plan,
+         consulted_sources,
          for_messages,
          against_messages,
          for_result,
@@ -4928,6 +5150,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
       topic: topic,
       steering: steering,
       search_plan: search_plan,
+      consulted_sources: consulted_sources,
       for_messages: for_messages,
       against_messages: against_messages,
       for_result: for_result,
@@ -4961,6 +5184,25 @@ defmodule Daemon.Tools.Builtins.Investigate do
   end
 
   defp evidence_plan_probe_selection_trace(_search_plan), do: %{}
+
+  defp consulted_sources_trace(sources) when is_list(sources) do
+    sources
+    |> Enum.with_index(1)
+    |> Enum.map(fn {source, index} ->
+      %{
+        ref: index,
+        title: map_value(source, :title),
+        source: stringify_term(map_value(source, :source)),
+        source_kind: stringify_term(map_value(source, :source_kind)),
+        url: map_value(source, :url),
+        provenance: map_value(source, :provenance)
+      }
+      |> Enum.reject(fn {_key, value} -> is_nil(value) or value == "" or value == %{} end)
+      |> Map.new()
+    end)
+  end
+
+  defp consulted_sources_trace(_sources), do: []
 
   defp evidence_trace(evidence) when is_list(evidence) do
     Enum.map(evidence, fn ev ->
@@ -5971,6 +6213,8 @@ defmodule Daemon.Tools.Builtins.Investigate do
         year: p["year"],
         citations: p["citation_count"] || p["citationCount"] || 0,
         source: p["source"] || "unknown",
+        source_kind: p["source_kind"],
+        provenance: p["provenance"],
         abstract: String.slice(to_string(p["abstract"] || ""), 0, 500)
       }
     end)

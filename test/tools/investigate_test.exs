@@ -975,6 +975,59 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
            ) == :synthesis
   end
 
+  test "verified local artifact evidence can ground directly with explicit provenance" do
+    summary =
+      "Documentation.md records the current active issue as vas-swarm-jji.4 [Paper 1]."
+
+    classification_context = %{
+      normalized_topic: "Documentation.md records the current active issue as vas-swarm-jji.4",
+      evidence_profile: %{
+        kind: :artifact_reference,
+        subject_terms: ["documentation", "active", "issue"]
+      }
+    }
+
+    source = %{
+      "title" => "docs/operations/roberto-content/Documentation.md",
+      "abstract" => "Current active issue: vas-swarm-jji.4",
+      "source" => "local_repo",
+      "publicationTypes" => ["Repository Artifact"],
+      "source_kind" => "artifact",
+      "provenance" => %{
+        "path" => "docs/operations/roberto-content/Documentation.md",
+        "operation" => "local_artifact_search"
+      }
+    }
+
+    role =
+      Investigate.grounding_role_for(
+        %{
+          source_type: :sourced,
+          verification: "verified",
+          summary: summary
+        },
+        classification_context,
+        source
+      )
+
+    assert role == :direct
+
+    store =
+      Investigate.evidence_store_for(
+        %{
+          source_type: :sourced,
+          verification: "verified",
+          summary: summary
+        },
+        0.15,
+        Strategy.default(),
+        classification_context,
+        source
+      )
+
+    assert store == :grounded
+  end
+
   test "grounding_role_for demotes indirect clinical proxy claims without profile" do
     assert Investigate.grounding_role_for(
              %{
@@ -1294,6 +1347,18 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
               shortlisted_count: 1
             }
           },
+          consulted_sources: [
+            %{
+              "title" => "docs/operations/roberto-content/Documentation.md",
+              "abstract" => "Current active issue: vas-swarm-jji.4",
+              "source" => "local_repo",
+              "source_kind" => "artifact",
+              "provenance" => %{
+                "path" => "docs/operations/roberto-content/Documentation.md",
+                "operation" => "local_artifact_search"
+              }
+            }
+          ],
           for_messages: [
             %{content: "FOR SYSTEM PROMPT"},
             %{content: "FOR USER PROMPT"}
@@ -1346,6 +1411,13 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert trace.planning.probe_selection.status == :ok
     assert trace.planning.probe_selection.source == :multi_source
     assert trace.planning.selected.probe.score == 9.2
+    assert hd(trace.sources).title == "docs/operations/roberto-content/Documentation.md"
+    assert hd(trace.sources).source == "local_repo"
+    assert hd(trace.sources).source_kind == "artifact"
+
+    assert hd(trace.sources).provenance["path"] ==
+             "docs/operations/roberto-content/Documentation.md"
+
     assert trace.prompts.for_system.preview == "FOR SYSTEM PROMPT"
     assert trace.prompts.against_user.preview == "AGAINST USER PROMPT"
     assert trace.llm.for.status == "ok"
@@ -2028,6 +2100,51 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
 
     refute Enum.any?(ss_queries ++ oa_queries, &String.contains?(&1, "placebo controlled trial"))
     refute Enum.any?(ss_queries ++ oa_queries, &String.contains?(&1, "Cochrane review"))
+  end
+
+  test "search_query_plan chooses artifact retrieval for repository documentation claims" do
+    plan =
+      Investigate.search_query_plan(
+        "the repository documentation says Documentation.md is the canonical Roberto status file",
+        ["repository", "documentation", "Documentation.md", "status"]
+      )
+
+    assert plan.family_profile == nil
+    assert plan.profile == :artifact_reference
+    assert plan.claim_family == nil
+    assert plan.evidence_plan.mode == :artifact_reference
+    assert plan.evidence_signatures.artifact_reference_signature
+    assert plan.evidence_profile.kind == :artifact_reference
+    assert plan.ss_queries == []
+    assert plan.oa_queries == []
+
+    assert [
+             %{
+               kind: :artifact,
+               operation: :local_artifact_search,
+               source: :local_repo
+             }
+           ] = plan.evidence_plan.retrieval_ops
+  end
+
+  test "prepare_advocate_bakeoff uses local artifact sources for repository documentation claims" do
+    assert {:ok, context} =
+             Investigate.prepare_advocate_bakeoff(
+               "the repository documentation says Documentation.md is the canonical Roberto status file"
+             )
+
+    assert context.search_plan.evidence_plan.mode == :artifact_reference
+    assert Enum.any?(context.all_papers, &(&1["source"] == "local_repo"))
+    assert Enum.any?(context.all_papers, &String.contains?(&1["title"], "Documentation.md"))
+
+    assert Enum.any?(context.all_papers, fn source ->
+             get_in(source, ["provenance", "path"]) ==
+               "docs/operations/roberto-content/Documentation.md"
+           end)
+
+    assert Enum.any?(context.for_messages, fn message ->
+             String.contains?(message.content, "Documentation.md")
+           end)
   end
 
   test "search_query_plan keeps clinical intervention queries for treatment claims" do

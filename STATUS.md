@@ -2,9 +2,9 @@
 
 **Canonical status**: [docs/operations/roberto-content/Documentation.md](docs/operations/roberto-content/Documentation.md)
 **Epic**: `vas-swarm-jji`
-**Current active issue**: `vas-swarm-jji.4`
-**Latest trace**: [vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-jji-3-live-curvature-1-1775939217052.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-jji-3-live-curvature-1-1775939217052.json)
-**Next Roberto step**: Add at least one non-paper evidence operation to the durable epistemic engine while keeping provenance explicit and leaving `vas-swarm-9m7` recorded only as blocker evidence.
+**Current active issue**: `vas-swarm-jji.5`
+**Latest trace**: [vaos-investigate-trace-d3720298d454cb3c-vas-swarm-jji-4-docs-testenv-1775942835911.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-d3720298d454cb3c-vas-swarm-jji-4-docs-testenv-1775942835911.json)
+**Next Roberto step**: Retire the surviving `ClaimFamily.normalize_topic/1` wrapper-normalization seam from the production investigate path while keeping `vas-swarm-9m7` recorded only as blocker evidence.
 
 ## Verification Status
 
@@ -62,6 +62,17 @@
     - `grounded_for_count = 3`
     - recurring direct refs `paper_ref=14`, `paper_ref=3`, and `paper_ref=5` stayed grounded without family/profile salvage
     - contextual sourced ref `paper_ref=6` was demoted to belief with `grounding_role=contextual`, showing the generic grounding path is separating contextual support from direct evidence
+- `vas-swarm-jji.4` closed:
+  - `EvidencePlanner` can now choose a generic non-paper `artifact_reference` mode via `artifact_reference_signature`
+  - the selected plan now carries explicit `retrieval_ops`, and `investigate` executes `local_artifact_search` against `local_repo` docs/code artifacts before paper retrieval
+  - non-paper sources now preserve explicit provenance in runtime traces via `trace.sources[*].source_kind` and `trace.sources[*].provenance`
+  - no new topic-family routing was introduced; `vas-swarm-9m7` remains blocker evidence only
+  - targeted investigate-path verification passed:
+    - `mix test test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs` -> `131 tests, 0 failures`
+  - live validation passed on both required claim classes:
+    - docs/code trace [vaos-investigate-trace-d3720298d454cb3c-vas-swarm-jji-4-docs-testenv-1775942835911.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-d3720298d454cb3c-vas-swarm-jji-4-docs-testenv-1775942835911.json) completed end to end under `MIX_ENV=test` to avoid a local `8089` port collision, selected `artifact_reference`, emitted `retrieval_ops = [%{operation: :local_artifact_search, source: :local_repo, scope: ["docs"]}]`, and finished with `direction = asymmetric_evidence_for`, `grounded_for_count = 1`, `grounded_against_count = 0`
+    - the docs/code trace records explicit non-paper provenance, including `source = local_repo`, `source_kind = artifact_doc`, and `provenance = %{operation: "local_artifact_search", path: "docs/operations/roberto-content/Documentation.md", scope: ["docs"]}`
+    - empirical trace [vaos-investigate-trace-e5e4f891f0c3d92b-vas-swarm-jji-4-empirical-1775942606636.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-e5e4f891f0c3d92b-vas-swarm-jji-4-empirical-1775942606636.json) still selected `measurement` and completed with `direction = supporting`, `grounded_for_count = 1`, and `grounded_against_count = 1`
 - Harness audit (2026-04-11):
   - targeted audit verification passed:
     - `mix test test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs test/tools/investigate_test.exs` -> `126 tests, 0 failures`
@@ -100,7 +111,8 @@
 - `vas-swarm-jji.1` — completed: remove `ClaimFamily` from planner selection path
 - `vas-swarm-jji.2` — completed: replace family-shaped retrieval hints with generic evidence signatures
 - `vas-swarm-jji.3` — completed: replace profile-conditioned verifier / grounding behavior with generic capability-driven cited-claim extraction
-- `vas-swarm-jji.4` — add non-paper evidence operations to the durable epistemic engine
+- `vas-swarm-jji.4` — completed: add a generic non-paper artifact/reference evidence operation with explicit provenance
+- `vas-swarm-jji.5` — active: retire the surviving `ClaimFamily.normalize_topic/1` wrapper-normalization seam from the production investigate path
 
 The queue order is intentional:
 - planner agnosticism first
@@ -112,8 +124,8 @@ The queue order is intentional:
 1. Read `STATUS.md`.
 2. Run `scripts/roberto-loop`.
 3. Open `vas-swarm-9m7` for blocker context only.
-4. Resume implementation from `vas-swarm-jji.4`.
-5. Use the `vas-swarm-jji.3` trace plus the `vas-swarm-9m7` traces as evidence for why the core path is ready for non-paper evidence broadening.
+4. Resume implementation from `vas-swarm-jji.5`.
+5. Use the `vas-swarm-jji.4` docs/code and empirical traces plus the `vas-swarm-9m7` traces as evidence for why the next cut is generic wrapper-normalization cleanup rather than more source-family salvage.
 6. Record any unrelated inherited suite failures under `vas-swarm-dy1` without blocking `investigate` work.
 7. Update status docs, Beads, commit, and push.
 

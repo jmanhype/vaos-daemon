@@ -18,6 +18,39 @@ defmodule Daemon.Investigation.EvidencePlannerTest do
     assert Enum.any?(planner.candidates, &(&1.mode == :measurement))
   end
 
+  test "selects artifact-reference route for repository documentation claims" do
+    topic =
+      "the repository documentation says Documentation.md is the canonical Roberto status file"
+
+    keywords = ["repository", "documentation", "Documentation.md", "status"]
+
+    terms = [
+      "repository",
+      "documentation",
+      "documentation",
+      "md",
+      "canonical",
+      "roberto",
+      "status",
+      "file"
+    ]
+
+    planner = EvidencePlanner.plan(topic, keywords, terms)
+
+    assert planner.selected.mode == :artifact_reference
+    assert planner.selected.profile == :artifact_reference
+    assert planner.selected.evidence_profile.kind == :artifact_reference
+    assert planner.evidence_signatures.artifact_reference_signature
+
+    assert [
+             %{
+               kind: :artifact,
+               operation: :local_artifact_search,
+               source: :local_repo
+             }
+           ] = planner.selected.retrieval_ops
+  end
+
   test "selects observational route for exposure-outcome claims" do
     topic = "smoking causes lung cancer"
     keywords = ["smoking", "lung", "cancer"]

@@ -17,7 +17,17 @@ defmodule Daemon.Investigation.EvidencePlanner do
           intervention_signature: boolean(),
           health_effect_signature: boolean(),
           review_signature: boolean(),
-          consensus_signature: boolean()
+          consensus_signature: boolean(),
+          artifact_reference_signature: boolean()
+        }
+  @type retrieval_op :: %{
+          kind: atom(),
+          source: atom(),
+          operation: atom(),
+          query: String.t(),
+          scope: [atom()],
+          limit: pos_integer(),
+          keywords: [String.t()]
         }
   @type plan :: %{
           mode: atom(),
@@ -29,20 +39,25 @@ defmodule Daemon.Investigation.EvidencePlanner do
           semantic_seed: String.t(),
           ss_queries: [query()],
           oa_queries: [query()],
+          retrieval_ops: [retrieval_op()],
           evidence_profile: map() | nil,
           probe: map() | nil
         }
 
   @candidate_order %{
-    measurement: 1,
-    randomized_intervention: 2,
-    observational: 3,
-    systematic_review: 4,
-    consensus: 5,
-    general_empirical: 6
+    artifact_reference: 1,
+    measurement: 2,
+    randomized_intervention: 3,
+    observational: 4,
+    systematic_review: 5,
+    consensus: 6,
+    general_empirical: 7
   }
 
   @review_opts [publication_types: "Review,MetaAnalysis", type: "review"]
+  @artifact_reference_terms ~w(code codebase repo repos repository repositories function functions module modules implementation implementations file files filepath filepaths path paths docs documentation documented readme spec specs status prompt runbook)
+  @artifact_doc_terms ~w(docs documentation readme spec specs status prompt runbook markdown md)
+  @artifact_code_terms ~w(code codebase repo repos repository repositories function functions module modules implementation implementations file files filepath filepaths path paths ex exs test tests)
   @guideline_terms ~w(guideline guidelines consensus recommendation recommendations position statement statements)
   @measurement_terms ~w(measurement measurements observe observed observation observations physical empirical curvature geodesy gravity orbit orbital satellite surveying)
   @shape_geometry_terms ~w(flat round spherical sphere spheroid oblate prolate curved curvature geometry geometric geodesy geodetic ellipsoid ellipsoidal globe globular)
@@ -153,6 +168,7 @@ defmodule Daemon.Investigation.EvidencePlanner do
       selection_score: round_score(plan.selection_score),
       rationale: plan.rationale,
       semantic_seed: plan.semantic_seed,
+      retrieval_ops: summarize_retrieval_ops(Map.get(plan, :retrieval_ops, [])),
       probe: summarize_probe(plan.probe)
     }
   end
@@ -186,6 +202,7 @@ defmodule Daemon.Investigation.EvidencePlanner do
 
   defp candidate_modes do
     [
+      :artifact_reference,
       :measurement,
       :randomized_intervention,
       :observational,
@@ -193,6 +210,42 @@ defmodule Daemon.Investigation.EvidencePlanner do
       :consensus,
       :general_empirical
     ]
+  end
+
+  defp build_candidate(:artifact_reference, topic, keyword_topic, terms, evidence_signatures) do
+    evidence_profile =
+      build_evidence_profile(
+        :artifact_reference,
+        topic,
+        keyword_topic,
+        terms,
+        evidence_signatures
+      )
+
+    %{
+      mode: :artifact_reference,
+      profile: :artifact_reference,
+      heuristic_score: 0.0,
+      probe_score: nil,
+      selection_score: 0.0,
+      rationale: "favor repository documentation and code artifacts",
+      semantic_seed: keyword_topic,
+      ss_queries: [],
+      oa_queries: [],
+      retrieval_ops: [
+        %{
+          kind: :artifact,
+          source: :local_repo,
+          operation: :local_artifact_search,
+          query: topic,
+          scope: artifact_scope(terms),
+          limit: 5,
+          keywords: specific_anchor_terms(keyword_topic)
+        }
+      ],
+      evidence_profile: evidence_profile,
+      probe: nil
+    }
   end
 
   defp build_candidate(:measurement, topic, keyword_topic, terms, evidence_signatures) do
@@ -258,6 +311,7 @@ defmodule Daemon.Investigation.EvidencePlanner do
       semantic_seed: semantic_seed,
       ss_queries: ss_queries,
       oa_queries: oa_queries,
+      retrieval_ops: [],
       evidence_profile: evidence_profile,
       probe: nil
     }
@@ -324,6 +378,7 @@ defmodule Daemon.Investigation.EvidencePlanner do
             {:meta_analysis, "meta-analysis #{keyword_topic}", @review_opts},
             {:guideline, "clinical guideline #{keyword_topic}", []}
           ],
+      retrieval_ops: [],
       evidence_profile: evidence_profile,
       probe: nil
     }
@@ -359,6 +414,7 @@ defmodule Daemon.Investigation.EvidencePlanner do
         {:observational, "observational study #{keyword_topic}", []},
         {:registry, "registry study #{keyword_topic}", []}
       ],
+      retrieval_ops: [],
       evidence_profile: evidence_profile,
       probe: nil
     }
@@ -400,6 +456,7 @@ defmodule Daemon.Investigation.EvidencePlanner do
         {:umbrella, "umbrella review #{keyword_topic}", @review_opts},
         {:review, "review #{keyword_topic}", @review_opts}
       ],
+      retrieval_ops: [],
       evidence_profile: evidence_profile,
       probe: nil
     }
@@ -429,6 +486,7 @@ defmodule Daemon.Investigation.EvidencePlanner do
         {:position, "position statement #{keyword_topic}", []},
         {:review, "review #{keyword_topic}", @review_opts}
       ],
+      retrieval_ops: [],
       evidence_profile: evidence_profile,
       probe: nil
     }
@@ -470,6 +528,7 @@ defmodule Daemon.Investigation.EvidencePlanner do
         {:observation, "#{keyword_topic} direct observation", []},
         {:analysis, "#{keyword_topic} empirical test", []}
       ],
+      retrieval_ops: [],
       evidence_profile: evidence_profile,
       probe: nil
     }
@@ -479,6 +538,23 @@ defmodule Daemon.Investigation.EvidencePlanner do
   defp review_profile(%{health_effect_signature: true}), do: :health_claim
 
   defp review_profile(_evidence_signatures), do: :general
+
+  defp build_evidence_profile(
+         :artifact_reference,
+         topic,
+         keyword_topic,
+         terms,
+         _evidence_signatures
+       ) do
+    %{
+      kind: :artifact_reference,
+      subject_terms: specific_anchor_terms(keyword_topic),
+      semantic_seed: topic,
+      required_terms: @artifact_reference_terms,
+      stable_terms: @artifact_reference_terms,
+      scope: artifact_scope(terms)
+    }
+  end
 
   defp build_evidence_profile(
          :measurement,
@@ -632,6 +708,12 @@ defmodule Daemon.Investigation.EvidencePlanner do
 
     generic_bias =
       case candidate.mode do
+        :artifact_reference ->
+          if(Map.get(evidence_signatures, :artifact_reference_signature, false),
+            do: 7.0,
+            else: 0.2
+          )
+
         :measurement ->
           if(Map.get(evidence_signatures, :measurement_signature, false), do: 5.5, else: 0.5)
 
@@ -662,6 +744,10 @@ defmodule Daemon.Investigation.EvidencePlanner do
 
     lexical_bias =
       case candidate.mode do
+        :artifact_reference ->
+          term_hits(terms, @artifact_reference_terms) * 1.0 +
+            artifact_reference_pattern_bonus(topic)
+
         :measurement ->
           term_hits(terms, @measurement_terms) * 0.8
 
@@ -749,6 +835,7 @@ defmodule Daemon.Investigation.EvidencePlanner do
   defp rationale_parts(mode, topic, terms, evidence_signatures) do
     base =
       case mode do
+        :artifact_reference -> ["repository/docs/code evidence route"]
         :measurement -> ["measurement/observation route"]
         :randomized_intervention -> ["trial/placebo route"]
         :observational -> ["cohort/case-control route"]
@@ -775,12 +862,19 @@ defmodule Daemon.Investigation.EvidencePlanner do
         mode == :consensus and Map.get(evidence_signatures, :consensus_signature, false) ->
           ["consensus/guideline signature present"]
 
+        mode == :artifact_reference and
+            Map.get(evidence_signatures, :artifact_reference_signature, false) ->
+          ["artifact reference signature present"]
+
         true ->
           []
       end
 
     lexical_hint =
       cond do
+        mode == :artifact_reference and term_hits(terms, @artifact_reference_terms) > 0 ->
+          ["repository/docs/code terms present"]
+
         mode == :measurement and term_hits(terms, @measurement_terms) > 0 ->
           ["measurement terms present"]
 
@@ -819,7 +913,8 @@ defmodule Daemon.Investigation.EvidencePlanner do
       intervention_signature: intervention_signature,
       health_effect_signature: health_effect_signature,
       review_signature: review_signature?(topic, terms),
-      consensus_signature: consensus_signature?(topic, terms)
+      consensus_signature: consensus_signature?(topic, terms),
+      artifact_reference_signature: artifact_reference_signature?(topic, terms)
     }
   end
 
@@ -830,9 +925,20 @@ defmodule Daemon.Investigation.EvidencePlanner do
       intervention_signature: false,
       health_effect_signature: false,
       review_signature: false,
-      consensus_signature: false
+      consensus_signature: false,
+      artifact_reference_signature: false
     }
   end
+
+  defp artifact_reference_signature?(topic, terms) when is_binary(topic) and is_list(terms) do
+    term_hits(terms, @artifact_reference_terms) > 0 or
+      Regex.match?(
+        ~r/\b(?:[\w\/.-]+\.(?:ex|exs|md|txt|json|yaml|yml)|[A-Z][A-Za-z0-9_.]+\/\d+)\b/,
+        topic
+      )
+  end
+
+  defp artifact_reference_signature?(_topic, _terms), do: false
 
   defp health_effect_signature?(topic, terms, intervention_signature)
        when is_binary(topic) and is_list(terms) do
@@ -922,6 +1028,36 @@ defmodule Daemon.Investigation.EvidencePlanner do
 
   defp performance_context_topic?(_text), do: false
 
+  defp artifact_scope(terms) when is_list(terms) do
+    docs_hits = term_hits(terms, @artifact_doc_terms)
+    code_hits = term_hits(terms, @artifact_code_terms)
+
+    cond do
+      code_hits > docs_hits -> [:code, :docs]
+      docs_hits > 0 and code_hits == 0 -> [:docs]
+      true -> [:docs, :code]
+    end
+  end
+
+  defp artifact_scope(_terms), do: [:docs, :code]
+
+  defp artifact_reference_pattern_bonus(topic) when is_binary(topic) do
+    bonuses = [
+      Regex.match?(
+        ~r/\b(?:codebase|repository|repo|documentation|docs|readme|module|function|implementation|file)\b/i,
+        topic
+      ),
+      Regex.match?(~r/\b[\w\/.-]+\.(?:ex|exs|md|txt|json|yaml|yml)\b/, topic),
+      Regex.match?(~r/`[^`]+`/, topic)
+    ]
+
+    bonuses
+    |> Enum.count(& &1)
+    |> Kernel.*(1.25)
+  end
+
+  defp artifact_reference_pattern_bonus(_topic), do: 0.0
+
   defp summarize_probe(nil), do: nil
 
   defp summarize_probe(probe) when is_map(probe) do
@@ -952,4 +1088,15 @@ defmodule Daemon.Investigation.EvidencePlanner do
   defp round_score(nil), do: nil
   defp round_score(value) when is_float(value), do: Float.round(value, 2)
   defp round_score(value), do: value
+
+  defp summarize_retrieval_ops(ops) when is_list(ops) do
+    Enum.map(ops, fn op ->
+      op
+      |> Map.take([:kind, :source, :operation, :query, :scope, :limit])
+      |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+      |> Map.new()
+    end)
+  end
+
+  defp summarize_retrieval_ops(_ops), do: []
 end
