@@ -8,7 +8,7 @@ Get Roberto content by hardening `investigate` into a trustworthy epistemic engi
 
 ## Current Focus
 
-The current implementation slice is `vas-swarm-jji.8`:
+The current implementation slice is `vas-swarm-9m7`:
 - `vas-swarm-jji.1` is closed: planner mode selection no longer depends on `ClaimFamily`
 - `vas-swarm-jji.2` is closed: retrieval no longer depends on family-shaped evidence profiles or query templates in the investigate core
 - `vas-swarm-jji.3` is closed: sourced evidence grounding now runs through generic cited-claim extraction instead of a `profile` switch
@@ -16,9 +16,9 @@ The current implementation slice is `vas-swarm-jji.8`:
 - `vas-swarm-jji.5` is closed: production investigate no longer depends on `ClaimFamily.normalize_topic/1`
 - `vas-swarm-jji.6` is closed: retrieval-ops-only `artifact_reference` runs now stay local unless mixed-source retrieval is explicit
 - `vas-swarm-jji.7` is closed: investigate preflight no longer touches alphaXiv auth/startup for the representative local-only docs/code preparation
-- `vas-swarm-jji.8` is active: audit whether any first-order integrity bug still remains now that the source-isolation chain is complete
-- `vas-swarm-9m7` remains recorded only as blocker evidence that exposed the deeper architectural drift
-- the next cut is a Roberto content check without reintroducing topic-family routing or prematurely reactivating blocker-only debt
+- `vas-swarm-jji.8` is closed: the content check kept representative route selection intact, but the fresh `jji8-measurement` trace reactivated the live earth-shape grounding boundary and filed `vas-swarm-jji.9` for the observational claim-alignment follow-up
+- `vas-swarm-9m7` is active again because the measurement path still selected the right direct-evidence corpus but ended `insufficient_evidence` with all opposing sourced items belief-only
+- the next cut is to stabilize that live measurement-side grounding boundary without reopening closed source-isolation work
 
 The strategic long-horizon queue for the durable epistemic engine is now:
 - `vas-swarm-jji.1` — completed: remove `ClaimFamily` from planner selection
@@ -28,6 +28,6 @@ The strategic long-horizon queue for the durable epistemic engine is now:
 - `vas-swarm-jji.5` — completed: retire the surviving wrapper-normalization seam from the production investigate path
 - `vas-swarm-jji.6` — completed: keep retrieval-ops-only artifact/reference investigations local unless mixed-source retrieval is explicit
 - `vas-swarm-jji.7` — completed: skip alphaXiv auth/startup preflight for retrieval-ops-only local artifact preparations
-- `vas-swarm-jji.8` — active: run the Roberto content check after source-isolation closure
+- `vas-swarm-jji.8` — completed: the content check proved representative routing still works, but it did not clear the first-order live grounding boundary
 
 Read the canonical spec for scope, constraints, and done-when criteria.

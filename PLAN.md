@@ -4,13 +4,13 @@
 
 ## Current Milestone
 
-Run the Roberto content check now that `retrieval_ops`-only `artifact_reference` investigate runs stay local through both retrieval dispatch and preflight, while `vas-swarm-9m7` remains blocker evidence only.
+Stabilize the reactivated live `measurement` grounding boundary now that `vas-swarm-jji.8` completed the Roberto content check and proved the remaining bug is still first-order.
 
 ## Active Issue
 
-`vas-swarm-jji.8` — Run Roberto content check after source-isolation closure.
+`vas-swarm-9m7` — Stabilize verification outcomes for recurring earth-shape direct-evidence papers.
 `vas-swarm-dy1` remains open as inherited repo debt. For this Roberto program, it is non-blocking unless a failing test touches `investigate` or its directly coupled planning/verification path.
-Current state: `vas-swarm-jji.1` through `vas-swarm-jji.7` are complete and closed. The live investigate core no longer switches on family/profile-conditioned planner, retrieval, grounding, or wrapper normalization behavior, and retrieval-ops-only local artifact plans no longer bleed into external paper search or alphaXiv preflight auth/startup. `vas-swarm-9m7` stays paused as blocker evidence after three live validation attempts failed to produce a stable recurring grounded core, but it is no longer the active implementation surface. The next step is deciding whether any first-order integrity bug still remains or whether the remaining work is second-order.
+Current state: `vas-swarm-jji.1` through `vas-swarm-jji.8` are complete and closed. The live investigate core no longer switches on family/profile-conditioned planner, retrieval, grounding, or wrapper normalization behavior, and retrieval-ops-only local artifact plans no longer bleed into external paper search or alphaXiv preflight auth/startup. The `vas-swarm-jji.8` audit reran representative `measurement`, `observational`, and `randomized_intervention` traces. Routing held across all three lanes and the intervention lane still grounded direct support, but the fresh live measurement trace selected the right geodesy corpus and still ended `insufficient_evidence` with every opposing sourced item stuck in belief. That reactivates `vas-swarm-9m7` as the next first-order bottleneck. The same audit also filed `vas-swarm-jji.9` for the observational follow-up concern where historical / debate-only fragments were grounded as support for `vaccines cause autism`.
 
 ## Strategic Queue
 
@@ -22,12 +22,12 @@ The next long-horizon tasks for the durable epistemic engine are:
 - `vas-swarm-jji.5` — completed: retire the surviving `ClaimFamily.normalize_topic/1` wrapper-normalization seam from the production investigate path
 - `vas-swarm-jji.6` — completed: prevent retrieval-ops-only `artifact_reference` plans from launching external paper search
 - `vas-swarm-jji.7` — completed: prevent retrieval-ops-only local artifact preparations from triggering alphaXiv auth/startup during preflight
-- `vas-swarm-jji.8` — active: decide whether any first-order integrity bug still remains after the source-isolation chain closed
+- `vas-swarm-jji.8` — completed: the content check proved representative routing still works, reactivated the live earth-shape grounding boundary, and filed `vas-swarm-jji.9` for the observational follow-up
 
 Sequence:
-- preserve `vas-swarm-9m7` as the blocker trace that exposed the drift
+- use `vas-swarm-jji.8` as the completed audit that reactivated `vas-swarm-9m7`
 - do not add more family-specific `planetary_shape` salvage unless it is temporary debt
-- continue the durable-epistemic-engine path through `vas-swarm-jji.8`
+- continue the durable-epistemic-engine path through the reactivated `vas-swarm-9m7` grounding boundary
 
 ## Verification Status
 
@@ -70,15 +70,25 @@ Sequence:
   - retrieval-ops-only docs/code plans skip alphaXiv auth/startup entirely, while mixed-source plans still check auth/start as needed
   - `mix test test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs test/tools/alphaxiv_client_test.exs` -> `136 tests, 0 failures`
   - runtime artifact [vaos-jji7-local-artifact-validation-1775946503.txt](/tmp/vaos-jji7-local-artifact-validation-1775946503.txt) confirms the representative docs/code claim stays `local_repo`-only through preflight and retrieval with no alphaXiv auth/startup warnings
+- `vas-swarm-jji.8` is complete:
+  - `mix test test/investigation/evidence_planner_test.exs test/tools/investigate_test.exs` -> `124 tests, 0 failures`
+  - planner spot checks still selected the intended generic lanes for:
+    - `measurement` (`examine claims that the earth is flat`)
+    - `observational` (`vaccines cause autism`)
+    - `randomized_intervention` (`acute caffeine intake enhances endurance time-trial performance in trained cyclists and triathletes`)
+  - runtime audit artifact [vaos-jji8-content-check-1775947922.json](/tmp/vaos-jji8-content-check-1775947922.json) captured the representative content check and the three trace paths
+  - measurement trace [vaos-investigate-trace-9cee767146dfb20d-jji8-measurement-1775947626820.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-9cee767146dfb20d-jji8-measurement-1775947626820.json) selected `measurement` with a direct geodesy corpus, but ended `direction=insufficient_evidence`, `grounded_for_count=0`, and `grounded_against_count=0` with all five opposing sourced items belief-only; that reactivates `vas-swarm-9m7`
+  - observational trace [vaos-investigate-trace-6288e6adc2dfd5a5-jji8-observational-1775947776135.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-6288e6adc2dfd5a5-jji8-observational-1775947776135.json) selected `observational` and grounded both sides (`2/4`), but it grounded history/debate fragments as support for `vaccines cause autism`; that is now tracked in `vas-swarm-jji.9`
+  - randomized-intervention trace [vaos-investigate-trace-5c090736ecfc44a0-jji8-randomized-intervention-1775947922324.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-5c090736ecfc44a0-jji8-randomized-intervention-1775947922324.json) selected `randomized_intervention` and completed with `direction=asymmetric_evidence_for`, `grounded_for_count=2`, and `grounded_against_count=0`
 - Harness audit (2026-04-11):
   - `mix test test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs test/tools/investigate_test.exs` -> `126 tests, 0 failures`
   - `ClaimFamily.normalize_topic/1` no longer appears on the production investigate path
   - `ClaimFamily.normalize_verification_claim/1` does not appear on the production investigate path
   - the `profile`-conditioned grounding branch has been removed from the live investigate path, leaving the Roberto content check as the next concern
 - Next Roberto step:
-  - `vas-swarm-jji.8`: audit representative empirical paths plus blocker-only evidence to determine whether any first-order integrity bug still remains
-- `vas-swarm-9m7` remains blocker evidence only:
-  - recurring earth-shape direct-evidence papers survive selection, but verification outcomes still flip between grounded and belief across reruns
+  - `vas-swarm-9m7`: trace why the fresh live measurement corpus still collapsed to belief-only despite correct `measurement` routing
+- `vas-swarm-9m7` is active again:
+  - recurring earth-shape direct-evidence papers survive selection, but verification outcomes still flip between grounded and belief across reruns and the fresh `jji8-measurement` trace ended `insufficient_evidence`
 - `vas-swarm-9m7` progress before the pause:
   - claim-family / verification-claim compaction was extended for the recurring earth-shape wrappers
   - `mix test test/intelligence/decision_ledger_test.exs test/intelligence/decision_journal_persistence_test.exs test/intelligence/runtime_ledger_isolation_test.exs test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs --seed 0` -> `160 tests, 0 failures`

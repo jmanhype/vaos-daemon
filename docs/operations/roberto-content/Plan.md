@@ -2,8 +2,8 @@
 
 **Created**: 2026-04-10
 **Epic**: `vas-swarm-jji`
-**Current Active Issue**: `vas-swarm-jji.8` (open)
-**Recorded blocker issue**: `vas-swarm-9m7` (blocked)
+**Current Active Issue**: `vas-swarm-9m7` (open)
+**Recently completed audit issue**: `vas-swarm-jji.8` (closed)
 
 ## Overview
 
@@ -57,8 +57,8 @@ Strategic correction:
 - Probe-paper carryover now lands in the merged retrieval set and the live rerun no longer ends `belief_consensus_for`.
 - `vas-swarm-942` is complete and closed.
 - `vas-swarm-tgf` is complete: repeated traced runs no longer timeout in `:investigate_ledger`.
-- `vas-swarm-9m7` is paused after three live attempts failed to prove a stable recurring grounded core.
-- The next investigate bottleneck is live verifier determinism on the recurring earth-shape evidence core.
+- `vas-swarm-9m7` is active again after the `vas-swarm-jji.8` content check reran the measurement lane and still ended with a belief-only opposing corpus.
+- The next investigate bottleneck is live verifier determinism / cited-claim grounding on the recurring earth-shape evidence core.
 - `vas-swarm-jji.1` is complete: planner mode selection no longer depends on `ClaimFamily`.
 - `vas-swarm-jji.2` is complete: retrieval no longer depends on family-shaped evidence profiles or query templates in the investigate core.
 - `vas-swarm-jji.3` is complete: the live `profile`-conditioned grounding branch is gone and cited-claim extraction is now generic on the production investigate path.
@@ -66,7 +66,7 @@ Strategic correction:
 - `vas-swarm-jji.5` is complete: production investigate no longer depends on `ClaimFamily.normalize_topic/1`.
 - `vas-swarm-jji.6` is complete: retrieval-ops-only `artifact_reference` runs stay local by suppressing external paper-search bleed exposed by the wrapped docs/code trace.
 - `vas-swarm-jji.7` is complete: retrieval-ops-only local artifact preparations no longer trigger alphaXiv auth/startup noise during preflight.
-- `vas-swarm-jji.8` is active: audit whether any first-order integrity bug still remains now that the source-isolation chain is closed.
+- `vas-swarm-jji.8` is complete: the content check reran the representative empirical lanes and proved the remaining work is still first-order.
 - Repo-history audit shows the remaining full-suite failures live in pre-takeover Roberto/PAMF2-era surfaces outside the `investigate` tool path.
 - Those inherited repo-wide failures are tracked as background debt in `vas-swarm-dy1` and are non-blocking unless they intersect `investigate`, `evidence_planner`, or directly coupled verification/retrieval code touched by this milestone.
 
@@ -144,7 +144,7 @@ Strategic correction:
 1. `vas-swarm-jji.4` — completed: add a generic non-paper artifact/reference evidence operation to the planner
 2. `vas-swarm-jji.6` — completed: keep retrieval-ops-only `artifact_reference` investigations local unless mixed-source retrieval is explicit
 3. `vas-swarm-jji.7` — completed: skip alphaXiv auth/startup preflight for retrieval-ops-only local artifact preparations
-4. `vas-swarm-jji.8` — active: run the Roberto content check after source-isolation closure
+4. `vas-swarm-jji.8` — completed: run the Roberto content check after source-isolation closure
 5. Define evidence operations beyond papers
    - docs/specs
    - code/repos
@@ -163,6 +163,10 @@ Strategic correction:
 ## Milestone 5: Roberto Content Check
 
 **Goal**: Decide whether the remaining work is second-order.
+
+**Status note**
+- `vas-swarm-jji.8` completed the content check, but the fresh measurement trace [vaos-investigate-trace-9cee767146dfb20d-jji8-measurement-1775947626820.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-9cee767146dfb20d-jji8-measurement-1775947626820.json) reactivated `vas-swarm-9m7`, so Milestone 5 is not accepted yet.
+- The same audit artifact [vaos-jji8-content-check-1775947922.json](/tmp/vaos-jji8-content-check-1775947922.json) also produced `vas-swarm-jji.9` for the observational claim-alignment follow-up.
 
 ### Acceptance Criteria
 
