@@ -2,9 +2,9 @@
 
 **Canonical status**: [docs/operations/roberto-content/Documentation.md](docs/operations/roberto-content/Documentation.md)
 **Epic**: `vas-swarm-jji`
-**Current active issue**: `vas-swarm-jji.2`
-**Latest trace**: [vaos-investigate-trace-783ba4fc4a18e58d-vas-swarm-jji-1-live-measurement-1775880477523.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-783ba4fc4a18e58d-vas-swarm-jji-1-live-measurement-1775880477523.json)
-**Next Roberto step**: Remove `ClaimFamily` from the retrieval core. Keep `vas-swarm-9m7` only as blocker evidence; do not add more family-specific salvage while `vas-swarm-jji.2` is active.
+**Current active issue**: `vas-swarm-jji.3`
+**Latest trace**: [vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-jji-2-live-curvature-1775881600133.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-jji-2-live-curvature-1775881600133.json)
+**Next Roberto step**: Remove `ClaimFamily` from verification normalization. Keep `vas-swarm-9m7` only as blocker evidence; do not add more family-specific salvage while `vas-swarm-jji.3` is active.
 
 ## Verification Status
 
@@ -40,6 +40,16 @@
     - trace [vaos-investigate-trace-783ba4fc4a18e58d-vas-swarm-jji-1-live-measurement-1775880477523.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-783ba4fc4a18e58d-vas-swarm-jji-1-live-measurement-1775880477523.json) selected `measurement`
     - the planning block contains generic `signatures`
     - the planning block no longer exposes family-conditioned metadata keys
+- `vas-swarm-jji.2` closed:
+  - retrieval no longer depends on `ClaimFamily.evidence_profile/3` in the investigate core
+  - `EvidencePlanner` now builds generic operation-shaped `evidence_profile` maps for query generation, rerank/directness scoring, and relevant-paper filtering
+  - `planetary_shape` retrieval hints are no longer used by the core measurement path
+  - targeted investigate-path verification passed:
+    - `mix test test/investigation/evidence_planner_test.exs test/tools/investigate_test.exs` -> `114 tests, 0 failures`
+  - live validation completed:
+    - trace [vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-jji-2-live-curvature-1775881600133.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-jji-2-live-curvature-1775881600133.json) selected `measurement`
+    - the planning block again exposed generic `signatures`
+    - the run completed through retrieval and both LLM passes, then degraded during citation verification under provider timeout / HTTP 429 noise
 - Recorded blocker context:
   - `vas-swarm-9m7` remains blocked after three live validation attempts
   - its role is now evidentiary, not active implementation scope
@@ -67,8 +77,8 @@
 ## Long-Horizon Queue
 
 - `vas-swarm-jji.1` — completed: remove `ClaimFamily` from planner selection path
-- `vas-swarm-jji.2` — active: replace family-shaped retrieval hints with generic evidence signatures
-- `vas-swarm-jji.3` — replace family-specific verifier salvage with generic cited-claim extraction
+- `vas-swarm-jji.2` — completed: replace family-shaped retrieval hints with generic evidence signatures
+- `vas-swarm-jji.3` — active: replace family-specific verifier salvage with generic cited-claim extraction
 - `vas-swarm-jji.4` — add non-paper evidence operations to the durable epistemic engine
 
 The queue order is intentional:
@@ -81,7 +91,7 @@ The queue order is intentional:
 1. Read `STATUS.md`.
 2. Run `mix osa.roberto.resume`.
 3. Open `vas-swarm-9m7` for blocker context only.
-4. Resume implementation from `vas-swarm-jji.2`.
-5. Use the `vas-swarm-jji.1` trace plus the `vas-swarm-9m7` traces as evidence for why retrieval/family drift needs correction.
+4. Resume implementation from `vas-swarm-jji.3`.
+5. Use the `vas-swarm-jji.2` trace plus the `vas-swarm-9m7` traces as evidence for why verifier/family drift needs correction.
 6. Record any unrelated inherited suite failures under `vas-swarm-dy1` without blocking `investigate` work.
 7. Update status docs, Beads, commit, and push.

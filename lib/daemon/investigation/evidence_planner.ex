@@ -58,24 +58,41 @@ defmodule Daemon.Investigation.EvidencePlanner do
     power output)
   @health_effect_terms ~w(cause causes caused causing risk risks associated association linked links smoking smoker smokers vaccine vaccines autism cancer disease diseases mortality incidence prevalence outcome outcomes)
   @causal_terms ~w(cause causes caused causing risk risks associated association linked links mortality incidence prevalence)
+  @measurement_required_terms ~w(measurement measurements observe observed observation observations physical empirical experiment experimental data dataset)
+  @measurement_stable_terms ~w(measurement measurements observe observed observation observations physical empirical experiment experimental data dataset direct instrument instruments quantitative)
+  @physical_measurement_required_terms ~w(curvature geodesy geodetic satellite orbital orbit gravity circumnavigation horizon navigation surveying ellipsoid spheroid spherical reference frame terrestrial)
+  @physical_measurement_stable_terms ~w(geodesy geodetic gravity geoid ellipsoid spheroid spherical curvature reference frame terrestrial gps gnss satellite orbital orbit vlbi slr doris gravimetry surveying navigation)
+  @physical_measurement_query_templates [
+    {:curvature, "{subject} curvature measurement", []},
+    {:geodesy, "{subject} geodesy", []},
+    {:satellite, "{subject} satellite observation", []},
+    {:gravity, "{subject} gravity measurement", []},
+    {:navigation, "{subject} navigation measurement", []},
+    {:surveying, "{subject} geodetic surveying", []}
+  ]
+  @trial_required_terms ~w(randomized randomised placebo trial trials crossover blinded blind double-blind controlled intervention supplementation administration ingestion intake)
+  @trial_stable_terms ~w(randomized randomised placebo trial trials crossover blind blinded double-blind controlled parallel participants intervention supplementation administration ingestion intake)
+  @observational_required_terms ~w(cohort observational case-control epidemiology epidemiologic association associated risk risks incidence prevalence hazard ratio odds ratio relative risk registry longitudinal)
+  @observational_stable_terms ~w(cohort observational case-control epidemiology epidemiologic association associated risk risks incidence prevalence hazard ratio odds ratio relative risk registry longitudinal population)
+  @review_required_terms ~w(review reviews systematic meta-analysis meta analysis umbrella synthesis)
+  @review_stable_terms ~w(review reviews systematic meta-analysis meta analysis umbrella synthesis pooled literature)
+  @consensus_required_terms ~w(consensus guideline guidelines position statement recommendation recommendations statement statements authoritative)
+  @anchor_stop_terms Enum.uniq(
+                       @guideline_terms ++
+                         @measurement_terms ++
+                         @causal_terms ++
+                         ~w(claim claims whether if determine examines examine assessed assess evaluate evaluated investigating investigate review reviewed test tested check checked probe probed verify verified map evidence on for improve improves improved improving prevent prevents prevented preventing help helps helped helping enhance enhances enhanced enhancing outcome outcomes result results analysis analyses study studies comparison comparisons acute chronic trained healthy adult adults patient patients participant participants male female men women)
+                     )
 
   @doc false
   def plan(topic, keywords, terms)
-      when is_binary(topic) and is_list(keywords) and is_list(terms) do
-    plan(topic, keywords, terms, nil)
-  end
-
-  @doc false
-  def plan(topic, keywords, terms, evidence_profile)
       when is_binary(topic) and is_list(keywords) and is_list(terms) do
     keyword_topic = keyword_query_topic(topic, keywords)
     evidence_signatures = infer_evidence_signatures(topic, terms)
 
     candidates =
       candidate_modes()
-      |> Enum.map(
-        &build_candidate(&1, topic, keyword_topic, evidence_profile, evidence_signatures)
-      )
+      |> Enum.map(&build_candidate(&1, topic, keyword_topic, terms, evidence_signatures))
       |> Enum.map(&score_candidate(&1, topic, terms, evidence_signatures))
       |> Enum.sort_by(fn candidate ->
         {-candidate.selection_score, Map.fetch!(@candidate_order, candidate.mode)}
@@ -88,13 +105,7 @@ defmodule Daemon.Investigation.EvidencePlanner do
       |> case do
         nil ->
           score_candidate(
-            build_candidate(
-              :general_empirical,
-              topic,
-              keyword_topic,
-              evidence_profile,
-              evidence_signatures
-            ),
+            build_candidate(:general_empirical, topic, keyword_topic, terms, evidence_signatures),
             topic,
             terms,
             evidence_signatures
@@ -111,18 +122,17 @@ defmodule Daemon.Investigation.EvidencePlanner do
     }
   end
 
-  def plan(topic, keywords, _terms, evidence_profile) do
+  @doc false
+  def plan(topic, keywords, terms, _evidence_profile)
+      when is_binary(topic) and is_list(keywords) and is_list(terms) do
+    plan(topic, keywords, terms)
+  end
+
+  def plan(topic, keywords, _terms, _evidence_profile) do
     keyword_topic = keyword_query_topic(topic, keywords)
     evidence_signatures = infer_evidence_signatures(topic, [])
 
-    selected =
-      build_candidate(
-        :general_empirical,
-        topic,
-        keyword_topic,
-        evidence_profile,
-        evidence_signatures
-      )
+    selected = build_candidate(:general_empirical, topic, keyword_topic, [], evidence_signatures)
 
     %{selected: selected, candidates: [selected], evidence_signatures: evidence_signatures}
   end
@@ -185,7 +195,10 @@ defmodule Daemon.Investigation.EvidencePlanner do
     ]
   end
 
-  defp build_candidate(:measurement, topic, keyword_topic, evidence_profile, _evidence_signatures) do
+  defp build_candidate(:measurement, topic, keyword_topic, terms, evidence_signatures) do
+    evidence_profile =
+      build_evidence_profile(:measurement, topic, keyword_topic, terms, evidence_signatures)
+
     {ss_queries, oa_queries, semantic_seed} =
       case evidence_profile do
         %{direct_queries: direct_queries, semantic_seed: seed}
@@ -197,6 +210,23 @@ defmodule Daemon.Investigation.EvidencePlanner do
                 {:keywords, keyword_topic, []},
                 {:evidence, "#{keyword_topic} empirical evidence", []}
               ],
+            seed
+          }
+
+        %{semantic_seed: seed} when is_binary(seed) ->
+          {
+            [
+              {:topic, topic, []},
+              {:measurement, "#{keyword_topic} measurement data", []},
+              {:observation, "#{keyword_topic} direct observation", []}
+            ],
+            [
+              {:topic, topic, []},
+              {:measurement, "#{keyword_topic} measurement data", []},
+              {:observation, "#{keyword_topic} direct observation", []},
+              {:evaluation, "#{keyword_topic} physical evidence", []},
+              {:analysis, "#{keyword_topic} empirical test", []}
+            ],
             seed
           }
 
@@ -237,9 +267,18 @@ defmodule Daemon.Investigation.EvidencePlanner do
          :randomized_intervention,
          topic,
          keyword_topic,
-         evidence_profile,
-         _evidence_signatures
+         terms,
+         evidence_signatures
        ) do
+    evidence_profile =
+      build_evidence_profile(
+        :randomized_intervention,
+        topic,
+        keyword_topic,
+        terms,
+        evidence_signatures
+      )
+
     performance_keyword_topic = performance_query_topic(topic, keyword_topic)
 
     performance_queries =
@@ -294,9 +333,12 @@ defmodule Daemon.Investigation.EvidencePlanner do
          :observational,
          topic,
          keyword_topic,
-         evidence_profile,
-         _evidence_signatures
+         terms,
+         evidence_signatures
        ) do
+    evidence_profile =
+      build_evidence_profile(:observational, topic, keyword_topic, terms, evidence_signatures)
+
     %{
       mode: :observational,
       profile: :health_claim,
@@ -326,9 +368,18 @@ defmodule Daemon.Investigation.EvidencePlanner do
          :systematic_review,
          topic,
          keyword_topic,
-         evidence_profile,
+         terms,
          evidence_signatures
        ) do
+    evidence_profile =
+      build_evidence_profile(
+        :systematic_review,
+        topic,
+        keyword_topic,
+        terms,
+        evidence_signatures
+      )
+
     %{
       mode: :systematic_review,
       profile: review_profile(evidence_signatures),
@@ -354,7 +405,10 @@ defmodule Daemon.Investigation.EvidencePlanner do
     }
   end
 
-  defp build_candidate(:consensus, topic, keyword_topic, evidence_profile, _evidence_signatures) do
+  defp build_candidate(:consensus, topic, keyword_topic, terms, evidence_signatures) do
+    evidence_profile =
+      build_evidence_profile(:consensus, topic, keyword_topic, terms, evidence_signatures)
+
     %{
       mode: :consensus,
       profile: :general,
@@ -384,9 +438,18 @@ defmodule Daemon.Investigation.EvidencePlanner do
          :general_empirical,
          topic,
          keyword_topic,
-         evidence_profile,
-         _evidence_signatures
+         terms,
+         evidence_signatures
        ) do
+    evidence_profile =
+      build_evidence_profile(
+        :general_empirical,
+        topic,
+        keyword_topic,
+        terms,
+        evidence_signatures
+      )
+
     %{
       mode: :general_empirical,
       profile: :general,
@@ -416,6 +479,153 @@ defmodule Daemon.Investigation.EvidencePlanner do
   defp review_profile(%{health_effect_signature: true}), do: :health_claim
 
   defp review_profile(_evidence_signatures), do: :general
+
+  defp build_evidence_profile(
+         :measurement,
+         _topic,
+         keyword_topic,
+         terms,
+         evidence_signatures
+       ) do
+    cond do
+      Map.get(evidence_signatures, :physical_geometry_signature, false) ->
+        subject_terms = physical_measurement_subject_terms(terms, keyword_topic)
+        subject_query = measurement_subject_query(subject_terms, keyword_topic)
+
+        %{
+          kind: :physical_measurement,
+          subject_terms: subject_terms,
+          semantic_seed: "#{subject_query} curvature measurement",
+          required_terms: @physical_measurement_required_terms,
+          stable_terms: @physical_measurement_stable_terms,
+          direct_queries:
+            render_direct_queries(@physical_measurement_query_templates, subject_query)
+        }
+
+      Map.get(evidence_signatures, :measurement_signature, false) ->
+        %{
+          kind: :measurement,
+          subject_terms: specific_anchor_terms(keyword_topic),
+          semantic_seed: "#{keyword_topic} measurement data",
+          required_terms: @measurement_required_terms,
+          stable_terms: @measurement_stable_terms
+        }
+
+      true ->
+        nil
+    end
+  end
+
+  defp build_evidence_profile(
+         :randomized_intervention,
+         _topic,
+         keyword_topic,
+         _terms,
+         _evidence_signatures
+       ) do
+    %{
+      kind: :randomized_intervention,
+      subject_terms: specific_anchor_terms(keyword_topic),
+      semantic_seed: keyword_topic,
+      required_terms: @trial_required_terms,
+      stable_terms: @trial_stable_terms
+    }
+  end
+
+  defp build_evidence_profile(:observational, _topic, keyword_topic, _terms, _evidence_signatures) do
+    %{
+      kind: :observational,
+      subject_terms: specific_anchor_terms(keyword_topic),
+      semantic_seed: keyword_topic,
+      required_terms: @observational_required_terms,
+      stable_terms: @observational_stable_terms
+    }
+  end
+
+  defp build_evidence_profile(
+         :systematic_review,
+         _topic,
+         keyword_topic,
+         _terms,
+         _evidence_signatures
+       ) do
+    %{
+      kind: :systematic_review,
+      subject_terms: specific_anchor_terms(keyword_topic),
+      semantic_seed: keyword_topic,
+      required_terms: @review_required_terms,
+      stable_terms: @review_stable_terms
+    }
+  end
+
+  defp build_evidence_profile(:consensus, _topic, keyword_topic, _terms, _evidence_signatures) do
+    %{
+      kind: :consensus,
+      subject_terms: specific_anchor_terms(keyword_topic),
+      semantic_seed: keyword_topic,
+      required_terms: @consensus_required_terms,
+      stable_terms: @consensus_required_terms
+    }
+  end
+
+  defp build_evidence_profile(
+         :general_empirical,
+         topic,
+         keyword_topic,
+         _terms,
+         _evidence_signatures
+       ) do
+    %{
+      kind: :general_empirical,
+      subject_terms: specific_anchor_terms(keyword_topic),
+      semantic_seed: topic,
+      required_terms: [],
+      stable_terms: []
+    }
+  end
+
+  defp physical_measurement_subject_terms(terms, keyword_topic) do
+    subject_terms =
+      terms
+      |> Enum.filter(&(&1 in @physical_subject_terms))
+      |> Enum.uniq()
+
+    case subject_terms do
+      [] -> specific_anchor_terms(keyword_topic)
+      _ -> subject_terms
+    end
+  end
+
+  defp measurement_subject_query(subject_terms, keyword_topic) do
+    case subject_terms do
+      [] ->
+        keyword_topic
+
+      _ ->
+        subject_terms
+        |> Enum.take(2)
+        |> Enum.join(" ")
+    end
+  end
+
+  defp render_direct_queries(templates, subject_query) when is_list(templates) do
+    Enum.map(templates, fn {label, query_template, opts} ->
+      {label, String.replace(query_template, "{subject}", subject_query), opts}
+    end)
+  end
+
+  defp specific_anchor_terms(text) when is_binary(text) do
+    text
+    |> String.downcase()
+    |> String.replace(~r/[^a-z0-9\s\-]/, " ")
+    |> String.split(~r/\s+/, trim: true)
+    |> Enum.reject(&(&1 in @anchor_stop_terms))
+    |> Enum.reject(&(String.length(&1) < 4))
+    |> Enum.uniq()
+    |> Enum.take(6)
+  end
+
+  defp specific_anchor_terms(_text), do: []
 
   defp score_candidate(candidate, topic, terms, evidence_signatures) do
     intervention_signature = Map.get(evidence_signatures, :intervention_signature, false)

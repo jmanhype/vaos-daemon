@@ -4,26 +4,26 @@
 
 ## Current Milestone
 
-Remove family-conditioned routing from the `investigate` core path while keeping `vas-swarm-9m7` recorded as blocker evidence only.
+Remove family-conditioned routing from the `investigate` core path, then remove family-conditioned verifier salvage while keeping `vas-swarm-9m7` recorded as blocker evidence only.
 
 ## Active Issue
 
-`vas-swarm-jji.2` — Replace family-shaped retrieval hints with generic evidence signatures.
+`vas-swarm-jji.3` — Replace family-specific verifier salvage with generic cited-claim extraction.
 `vas-swarm-dy1` remains open as inherited repo debt. For this Roberto program, it is non-blocking unless a failing test touches `investigate` or its directly coupled planning/verification path.
-Current state: `vas-swarm-jji.1` is complete and closed; `vas-swarm-jji.2` is now active. `vas-swarm-9m7` stays paused as blocker evidence after three live validation attempts failed to produce a stable recurring grounded core.
+Current state: `vas-swarm-jji.1` and `vas-swarm-jji.2` are complete and closed; `vas-swarm-jji.3` is now active. `vas-swarm-9m7` stays paused as blocker evidence after three live validation attempts failed to produce a stable recurring grounded core.
 
 ## Strategic Queue
 
 The next long-horizon tasks for the durable epistemic engine are:
 - `vas-swarm-jji.1` — completed: remove `ClaimFamily` from planner selection path
-- `vas-swarm-jji.2` — active: replace family-shaped retrieval hints with generic evidence signatures
-- `vas-swarm-jji.3` — replace family-specific verifier salvage with generic cited-claim extraction
+- `vas-swarm-jji.2` — completed: replace family-shaped retrieval hints with generic evidence signatures
+- `vas-swarm-jji.3` — active: replace family-specific verifier salvage with generic cited-claim extraction
 - `vas-swarm-jji.4` — add non-paper evidence operations to the planner
 
 Sequence:
 - preserve `vas-swarm-9m7` as the blocker trace that exposed the drift
 - do not add more family-specific `planetary_shape` salvage unless it is temporary debt
-- continue the corrective path from `vas-swarm-jji.2`
+- continue the corrective path from `vas-swarm-jji.3`
 
 ## Verification Status
 
@@ -40,6 +40,11 @@ Sequence:
   - `EvidencePlanner` now derives generic evidence signatures from the claim text itself
   - `mix test test/investigation/evidence_planner_test.exs test/tools/investigate_test.exs` -> `114 tests, 0 failures`
   - live validation trace [vaos-investigate-trace-783ba4fc4a18e58d-vas-swarm-jji-1-live-measurement-1775880477523.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-783ba4fc4a18e58d-vas-swarm-jji-1-live-measurement-1775880477523.json) selected `measurement` with generic `planning.signatures` and no family-conditioned planning metadata
+- `vas-swarm-jji.2` is complete:
+  - retrieval no longer uses `ClaimFamily.evidence_profile/3` in the investigate core
+  - `EvidencePlanner` now builds generic retrieval profiles from operation signatures for query generation, rerank/directness scoring, and relevant-paper filtering
+  - `mix test test/investigation/evidence_planner_test.exs test/tools/investigate_test.exs` -> `114 tests, 0 failures`
+  - live validation trace [vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-jji-2-live-curvature-1775881600133.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-jji-2-live-curvature-1775881600133.json) selected `measurement` with generic `planning.signatures`; later citation verification degraded under provider timeout / HTTP 429 noise
 - Next investigate bottleneck is `vas-swarm-9m7`: recurring earth-shape direct-evidence papers survive selection, but verification outcomes still flip between grounded and belief across reruns
 - `vas-swarm-9m7` progress before the pause:
   - claim-family / verification-claim compaction was extended for the recurring earth-shape wrappers

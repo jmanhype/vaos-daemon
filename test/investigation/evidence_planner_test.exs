@@ -12,6 +12,7 @@ defmodule Daemon.Investigation.EvidencePlannerTest do
 
     assert planner.selected.mode == :measurement
     assert planner.selected.profile == :general
+    assert planner.selected.evidence_profile.kind == :physical_measurement
     assert planner.evidence_signatures.measurement_signature
     assert planner.evidence_signatures.physical_geometry_signature
     assert Enum.any?(planner.candidates, &(&1.mode == :measurement))
@@ -26,6 +27,7 @@ defmodule Daemon.Investigation.EvidencePlannerTest do
 
     assert planner.selected.mode == :observational
     assert planner.selected.profile == :health_claim
+    assert planner.selected.evidence_profile.kind == :observational
     assert planner.evidence_signatures.health_effect_signature
   end
 
@@ -38,6 +40,7 @@ defmodule Daemon.Investigation.EvidencePlannerTest do
 
     assert planner.selected.mode == :randomized_intervention
     assert planner.selected.profile == :clinical_intervention
+    assert planner.selected.evidence_profile.kind == :randomized_intervention
     assert planner.evidence_signatures.intervention_signature
   end
 

@@ -3552,9 +3552,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
     normalized_topic = normalized_search_topic(topic)
     normalized_keywords = search_keywords(normalized_topic, keywords)
     terms = topic_terms(normalized_topic)
-    evidence_profile = ClaimFamily.evidence_profile(normalized_topic, normalized_keywords, terms)
-
-    planner = EvidencePlanner.plan(normalized_topic, normalized_keywords, terms, evidence_profile)
+    planner = EvidencePlanner.plan(normalized_topic, normalized_keywords, terms)
 
     selected_plan = planner.selected
 
@@ -3565,7 +3563,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
       family_profile: nil,
       profile: selected_plan.profile,
       evidence_signatures: Map.get(planner, :evidence_signatures, %{}),
-      evidence_profile: selected_plan.evidence_profile || evidence_profile,
+      evidence_profile: selected_plan.evidence_profile,
       evidence_plan: selected_plan,
       evidence_plan_candidate_plans: planner.candidates,
       evidence_plan_candidates: EvidencePlanner.candidate_summaries(planner.candidates),
@@ -3912,32 +3910,15 @@ defmodule Daemon.Tools.Builtins.Investigate do
   end
 
   @doc false
-  def rerank_retrieval_candidates(
-        papers,
-        %{profile: profile, normalized_topic: topic, evidence_profile: evidence_profile}
-      )
-      when profile in [:general, :clinical_intervention] and is_list(papers) do
+  def rerank_retrieval_candidates(papers, %{normalized_topic: topic} = plan)
+      when is_binary(topic) and is_list(papers) do
+    evidence_profile = Map.get(plan, :evidence_profile)
     topic_terms = distinctive_topic_terms(topic)
 
     papers
     |> Enum.with_index()
     |> Enum.sort_by(fn {paper, index} ->
       {-retrieval_directness_score(paper, topic_terms, evidence_profile), index}
-    end)
-    |> Enum.map(&elem(&1, 0))
-  end
-
-  def rerank_retrieval_candidates(
-        papers,
-        %{profile: :general, normalized_topic: topic}
-      )
-      when is_list(papers) do
-    topic_terms = distinctive_topic_terms(topic)
-
-    papers
-    |> Enum.with_index()
-    |> Enum.sort_by(fn {paper, index} ->
-      {-retrieval_directness_score(paper, topic_terms, nil), index}
     end)
     |> Enum.map(&elem(&1, 0))
   end
@@ -4012,30 +3993,30 @@ defmodule Daemon.Tools.Builtins.Investigate do
   # Requires the MOST SPECIFIC term (longest word) to appear in title or abstract.
   # This prevents generic words like "effectiveness" from matching unrelated papers
   # (e.g. "Effectiveness of treatments for firework fears in dogs").
-  defp filter_relevant(papers, %{
-         profile: :general,
-         normalized_topic: topic,
-         evidence_profile: evidence_profile
-       })
+  defp filter_relevant(papers, %{normalized_topic: topic, evidence_profile: evidence_profile})
        when is_map(evidence_profile) do
     specific_terms = Map.get(evidence_profile, :required_terms, [])
     subject_terms = Map.get(evidence_profile, :subject_terms, [])
 
-    {relevant, dropped} =
-      Enum.split_with(papers, fn paper ->
-        paper_text = paper_search_text(paper)
-
-        subject_hit =
-          subject_terms == [] or Enum.any?(subject_terms, &String.contains?(paper_text, &1))
-
-        evidence_hit = Enum.any?(specific_terms, &String.contains?(paper_text, &1))
-        subject_hit and evidence_hit
-      end)
-
-    if relevant == [] do
+    if specific_terms == [] do
       filter_relevant(papers, %{normalized_topic: topic})
     else
-      {relevant, length(dropped)}
+      {relevant, dropped} =
+        Enum.split_with(papers, fn paper ->
+          paper_text = paper_search_text(paper)
+
+          subject_hit =
+            subject_terms == [] or Enum.any?(subject_terms, &String.contains?(paper_text, &1))
+
+          evidence_hit = Enum.any?(specific_terms, &String.contains?(paper_text, &1))
+          subject_hit and evidence_hit
+        end)
+
+      if relevant == [] do
+        filter_relevant(papers, %{normalized_topic: topic})
+      else
+        {relevant, length(dropped)}
+      end
     end
   end
 

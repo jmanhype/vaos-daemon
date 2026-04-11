@@ -2,7 +2,7 @@
 
 **Last updated**: 2026-04-10
 **Epic**: `vas-swarm-jji`
-**Current active issue**: `vas-swarm-jji.2`
+**Current active issue**: `vas-swarm-jji.3`
 **Latest functional checkpoint before this doc stack**: `b75a63f`
 
 ## Objective
@@ -14,6 +14,7 @@ Make `investigate` trustworthy and generic enough that Roberto's next objection 
 The program is back on the right route:
 - evidence planning is more generic than it was during the topic-family drift
 - planner mode choice no longer depends on `ClaimFamily`
+- retrieval no longer depends on `ClaimFamily.evidence_profile/3` in the investigate core
 - administration-style intervention phrasing now routes into `randomized_intervention`
 - live traces fail more honestly than before
 - the durable epistemic engine route is now explicit in Beads as `vas-swarm-jji.1` through `vas-swarm-jji.4`
@@ -29,40 +30,40 @@ Repo-wide full-suite debt is no longer the gating concern for this program when 
 ## Current Slice In Progress
 
 ### Active issue
-- `vas-swarm-jji.2`
+- `vas-swarm-jji.3`
 
 ### Why this is active
-- `vas-swarm-jji.1` removed `ClaimFamily` from planner selection, but retrieval still calls into family-shaped evidence profiles
-- `ClaimFamily.evidence_profile/3` is now the main compatibility shim left in the core path
-- the next slice is to replace family-shaped retrieval hints with generic evidence signatures without regressing representative empirical claims
+- planner and retrieval-family coupling are now removed from the investigate core
+- the remaining family-conditioned path is `ClaimFamily.normalize_verification_claim/1` and the verifier salvage it enables
+- the next slice is to replace that family-conditioned verifier shaping with generic cited-claim extraction without regressing recurring wrapper cases
 
 ### Validation
 - Tests:
-  - `vas-swarm-jji.2` has not landed yet
-  - the active gate remains targeted `investigate`-path tests plus one live trace after the retrieval refactor
+  - `vas-swarm-jji.3` has not landed yet
+  - the active gate remains targeted `investigate`-path tests plus one live trace after the verifier refactor
 
 ## Latest Completed Slice
 
 ### Closed issue
-- `vas-swarm-jji.1`
+- `vas-swarm-jji.2`
 
 ### What landed
-- planner selection no longer uses `ClaimFamily`
-- `EvidencePlanner` now infers generic evidence signatures from topic terms and supporting keywords
-- planner scoring no longer applies `family_bias`
-- `search_query_plan/2` no longer emits planner `claim_family` or `family_profile`
-- planning traces now expose generic `signatures`
+- retrieval no longer uses `ClaimFamily.evidence_profile/3` in the investigate core
+- `EvidencePlanner` now builds generic operation-shaped `evidence_profile` maps for query generation, rerank/directness scoring, and relevant-paper filtering
+- the old `planetary_shape` retrieval hints are no longer used by the core measurement path
+- representative intervention and observational claims still route through the generic planner/retrieval path
 
 ### Validation
 - Tests:
   - `mix test test/investigation/evidence_planner_test.exs test/tools/investigate_test.exs` -> `114 tests, 0 failures`
 - Live trace:
-  - [vaos-investigate-trace-783ba4fc4a18e58d-vas-swarm-jji-1-live-measurement-1775880477523.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-783ba4fc4a18e58d-vas-swarm-jji-1-live-measurement-1775880477523.json)
+  - [vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-jji-2-live-curvature-1775881600133.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-jji-2-live-curvature-1775881600133.json)
 
 ### What the trace proved
 - the selected evidence mode was `measurement`
 - the planning block exposed generic `signatures`
-- the planning block no longer contained family-conditioned metadata keys
+- the run completed through retrieval and both LLM passes on the new generic retrieval path
+- citation verification later degraded under provider timeout / HTTP 429 noise, but that degradation is downstream of the retrieval-family removal
 
 ## Recorded Blocker Context
 
@@ -83,8 +84,8 @@ Earth-shape direct-evidence selection is now stable enough that the remaining in
 ## Long-Horizon Queue
 
 - `vas-swarm-jji.1` — completed: remove `ClaimFamily` from planner selection path
-- `vas-swarm-jji.2` — active: replace family-shaped retrieval hints with generic evidence signatures
-- `vas-swarm-jji.3` — replace family-specific verifier salvage with generic cited-claim extraction
+- `vas-swarm-jji.2` — completed: replace family-shaped retrieval hints with generic evidence signatures
+- `vas-swarm-jji.3` — active: replace family-specific verifier salvage with generic cited-claim extraction
 - `vas-swarm-jji.4` — add non-paper evidence operations to the durable epistemic engine
 
 Why this order:
@@ -99,11 +100,11 @@ Continue from the next empirical bottleneck, not the inherited full-suite debt:
 - keep `vas-swarm-dy1` open only as background suite debt
 - only let repo-wide failures block advancement when they intersect `investigate` or its directly coupled planning/verification path
 - when three live attempts fail to prove the same milestone because of provider instability or wrapper drift, write down the blocker and pause instead of advancing
-- do not add more family-specific `planetary_shape` salvage as forward architecture; use `vas-swarm-9m7` as the blocker record and continue from `vas-swarm-jji.2`
+- do not add more family-specific `planetary_shape` salvage as forward architecture; use `vas-swarm-9m7` as the blocker record and continue from `vas-swarm-jji.3`
 
 Shortest version:
 
-`Planner-family decoupling is complete. The active architectural work is retrieval-family decoupling, while the recorded empirical blocker remains live verifier determinism on the recurring earth-shape evidence core.`
+`Planner-family and retrieval-family decoupling are complete. The active architectural work is verifier-family decoupling, while the recorded empirical blocker remains live verifier determinism on the recurring earth-shape evidence core.`
 
 ## Known Stable Wins
 
@@ -119,7 +120,7 @@ On the next session:
 1. Read this file.
 2. Run `mix osa.roberto.resume`.
 3. Open `vas-swarm-9m7` for blocker context.
-4. Resume from `vas-swarm-jji.2`.
-5. Use the `vas-swarm-jji.1` trace plus the three blocker traces above as evidence for why the retrieval-family path needs to be removed.
+4. Resume from `vas-swarm-jji.3`.
+5. Use the `vas-swarm-jji.2` trace plus the three blocker traces above as evidence for why the verifier-family path needs to be removed.
 6. Record unrelated suite failures under `vas-swarm-dy1` without blocking `investigate` milestone advancement.
 7. Update this file, close/open issues, and push.

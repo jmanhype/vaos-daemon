@@ -1925,7 +1925,7 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert plan.evidence_plan.mode == :measurement
     assert plan.evidence_signatures.measurement_signature
     assert plan.evidence_signatures.physical_geometry_signature
-    assert plan.evidence_profile.kind == :planetary_shape
+    assert plan.evidence_profile.kind == :physical_measurement
     assert Enum.any?(plan.evidence_plan_candidates, &(&1.mode == :measurement))
 
     ss_queries = Enum.map(plan.ss_queries, fn {_label, query, _opts} -> query end)
@@ -1958,6 +1958,7 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert plan.claim_family == nil
     assert plan.evidence_plan.mode == :randomized_intervention
     assert plan.evidence_signatures.intervention_signature
+    assert plan.evidence_profile.kind == :randomized_intervention
 
     queries =
       Enum.map(plan.ss_queries ++ plan.oa_queries, fn {_label, query, _opts} -> query end)
@@ -1979,6 +1980,7 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert plan.claim_family == nil
     assert plan.evidence_plan.mode == :observational
     assert plan.evidence_signatures.health_effect_signature
+    assert plan.evidence_profile.kind == :observational
 
     queries =
       Enum.map(plan.ss_queries ++ plan.oa_queries, fn {_label, query, _opts} -> query end)
