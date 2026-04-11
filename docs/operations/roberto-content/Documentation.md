@@ -2,7 +2,7 @@
 
 **Last updated**: 2026-04-11
 **Epic**: `vas-swarm-jji`
-**Current active issue**: `none` (`vas-swarm-jji.6` closed)
+**Current active issue**: `vas-swarm-jji.7`
 **Latest functional checkpoint before this doc stack**: `9e16bad`
 
 ## Objective
@@ -19,15 +19,15 @@ The program is back on the right route:
 - runtime traces now preserve explicit non-paper provenance for local artifact evidence
 - administration-style intervention phrasing now routes into `randomized_intervention`
 - live traces fail more honestly than before
-- the durable epistemic engine route is now explicit in Beads as `vas-swarm-jji.1` through `vas-swarm-jji.6`
+- the durable epistemic engine route is now explicit in Beads as `vas-swarm-jji.1` through `vas-swarm-jji.7`
 - the `profile`-conditioned grounding branch has been removed from the live investigate path
 - production investigate no longer depends on `ClaimFamily.normalize_topic/1`
 - `ClaimFamily.normalize_verification_claim/1` appears to be superseded in the production investigate path by generic `verification_claim_text/1`
 - wrapped docs/code claims now normalize onto the generic `artifact_reference` path without a `ClaimFamily` seam
 - retrieval-ops-only `artifact_reference` plans now stay local unless mixed-source retrieval is explicit
-- no new post-`vas-swarm-jji.6` first-order issue is activated yet; `vas-swarm-9m7` remains blocker evidence only
+- the representative local-only runtime artifact stayed `local_repo`-only but still logged alphaXiv auth noise during preflight, which is now the next active bottleneck
 
-But Roberto is not content yet because the next first-order bottleneck still needs to be re-evaluated after the `vas-swarm-jji.6` closure, not because the old external-search bleed remains.
+But Roberto is not content yet because the next first-order bottleneck is now preflight-locality on retrieval-ops-only local artifact runs, not because the old external-search bleed remains.
 
 Strategic correction:
 - `ClaimFamily` is no longer treated as the intended architecture
@@ -49,15 +49,15 @@ Repo-wide full-suite debt is no longer the gating concern for this program when 
 
 ### Validation
 - Tests:
-  - `mix test test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs` -> `131 tests, 0 failures`
-  - `mix test test/tools/investigate_test.exs:2147` -> representative docs/code `prepare_advocate_bakeoff/1` runtime validation passed
+  - `mix test test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs` -> `132 tests, 0 failures`
   - inherited repo-wide warnings and unrelated suite failures remain background debt unless they intersect `investigate`, `evidence_planner`, or the new non-paper path
 ### What the slice proved
 - the same wrapped docs/code claim that triggered `vas-swarm-jji.6` now stays on `artifact_reference`
 - `prepare_advocate_bakeoff/1` records `evidence_plan_probe_selection.reason == "retrieval_ops_only"` for that claim
 - the consulted source set stays `local_repo`-only with explicit `local_artifact_search` provenance; no HuggingFace / Semantic Scholar / OpenAlex / alphaXiv papers appear in `all_papers`
 - the earlier trigger trace [vaos-investigate-trace-aec23c8ca5850790-vas-swarm-jji-5-docs-wrapper-1775943904289.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-aec23c8ca5850790-vas-swarm-jji-5-docs-wrapper-1775943904289.json) remains the evidence for why this slice existed
-- standalone `mix run` trace capture was not reliable in this sandbox because Mix.PubSub hit `:eperm`; the advocate-preparation path above is the recorded equivalent runtime artifact for this slice
+- the runtime artifact [vaos-jji6-local-artifact-validation-XXXX.txt](/tmp/vaos-jji6-local-artifact-validation-XXXX.txt) confirms `source_counts = %{local_repo: 5}` and `unique_sources = ["local_repo"]`
+- the next bottleneck is one layer earlier than retrieval dispatch: the same runtime artifact still logged alphaXiv token-refresh noise during preflight, which is now tracked as `vas-swarm-jji.7`
 
 ## Recorded Blocker Context
 
@@ -83,6 +83,7 @@ Earth-shape direct-evidence selection is now stable enough that the remaining in
 - `vas-swarm-jji.4` — completed: add a generic non-paper artifact/reference evidence operation with explicit provenance
 - `vas-swarm-jji.5` — completed: retire the surviving `ClaimFamily.normalize_topic/1` wrapper-normalization seam from the production investigate path
 - `vas-swarm-jji.6` — completed: keep retrieval-ops-only `artifact_reference` investigate runs local by suppressing external paper search bleed
+- `vas-swarm-jji.7` — active: skip alphaXiv auth/startup preflight for retrieval-ops-only local artifact preparations
 
 Why this order:
 - planner agnosticism first, so mode choice is no longer boxed by hidden topic priors
@@ -98,11 +99,11 @@ Continue from the next empirical bottleneck, not the inherited full-suite debt:
 - only let repo-wide failures block advancement when they intersect `investigate` or its directly coupled planning/verification path
 - when three live attempts fail to prove the same milestone because of provider instability or wrapper drift, write down the blocker and pause instead of advancing
 - do not add more family-specific `planetary_shape` salvage as forward architecture; use `vas-swarm-9m7` as the blocker record unless fresh evidence makes it active again
-- spend the next slice on the next verified first-order bottleneck rather than reopening closed source-isolation work or adding new source-family salvage
+- spend the next slice on containing alphaXiv auth/startup preflight for retrieval-ops-only artifact preparations rather than reopening closed source-isolation work or adding new source-family salvage
 
 Shortest version:
 
-`Planner-family, retrieval-family, profile-conditioned grounding, wrapper-normalization, and retrieval-ops-only external-search bleed are no longer the core bottlenecks. The next architectural work must come from a fresh first-order review while the recorded empirical blocker remains live verifier determinism on the recurring earth-shape evidence core.`
+`Planner-family, retrieval-family, profile-conditioned grounding, wrapper-normalization, and retrieval-ops-only external-search bleed are no longer the core bottlenecks. The next architectural work is keeping retrieval-ops-only artifact preparations fully local at preflight while the recorded empirical blocker remains live verifier determinism on the recurring earth-shape evidence core.`
 
 ## Known Stable Wins
 
@@ -118,8 +119,8 @@ On the next session:
 1. Read this file.
 2. Run `scripts/roberto-loop`.
 3. Open `vas-swarm-9m7` for blocker context.
-4. Re-evaluate the next first-order bottleneck now that `vas-swarm-jji.6` is closed.
-5. Keep `vas-swarm-9m7` as blocker evidence only unless fresh traces justify reactivation.
+4. Resume from `vas-swarm-jji.7`.
+5. Use the `vas-swarm-jji.6` runtime artifact plus the `vas-swarm-jji.5` wrapped docs/code trace as evidence that retrieval dispatch is contained and the next cut is preflight-locality.
 6. Record unrelated suite failures under `vas-swarm-dy1` without blocking `investigate` milestone advancement.
 7. Update this file, close/open issues, and push.
 

@@ -2,7 +2,7 @@
 
 **Created**: 2026-04-10
 **Epic**: `vas-swarm-jji`
-**Current Active Issue**: `none` (`vas-swarm-jji.6` closed)
+**Current Active Issue**: `vas-swarm-jji.7` (in progress)
 **Recorded blocker issue**: `vas-swarm-9m7` (blocked)
 
 ## Overview
@@ -65,6 +65,7 @@ Strategic correction:
 - `vas-swarm-jji.4` is complete: the planner can now select a generic non-paper `artifact_reference` path with explicit trace provenance.
 - `vas-swarm-jji.5` is complete: production investigate no longer depends on `ClaimFamily.normalize_topic/1`.
 - `vas-swarm-jji.6` is complete: retrieval-ops-only `artifact_reference` runs stay local by suppressing external paper-search bleed exposed by the wrapped docs/code trace.
+- `vas-swarm-jji.7` is active: retrieval-ops-only local artifact preparations still trigger alphaXiv auth/startup noise during preflight.
 - Repo-history audit shows the remaining full-suite failures live in pre-takeover Roberto/PAMF2-era surfaces outside the `investigate` tool path.
 - Those inherited repo-wide failures are tracked as background debt in `vas-swarm-dy1` and are non-blocking unless they intersect `investigate`, `evidence_planner`, or directly coupled verification/retrieval code touched by this milestone.
 
@@ -88,8 +89,9 @@ Strategic correction:
    - trace capture on partial or failed runs
 
 5. Non-paper source isolation
-   - keep retrieval-ops-only local artifact plans from automatically launching external paper search
-   - preserve explicit provenance for local docs/code evidence without mixed-source contamination
+  - keep retrieval-ops-only local artifact plans from automatically launching external paper search
+  - keep retrieval-ops-only local artifact plans from triggering alphaXiv auth/startup during preflight
+  - preserve explicit provenance for local docs/code evidence without mixed-source contamination
 
 **Validation**
 - Focused tests for the changed layer
@@ -140,19 +142,21 @@ Strategic correction:
 
 1. `vas-swarm-jji.4` — completed: add a generic non-paper artifact/reference evidence operation to the planner
 2. `vas-swarm-jji.6` — completed: keep retrieval-ops-only `artifact_reference` investigations local unless mixed-source retrieval is explicit
-3. Define evidence operations beyond papers
+3. `vas-swarm-jji.7` — active: skip alphaXiv auth/startup preflight for retrieval-ops-only local artifact preparations
+4. Define evidence operations beyond papers
    - docs/specs
    - code/repos
    - benchmarks
    - standards
 
-4. Add at least one non-paper adapter path to the planner
-5. Validate on one empirical claim and one docs/code question
+5. Add at least one non-paper adapter path to the planner
+6. Validate on one empirical claim and one docs/code question
 
 **Validation**
 - one mixed-source live investigation path exists
 - provenance remains explicit
 - retrieval-ops-only docs/code validations do not consult external paper sources unless requested
+- retrieval-ops-only docs/code preparations do not trigger alphaXiv auth/startup unless mixed-source retrieval is requested
 
 ## Milestone 5: Roberto Content Check
 

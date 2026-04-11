@@ -4,13 +4,13 @@
 
 ## Current Milestone
 
-Re-evaluate the next first-order bottleneck now that `retrieval_ops`-only `artifact_reference` investigate runs stay local and `vas-swarm-9m7` remains blocker evidence only.
+Keep retrieval-ops-only local artifact preparations fully local now that `retrieval_ops`-only `artifact_reference` investigate runs stay local and `vas-swarm-9m7` remains blocker evidence only.
 
 ## Active Issue
 
-No new post-`vas-swarm-jji.6` issue is active yet.
+`vas-swarm-jji.7` — Skip alphaXiv preflight for retrieval-ops-only investigate runs.
 `vas-swarm-dy1` remains open as inherited repo debt. For this Roberto program, it is non-blocking unless a failing test touches `investigate` or its directly coupled planning/verification path.
-Current state: `vas-swarm-jji.1` through `vas-swarm-jji.6` are complete and closed. The live investigate core no longer switches on family/profile-conditioned planner, retrieval, grounding, or wrapper normalization behavior, and retrieval-ops-only local artifact plans no longer bleed into external paper search. `vas-swarm-9m7` stays paused as blocker evidence after three live validation attempts failed to produce a stable recurring grounded core, but it is no longer the active implementation surface.
+Current state: `vas-swarm-jji.1` through `vas-swarm-jji.6` are complete and closed. The live investigate core no longer switches on family/profile-conditioned planner, retrieval, grounding, or wrapper normalization behavior, and retrieval-ops-only local artifact plans no longer bleed into external paper search. The remaining local-only leakage is alphaXiv auth/startup preflight noise. `vas-swarm-9m7` stays paused as blocker evidence after three live validation attempts failed to produce a stable recurring grounded core, but it is no longer the active implementation surface.
 
 ## Strategic Queue
 
@@ -21,11 +21,12 @@ The next long-horizon tasks for the durable epistemic engine are:
 - `vas-swarm-jji.4` — completed: add non-paper evidence operations to the planner
 - `vas-swarm-jji.5` — completed: retire the surviving `ClaimFamily.normalize_topic/1` wrapper-normalization seam from the production investigate path
 - `vas-swarm-jji.6` — completed: prevent retrieval-ops-only `artifact_reference` plans from launching external paper search
+- `vas-swarm-jji.7` — active: prevent retrieval-ops-only local artifact preparations from triggering alphaXiv auth/startup during preflight
 
 Sequence:
 - preserve `vas-swarm-9m7` as the blocker trace that exposed the drift
 - do not add more family-specific `planetary_shape` salvage unless it is temporary debt
-- continue the durable-epistemic-engine path from the next first-order bottleneck after `vas-swarm-jji.6`
+- continue the durable-epistemic-engine path through `vas-swarm-jji.7`
 
 ## Verification Status
 
@@ -59,15 +60,17 @@ Sequence:
   - live validation trace [vaos-investigate-trace-aec23c8ca5850790-vas-swarm-jji-5-docs-wrapper-1775943904289.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-aec23c8ca5850790-vas-swarm-jji-5-docs-wrapper-1775943904289.json) selected `artifact_reference` from a wrapped docs/code claim and normalized its `local_artifact_search` query to `the repository documentation says Documentation.md is the canonical Roberto status file`
 - `vas-swarm-jji.6` is complete:
   - `search_all_papers/4` now exits through a local-only retrieval path before external paper fanout when the selected plan is retrieval-ops-only
-  - `mix test test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs` -> `131 tests, 0 failures`
-  - equivalent runtime validation: `mix test test/tools/investigate_test.exs:2147` confirms the representative docs/code claim stays on `artifact_reference`, records `evidence_plan_probe_selection.reason == "retrieval_ops_only"`, and returns `source_counts == %{local_repo: 5}` with only `local_repo` consulted sources
+  - `finalize_search_results/3` now keeps local-only and mixed-source retrieval finalization on the same executor seam
+  - `Investigate.external_paper_search_enabled?/1` exposes the retrieval gate for deterministic coverage
+  - `mix test test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs` -> `132 tests, 0 failures`
+  - runtime artifact [vaos-jji6-local-artifact-validation-XXXX.txt](/tmp/vaos-jji6-local-artifact-validation-XXXX.txt) confirms the representative docs/code claim stays on `artifact_reference`, records `probe_reason = "retrieval_ops_only"`, and returns `source_counts = %{local_repo: 5}` with only `local_repo` consulted sources
 - Harness audit (2026-04-11):
   - `mix test test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs test/tools/investigate_test.exs` -> `126 tests, 0 failures`
   - `ClaimFamily.normalize_topic/1` no longer appears on the production investigate path
   - `ClaimFamily.normalize_verification_claim/1` does not appear on the production investigate path
   - the `profile`-conditioned grounding branch has been removed from the live investigate path, leaving source-isolation as the next concern
 - Next investigate bottleneck:
-  - pending re-evaluation after the `vas-swarm-jji.6` closure; no new first-order issue is activated yet
+  - `vas-swarm-jji.7`: retrieval-ops-only local artifact preparations still trigger alphaXiv auth/startup noise during preflight even though retrieval dispatch now stays local
 - `vas-swarm-9m7` remains blocker evidence only:
   - recurring earth-shape direct-evidence papers survive selection, but verification outcomes still flip between grounded and belief across reruns
 - `vas-swarm-9m7` progress before the pause:

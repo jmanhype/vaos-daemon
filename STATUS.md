@@ -2,9 +2,9 @@
 
 **Canonical status**: [docs/operations/roberto-content/Documentation.md](docs/operations/roberto-content/Documentation.md)
 **Epic**: `vas-swarm-jji`
-**Current active issue**: `none` (`vas-swarm-jji.6` closed)
-**Latest trace**: [vaos-investigate-trace-aec23c8ca5850790-vas-swarm-jji-5-docs-wrapper-1775943904289.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-aec23c8ca5850790-vas-swarm-jji-5-docs-wrapper-1775943904289.json)
-**Next Roberto step**: Re-evaluate the next first-order bottleneck now that `retrieval_ops`-only `artifact_reference` runs stay local; keep `vas-swarm-9m7` recorded only as blocker evidence unless fresh traces justify reactivation.
+**Current active issue**: `vas-swarm-jji.7`
+**Latest trace / runtime artifact**: [vaos-jji6-local-artifact-validation-XXXX.txt](/tmp/vaos-jji6-local-artifact-validation-XXXX.txt)
+**Next Roberto step**: Skip alphaXiv auth/startup preflight for `retrieval_ops`-only local artifact preparations while keeping `vas-swarm-9m7` recorded only as blocker evidence.
 
 ## Verification Status
 
@@ -91,12 +91,12 @@
     - `Investigate.external_paper_search_enabled?/1` disables external paper search for `artifact_reference` plans while remaining enabled for empirical plans
     - `prepare_advocate_bakeoff/1` now asserts `evidence_plan_probe_selection.reason == "retrieval_ops_only"` and `source_counts == %{local_repo: 5}` for the representative docs/code claim
   - targeted investigate-path verification passed:
-    - `mix test test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs` -> `131 tests, 0 failures`
+    - `mix test test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs` -> `132 tests, 0 failures`
   - runtime-equivalent validation passed:
-    - `mix test test/tools/investigate_test.exs:2147` exercised the live `prepare_advocate_bakeoff/1` retrieval path for the representative docs/code claim
+    - artifact [vaos-jji6-local-artifact-validation-XXXX.txt](/tmp/vaos-jji6-local-artifact-validation-XXXX.txt) exercised the live `prepare_advocate_bakeoff/1` retrieval path for the representative docs/code claim
     - the selected plan stayed on `artifact_reference`
     - the consulted source set stayed `local_repo`-only with explicit `local_artifact_search` provenance and no HuggingFace / Semantic Scholar / OpenAlex / alphaXiv papers in `all_papers`
-    - standalone `mix run` trace capture was not reliable in this sandbox because Mix.PubSub hit `:eperm`; the advocate-preparation path above is the recorded equivalent runtime artifact for this slice
+    - alphaXiv token-refresh noise still appeared during preflight, which is now tracked as `vas-swarm-jji.7`
 - Harness audit (2026-04-11):
   - targeted audit verification passed:
     - `mix test test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs test/tools/investigate_test.exs` -> `126 tests, 0 failures`
@@ -139,6 +139,7 @@
 - `vas-swarm-jji.4` — completed: add a generic non-paper artifact/reference evidence operation with explicit provenance
 - `vas-swarm-jji.5` — completed: retire the surviving `ClaimFamily.normalize_topic/1` wrapper-normalization seam from the production investigate path
 - `vas-swarm-jji.6` — completed: keep `retrieval_ops`-only `artifact_reference` investigate runs local by suppressing external paper search bleed
+- `vas-swarm-jji.7` — active: skip alphaXiv auth/startup preflight for retrieval-ops-only local artifact preparations
 
 The queue order is intentional:
 - planner agnosticism first
@@ -150,8 +151,8 @@ The queue order is intentional:
 1. Read `STATUS.md`.
 2. Run `scripts/roberto-loop`.
 3. Open `vas-swarm-9m7` for blocker context only.
-4. Re-evaluate the next first-order bottleneck now that `vas-swarm-jji.6` is closed.
-5. Keep `vas-swarm-9m7` as blocker evidence only unless fresh traces show it should be reactivated.
+4. Resume implementation from `vas-swarm-jji.7`.
+5. Use the `vas-swarm-jji.6` runtime artifact plus the `vas-swarm-jji.5` wrapped docs/code trace as evidence that retrieval dispatch is contained and the next cut is preflight-locality.
 6. Record any unrelated inherited suite failures under `vas-swarm-dy1` without blocking `investigate` work.
 7. Update status docs, Beads, commit, and push.
 
