@@ -107,6 +107,15 @@ defmodule Daemon.Operations.RobertoLoopTest do
     assert prompt =~ "Next Roberto step: Replace the profile contract."
     assert prompt =~ Path.join(base, "STATUS.md")
     assert prompt =~ Path.join(base, "docs/operations/roberto-content/Documentation.md")
+    assert prompt =~ "Start code tracing here before any broad search:"
+    assert prompt =~ Path.join(base, "lib/daemon/tools/builtins/investigate.ex")
+    assert prompt =~ "do not begin with repo-wide `rg` on broad terms"
+    assert prompt =~ "Repo standards note:"
+
+    assert prompt =~
+             "Use `AGENTS.md` plus the Roberto control files above as the repo standards source."
+
+    assert prompt =~ "This repo does not maintain `.specify/memory/constitution.md`"
     assert prompt =~ "Current Beads issue:"
     assert prompt =~ "vas-swarm-jji.3: Replace family-specific verifier salvage"
   end
