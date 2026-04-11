@@ -6,7 +6,15 @@ cd "$(dirname "$0")/.."
 cmd="${1:-run}"
 
 case "$cmd" in
+  auto|autonomous|continuous)
+    shift || true
+    exec mix osa.roberto.codex --continuous "$@"
+    ;;
   run|codex)
+    shift || true
+    exec mix osa.roberto.codex "$@"
+    ;;
+  once)
     shift || true
     exec mix osa.roberto.codex "$@"
     ;;
@@ -21,7 +29,9 @@ case "$cmd" in
   help|-h|--help)
     cat <<'EOF'
 Usage:
-  scripts/roberto-loop            # launch a Codex Roberto slice
+  scripts/roberto-loop auto       # keep launching Roberto Codex slices until blocked
+  scripts/roberto-loop            # launch one Roberto Codex slice
+  scripts/roberto-loop once       # explicit one-slice alias
   scripts/roberto-loop resume     # print the current Roberto resume summary
   scripts/roberto-loop prompt     # print the generated Codex prompt
 
