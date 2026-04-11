@@ -2,7 +2,7 @@
 
 **Created**: 2026-04-10
 **Epic**: `vas-swarm-jji`
-**Current Active Issue**: `vas-swarm-jji.3` (in progress)
+**Current Active Issue**: `vas-swarm-jji.4` (in progress)
 **Recorded blocker issue**: `vas-swarm-9m7` (blocked)
 
 ## Overview
@@ -61,8 +61,9 @@ Strategic correction:
 - The next investigate bottleneck is live verifier determinism on the recurring earth-shape evidence core.
 - `vas-swarm-jji.1` is complete: planner mode selection no longer depends on `ClaimFamily`.
 - `vas-swarm-jji.2` is complete: retrieval no longer depends on family-shaped evidence profiles or query templates in the investigate core.
-- `vas-swarm-jji.3` is active: repo audit shows the remaining live drift is profile-conditioned grounding / verification behavior plus wrapper-normalization debt.
-- Current issue wording lags the call graph slightly: `ClaimFamily.normalize_verification_claim/1` no longer appears to be the production investigate boundary; the concrete next cut is the `profile` contract.
+- `vas-swarm-jji.3` is complete: the live `profile`-conditioned grounding branch is gone and cited-claim extraction is now generic on the production investigate path.
+- `ClaimFamily.normalize_topic/1` remains wrapper-normalization debt, but it is no longer the first-order bottleneck.
+- `vas-swarm-jji.4` is active: the next cut is to add non-paper evidence operations without reintroducing topic-family routing.
 - Repo-history audit shows the remaining full-suite failures live in pre-takeover Roberto/PAMF2-era surfaces outside the `investigate` tool path.
 - Those inherited repo-wide failures are tracked as background debt in `vas-swarm-dy1` and are non-blocking unless they intersect `investigate`, `evidence_planner`, or directly coupled verification/retrieval code touched by this milestone.
 
@@ -100,7 +101,7 @@ Strategic correction:
 
 1. `vas-swarm-jji.1` — completed: remove `ClaimFamily` from planner selection path
 2. `vas-swarm-jji.2` — completed: replace family-shaped retrieval hints with generic evidence signatures
-3. `vas-swarm-jji.3` — active: replace profile-conditioned verifier / grounding behavior with generic capability-driven cited-claim extraction
+3. `vas-swarm-jji.3` — completed: replace profile-conditioned verifier / grounding behavior with generic capability-driven cited-claim extraction
 4. Track any surviving family logic as temporary debt with a deletion path
 
 **Validation**

@@ -2,9 +2,9 @@
 
 **Canonical status**: [docs/operations/roberto-content/Documentation.md](docs/operations/roberto-content/Documentation.md)
 **Epic**: `vas-swarm-jji`
-**Current active issue**: `vas-swarm-jji.3`
-**Latest trace**: [vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-jji-2-live-curvature-1775881600133.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-jji-2-live-curvature-1775881600133.json)
-**Next Roberto step**: Replace the remaining `profile`-conditioned grounding / verification behavior with generic capability-driven cited-claim extraction. Keep `vas-swarm-9m7` only as blocker evidence; do not add more family-specific or profile-specific salvage while `vas-swarm-jji.3` is active.
+**Current active issue**: `vas-swarm-jji.4`
+**Latest trace**: [vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-jji-3-live-curvature-1-1775939217052.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-jji-3-live-curvature-1-1775939217052.json)
+**Next Roberto step**: Add at least one non-paper evidence operation to the durable epistemic engine while keeping provenance explicit and leaving `vas-swarm-9m7` recorded only as blocker evidence.
 
 ## Verification Status
 
@@ -50,15 +50,27 @@
     - trace [vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-jji-2-live-curvature-1775881600133.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-jji-2-live-curvature-1775881600133.json) selected `measurement`
     - the planning block again exposed generic `signatures`
     - the run completed through retrieval and both LLM passes, then degraded during citation verification under provider timeout / HTTP 429 noise
+- `vas-swarm-jji.3` closed:
+  - sourced evidence no longer switches on `profile` to decide grounding behavior inside `investigate`
+  - `grounding_role_for/3` now routes all sourced evidence through one generic cited-claim grounding path based on extracted claim text, evidence-profile anchors, and paper-context fallback
+  - generic `verification_claim_text/1` remains the single verifier-shaping layer; recurring earth-shape wrappers and a non-earth `subject as "quote"` case are covered without family-specific normalization
+  - targeted investigate-path verification passed:
+    - `mix test test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs` -> `127 tests, 0 failures`
+  - live validation completed:
+    - trace [vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-jji-3-live-curvature-1-1775939217052.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-jji-3-live-curvature-1-1775939217052.json) completed in `101699ms`
+    - `direction = asymmetric_evidence_for`
+    - `grounded_for_count = 3`
+    - recurring direct refs `paper_ref=14`, `paper_ref=3`, and `paper_ref=5` stayed grounded without family/profile salvage
+    - contextual sourced ref `paper_ref=6` was demoted to belief with `grounding_role=contextual`, showing the generic grounding path is separating contextual support from direct evidence
 - Harness audit (2026-04-11):
   - targeted audit verification passed:
     - `mix test test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs test/tools/investigate_test.exs` -> `126 tests, 0 failures`
   - current runtime picture:
     - `ClaimFamily.normalize_topic/1` remains live for wrapper cleanup
     - `ClaimFamily.normalize_verification_claim/1` does not appear on the production investigate path
-    - the remaining meaningful family-conditioned behavior is `profile`-based branching in `investigate` / `EvidencePlanner`
-  - implication for `vas-swarm-jji.3`:
-    - the issue wording is historically right about verifier-family drift, but the immediate cut is now the `profile` contract rather than a direct runtime call to `ClaimFamily.normalize_verification_claim/1`
+    - the `profile`-conditioned grounding branch in `investigate` has now been removed from the live path
+  - implication after `vas-swarm-jji.3`:
+    - wrapper cleanup in `ClaimFamily.normalize_topic/1` remains debt, but the next long-horizon step has shifted to non-paper evidence operations rather than more family/profile salvage
 - Recorded blocker context:
   - `vas-swarm-9m7` remains blocked after three live validation attempts
   - its role is now evidentiary, not active implementation scope
@@ -87,7 +99,7 @@
 
 - `vas-swarm-jji.1` — completed: remove `ClaimFamily` from planner selection path
 - `vas-swarm-jji.2` — completed: replace family-shaped retrieval hints with generic evidence signatures
-- `vas-swarm-jji.3` — active: replace profile-conditioned verifier / grounding behavior with generic capability-driven cited-claim extraction
+- `vas-swarm-jji.3` — completed: replace profile-conditioned verifier / grounding behavior with generic capability-driven cited-claim extraction
 - `vas-swarm-jji.4` — add non-paper evidence operations to the durable epistemic engine
 
 The queue order is intentional:
@@ -100,8 +112,8 @@ The queue order is intentional:
 1. Read `STATUS.md`.
 2. Run `scripts/roberto-loop`.
 3. Open `vas-swarm-9m7` for blocker context only.
-4. Resume implementation from `vas-swarm-jji.3`.
-5. Use the `vas-swarm-jji.2` trace plus the `vas-swarm-9m7` traces as evidence for why the remaining profile / verifier drift needs correction.
+4. Resume implementation from `vas-swarm-jji.4`.
+5. Use the `vas-swarm-jji.3` trace plus the `vas-swarm-9m7` traces as evidence for why the core path is ready for non-paper evidence broadening.
 6. Record any unrelated inherited suite failures under `vas-swarm-dy1` without blocking `investigate` work.
 7. Update status docs, Beads, commit, and push.
 

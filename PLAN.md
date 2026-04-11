@@ -4,26 +4,26 @@
 
 ## Current Milestone
 
-Remove the last family-conditioned behavior from the `investigate` core by replacing `profile`-driven grounding / verification logic with generic capability-driven cited-claim extraction, while keeping `vas-swarm-9m7` recorded as blocker evidence only.
+Broaden the durable epistemic engine beyond paper-only retrieval now that the family/profile-conditioned core path has been removed, while keeping `vas-swarm-9m7` recorded as blocker evidence only.
 
 ## Active Issue
 
-`vas-swarm-jji.3` — Replace family-specific verifier salvage with generic cited-claim extraction.
+`vas-swarm-jji.4` — Add non-paper evidence operations to the durable epistemic engine.
 `vas-swarm-dy1` remains open as inherited repo debt. For this Roberto program, it is non-blocking unless a failing test touches `investigate` or its directly coupled planning/verification path.
-Current state: `vas-swarm-jji.1` and `vas-swarm-jji.2` are complete and closed; `vas-swarm-jji.3` is now active. Repo audit shows the live boundary is `profile`-conditioned behavior, not planner/retrieval routing or a direct production call to `ClaimFamily.normalize_verification_claim/1`. `vas-swarm-9m7` stays paused as blocker evidence after three live validation attempts failed to produce a stable recurring grounded core.
+Current state: `vas-swarm-jji.1`, `vas-swarm-jji.2`, and `vas-swarm-jji.3` are complete and closed. The live investigate core no longer switches on family/profile-conditioned planner, retrieval, or grounding behavior. `vas-swarm-9m7` stays paused as blocker evidence after three live validation attempts failed to produce a stable recurring grounded core, but it is no longer the active implementation surface.
 
 ## Strategic Queue
 
 The next long-horizon tasks for the durable epistemic engine are:
 - `vas-swarm-jji.1` — completed: remove `ClaimFamily` from planner selection path
 - `vas-swarm-jji.2` — completed: replace family-shaped retrieval hints with generic evidence signatures
-- `vas-swarm-jji.3` — active: replace profile-conditioned verifier / grounding behavior with generic capability-driven cited-claim extraction
+- `vas-swarm-jji.3` — completed: replace profile-conditioned verifier / grounding behavior with generic capability-driven cited-claim extraction
 - `vas-swarm-jji.4` — add non-paper evidence operations to the planner
 
 Sequence:
 - preserve `vas-swarm-9m7` as the blocker trace that exposed the drift
 - do not add more family-specific `planetary_shape` salvage unless it is temporary debt
-- continue the corrective path from `vas-swarm-jji.3`
+- continue the durable-epistemic-engine path from `vas-swarm-jji.4`
 
 ## Verification Status
 
@@ -45,11 +45,16 @@ Sequence:
   - `EvidencePlanner` now builds generic retrieval profiles from operation signatures for query generation, rerank/directness scoring, and relevant-paper filtering
   - `mix test test/investigation/evidence_planner_test.exs test/tools/investigate_test.exs` -> `114 tests, 0 failures`
   - live validation trace [vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-jji-2-live-curvature-1775881600133.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-jji-2-live-curvature-1775881600133.json) selected `measurement` with generic `planning.signatures`; later citation verification degraded under provider timeout / HTTP 429 noise
+- `vas-swarm-jji.3` is complete:
+  - sourced-evidence grounding no longer branches on `profile` inside `investigate`
+  - `grounding_role_for/3` now derives direct/synthesis/contextual/indirect roles from extracted cited claims plus evidence-profile anchors and paper context
+  - `mix test test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs` -> `127 tests, 0 failures`
+  - live validation trace [vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-jji-3-live-curvature-1-1775939217052.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-jji-3-live-curvature-1-1775939217052.json) completed with `direction=asymmetric_evidence_for`, `grounded_for_count=3`, and recurring direct refs `14`, `3`, and `5` grounded without family/profile salvage
 - Harness audit (2026-04-11):
   - `mix test test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs test/tools/investigate_test.exs` -> `126 tests, 0 failures`
   - `ClaimFamily.normalize_topic/1` remains live for wrapper cleanup
   - `ClaimFamily.normalize_verification_claim/1` does not appear on the production investigate path
-  - the remaining meaningful family-conditioned behavior is `profile`-based branching in `investigate` / `EvidencePlanner`, which is the concrete next cut under `vas-swarm-jji.3`
+  - the `profile`-conditioned grounding branch has been removed from the live investigate path, leaving wrapper cleanup debt and source-broadening as the next concerns
 - Next investigate bottleneck remains the blocker recorded by `vas-swarm-9m7`: recurring earth-shape direct-evidence papers survive selection, but verification outcomes still flip between grounded and belief across reruns
 - `vas-swarm-9m7` progress before the pause:
   - claim-family / verification-claim compaction was extended for the recurring earth-shape wrappers

@@ -786,7 +786,14 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
         opposing,
         all_papers,
         Strategy.default(),
-        %{profile: :clinical_intervention}
+        %{
+          normalized_topic:
+            "acute caffeine supplementation improves cycling time trial performance in trained cyclists",
+          evidence_profile: %{
+            kind: :randomized_intervention,
+            subject_terms: ["caffeine", "cycling", "performance", "cyclists"]
+          }
+        }
       )
 
     assert [%{evidence_store: :grounded, grounding_role: :direct, verified: true}] =
@@ -857,7 +864,34 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert status == :multiple_refs
   end
 
-  test "grounding_role_for classifies direct clinical trial claims as direct" do
+  test "grounding_role_for classifies direct earth-shape evidence as direct without profile when paper context carries the subject" do
+    role =
+      Investigate.grounding_role_for(
+        %{
+          source_type: :sourced,
+          verification: "verified",
+          summary:
+            "Gravity measurements across Earth's surface confirm the predicted oblate spheroid shape through Clairaut's Theorem, which establishes the numerical relation \"between the ellipticity and the ratio between polar and equatorial gravity\" [Paper 8]."
+        },
+        %{
+          normalized_topic: "determine whether the earth has measurable curvature",
+          evidence_profile: %{
+            kind: :physical_measurement,
+            subject_terms: ["earth"]
+          }
+        },
+        %{
+          "title" => "On the Figure of the Earth under Universal Gravitation",
+          "abstract" =>
+            "The Earth's surface is shown to satisfy a numerical relation between ellipticity and the ratio between polar and equatorial gravity.",
+          "publicationTypes" => []
+        }
+      )
+
+    assert role == :direct
+  end
+
+  test "grounding_role_for classifies direct clinical trial claims as direct without profile" do
     role =
       Investigate.grounding_role_for(
         %{
@@ -867,7 +901,14 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
           summary:
             "Creatine supplementation significantly improved 1-RM strength compared with placebo [Paper 1]."
         },
-        %{profile: :clinical_intervention},
+        %{
+          normalized_topic:
+            "creatine supplementation improves maximal strength outcomes during resistance training",
+          evidence_profile: %{
+            kind: :randomized_intervention,
+            subject_terms: ["creatine", "strength", "resistance"]
+          }
+        },
         %{
           "title" => "Randomized placebo-controlled trial of creatine supplementation",
           "abstract" =>
@@ -879,7 +920,7 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert role == :direct
   end
 
-  test "evidence_store_for grounds systematic review synthesis in clinical mode" do
+  test "evidence_store_for grounds systematic review synthesis without profile" do
     store =
       Investigate.evidence_store_for(
         %{
@@ -891,7 +932,14 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
         },
         0.9,
         Strategy.default(),
-        %{profile: :clinical_intervention},
+        %{
+          normalized_topic:
+            "creatine supplementation improves maximal strength outcomes during resistance training",
+          evidence_profile: %{
+            kind: :randomized_intervention,
+            subject_terms: ["creatine", "strength", "resistance"]
+          }
+        },
         %{
           "title" => "Systematic review and meta-analysis of creatine supplementation",
           "abstract" =>
@@ -911,9 +959,12 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
                  "A systematic review and meta-analysis found creatine supplementation improves maximal strength outcomes [Paper 4]."
              },
              %{
-               profile: :clinical_intervention,
                normalized_topic:
-                 "creatine supplementation improves maximal strength outcomes during resistance training"
+                 "creatine supplementation improves maximal strength outcomes during resistance training",
+               evidence_profile: %{
+                 kind: :randomized_intervention,
+                 subject_terms: ["creatine", "strength", "resistance"]
+               }
              },
              %{
                "title" => "Systematic review and meta-analysis of creatine supplementation",
@@ -924,7 +975,7 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
            ) == :synthesis
   end
 
-  test "grounding_role_for demotes indirect clinical proxy claims without topic anchors" do
+  test "grounding_role_for demotes indirect clinical proxy claims without profile" do
     assert Investigate.grounding_role_for(
              %{
                source_type: :sourced,
@@ -936,9 +987,18 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
                  "Even at low doses caffeine has been shown to be ergogenic in exercise situations, with effects including improved vigilance, alertness, and cognitive processes during and after exercise [Paper 2]. These central nervous system-mediated cognitive benefits are particularly relevant to endurance time-trial performance in trained cyclists and triathletes."
              },
              %{
-               profile: :clinical_intervention,
                normalized_topic:
-                 "acute caffeine intake improves endurance time-trial performance in trained cyclists and triathletes"
+                 "acute caffeine intake improves endurance time-trial performance in trained cyclists and triathletes",
+               evidence_profile: %{
+                 kind: :randomized_intervention,
+                 subject_terms: [
+                   "caffeine",
+                   "endurance",
+                   "performance",
+                   "cyclists",
+                   "triathletes"
+                 ]
+               }
              },
              %{
                "title" => "Exercise and sport performance with low doses of caffeine",
@@ -975,7 +1035,7 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
            ) == :indirect
   end
 
-  test "evidence_store_for keeps contextual narrative reviews in belief for clinical mode" do
+  test "evidence_store_for keeps contextual narrative reviews in belief without profile" do
     store =
       Investigate.evidence_store_for(
         %{
@@ -987,7 +1047,14 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
         },
         0.9,
         Strategy.default(),
-        %{profile: :clinical_intervention},
+        %{
+          normalized_topic:
+            "creatine supplementation improves maximal strength outcomes during resistance training",
+          evidence_profile: %{
+            kind: :randomized_intervention,
+            subject_terms: ["creatine", "strength", "resistance"]
+          }
+        },
         %{
           "title" => "Narrative review of ergogenic aids for sport",
           "abstract" =>
@@ -1006,7 +1073,14 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
                summary:
                  "A narrative review describes creatine as one of the most effective ergogenic aids [Paper 4]."
              },
-             %{profile: :clinical_intervention},
+             %{
+               normalized_topic:
+                 "creatine supplementation improves maximal strength outcomes during resistance training",
+               evidence_profile: %{
+                 kind: :randomized_intervention,
+                 subject_terms: ["creatine", "strength", "resistance"]
+               }
+             },
              %{
                "title" => "Narrative review of ergogenic aids for sport",
                "abstract" =>
@@ -1702,6 +1776,16 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
 
     assert normalized == "the Earth is of the form of an oblate spheroid of small ellipticity"
     refute normalized =~ "operative word being"
+  end
+
+  test "verification_claim_text rewrites non-earth subject-as quotes into direct claims" do
+    summary =
+      "The sports nutrition literature treats creatine as a well-established ergogenic aid rather than a speculative supplement. [Paper 5] describes creatine as \"an ergogenic aid for repeated high-intensity exercise\" in trained athletes."
+
+    normalized = Investigate.verification_claim_text(summary)
+
+    assert normalized == "creatine is an ergogenic aid for repeated high-intensity exercise"
+    refute normalized =~ "describes creatine as"
   end
 
   test "verification_claim_text prefers traced shape quotes after connecting-it-to wrappers" do

@@ -2383,13 +2383,17 @@ defmodule Daemon.Tools.Builtins.Investigate do
       |> Map.get(:summary, "")
       |> to_string()
 
+    claim_text =
+      ev
+      |> Map.get(:verification_claim)
+      |> case do
+        value when is_binary(value) and value != "" -> value
+        _ -> verification_claim_text(summary)
+      end
+
     case Map.get(ev, :source_type) do
       type when type in [:sourced, "sourced"] ->
-        if clinical_intervention_context?(classification_context) do
-          clinical_grounding_role(ev, paper, summary, classification_context)
-        else
-          :direct
-        end
+        cited_claim_grounding_role(ev, paper, summary, claim_text, classification_context)
 
       _ ->
         :reasoning
@@ -2407,25 +2411,11 @@ defmodule Daemon.Tools.Builtins.Investigate do
 
   defp classification_context(_), do: %{}
 
-  defp clinical_intervention_context?(%{profile: profile})
-       when profile in [:clinical_intervention, "clinical_intervention"],
-       do: true
-
-  defp clinical_intervention_context?(_), do: false
-
-  defp clinical_grounding_role(ev, paper, summary, classification_context) do
-    claim_text =
-      ev
-      |> Map.get(:verification_claim)
-      |> case do
-        value when is_binary(value) and value != "" -> value
-        _ -> verification_claim_text(summary)
-      end
-
-    design = clinical_evidence_design(ev, paper, summary, claim_text)
+  defp cited_claim_grounding_role(ev, paper, summary, claim_text, classification_context) do
+    design = cited_claim_design(ev, paper, summary, claim_text)
 
     topic_direct? =
-      clinical_topic_direct_claim?(claim_text, Map.get(classification_context, :normalized_topic))
+      grounding_topic_direct_claim?(claim_text, paper, classification_context)
 
     cond do
       methodological_caveat_claim?(claim_text) -> :caveat
@@ -2438,21 +2428,21 @@ defmodule Daemon.Tools.Builtins.Investigate do
     end
   end
 
-  defp clinical_evidence_design(ev, paper, summary, claim_text) do
-    paper_text = clinical_paper_text(paper)
-    publication_types = clinical_publication_types(paper)
+  defp cited_claim_design(ev, paper, summary, claim_text) do
+    paper_text = grounding_paper_text(paper)
+    publication_types = grounding_publication_types(paper)
     title = paper_title(paper)
     paper_type = Map.get(ev, :paper_type)
     context_text = Enum.join([summary, claim_text], " ")
 
     cond do
-      clinical_contextual_source?(title, paper_text, publication_types, context_text) ->
+      contextual_source?(title, paper_text, publication_types, context_text) ->
         :contextual_review
 
-      clinical_synthesis_source?(title, paper_text, publication_types, context_text) ->
+      synthesis_source?(title, paper_text, publication_types, context_text) ->
         :synthesis
 
-      clinical_guidance_source?(title, paper_text, publication_types, context_text) ->
+      guidance_source?(title, paper_text, publication_types, context_text) ->
         :guidance
 
       paper_type == :review ->
@@ -2466,7 +2456,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
     end
   end
 
-  defp clinical_synthesis_source?(title, paper_text, publication_types, context_text) do
+  defp synthesis_source?(title, paper_text, publication_types, context_text) do
     Enum.any?(List.wrap(publication_types), fn publication_type ->
       publication_type
       |> to_string()
@@ -2487,7 +2477,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
       )
   end
 
-  defp clinical_guidance_source?(title, paper_text, publication_types, context_text) do
+  defp guidance_source?(title, paper_text, publication_types, context_text) do
     Enum.any?(List.wrap(publication_types), fn publication_type ->
       publication_type
       |> to_string()
@@ -2516,7 +2506,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
       )
   end
 
-  defp clinical_contextual_source?(title, paper_text, publication_types, context_text) do
+  defp contextual_source?(title, paper_text, publication_types, context_text) do
     Enum.any?(List.wrap(publication_types), fn publication_type ->
       publication_type
       |> to_string()
@@ -2555,9 +2545,9 @@ defmodule Daemon.Tools.Builtins.Investigate do
 
   defp methodological_caveat_claim?(_claim_text), do: false
 
-  defp clinical_topic_direct_claim?(claim_text, normalized_topic)
-       when is_binary(claim_text) and is_binary(normalized_topic) do
-    anchors = clinical_topic_anchor_terms(normalized_topic)
+  defp grounding_topic_direct_claim?(claim_text, paper, classification_context)
+       when is_binary(claim_text) and is_map(classification_context) do
+    anchors = grounding_topic_anchor_terms(classification_context)
 
     case anchors do
       [] ->
@@ -2566,19 +2556,40 @@ defmodule Daemon.Tools.Builtins.Investigate do
       terms ->
         claim_text_normalized = normalize_search_text(claim_text)
 
-        matched_count =
+        claim_match_count =
           terms
           |> Enum.uniq()
           |> Enum.count(&String.contains?(claim_text_normalized, &1))
 
+        paper_context_normalized =
+          paper
+          |> grounding_paper_text()
+          |> normalize_search_text()
+
+        paper_context_match_count =
+          terms
+          |> Enum.uniq()
+          |> Enum.count(&String.contains?(paper_context_normalized, &1))
+
         required_matches = if length(terms) >= 3, do: 2, else: 1
-        matched_count >= required_matches
+
+        claim_match_count >= required_matches or
+          (claim_match_count == 0 and paper_context_match_count >= required_matches)
     end
   end
 
-  defp clinical_topic_direct_claim?(_claim_text, _normalized_topic), do: true
+  defp grounding_topic_direct_claim?(_claim_text, _paper, _classification_context), do: true
 
-  defp clinical_topic_anchor_terms(normalized_topic) when is_binary(normalized_topic) do
+  defp grounding_topic_anchor_terms(%{evidence_profile: %{subject_terms: subject_terms}})
+       when is_list(subject_terms) do
+    case grounding_subject_terms(subject_terms) do
+      [] -> []
+      anchors -> anchors
+    end
+  end
+
+  defp grounding_topic_anchor_terms(%{normalized_topic: normalized_topic})
+       when is_binary(normalized_topic) do
     normalized_topic
     |> topic_terms()
     |> Enum.reject(&(&1 in @clinical_topic_anchor_stop_words))
@@ -2587,7 +2598,18 @@ defmodule Daemon.Tools.Builtins.Investigate do
     |> Enum.uniq()
   end
 
-  defp clinical_paper_text(paper) when is_map(paper) do
+  defp grounding_topic_anchor_terms(_), do: []
+
+  defp grounding_subject_terms(subject_terms) when is_list(subject_terms) do
+    subject_terms
+    |> Enum.map(&normalize_search_text/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.reject(&search_relation_variant?/1)
+    |> Enum.reject(&(String.length(&1) < 4))
+    |> Enum.uniq()
+  end
+
+  defp grounding_paper_text(paper) when is_map(paper) do
     [paper["title"], paper["abstract"]]
     |> Enum.reject(&is_nil/1)
     |> Enum.map(&to_string/1)
@@ -2595,15 +2617,15 @@ defmodule Daemon.Tools.Builtins.Investigate do
     |> String.downcase()
   end
 
-  defp clinical_paper_text(_paper), do: ""
+  defp grounding_paper_text(_paper), do: ""
 
-  defp clinical_publication_types(paper) when is_map(paper) do
+  defp grounding_publication_types(paper) when is_map(paper) do
     paper
     |> Map.get("publicationTypes", [])
     |> List.wrap()
   end
 
-  defp clinical_publication_types(_paper), do: []
+  defp grounding_publication_types(_paper), do: []
 
   defp paper_title(paper) when is_map(paper), do: to_string(Map.get(paper, "title", ""))
   defp paper_title(_paper), do: ""
@@ -4987,6 +5009,8 @@ defmodule Daemon.Tools.Builtins.Investigate do
       |> trim_after_contrastive_clause()
       |> prefer_quote_after_inline_paper_definition()
       |> prefer_quote_before_followup_reporting()
+      |> prefer_reported_predicate_quote()
+      |> trim_quoted_complement_shell()
       |> trim_after_last_quote()
       |> strip_verification_markup()
       |> prefer_contrastive_reported_result_clause()
@@ -4998,12 +5022,16 @@ defmodule Daemon.Tools.Builtins.Investigate do
       |> rewrite_reporting_fragments()
       |> trim_trailing_inference_clause()
       |> prefer_complete_quote_after_ellipsis()
+      |> prefer_substantive_quote_over_setup_quote()
       |> strip_drawback_wrapper_before_quote()
       |> prefer_reported_subclause()
+      |> prefer_reporting_object_with_article_quote()
       |> prefer_reporting_object_plus_quoted_fragment()
+      |> rewrite_subject_as_quoted_complement()
       |> prefer_definition_quote()
       |> prefer_subject_plus_quoted_predicate()
-      |> ClaimFamily.normalize_verification_claim()
+      |> prefer_split_quoted_complement()
+      |> prefer_linked_quoted_complement()
       |> String.trim()
 
     __MODULE__.trim_trailing_trial_stats_parenthetical(normalized)
@@ -5650,7 +5678,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
 
         if object_phrase != "" and
              not Regex.match?(~r/[,;:]/u, object_phrase) and
-             quoted_fragment_continues_object?(quoted) do
+             quoted_fragment_continues_object?(object_phrase, quoted) do
           "#{object_phrase} #{quoted}"
           |> normalize_verification_whitespace()
           |> String.trim_trailing(".")
@@ -5663,11 +5691,51 @@ defmodule Daemon.Tools.Builtins.Investigate do
     end
   end
 
-  defp quoted_fragment_continues_object?(quoted) when is_binary(quoted) do
+  defp prefer_reporting_object_with_article_quote(summary) when is_binary(summary) do
+    case Regex.run(
+           ~r/\b(?:#{reporting_verbs_pattern()})\s+([^"“”]{1,120}?\b(?:with\s+respect\s+to|as|between|of|for|from|under|within|across|through|using|via))\s+["“]([^"”]+)["”]/iu,
+           summary,
+           capture: :all_but_first
+         ) do
+      [object_phrase, quoted] ->
+        object_phrase =
+          object_phrase
+          |> normalize_verification_whitespace()
+          |> String.trim_trailing(",")
+
+        quoted = String.trim(quoted)
+
+        if object_phrase != "" and quoted != "" do
+          "#{object_phrase} #{quoted}"
+          |> normalize_verification_whitespace()
+        else
+          summary
+        end
+
+      _ ->
+        summary
+    end
+  end
+
+  defp prefer_reporting_object_with_article_quote(summary), do: summary
+
+  defp quoted_fragment_continues_object?(object_phrase, quoted)
+       when is_binary(object_phrase) and is_binary(quoted) do
+    trimmed_object = String.trim(object_phrase)
+    trimmed_quote = String.trim_leading(quoted)
+
     Regex.match?(
       ~r/^(?:with\s+respect\s+to|between|of|for|from|under|within|across|through|using|via|regarding|concerning|consistent\s+with|coincident\s+with)\b/iu,
-      String.trim_leading(quoted)
-    )
+      trimmed_quote
+    ) or
+      (Regex.match?(
+         ~r/\b(?:with\s+respect\s+to|as|of|for|from|under|within|across|through|using|via|regarding|concerning|between)\s*$/iu,
+         trimmed_object
+       ) and
+         Regex.match?(
+           ~r/^(?:the|a|an|this|that|these|those|mean|ratio|axis|center|geometry|origin)\b/iu,
+           trimmed_quote
+         ))
   end
 
   defp prefer_quote_before_followup_reporting(summary) when is_binary(summary) do
@@ -5714,6 +5782,134 @@ defmodule Daemon.Tools.Builtins.Investigate do
     end
   end
 
+  defp rewrite_subject_as_quoted_complement(summary) when is_binary(summary) do
+    case Regex.run(
+           ~r/^\s*([^"“”]{1,120}?)\s+as\s+["“]([^"”]+)["”](?:\s*[—-].*)?$/iu,
+           summary,
+           capture: :all_but_first
+         ) do
+      [subject, quoted] ->
+        subject =
+          subject
+          |> normalize_verification_whitespace()
+          |> String.trim_trailing(",")
+
+        quoted = String.trim(quoted)
+
+        if subject != "" and quoted_complement?(quoted) do
+          "#{subject} is #{quoted}"
+          |> normalize_verification_whitespace()
+          |> String.trim_trailing(".")
+        else
+          summary
+        end
+
+      _ ->
+        summary
+    end
+  end
+
+  defp rewrite_subject_as_quoted_complement(summary), do: summary
+
+  defp prefer_split_quoted_complement(summary) when is_binary(summary) do
+    case Regex.run(
+           ~r/\b((?:the\s+)?(?:form|shape|kind|type|relation|relationship)\s+of)\s+["“]([^"”]+)["”]\s+with\s+(?:its\s+)?["“]([^"”]+)["”]/iu,
+           summary,
+           capture: :all_but_first
+         ) do
+      [lead, first, second] ->
+        ~s("#{String.trim(lead)} #{String.trim(first)} with its #{String.trim(second)}")
+
+      _ ->
+        summary
+    end
+  end
+
+  defp prefer_split_quoted_complement(summary), do: summary
+
+  defp prefer_linked_quoted_complement(summary) when is_binary(summary) do
+    case Regex.run(
+           ~r/^\s*[^"“”]{0,220}?\b(?:connecting|connects?|connected|linking|links?|linked)\s+(?:it|this|that|them)\s+to\s+["“]([^"”]+)["”]\.?$/iu,
+           summary,
+           capture: :all_but_first
+         ) do
+      [quoted] ->
+        quoted = String.trim(quoted)
+
+        if quoted_complement?(quoted) do
+          ~s("#{quoted}")
+        else
+          summary
+        end
+
+      _ ->
+        summary
+    end
+  end
+
+  defp prefer_linked_quoted_complement(summary), do: summary
+
+  defp prefer_substantive_quote_over_setup_quote(summary) when is_binary(summary) do
+    quotes =
+      Regex.scan(~r/["“]([^"”]+)["”]/u, summary, capture: :all_but_first)
+      |> List.flatten()
+      |> Enum.map(&String.trim/1)
+
+    case quotes do
+      [first, second | _rest] ->
+        cond do
+          setup_quote?(first) and quoted_complement?(second) ->
+            ~s("#{second}")
+
+          true ->
+            summary
+        end
+
+      _ ->
+        summary
+    end
+  end
+
+  defp prefer_substantive_quote_over_setup_quote(summary), do: summary
+
+  defp prefer_reported_predicate_quote(summary) when is_binary(summary) do
+    case Regex.run(
+           ~r/\b(?:#{reporting_verbs_pattern()})\b[^"“”]{0,180}?["“]([^"”]+)["”]/iu,
+           summary,
+           capture: :all_but_first
+         ) do
+      [quoted] ->
+        quoted = String.trim(quoted)
+
+        if quoted_predicate?(quoted) do
+          ~s("#{quoted}")
+        else
+          summary
+        end
+
+      _ ->
+        summary
+    end
+  end
+
+  defp prefer_reported_predicate_quote(summary), do: summary
+
+  defp trim_quoted_complement_shell(summary) when is_binary(summary) do
+    case Regex.run(
+           ~r/^["“](?:ought\s+to\s+be|is|are|was|were)\s+of\s+the\s+(?:form|type|kind)\s+of\s+(?:an?\s+)?([^"”]+)["”]\.?$/iu,
+           summary,
+           capture: :all_but_first
+         ) do
+      [core] ->
+        ~s("#{String.trim(core)}")
+
+      _ ->
+        summary
+    end
+  end
+
+  defp trim_quoted_complement_shell(summary), do: summary
+
   defp quoted_predicate?(quoted) when is_binary(quoted) do
     Regex.match?(
       ~r/^(?:ought|is|are|was|were|has|have|had|can|could|will|would|should|must|may|might|does|do|did)\b/iu,
@@ -5728,6 +5924,25 @@ defmodule Daemon.Tools.Builtins.Investigate do
       String.trim(subject)
     ) and
       Regex.match?(~r/^(?:of|to|for|from|that|how|why|whether|where|when|which)\b/iu, quoted)
+  end
+
+  defp quoted_complement?(quoted) when is_binary(quoted) do
+    trimmed = String.trim_leading(quoted)
+
+    quoted_predicate?(trimmed) or
+      Regex.match?(
+        ~r/^(?:of|to|for|from|with|within|between|under|across|through|using|via|regarding|concerning|the|a|an|this|that|these|those)\b/iu,
+        trimmed
+      )
+  end
+
+  defp setup_quote?(quoted) when is_binary(quoted) do
+    trimmed = String.trim(quoted)
+
+    Regex.match?(
+      ~r/\b(?:assuming|assumption|merely\s+assuming|theory|framework|model|background|setup|context)\b/iu,
+      trimmed
+    ) and String.split(trimmed) |> length() <= 12
   end
 
   defp followup_reported_sentence?(sentence) when is_binary(sentence) do
