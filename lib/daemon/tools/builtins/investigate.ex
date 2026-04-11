@@ -2114,11 +2114,39 @@ defmodule Daemon.Tools.Builtins.Investigate do
         if Map.has_key?(paper_map, paper_ref), do: {:ok, paper_ref}, else: :invalid_ref
 
       _multiple ->
-        :multiple_refs
+        focused_verification_ref_status(summary, paper_map)
     end
   end
 
   def verification_ref_status(_summary, _paper_map), do: :no_citation
+
+  defp focused_verification_ref_status(summary, paper_map) do
+    primary_ref = extract_paper_ref(summary)
+    claim = verification_claim_text(summary)
+
+    focused_summary =
+      summary
+      |> strip_evidence_prefix()
+      |> normalize_verification_whitespace()
+      |> trim_after_other_paper_ref()
+
+    cond do
+      not is_integer(primary_ref) ->
+        :multiple_refs
+
+      not Map.has_key?(paper_map, primary_ref) ->
+        :invalid_ref
+
+      paper_refs(focused_summary) != [primary_ref] ->
+        :multiple_refs
+
+      not substantive_verification_claim?(claim) ->
+        :multiple_refs
+
+      true ->
+        {:ok, primary_ref}
+    end
+  end
 
   defp llm_verification_candidate?(ev, paper_map) when is_map(ev) and is_map(paper_map) do
     case Map.get(ev, :source_type) do
@@ -2242,6 +2270,16 @@ defmodule Daemon.Tools.Builtins.Investigate do
   end
 
   defp verification_key(ev), do: {extract_paper_ref(ev.summary), ev.summary}
+
+  defp substantive_verification_claim?(claim) when is_binary(claim) do
+    claim
+    |> String.downcase()
+    |> String.replace(~r/[^[:alnum:]\s]+/u, " ")
+    |> String.split(~r/\s+/, trim: true)
+    |> Enum.count() >= 4
+  end
+
+  defp substantive_verification_claim?(_claim), do: false
 
   defp overlap_pair_lookup(evidence_list, paper_map) do
     Enum.reduce(evidence_list, %{}, fn evidence, acc ->

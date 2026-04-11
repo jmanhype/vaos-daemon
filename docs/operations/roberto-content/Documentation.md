@@ -2,7 +2,7 @@
 
 **Last updated**: 2026-04-11
 **Epic**: `vas-swarm-jji`
-**Current active issue**: `vas-swarm-9m7`
+**Current active issue**: `vas-swarm-jji.9`
 **Latest functional checkpoint before this doc stack**: `9c62110`
 
 ## Objective
@@ -27,11 +27,11 @@ The program is back on the right route:
 - retrieval-ops-only `artifact_reference` plans now stay local unless mixed-source retrieval is explicit
 - the representative local-only runtime artifact now stays `local_repo`-only through preflight and retrieval without alphaXiv auth/startup warnings
 
-But Roberto is not content yet because the `vas-swarm-jji.8` content check did not clear the live empirical boundary:
+But Roberto is not content yet because one first-order empirical boundary remains:
 - representative planner lanes still route generically across `measurement`, `observational`, and `randomized_intervention`
 - the intervention lane still grounds direct support
-- the fresh live `measurement` trace selected the right direct-evidence corpus and still ended `insufficient_evidence` with every opposing sourced item left belief-only
-- the fresh live `observational` trace grounded history / debate fragments as support for `vaccines cause autism`, which is now recorded in `vas-swarm-jji.9`
+- `vas-swarm-9m7` is now closed: the measurement verifier no longer drops separable multi-ref earth-shape summaries into `multiple_refs`, and the fallback live measurement trace on `2026-04-11` grounded both sides instead of collapsing to belief-only
+- the fresh live `observational` trace still grounds history / debate fragments as support for `vaccines cause autism`, which remains active as `vas-swarm-jji.9`
 
 So the remaining work is still first-order, not second-order.
 
@@ -44,45 +44,44 @@ Repo-wide full-suite debt is no longer the gating concern for this program when 
 ## Latest Completed Slice
 
 ### Closed issue
-- `vas-swarm-jji.8`
+- `vas-swarm-9m7`
 
 ### What landed
-- the content check reran the focused `investigate` gate plus three traced live `investigate` runs on the representative empirical lanes
-- no new code landed in this slice; the audit outcome is that the source-isolation chain is closed but the live empirical loop still has an active first-order boundary
-- `vas-swarm-9m7` is reactivated from blocker evidence because the fresh measurement trace did not ground the direct-evidence core
+- `verification_ref_status/2` no longer short-circuits every multi-ref sourced summary into `multiple_refs`
+- when the existing `verification_claim_text/1` pipeline already isolates one substantive primary cited claim, the verifier now focuses that primary paper instead of dropping the item to belief before LLM verification
+- inseparable multi-ref summaries still stay rejected, so the fix is limited to the generic verification boundary rather than topic salvage
 
 ### Validation
 - Tests:
-  - `mix test test/investigation/evidence_planner_test.exs test/tools/investigate_test.exs` -> `124 tests, 0 failures`
+  - `mix test test/investigation/claim_family_test.exs test/investigation/evidence_planner_test.exs test/tools/investigate_test.exs` -> `136 tests, 0 failures`
   - inherited repo-wide warnings and unrelated suite failures remain background debt unless they intersect `investigate`, `evidence_planner`, or directly coupled verification/retrieval code
 ### What the slice proved
-- planner spot checks still selected the intended generic lanes:
-  - `examine claims that the earth is flat` -> `measurement`
-  - `vaccines cause autism` -> `observational`
-  - `acute caffeine intake enhances endurance time-trial performance in trained cyclists and triathletes` -> `randomized_intervention`
-- runtime audit artifact [vaos-jji8-content-check-1775947922.json](/tmp/vaos-jji8-content-check-1775947922.json) captured the representative content check plus the three trace paths
-- measurement trace [vaos-investigate-trace-9cee767146dfb20d-jji8-measurement-1775947626820.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-9cee767146dfb20d-jji8-measurement-1775947626820.json) selected `measurement` and a geodesy corpus via OpenAlex probe carryover, but the verified outcome stayed `grounded_for_count = 0`, `grounded_against_count = 0`, and `direction = insufficient_evidence` without an explicit timeout/provider-failure completion status
-- that same measurement trace shows the opposing sourced core is still live (`paper_ref = 3, 8, 14, 2`), but all five sourced items remained belief-only; this reactivates `vas-swarm-9m7`
-- observational trace [vaos-investigate-trace-6288e6adc2dfd5a5-jji8-observational-1775947776135.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-6288e6adc2dfd5a5-jji8-observational-1775947776135.json) grounded both sides (`2/4`), but it grounded `"public debate ... persists"` and `"a 1998 report suggested ..."` as support for `vaccines cause autism`; that is now tracked in `vas-swarm-jji.9` rather than treated as the next active bottleneck
-- randomized-intervention trace [vaos-investigate-trace-5c090736ecfc44a0-jji8-randomized-intervention-1775947922324.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-5c090736ecfc44a0-jji8-randomized-intervention-1775947922324.json) selected `randomized_intervention` and completed with `direction = asymmetric_evidence_for`, `grounded_for_count = 2`, and `grounded_against_count = 0`
+- replaying the exact blocker trace [vaos-investigate-trace-9cee767146dfb20d-jji8-measurement-1775947626820.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-9cee767146dfb20d-jji8-measurement-1775947626820.json) through the new verifier target logic now maps the five opposing sourced items back to primary papers instead of the old dead-end:
+  - `paper_ref=3 -> {:ok, 3}`
+  - `paper_ref=8 -> {:ok, 8}`
+  - `paper_ref=14 -> {:ok, 14}`
+  - `paper_ref=2 -> {:ok, 2}`
+  - `paper_ref=7 -> {:ok, 7}`
+- the exact `jji8-measurement` prompt was under a 4-hour DecisionJournal cooldown on `2026-04-11`, so live validation used semantically equivalent fallback `determine whether the earth has measurable curvature`
+- fallback live trace [vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-9m7-live-curvature-1775949543170.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-9m7-live-curvature-1775949543170.json) still selected `measurement`, completed without timeout, and no longer collapsed to belief-only:
+  - `direction = supporting`
+  - `grounded_for_count = 3`
+  - `grounded_against_count = 1`
+  - `verified_for = 5`
+  - `verified_against = 1`
+- the next first-order bottleneck is now exactly the already-recorded observational follow-up `vas-swarm-jji.9`, not the old earth-shape measurement verifier boundary
 
 ## Recorded Blocker Context
 
 ### Active issue
-- `vas-swarm-9m7`
+- `vas-swarm-jji.9`
 
 ### Problem
 
-Earth-shape direct-evidence selection is still stable enough that the remaining instability is downstream:
-- recurring direct-evidence refs in the earth-shape family still recur at the advocate-selection layer
-- those same recurring items still flip between grounded and belief across reruns
-- the `vas-swarm-jji.8` content check reactivated the blocker on the same boundary:
-  - fresh trace [vaos-investigate-trace-9cee767146dfb20d-jji8-measurement-1775947626820.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-9cee767146dfb20d-jji8-measurement-1775947626820.json) selected `measurement`, carried a direct geodesy corpus, and still ended `insufficient_evidence` with every opposing sourced item belief-only
-- earlier live evidence still matters:
-  - live trace [vaos-investigate-trace-26a15ca058e69445-vas-swarm-9m7-live-3-1775866106501.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-26a15ca058e69445-vas-swarm-9m7-live-3-1775866106501.json) grounded recurring ref `8`, but recurring ref `2` still stayed belief-only, so the overlap was still unstable
-  - live trace [vaos-investigate-trace-65d0265bdc0cbfe6-vas-swarm-9m7-live-4-1775866396092.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-65d0265bdc0cbfe6-vas-swarm-9m7-live-4-1775866396092.json) drifted into unrelated black-hole horizon literature, so it is not a valid recurrence check for the earth-shape core
-  - live trace [vaos-investigate-trace-b3f6795f46baf623-vas-swarm-9m7-live-5-1775866601837.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-b3f6795f46baf623-vas-swarm-9m7-live-5-1775866601837.json) hit verifier timeouts and rate limits and ended with no recurring opposing refs grounded
-- this is now an active verifier-determinism / cited-claim-grounding problem, not a ledger-lifecycle problem
+The next first-order boundary is observational claim alignment, not measurement verification:
+- the `vas-swarm-jji.8` observational trace [vaos-investigate-trace-6288e6adc2dfd5a5-jji8-observational-1775947776135.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-6288e6adc2dfd5a5-jji8-observational-1775947776135.json) selected `observational` correctly and grounded both sides, but it also grounded history/debate fragments such as `"public debate ... persists"` and `"A 1998 report suggested that MMR vaccine causes autism"`
+- those fragments should be contextual/belief material rather than grounded support for the causal claim
+- the measurement-side blocker is now resolved enough that reopening `vas-swarm-9m7` would be drift unless a new live measurement trace regresses
 
 ## Long-Horizon Queue
 
@@ -94,6 +93,7 @@ Earth-shape direct-evidence selection is still stable enough that the remaining 
 - `vas-swarm-jji.6` — completed: keep retrieval-ops-only `artifact_reference` investigate runs local by suppressing external paper search bleed
 - `vas-swarm-jji.7` — completed: skip alphaXiv auth/startup preflight for retrieval-ops-only local artifact preparations
 - `vas-swarm-jji.8` — completed: the content check reran the representative modes, reactivated `vas-swarm-9m7`, and filed `vas-swarm-jji.9` for the observational claim-alignment follow-up
+- `vas-swarm-jji.9` — active: demote historical or debate-only support fragments in observational traces
 
 Why this order:
 - planner agnosticism first, so mode choice is no longer boxed by hidden topic priors
@@ -108,16 +108,16 @@ Continue from the next empirical bottleneck, not the inherited full-suite debt:
 - keep `vas-swarm-dy1` open only as background suite debt
 - only let repo-wide failures block advancement when they intersect `investigate` or its directly coupled planning/verification path
 - when three live attempts fail to prove the same milestone because of provider instability or wrapper drift, write down the blocker and pause instead of advancing
-- do not add more family-specific `planetary_shape` salvage as forward architecture; treat `vas-swarm-9m7` as the active boundary now that fresh evidence reactivated it
-- spend the next slice on `vas-swarm-9m7`: trace why the live measurement corpus still collapses to belief-only after correct routing, rather than reopening closed source-isolation work
+- do not reopen `vas-swarm-9m7` unless a new live measurement trace regresses
+- spend the next slice on `vas-swarm-jji.9`: demote historical or debate-only support fragments in the observational lane without regressing the now-closed measurement verifier boundary
 
 Shortest version:
 
-`Planner-family, retrieval-family, profile-conditioned grounding, wrapper-normalization, external-search bleed, and retrieval-ops-only preflight locality are no longer the core bottlenecks. The fresh content check reactivated the live measurement grounding boundary, so the next architectural work is stabilizing that verifier / cited-claim path rather than declaring the remaining work second-order.`
+Planner-family, retrieval-family, profile-conditioned grounding, wrapper-normalization, external-search bleed, and the measurement-side multi-ref verifier collapse are no longer the core bottlenecks. The next architectural work is observational claim alignment in `vas-swarm-jji.9`, not reopening the now-closed earth-shape measurement boundary.
 
 ## Known Stable Wins
 
-- `measurement` claims no longer rely on the earlier broken flat-earth routing path, even though live grounding on the earth-shape core is still unstable
+- `measurement` claims no longer rely on the earlier broken flat-earth routing path, and the `vas-swarm-9m7` verifier collapse is no longer active on the latest live validation
 - `observational` and `randomized_intervention` mode selection survive more paraphrase noise
 - advocate runtime now completes honestly under real budgets
 - verification and timeout boundaries are much more explicit than they were earlier in the loop
@@ -128,9 +128,9 @@ On the next session:
 
 1. Read this file.
 2. Run `scripts/roberto-loop`.
-3. Open `vas-swarm-9m7` plus the fresh measurement trace [vaos-investigate-trace-9cee767146dfb20d-jji8-measurement-1775947626820.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-9cee767146dfb20d-jji8-measurement-1775947626820.json).
-4. Resume from `vas-swarm-9m7`.
-5. Use the `vas-swarm-jji.8` content-check artifact [vaos-jji8-content-check-1775947922.json](/tmp/vaos-jji8-content-check-1775947922.json) plus the `jji8-measurement` trace as the current evidence boundary.
+3. Open `vas-swarm-jji.9` plus the observational trace [vaos-investigate-trace-6288e6adc2dfd5a5-jji8-observational-1775947776135.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-6288e6adc2dfd5a5-jji8-observational-1775947776135.json).
+4. Resume from `vas-swarm-jji.9`.
+5. Use the `vas-swarm-jji.8` content-check artifact [vaos-jji8-content-check-1775947922.json](/tmp/vaos-jji8-content-check-1775947922.json) plus the observational trace as the current evidence boundary; keep [vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-9m7-live-curvature-1775949543170.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-9m7-live-curvature-1775949543170.json) as the closed measurement checkpoint.
 6. Record unrelated suite failures under `vas-swarm-dy1` without blocking `investigate` milestone advancement.
 7. Update this file, close/open issues, and push.
 

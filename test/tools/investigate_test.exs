@@ -910,6 +910,33 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert status == :multiple_refs
   end
 
+  test "verification_ref_status focuses separable followup refs onto the primary cited claim" do
+    status =
+      Investigate.verification_ref_status(
+        "The GRACE satellite gravimetry mission has, since 2002, enabled continuous monitoring of terrestrial water cycle, ice sheet and glacier mass balance, sea level change and ocean bottom pressure variations, producing reliable mass transport products [Paper 8]. [Paper 4] further confirms that drag-free satellites can directly determine the detailed shape of geodesics through orbital tracking.",
+        %{
+          4 => %{"title" => "Small Satellite Constellations for Earth Geodesy and Aeronomy"},
+          8 => %{"title" => "Contributions of GRACE to understanding climate change"}
+        }
+      )
+
+    assert status == {:ok, 8}
+  end
+
+  test "verification_ref_status focuses mixed same-sentence corroboration onto the primary cited claim" do
+    status =
+      Investigate.verification_ref_status(
+        "Modern geodesy, as described in [Paper 2], integrates a range of space and terrestrial technologies including GNSS, SLR, VLBI, satellite altimetry, and gravity mapping missions to determine the geometry, orientation and gravity field of the Earth—an enterprise that [Paper 5] notes has achieved such precision that geodesy now aims to increase the level of accuracy by a factor of ten over the next decade. The JPL GipsyX/RTGx software described in [Paper 1] routinely performs precision orbit determination for GPS satellites.",
+        %{
+          1 => %{"title" => "GipsyX/RTGx"},
+          2 => %{"title" => "Contribution of GNSS CORS Infrastructure"},
+          5 => %{"title" => "Geodesy"}
+        }
+      )
+
+    assert status == {:ok, 2}
+  end
+
   test "grounding_role_for classifies direct earth-shape evidence as direct without profile when paper context carries the subject" do
     role =
       Investigate.grounding_role_for(

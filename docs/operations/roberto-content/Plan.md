@@ -2,8 +2,8 @@
 
 **Created**: 2026-04-10
 **Epic**: `vas-swarm-jji`
-**Current Active Issue**: `vas-swarm-9m7` (open)
-**Recently completed audit issue**: `vas-swarm-jji.8` (closed)
+**Current Active Issue**: `vas-swarm-jji.9` (open)
+**Recently closed measurement issue**: `vas-swarm-9m7`
 
 ## Overview
 
@@ -51,14 +51,14 @@ Strategic correction:
 **Goal**: Eliminate known trust-breaking failures in the current literature-centered pipeline.
 
 **Current focus**
-- `vas-swarm-9m7`: stabilize verification outcomes for recurring earth-shape direct-evidence papers
+- `vas-swarm-jji.9`: demote historical or debate-only support fragments in observational investigate traces
 
 **Status note**
 - Probe-paper carryover now lands in the merged retrieval set and the live rerun no longer ends `belief_consensus_for`.
 - `vas-swarm-942` is complete and closed.
 - `vas-swarm-tgf` is complete: repeated traced runs no longer timeout in `:investigate_ledger`.
-- `vas-swarm-9m7` is active again after the `vas-swarm-jji.8` content check reran the measurement lane and still ended with a belief-only opposing corpus.
-- The next investigate bottleneck is live verifier determinism / cited-claim grounding on the recurring earth-shape evidence core.
+- `vas-swarm-9m7` is now closed after the verifier stopped dead-ending separable multi-ref sourced summaries as `multiple_refs`.
+- The next investigate bottleneck is observational claim alignment: the `vaccines cause autism` trace still grounded history/debate fragments as support.
 - `vas-swarm-jji.1` is complete: planner mode selection no longer depends on `ClaimFamily`.
 - `vas-swarm-jji.2` is complete: retrieval no longer depends on family-shaped evidence profiles or query templates in the investigate core.
 - `vas-swarm-jji.3` is complete: the live `profile`-conditioned grounding branch is gone and cited-claim extraction is now generic on the production investigate path.
@@ -165,8 +165,9 @@ Strategic correction:
 **Goal**: Decide whether the remaining work is second-order.
 
 **Status note**
-- `vas-swarm-jji.8` completed the content check, but the fresh measurement trace [vaos-investigate-trace-9cee767146dfb20d-jji8-measurement-1775947626820.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-9cee767146dfb20d-jji8-measurement-1775947626820.json) reactivated `vas-swarm-9m7`, so Milestone 5 is not accepted yet.
-- The same audit artifact [vaos-jji8-content-check-1775947922.json](/tmp/vaos-jji8-content-check-1775947922.json) also produced `vas-swarm-jji.9` for the observational claim-alignment follow-up.
+- `vas-swarm-jji.8` completed the content check and exposed two first-order follow-ups.
+- `vas-swarm-9m7` is now resolved: replaying the exact blocker trace no longer returns `multiple_refs` for the recurring earth-shape core, and the fallback live measurement trace [vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-9m7-live-curvature-1775949543170.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-9m7-live-curvature-1775949543170.json) grounded both sides with no timeout.
+- `vas-swarm-jji.9` remains open, so Milestone 5 is still not accepted.
 
 ### Acceptance Criteria
 

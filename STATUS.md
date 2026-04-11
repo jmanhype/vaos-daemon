@@ -2,12 +2,32 @@
 
 **Canonical status**: [docs/operations/roberto-content/Documentation.md](docs/operations/roberto-content/Documentation.md)
 **Epic**: `vas-swarm-jji`
-**Current active issue**: `vas-swarm-9m7`
-**Latest trace**: [vaos-investigate-trace-9cee767146dfb20d-jji8-measurement-1775947626820.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-9cee767146dfb20d-jji8-measurement-1775947626820.json)
-**Next Roberto step**: Trace why the live `measurement` path still leaves the earth-shape direct-evidence core belief-only after the `vas-swarm-jji.8` content check, starting from the fresh `jji8-measurement` trace and keeping `vas-swarm-jji.9` recorded as the observational follow-up.
+**Current active issue**: `vas-swarm-jji.9`
+**Latest trace**: [vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-9m7-live-curvature-1775949543170.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-9m7-live-curvature-1775949543170.json)
+**Next Roberto step**: Demote historical or debate-only support fragments in the live `observational` path for `vaccines cause autism`, starting from the `vas-swarm-jji.8` observational trace and keeping the now-closed `vas-swarm-9m7` measurement fix as resolved history.
 
 ## Verification Status
 
+- `vas-swarm-9m7` closed:
+  - `verification_ref_status/2` no longer hard-rejects every multi-paper sourced summary as `multiple_refs`; when the existing claim-shaping pipeline already isolates one substantive primary cited claim, verification now focuses that primary paper while inseparable multi-ref claims still stay rejected
+  - focused regressions cover both separable follow-up refs and same-sentence corroborating refs on the earth-shape measurement corpus
+  - targeted investigate-path verification passed:
+    - `mix test test/investigation/claim_family_test.exs test/investigation/evidence_planner_test.exs test/tools/investigate_test.exs` -> `136 tests, 0 failures`
+  - runtime-equivalent replay of the exact blocker trace now resolves all five opposing sourced items back to primary verification targets:
+    - `paper_ref=3 -> {:ok, 3}`
+    - `paper_ref=8 -> {:ok, 8}`
+    - `paper_ref=14 -> {:ok, 14}`
+    - `paper_ref=2 -> {:ok, 2}`
+    - `paper_ref=7 -> {:ok, 7}`
+  - live validation on `2026-04-11` used a semantically equivalent fallback because the exact `jji8-measurement` prompt was under a 4-hour DecisionJournal cooldown:
+    - trace [vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-9m7-live-curvature-1775949543170.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-9m7-live-curvature-1775949543170.json) selected `measurement`
+    - `direction = supporting`
+    - `grounded_for_count = 3`
+    - `grounded_against_count = 1`
+    - `verified_for = 5`
+    - `verified_against = 1`
+    - `timeout = nil`
+    - the measurement lane no longer collapsed to a belief-only corpus
 - `vas-swarm-942` closed:
   - carryover fix landed: selected probe papers now seed the merged retrieval corpus
   - targeted tests passed:
@@ -169,6 +189,7 @@
 - `vas-swarm-jji.6` — completed: keep `retrieval_ops`-only `artifact_reference` investigate runs local by suppressing external paper search bleed
 - `vas-swarm-jji.7` — completed: skip alphaXiv auth/startup preflight for retrieval-ops-only local artifact preparations
 - `vas-swarm-jji.8` — completed: the content check kept representative routing intact, reactivated `vas-swarm-9m7`, and filed `vas-swarm-jji.9` for the observational claim-alignment follow-up
+- `vas-swarm-jji.9` — active: demote historical or debate-only support fragments in observational traces without reopening the now-closed measurement verifier boundary
 
 The queue order is intentional:
 - planner agnosticism first
@@ -179,9 +200,9 @@ The queue order is intentional:
 
 1. Read `STATUS.md`.
 2. Run `scripts/roberto-loop`.
-3. Open [vaos-investigate-trace-9cee767146dfb20d-jji8-measurement-1775947626820.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-9cee767146dfb20d-jji8-measurement-1775947626820.json) and [vaos-jji8-content-check-1775947922.json](/tmp/vaos-jji8-content-check-1775947922.json).
-4. Resume implementation from `vas-swarm-9m7`.
-5. Use the `vas-swarm-jji.8` content-check artifact plus the reactivated `jji8-measurement` trace as the starting evidence boundary.
+3. Open [vaos-investigate-trace-6288e6adc2dfd5a5-jji8-observational-1775947776135.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-6288e6adc2dfd5a5-jji8-observational-1775947776135.json) and [vaos-jji8-content-check-1775947922.json](/tmp/vaos-jji8-content-check-1775947922.json).
+4. Resume implementation from `vas-swarm-jji.9`.
+5. Use the `vas-swarm-jji.8` observational trace as the starting evidence boundary; keep [vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-9m7-live-curvature-1775949543170.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-9m7-live-curvature-1775949543170.json) as the closed measurement validation checkpoint.
 6. Record any unrelated inherited suite failures under `vas-swarm-dy1` without blocking `investigate` work.
 7. Update status docs, Beads, commit, and push.
 
