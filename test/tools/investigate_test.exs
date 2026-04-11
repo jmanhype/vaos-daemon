@@ -4,6 +4,47 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
   alias Daemon.Investigation.Strategy
   alias Daemon.Tools.Builtins.Investigate
 
+  defmodule AlphaXivClientStub do
+    use Agent
+
+    def start_link(_opts) do
+      Agent.start_link(
+        fn -> %{auth_available?: false, auth_calls: 0, start_calls: 0} end,
+        name: state_name()
+      )
+    end
+
+    def start_link do
+      Agent.get_and_update(state_name(), fn state ->
+        {{:ok, self()}, %{state | start_calls: state.start_calls + 1}}
+      end)
+    end
+
+    def reset(opts \\ []) do
+      Agent.update(state_name(), fn _ ->
+        %{
+          auth_available?: Keyword.get(opts, :auth_available?, false),
+          auth_calls: 0,
+          start_calls: 0
+        }
+      end)
+    end
+
+    def auth_available? do
+      Agent.get_and_update(state_name(), fn state ->
+        {state.auth_available?, %{state | auth_calls: state.auth_calls + 1}}
+      end)
+    end
+
+    def stats do
+      Agent.get(state_name(), fn %{auth_calls: auth_calls, start_calls: start_calls} ->
+        %{auth_calls: auth_calls, start_calls: start_calls}
+      end)
+    end
+
+    defp state_name, do: Module.concat(__MODULE__, State)
+  end
+
   defmodule TrialStub do
     use Agent
 
@@ -71,6 +112,11 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     case Process.whereis(TrialStub) do
       nil -> start_supervised!(TrialStub)
       _pid -> TrialStub.reset()
+    end
+
+    case Process.whereis(Module.concat(AlphaXivClientStub, State)) do
+      nil -> start_supervised!(AlphaXivClientStub)
+      _pid -> AlphaXivClientStub.reset()
     end
 
     :ok
@@ -2165,6 +2211,34 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert Enum.any?(context.for_messages, fn message ->
              String.contains?(message.content, "Documentation.md")
            end)
+  end
+
+  test "preflight_runtime skips alphaXiv auth and startup for retrieval-ops-only artifact plans" do
+    AlphaXivClientStub.reset(auth_available?: true)
+
+    runtime =
+      Investigate.preflight_runtime(
+        "the repository documentation says Documentation.md is the canonical Roberto status file",
+        alphaxiv_client: AlphaXivClientStub
+      )
+
+    refute runtime.external_paper_search_enabled?
+    refute runtime.alphaxiv_enabled?
+    assert AlphaXivClientStub.stats() == %{auth_calls: 0, start_calls: 0}
+  end
+
+  test "preflight_runtime still checks alphaXiv auth and startup for mixed-source plans" do
+    AlphaXivClientStub.reset(auth_available?: true)
+
+    runtime =
+      Investigate.preflight_runtime(
+        "vaccines cause autism",
+        alphaxiv_client: AlphaXivClientStub
+      )
+
+    assert runtime.external_paper_search_enabled?
+    assert runtime.alphaxiv_enabled?
+    assert AlphaXivClientStub.stats() == %{auth_calls: 1, start_calls: 1}
   end
 
   test "external paper search is disabled for retrieval-ops-only artifact plans" do

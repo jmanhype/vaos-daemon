@@ -2,9 +2,9 @@
 
 **Canonical status**: [docs/operations/roberto-content/Documentation.md](docs/operations/roberto-content/Documentation.md)
 **Epic**: `vas-swarm-jji`
-**Current active issue**: `vas-swarm-jji.7`
-**Latest trace / runtime artifact**: [vaos-jji6-local-artifact-validation-XXXX.txt](/tmp/vaos-jji6-local-artifact-validation-XXXX.txt)
-**Next Roberto step**: Skip alphaXiv auth/startup preflight for `retrieval_ops`-only local artifact preparations while keeping `vas-swarm-9m7` recorded only as blocker evidence.
+**Current active issue**: `vas-swarm-jji.8`
+**Latest trace / runtime artifact**: [vaos-jji7-local-artifact-validation-1775946503.txt](/tmp/vaos-jji7-local-artifact-validation-1775946503.txt)
+**Next Roberto step**: Run the Roberto content check now that `retrieval_ops`-only local artifact preparations stay local through preflight, while keeping `vas-swarm-9m7` recorded only as blocker evidence unless new validation reactivates it.
 
 ## Verification Status
 
@@ -97,6 +97,19 @@
     - the selected plan stayed on `artifact_reference`
     - the consulted source set stayed `local_repo`-only with explicit `local_artifact_search` provenance and no HuggingFace / Semantic Scholar / OpenAlex / alphaXiv papers in `all_papers`
     - alphaXiv token-refresh noise still appeared during preflight, which is now tracked as `vas-swarm-jji.7`
+- `vas-swarm-jji.7` closed:
+  - investigate preflight now derives external-paper-search eligibility from the topic's evidence plan before checking alphaXiv auth or attempting MCP startup
+  - `Investigate.preflight_runtime/2` provides a focused seam for asserting retrieval-ops-only preflight locality versus mixed-source behavior
+  - focused regressions now prove the boundary directly:
+    - retrieval-ops-only docs/code plans skip alphaXiv auth and startup entirely
+    - mixed-source empirical plans still perform alphaXiv auth/startup preflight when external paper search remains enabled
+  - targeted investigate-path verification passed:
+    - `mix test test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs test/tools/alphaxiv_client_test.exs` -> `136 tests, 0 failures`
+  - runtime-equivalent validation passed:
+    - artifact [vaos-jji7-local-artifact-validation-1775946503.txt](/tmp/vaos-jji7-local-artifact-validation-1775946503.txt) exercised the live `prepare_advocate_bakeoff/1` preflight-plus-retrieval path for the representative docs/code claim under `MIX_ENV=test`
+    - the selected plan stayed on `artifact_reference`
+    - `source_counts = %{local_repo: 5}`, `probe_reason = "retrieval_ops_only"`, and `unique_sources = ["local_repo"]`
+    - no alphaXiv token-refresh, auth-missing, MCP-startup, or MCP-crash warnings appeared in the artifact; only unrelated inherited compile/config warnings remained
 - Harness audit (2026-04-11):
   - targeted audit verification passed:
     - `mix test test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs test/tools/investigate_test.exs` -> `126 tests, 0 failures`
@@ -106,7 +119,7 @@
     - the `profile`-conditioned grounding branch in `investigate` remains absent from the live path
   - implication after `vas-swarm-jji.5`:
     - wrapper cleanup debt has been retired from the live path
-    - the next long-horizon step is keeping `retrieval_ops`-only `artifact_reference` runs local without adding new family/profile salvage
+    - the next long-horizon step is the Roberto content check now that the source-isolation chain is closed
 - Recorded blocker context:
   - `vas-swarm-9m7` remains blocked after three live validation attempts
   - its role is now evidentiary, not active implementation scope
@@ -139,7 +152,8 @@
 - `vas-swarm-jji.4` — completed: add a generic non-paper artifact/reference evidence operation with explicit provenance
 - `vas-swarm-jji.5` — completed: retire the surviving `ClaimFamily.normalize_topic/1` wrapper-normalization seam from the production investigate path
 - `vas-swarm-jji.6` — completed: keep `retrieval_ops`-only `artifact_reference` investigate runs local by suppressing external paper search bleed
-- `vas-swarm-jji.7` — active: skip alphaXiv auth/startup preflight for retrieval-ops-only local artifact preparations
+- `vas-swarm-jji.7` — completed: skip alphaXiv auth/startup preflight for retrieval-ops-only local artifact preparations
+- `vas-swarm-jji.8` — active: run the Roberto content check after source-isolation closure
 
 The queue order is intentional:
 - planner agnosticism first
@@ -151,8 +165,8 @@ The queue order is intentional:
 1. Read `STATUS.md`.
 2. Run `scripts/roberto-loop`.
 3. Open `vas-swarm-9m7` for blocker context only.
-4. Resume implementation from `vas-swarm-jji.7`.
-5. Use the `vas-swarm-jji.6` runtime artifact plus the `vas-swarm-jji.5` wrapped docs/code trace as evidence that retrieval dispatch is contained and the next cut is preflight-locality.
+4. Resume implementation from `vas-swarm-jji.8`.
+5. Use the `vas-swarm-jji.7` runtime artifact plus the `vas-swarm-jji.6` runtime artifact as evidence that retrieval dispatch and preflight now stay local for retrieval-ops-only docs/code claims.
 6. Record any unrelated inherited suite failures under `vas-swarm-dy1` without blocking `investigate` work.
 7. Update status docs, Beads, commit, and push.
 

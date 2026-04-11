@@ -228,7 +228,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
       when is_binary(topic) and is_binary(depth) and is_binary(steering) do
     investigation_started_ms = monotonic_ms()
 
-    runtime = ensure_investigate_preflight_runtime()
+    runtime = ensure_investigate_preflight_runtime(topic)
     {prompts, variant_id} = select_prompt_variant()
     prior_strategy = load_prior_strategy(topic)
 
@@ -312,13 +312,20 @@ defmodule Daemon.Tools.Builtins.Investigate do
     end
   end
 
-  defp ensure_investigate_preflight_runtime do
+  @doc false
+  def preflight_runtime(topic, opts \\ []) when is_binary(topic) do
+    alphaxiv_client =
+      Keyword.get(opts, :alphaxiv_client, Daemon.Tools.Builtins.AlphaXivClient)
+
+    preflight_plan = search_query_plan(topic)
+    external_paper_search_enabled? = external_paper_search_enabled?(preflight_plan)
+
     :inets.start()
     :ssl.start()
     ensure_circuit_table()
 
-    alphaxiv_enabled? = Daemon.Tools.Builtins.AlphaXivClient.auth_available?()
-    maybe_start_alphaxiv(alphaxiv_enabled?)
+    alphaxiv_enabled? =
+      maybe_enable_alphaxiv_preflight(external_paper_search_enabled?, alphaxiv_client)
 
     case ensure_store_started() do
       :ok ->
@@ -332,19 +339,40 @@ defmodule Daemon.Tools.Builtins.Investigate do
       Logger.warning("[investigate] CrashLearner not running — crash reporting will be skipped")
     end
 
-    %{alphaxiv_enabled?: alphaxiv_enabled?}
+    %{
+      alphaxiv_enabled?: alphaxiv_enabled?,
+      external_paper_search_enabled?: external_paper_search_enabled?
+    }
   end
 
-  defp maybe_start_alphaxiv(false) do
+  defp ensure_investigate_preflight_runtime(topic) when is_binary(topic) do
+    preflight_runtime(topic)
+  end
+
+  defp maybe_enable_alphaxiv_preflight(false, _alphaxiv_client) do
+    Logger.info(
+      "[investigate] Skipping alphaXiv preflight for retrieval-ops-only local artifact plan"
+    )
+
+    false
+  end
+
+  defp maybe_enable_alphaxiv_preflight(true, alphaxiv_client) do
+    alphaxiv_enabled? = alphaxiv_client.auth_available?()
+    maybe_start_alphaxiv(alphaxiv_enabled?, alphaxiv_client)
+    alphaxiv_enabled?
+  end
+
+  defp maybe_start_alphaxiv(false, _alphaxiv_client) do
     Logger.info("[investigate] alphaXiv auth missing — skipping MCP startup")
     :ok
   end
 
-  defp maybe_start_alphaxiv(true) do
+  defp maybe_start_alphaxiv(true, alphaxiv_client) do
     old_trap = Process.flag(:trap_exit, true)
 
     try do
-      Daemon.Tools.Builtins.AlphaXivClient.start_link()
+      alphaxiv_client.start_link()
 
       receive do
         {:EXIT, _pid, reason} ->
@@ -574,7 +602,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
   defp do_run_investigation(topic, depth, steering, caller_metadata) do
     investigation_started_ms = monotonic_ms()
 
-    runtime = ensure_investigate_preflight_runtime()
+    runtime = ensure_investigate_preflight_runtime(topic)
 
     # 0. Create scorer cache ETS table upfront (owned by caller, visible to child tasks)
     ensure_scorer_cache()
