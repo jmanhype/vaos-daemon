@@ -2,7 +2,7 @@
 
 **Created**: 2026-04-10
 **Epic**: `vas-swarm-jji`
-**Current Active Issue**: `vas-swarm-jji.6` (in progress)
+**Current Active Issue**: `none` (`vas-swarm-jji.6` closed)
 **Recorded blocker issue**: `vas-swarm-9m7` (blocked)
 
 ## Overview
@@ -64,7 +64,7 @@ Strategic correction:
 - `vas-swarm-jji.3` is complete: the live `profile`-conditioned grounding branch is gone and cited-claim extraction is now generic on the production investigate path.
 - `vas-swarm-jji.4` is complete: the planner can now select a generic non-paper `artifact_reference` path with explicit trace provenance.
 - `vas-swarm-jji.5` is complete: production investigate no longer depends on `ClaimFamily.normalize_topic/1`.
-- `vas-swarm-jji.6` is active: keep retrieval-ops-only `artifact_reference` runs local by suppressing external paper-search bleed exposed by the wrapped docs/code trace.
+- `vas-swarm-jji.6` is complete: retrieval-ops-only `artifact_reference` runs stay local by suppressing external paper-search bleed exposed by the wrapped docs/code trace.
 - Repo-history audit shows the remaining full-suite failures live in pre-takeover Roberto/PAMF2-era surfaces outside the `investigate` tool path.
 - Those inherited repo-wide failures are tracked as background debt in `vas-swarm-dy1` and are non-blocking unless they intersect `investigate`, `evidence_planner`, or directly coupled verification/retrieval code touched by this milestone.
 
@@ -139,7 +139,7 @@ Strategic correction:
 ### Tasks
 
 1. `vas-swarm-jji.4` — completed: add a generic non-paper artifact/reference evidence operation to the planner
-2. `vas-swarm-jji.6` — active: keep retrieval-ops-only `artifact_reference` investigations local unless mixed-source retrieval is explicit
+2. `vas-swarm-jji.6` — completed: keep retrieval-ops-only `artifact_reference` investigations local unless mixed-source retrieval is explicit
 3. Define evidence operations beyond papers
    - docs/specs
    - code/repos

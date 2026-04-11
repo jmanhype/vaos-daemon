@@ -2,8 +2,8 @@
 
 **Last updated**: 2026-04-11
 **Epic**: `vas-swarm-jji`
-**Current active issue**: `vas-swarm-jji.6`
-**Latest functional checkpoint before this doc stack**: `d0bc837`
+**Current active issue**: `none` (`vas-swarm-jji.6` closed)
+**Latest functional checkpoint before this doc stack**: `e3e6eb8`
 
 ## Objective
 
@@ -24,9 +24,10 @@ The program is back on the right route:
 - production investigate no longer depends on `ClaimFamily.normalize_topic/1`
 - `ClaimFamily.normalize_verification_claim/1` appears to be superseded in the production investigate path by generic `verification_claim_text/1`
 - wrapped docs/code claims now normalize onto the generic `artifact_reference` path without a `ClaimFamily` seam
-- retrieval-ops-only `artifact_reference` plans still launch external paper search, which is now the next active bottleneck
+- retrieval-ops-only `artifact_reference` plans now stay local unless mixed-source retrieval is explicit
+- no new post-`vas-swarm-jji.6` first-order issue is activated yet; `vas-swarm-9m7` remains blocker evidence only
 
-But Roberto is not content yet because the next bottleneck is now external-search bleed on retrieval-ops-only `artifact_reference` runs, not more source-family routing.
+But Roberto is not content yet because the next first-order bottleneck still needs to be re-evaluated after the `vas-swarm-jji.6` closure, not because the old external-search bleed remains.
 
 Strategic correction:
 - `ClaimFamily` is no longer treated as the intended architecture
@@ -34,45 +35,29 @@ Strategic correction:
 
 Repo-wide full-suite debt is no longer the gating concern for this program when that debt is inherited and outside the `investigate` tool path.
 
-## Current Slice In Progress
+## Latest Completed Slice
 
-### Active issue
+### Closed issue
 - `vas-swarm-jji.6`
 
-### Why this is active
+### What landed
 - `vas-swarm-jji.5` removed the last production `ClaimFamily.normalize_topic/1` dependency from the investigate path
-- the wrapped docs/code live trace still consulted HuggingFace/external papers even though the selected plan was `artifact_reference` with retrieval-ops-only `local_artifact_search`
-- `search_all_papers/4` remains the narrow generic layer that explains that bleed
+- `search_all_papers/4` now exits through a local-only retrieval path before Semantic Scholar / OpenAlex / alphaXiv / HuggingFace fanout when the selected evidence plan is retrieval-ops-only
+- retrieval finalization is shared through `finalize_search_results/3`, so local artifact plans keep the same ranking and provenance path without external-search bleed
+- `Investigate.external_paper_search_enabled?/1` now exposes the guard as a focused regression seam
 - `vas-swarm-9m7` remains recorded only as blocker evidence and is not the active implementation scope
 
 ### Validation
 - Tests:
-  - next gate: retrieval-ops-only `artifact_reference` investigate runs stay local while wrapped empirical and docs/code claims continue to route correctly on the generic path
-  - inherited repo-wide warnings and unrelated suite failures remain background debt unless they intersect `investigate`, `evidence_planner`, or the new non-paper path
-
-## Latest Completed Slice
-
-### Closed issue
-- `vas-swarm-jji.5`
-
-### What landed
-- generic wrapper stripping now lives in `Daemon.Tools.Builtins.Investigate.normalized_search_topic/1`
-- production investigate no longer aliases or calls `ClaimFamily.normalize_topic/1`
-- the obsolete `ClaimFamily.normalize_topic/1` seam was removed instead of being replaced by another family-shaped abstraction
-- wrapped docs/code planning coverage now explicitly exercises the generic `artifact_reference` path
-- no new topic-family routing was introduced; `vas-swarm-9m7` remains blocker evidence only
-
-### Validation
-- Tests:
   - `mix test test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs` -> `131 tests, 0 failures`
-- Live trace:
-  - wrapped docs/code: [vaos-investigate-trace-aec23c8ca5850790-vas-swarm-jji-5-docs-wrapper-1775943904289.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-aec23c8ca5850790-vas-swarm-jji-5-docs-wrapper-1775943904289.json)
-
-### What the trace proved
-- the wrapped docs/code run completed end to end under `MIX_ENV=test` to avoid a local `8089` port collision
-- the selected plan stayed on `artifact_reference` and emitted `retrieval_ops = [%{operation: :local_artifact_search, source: :local_repo, scope: ["docs", "code"], query: "the repository documentation says Documentation.md is the canonical Roberto status file"}]`, proving the wrapper normalized onto the generic local-artifact query
-- the trace records explicit local provenance in `trace.sources`, including `source = local_repo`, `source_kind = artifact_doc` for `STATUS.md` and `docs/operations/roberto-content/Documentation.md`, plus `source_kind = artifact_code` for `lib/daemon/operations/roberto_loop.ex`
-- the run still finished `direction = opposing` because `retrieval_ops`-only `artifact_reference` planning does not yet suppress HuggingFace/external paper search; that leakage is now the first-order follow-up captured as `vas-swarm-jji.6`
+  - `mix test test/tools/investigate_test.exs:2147` -> representative docs/code `prepare_advocate_bakeoff/1` runtime validation passed
+  - inherited repo-wide warnings and unrelated suite failures remain background debt unless they intersect `investigate`, `evidence_planner`, or the new non-paper path
+### What the slice proved
+- the same wrapped docs/code claim that triggered `vas-swarm-jji.6` now stays on `artifact_reference`
+- `prepare_advocate_bakeoff/1` records `evidence_plan_probe_selection.reason == "retrieval_ops_only"` for that claim
+- the consulted source set stays `local_repo`-only with explicit `local_artifact_search` provenance; no HuggingFace / Semantic Scholar / OpenAlex / alphaXiv papers appear in `all_papers`
+- the earlier trigger trace [vaos-investigate-trace-aec23c8ca5850790-vas-swarm-jji-5-docs-wrapper-1775943904289.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-aec23c8ca5850790-vas-swarm-jji-5-docs-wrapper-1775943904289.json) remains the evidence for why this slice existed
+- standalone `mix run` trace capture was not reliable in this sandbox because Mix.PubSub hit `:eperm`; the advocate-preparation path above is the recorded equivalent runtime artifact for this slice
 
 ## Recorded Blocker Context
 
@@ -97,7 +82,7 @@ Earth-shape direct-evidence selection is now stable enough that the remaining in
 - `vas-swarm-jji.3` — completed: replace profile-conditioned verifier / grounding behavior with generic capability-driven cited-claim extraction
 - `vas-swarm-jji.4` — completed: add a generic non-paper artifact/reference evidence operation with explicit provenance
 - `vas-swarm-jji.5` — completed: retire the surviving `ClaimFamily.normalize_topic/1` wrapper-normalization seam from the production investigate path
-- `vas-swarm-jji.6` — active: keep retrieval-ops-only `artifact_reference` investigate runs local by suppressing external paper search bleed
+- `vas-swarm-jji.6` — completed: keep retrieval-ops-only `artifact_reference` investigate runs local by suppressing external paper search bleed
 
 Why this order:
 - planner agnosticism first, so mode choice is no longer boxed by hidden topic priors
@@ -112,12 +97,12 @@ Continue from the next empirical bottleneck, not the inherited full-suite debt:
 - keep `vas-swarm-dy1` open only as background suite debt
 - only let repo-wide failures block advancement when they intersect `investigate` or its directly coupled planning/verification path
 - when three live attempts fail to prove the same milestone because of provider instability or wrapper drift, write down the blocker and pause instead of advancing
-- do not add more family-specific `planetary_shape` salvage as forward architecture; use `vas-swarm-9m7` as the blocker record and continue from `vas-swarm-jji.6`
-- spend the next slice on containing external paper-search bleed for retrieval-ops-only artifact plans rather than adding new source-family salvage; `vas-swarm-jji.5` already proved the wrapper-normalization seam is gone
+- do not add more family-specific `planetary_shape` salvage as forward architecture; use `vas-swarm-9m7` as the blocker record unless fresh evidence makes it active again
+- spend the next slice on the next verified first-order bottleneck rather than reopening closed source-isolation work or adding new source-family salvage
 
 Shortest version:
 
-`Planner-family, retrieval-family, profile-conditioned grounding, and wrapper-normalization seams are no longer the core bottleneck. The next architectural work is keeping retrieval-ops-only artifact-reference runs local while the recorded empirical blocker remains live verifier determinism on the recurring earth-shape evidence core.`
+`Planner-family, retrieval-family, profile-conditioned grounding, wrapper-normalization, and retrieval-ops-only external-search bleed are no longer the core bottlenecks. The next architectural work must come from a fresh first-order review while the recorded empirical blocker remains live verifier determinism on the recurring earth-shape evidence core.`
 
 ## Known Stable Wins
 
@@ -133,8 +118,8 @@ On the next session:
 1. Read this file.
 2. Run `scripts/roberto-loop`.
 3. Open `vas-swarm-9m7` for blocker context.
-4. Resume from `vas-swarm-jji.6` with the current understanding that the live investigate core no longer depends on planner/retrieval/grounding/wrapper family seams and now has one generic non-paper artifact path.
-5. Use the `vas-swarm-jji.5` wrapped docs/code trace plus the `vas-swarm-jji.4` docs/code and empirical traces as evidence for why the next step is external-search containment on retrieval-ops-only artifact plans rather than more family/profile salvage.
+4. Re-evaluate the next first-order bottleneck now that `vas-swarm-jji.6` is closed.
+5. Keep `vas-swarm-9m7` as blocker evidence only unless fresh traces justify reactivation.
 6. Record unrelated suite failures under `vas-swarm-dy1` without blocking `investigate` milestone advancement.
 7. Update this file, close/open issues, and push.
 

@@ -3355,208 +3355,209 @@ defmodule Daemon.Tools.Builtins.Investigate do
     http_fn = literature_http_fn()
     plan = search_query_plan(topic, keywords)
     plan = maybe_probe_search_plan(plan, strategy, http_fn)
-    semantic_seed = semantic_search_seed(plan)
     retrieval_op_results = run_retrieval_ops(plan, topic)
-    {ss_queries, oa_queries} = {plan.ss_queries, plan.oa_queries}
-    per_query = strategy.per_query_limit
-    alphaxiv_enabled? = Keyword.get(opts, :alphaxiv_enabled?, true)
 
-    # Log circuit breaker state for observability (read-only peek, no state transitions)
-    ensure_circuit_table()
-
-    open_circuits =
-      @circuit_sources
-      |> Enum.filter(fn s ->
-        case :ets.lookup(@circuit_table, s) do
-          [{^s, %{state: :open}}] -> true
-          _ -> false
-        end
-      end)
-
-    if open_circuits != [] do
+    if retrieval_ops_only_plan?(plan) do
       Logger.info(
-        "[investigate] Circuit breakers OPEN: #{Enum.join(open_circuits, ", ")} — skipping"
+        "[investigate] Skipping external paper search for retrieval-ops-only local artifact plan"
       )
-    end
 
-    # -- Circuit breaker gated source dispatch --
-    # Each source is checked against its circuit breaker before launching tasks.
-    # This prevents wasting 30s on APIs that are consistently down.
+      finalize_search_results(retrieval_op_results, plan, strategy.top_n_papers)
+    else
+      semantic_seed = semantic_search_seed(plan)
+      {ss_queries, oa_queries} = {plan.ss_queries, plan.oa_queries}
+      per_query = strategy.per_query_limit
+      alphaxiv_enabled? = Keyword.get(opts, :alphaxiv_enabled?, true)
 
-    # SS: sequential with 1.5s delay — unauthenticated rate limit is ~1 req/s.
-    ss_api_key = Application.get_env(:daemon, :semantic_scholar_api_key)
+      # Log circuit breaker state for observability (read-only peek, no state transitions)
+      ensure_circuit_table()
 
-    {ss_results, ss_terminal_failure?} =
-      if circuit_check(:semantic_scholar) == :ok do
-        run_semantic_scholar_queries(ss_queries, http_fn, per_query, ss_api_key)
-      else
-        {[], false}
+      open_circuits =
+        @circuit_sources
+        |> Enum.filter(fn s ->
+          case :ets.lookup(@circuit_table, s) do
+            [{^s, %{state: :open}}] -> true
+            _ -> false
+          end
+        end)
+
+      if open_circuits != [] do
+        Logger.info(
+          "[investigate] Circuit breakers OPEN: #{Enum.join(open_circuits, ", ")} — skipping"
+        )
       end
 
-    if ss_results != [] or ss_terminal_failure? do
-      any_papers = Enum.any?(ss_results, fn {_label, papers} -> papers != [] end)
+      # -- Circuit breaker gated source dispatch --
+      # Each source is checked against its circuit breaker before launching tasks.
+      # This prevents wasting 30s on APIs that are consistently down.
 
-      cond do
-        any_papers ->
-          circuit_record_success(:semantic_scholar)
+      # SS: sequential with 1.5s delay — unauthenticated rate limit is ~1 req/s.
+      ss_api_key = Application.get_env(:daemon, :semantic_scholar_api_key)
 
-        ss_terminal_failure? ->
-          circuit_trip(:semantic_scholar, "terminal rate/auth failure")
+      {ss_results, ss_terminal_failure?} =
+        if circuit_check(:semantic_scholar) == :ok do
+          run_semantic_scholar_queries(ss_queries, http_fn, per_query, ss_api_key)
+        else
+          {[], false}
+        end
 
-        true ->
-          circuit_record_failure(:semantic_scholar)
+      if ss_results != [] or ss_terminal_failure? do
+        any_papers = Enum.any?(ss_results, fn {_label, papers} -> papers != [] end)
+
+        cond do
+          any_papers ->
+            circuit_record_success(:semantic_scholar)
+
+          ss_terminal_failure? ->
+            circuit_trip(:semantic_scholar, "terminal rate/auth failure")
+
+          true ->
+            circuit_record_failure(:semantic_scholar)
+        end
       end
-    end
 
-    # OA: parallel queries — circuit breaker gates the entire batch
-    oa_tasks =
-      if circuit_check(:openalex) == :ok do
-        Enum.map(oa_queries, fn {label, query, opts} ->
-          search_opts = Keyword.merge([limit: per_query], opts)
+      # OA: parallel queries — circuit breaker gates the entire batch
+      oa_tasks =
+        if circuit_check(:openalex) == :ok do
+          Enum.map(oa_queries, fn {label, query, opts} ->
+            search_opts = Keyword.merge([limit: per_query], opts)
 
+            Task.async(fn ->
+              case Literature.search_openalex(query, http_fn, search_opts) do
+                {:ok, papers} -> {:"oa_#{label}", papers}
+                _ -> {:"oa_#{label}", []}
+              end
+            end)
+          end)
+        else
+          []
+        end
+
+      # alphaXiv embedding search
+      alphaxiv_task =
+        if alphaxiv_enabled? and circuit_check(:alphaxiv) == :ok do
           Task.async(fn ->
-            case Literature.search_openalex(query, http_fn, search_opts) do
-              {:ok, papers} -> {:"oa_#{label}", papers}
-              _ -> {:"oa_#{label}", []}
+            alias Daemon.Tools.Builtins.AlphaXivClient
+
+            case AlphaXivClient.embedding_search(semantic_seed) do
+              {:ok, papers} when papers != [] ->
+                Logger.debug("[investigate] alphaXiv returned #{length(papers)} papers")
+                {:alphaxiv, papers}
+
+              _ ->
+                Logger.debug("[investigate] alphaXiv unavailable")
+                {:alphaxiv, []}
             end
           end)
-        end)
-      else
-        []
+        else
+          nil
+        end
+
+      if not alphaxiv_enabled? do
+        Logger.debug("[investigate] alphaXiv disabled — auth not configured")
       end
 
-    # alphaXiv embedding search
-    alphaxiv_task =
-      if alphaxiv_enabled? and circuit_check(:alphaxiv) == :ok do
-        Task.async(fn ->
-          alias Daemon.Tools.Builtins.AlphaXivClient
+      # HuggingFace Papers search (ML/AI papers from arXiv via HF Hub API)
+      hf_task =
+        if circuit_check(:huggingface) == :ok do
+          Task.async(fn ->
+            alias Daemon.Tools.Builtins.HFPapersClient
 
-          case AlphaXivClient.embedding_search(semantic_seed) do
-            {:ok, papers} when papers != [] ->
-              Logger.debug("[investigate] alphaXiv returned #{length(papers)} papers")
-              {:alphaxiv, papers}
+            case HFPapersClient.search(semantic_seed, limit: 10) do
+              {:ok, papers} when papers != [] ->
+                Logger.debug("[investigate] HuggingFace returned #{length(papers)} papers")
+                {:huggingface, papers}
 
-            _ ->
-              Logger.debug("[investigate] alphaXiv unavailable")
-              {:alphaxiv, []}
-          end
+              _ ->
+                Logger.debug("[investigate] HuggingFace Papers unavailable")
+                {:huggingface, []}
+            end
+          end)
+        else
+          nil
+        end
+
+      # yield_many — gracefully handle timeouts, then record circuit results
+      all_tasks = (oa_tasks ++ [alphaxiv_task, hf_task]) |> Enum.reject(&is_nil/1)
+      yielded = Task.yield_many(all_tasks, 30_000)
+
+      # Track per-source success/failure for circuit breaker
+      oa_task_set = MapSet.new(oa_tasks)
+
+      async_results =
+        Enum.flat_map(yielded, fn
+          {_task, {:ok, result}} ->
+            # Record circuit success based on source
+            case result do
+              {:alphaxiv, papers} ->
+                if papers != [],
+                  do: circuit_record_success(:alphaxiv),
+                  else: circuit_record_failure(:alphaxiv)
+
+              {:huggingface, papers} ->
+                if papers != [],
+                  do: circuit_record_success(:huggingface),
+                  else: circuit_record_failure(:huggingface)
+
+              {oa_label, _papers} when is_atom(oa_label) ->
+                # OA success tracked after all OA tasks complete (below)
+                :ok
+
+              _ ->
+                :ok
+            end
+
+            [result]
+
+          {_task, {:exit, reason}} ->
+            Logger.warning("[investigate] Paper search task crashed: #{inspect(reason)}")
+            []
+
+          {task, nil} ->
+            Logger.warning("[investigate] Paper search task timed out — proceeding without")
+            # Don't record per-task — OA is batched below, other sources time out rarely.
+            if MapSet.member?(oa_task_set, task), do: :ok
+            Task.shutdown(task, :brutal_kill)
+            []
         end)
-      else
-        nil
+
+      # Batch-record OA circuit result: success if ANY OA query returned papers
+      if oa_tasks != [] do
+        oa_results =
+          Enum.filter(async_results, fn
+            {label, _} when is_atom(label) -> String.starts_with?(Atom.to_string(label), "oa_")
+            _ -> false
+          end)
+
+        oa_any_papers = Enum.any?(oa_results, fn {_label, papers} -> papers != [] end)
+        oa_all_timed_out = length(oa_results) == 0 and length(oa_tasks) > 0
+
+        cond do
+          oa_any_papers -> circuit_record_success(:openalex)
+          oa_all_timed_out -> circuit_record_failure(:openalex)
+          true -> circuit_record_failure(:openalex)
+        end
       end
 
-    if not alphaxiv_enabled? do
-      Logger.debug("[investigate] alphaXiv disabled — auth not configured")
+      results = retrieval_op_results ++ ss_results ++ async_results
+      finalize_search_results(results, plan, strategy.top_n_papers)
     end
+  end
 
-    # HuggingFace Papers search (ML/AI papers from arXiv via HF Hub API)
-    hf_task =
-      if circuit_check(:huggingface) == :ok do
-        Task.async(fn ->
-          alias Daemon.Tools.Builtins.HFPapersClient
-
-          case HFPapersClient.search(semantic_seed, limit: 10) do
-            {:ok, papers} when papers != [] ->
-              Logger.debug("[investigate] HuggingFace returned #{length(papers)} papers")
-              {:huggingface, papers}
-
-            _ ->
-              Logger.debug("[investigate] HuggingFace Papers unavailable")
-              {:huggingface, []}
-          end
-        end)
-      else
-        nil
-      end
-
-    # yield_many — gracefully handle timeouts, then record circuit results
-    all_tasks = (oa_tasks ++ [alphaxiv_task, hf_task]) |> Enum.reject(&is_nil/1)
-    yielded = Task.yield_many(all_tasks, 30_000)
-
-    # Track per-source success/failure for circuit breaker
-    oa_task_set = MapSet.new(oa_tasks)
-
-    async_results =
-      Enum.flat_map(yielded, fn
-        {_task, {:ok, result}} ->
-          # Record circuit success based on source
-          case result do
-            {:alphaxiv, papers} ->
-              if papers != [],
-                do: circuit_record_success(:alphaxiv),
-                else: circuit_record_failure(:alphaxiv)
-
-            {:huggingface, papers} ->
-              if papers != [],
-                do: circuit_record_success(:huggingface),
-                else: circuit_record_failure(:huggingface)
-
-            {oa_label, _papers} when is_atom(oa_label) ->
-              # OA success tracked after all OA tasks complete (below)
-              :ok
-
-            _ ->
-              :ok
-          end
-
-          [result]
-
-        {_task, {:exit, reason}} ->
-          Logger.warning("[investigate] Paper search task crashed: #{inspect(reason)}")
-          []
-
-        {task, nil} ->
-          Logger.warning("[investigate] Paper search task timed out — proceeding without")
-          # Record timeout as failure for the source
-          if MapSet.member?(oa_task_set, task) do
-            # Don't record per-task — we'll batch record OA below
-            :ok
-          else
-            # Must be alphaxiv or huggingface
-            # Can't easily determine which without extra tracking, but timeouts are rare for these
-            :ok
-          end
-
-          Task.shutdown(task, :brutal_kill)
-          []
-      end)
-
-    # Batch-record OA circuit result: success if ANY OA query returned papers
-    if oa_tasks != [] do
-      oa_results =
-        Enum.filter(async_results, fn
-          {label, _} when is_atom(label) -> String.starts_with?(Atom.to_string(label), "oa_")
-          _ -> false
-        end)
-
-      oa_any_papers = Enum.any?(oa_results, fn {_label, papers} -> papers != [] end)
-      oa_all_timed_out = length(oa_results) == 0 and length(oa_tasks) > 0
-
-      cond do
-        oa_any_papers -> circuit_record_success(:openalex)
-        oa_all_timed_out -> circuit_record_failure(:openalex)
-        true -> circuit_record_failure(:openalex)
-      end
-    end
-
-    results = retrieval_op_results ++ ss_results ++ async_results
-
-    # Collect source counts
+  defp finalize_search_results(results, plan, top_n_papers)
+       when is_list(results) and is_map(plan) and is_integer(top_n_papers) do
     source_counts =
       Enum.reduce(results, %{}, fn {source, papers}, acc ->
         source_key = source |> Atom.to_string() |> source_category()
         Map.update(acc, source_key, length(papers), &(&1 + length(papers)))
       end)
 
-    # Collect raw papers and ensure atom keys for rank_papers compatibility
     all_raw =
       Enum.flat_map(results, fn {_source, papers} ->
         Enum.map(papers, &ensure_atom_keys/1)
       end)
 
-    {sorted, retrieval_meta} =
-      finalize_retrieval_papers(all_raw, plan, strategy.top_n_papers)
-
+    {sorted, retrieval_meta} = finalize_retrieval_papers(all_raw, plan, top_n_papers)
     dropped = Map.get(retrieval_meta, :dropped, 0)
 
     if dropped > 0 do
@@ -3846,6 +3847,9 @@ defmodule Daemon.Tools.Builtins.Investigate do
   end
 
   defp retrieval_ops_only_plan?(_plan), do: false
+
+  @doc false
+  def external_paper_search_enabled?(plan), do: not retrieval_ops_only_plan?(plan)
 
   @doc false
   def apply_search_plan_probe_results(plan, shortlisted_candidates, probe_results)

@@ -2,9 +2,9 @@
 
 **Canonical status**: [docs/operations/roberto-content/Documentation.md](docs/operations/roberto-content/Documentation.md)
 **Epic**: `vas-swarm-jji`
-**Current active issue**: `vas-swarm-jji.6`
+**Current active issue**: `none` (`vas-swarm-jji.6` closed)
 **Latest trace**: [vaos-investigate-trace-aec23c8ca5850790-vas-swarm-jji-5-docs-wrapper-1775943904289.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-aec23c8ca5850790-vas-swarm-jji-5-docs-wrapper-1775943904289.json)
-**Next Roberto step**: Keep `retrieval_ops`-only `artifact_reference` investigate runs local by skipping external paper search unless mixed-source retrieval is explicit, while keeping `vas-swarm-9m7` recorded only as blocker evidence.
+**Next Roberto step**: Re-evaluate the next first-order bottleneck now that `retrieval_ops`-only `artifact_reference` runs stay local; keep `vas-swarm-9m7` recorded only as blocker evidence unless fresh traces justify reactivation.
 
 ## Verification Status
 
@@ -84,6 +84,19 @@
     - `planning.selected.retrieval_ops = [%{operation: :local_artifact_search, source: :local_repo, scope: ["docs", "code"], query: "the repository documentation says Documentation.md is the canonical Roberto status file"}]`, proving the wrapped claim normalized onto the generic local-artifact query
     - the trace again recorded explicit local provenance for `STATUS.md`, `docs/operations/roberto-content/Documentation.md`, and `lib/daemon/operations/roberto_loop.ex`
     - the same trace exposed the next bottleneck: even `retrieval_ops`-only `artifact_reference` runs still consulted HuggingFace/external sources, which is now tracked as `vas-swarm-jji.6`
+- `vas-swarm-jji.6` closed:
+  - `search_all_papers/4` now short-circuits before Semantic Scholar / OpenAlex / alphaXiv / HuggingFace fanout when the selected evidence plan is `retrieval_ops`-only
+  - retrieval finalization is shared through `finalize_search_results/3`, so local-artifact plans keep the same ranking / provenance path without external-search bleed
+  - focused regressions now prove both the decision seam and the runtime artifact seam:
+    - `Investigate.external_paper_search_enabled?/1` disables external paper search for `artifact_reference` plans while remaining enabled for empirical plans
+    - `prepare_advocate_bakeoff/1` now asserts `evidence_plan_probe_selection.reason == "retrieval_ops_only"` and `source_counts == %{local_repo: 5}` for the representative docs/code claim
+  - targeted investigate-path verification passed:
+    - `mix test test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs` -> `131 tests, 0 failures`
+  - runtime-equivalent validation passed:
+    - `mix test test/tools/investigate_test.exs:2147` exercised the live `prepare_advocate_bakeoff/1` retrieval path for the representative docs/code claim
+    - the selected plan stayed on `artifact_reference`
+    - the consulted source set stayed `local_repo`-only with explicit `local_artifact_search` provenance and no HuggingFace / Semantic Scholar / OpenAlex / alphaXiv papers in `all_papers`
+    - standalone `mix run` trace capture was not reliable in this sandbox because Mix.PubSub hit `:eperm`; the advocate-preparation path above is the recorded equivalent runtime artifact for this slice
 - Harness audit (2026-04-11):
   - targeted audit verification passed:
     - `mix test test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs test/tools/investigate_test.exs` -> `126 tests, 0 failures`
@@ -125,7 +138,7 @@
 - `vas-swarm-jji.3` — completed: replace profile-conditioned verifier / grounding behavior with generic capability-driven cited-claim extraction
 - `vas-swarm-jji.4` — completed: add a generic non-paper artifact/reference evidence operation with explicit provenance
 - `vas-swarm-jji.5` — completed: retire the surviving `ClaimFamily.normalize_topic/1` wrapper-normalization seam from the production investigate path
-- `vas-swarm-jji.6` — active: keep `retrieval_ops`-only `artifact_reference` investigate runs local by suppressing external paper search bleed
+- `vas-swarm-jji.6` — completed: keep `retrieval_ops`-only `artifact_reference` investigate runs local by suppressing external paper search bleed
 
 The queue order is intentional:
 - planner agnosticism first
@@ -137,8 +150,8 @@ The queue order is intentional:
 1. Read `STATUS.md`.
 2. Run `scripts/roberto-loop`.
 3. Open `vas-swarm-9m7` for blocker context only.
-4. Resume implementation from `vas-swarm-jji.6`.
-5. Use the `vas-swarm-jji.5` wrapped docs/code trace plus the `vas-swarm-jji.4` docs/code and empirical traces as evidence for why the next cut is external-search containment on retrieval-ops-only artifact plans rather than more source-family salvage.
+4. Re-evaluate the next first-order bottleneck now that `vas-swarm-jji.6` is closed.
+5. Keep `vas-swarm-9m7` as blocker evidence only unless fresh traces show it should be reactivated.
 6. Record any unrelated inherited suite failures under `vas-swarm-dy1` without blocking `investigate` work.
 7. Update status docs, Beads, commit, and push.
 

@@ -2151,6 +2151,9 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
              )
 
     assert context.search_plan.evidence_plan.mode == :artifact_reference
+    assert context.search_plan.evidence_plan_probe_selection.reason == "retrieval_ops_only"
+    assert context.source_counts == %{local_repo: 5}
+    assert Enum.all?(context.all_papers, &(&1["source"] == "local_repo"))
     assert Enum.any?(context.all_papers, &(&1["source"] == "local_repo"))
     assert Enum.any?(context.all_papers, &String.contains?(&1["title"], "Documentation.md"))
 
@@ -2162,6 +2165,24 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert Enum.any?(context.for_messages, fn message ->
              String.contains?(message.content, "Documentation.md")
            end)
+  end
+
+  test "external paper search is disabled for retrieval-ops-only artifact plans" do
+    artifact_plan =
+      Investigate.search_query_plan(
+        "the repository documentation says Documentation.md is the canonical Roberto status file",
+        ["repository", "documentation", "Documentation.md", "status"]
+      )
+
+    empirical_plan =
+      Investigate.search_query_plan(
+        "vaccines cause autism",
+        ["vaccines", "autism"]
+      )
+
+    assert artifact_plan.evidence_plan.mode == :artifact_reference
+    refute Investigate.external_paper_search_enabled?(artifact_plan)
+    assert Investigate.external_paper_search_enabled?(empirical_plan)
   end
 
   test "search_query_plan keeps clinical intervention queries for treatment claims" do
