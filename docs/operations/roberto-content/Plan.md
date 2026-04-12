@@ -2,7 +2,7 @@
 
 **Created**: 2026-04-10
 **Epic**: `vas-swarm-jji`
-**Current Active Issue**: `vas-swarm-jji.18` (open)
+**Current Active Issue**: `vas-swarm-jji.19` (open)
 **Recently closed measurement issue**: `vas-swarm-9m7`
 
 ## Overview
@@ -51,7 +51,7 @@ Strategic correction:
 **Goal**: Eliminate known trust-breaking failures in the current literature-centered pipeline, then reduce second-order instability without regressing honesty.
 
 **Current focus**
-- `vas-swarm-jji.18`: harden investigate against malformed non-empty verifier replies poisoning the citation cache
+- `vas-swarm-jji.19`: rerun the representative Roberto content check after verifier malformed-reply cache hardening
 
 **Status note**
 - Probe-paper carryover now lands in the merged retrieval set and the live rerun no longer ends `belief_consensus_for`.
@@ -75,7 +75,8 @@ Strategic correction:
 - `vas-swarm-jji.15` is complete: the saved nitric-oxide-plus-caffeine contradiction now replays as `indirect/belief` instead of grounded direct opposition via [vaos-jji15-grounding-replay-1775979139.json](/tmp/vaos-jji15-grounding-replay-1775979139.json).
 - `vas-swarm-jji.16` is complete: the exact representative content check [vaos-jji16-content-check-1775980701.json](/tmp/vaos-jji16-content-check-1775980701.json) exposed the remaining belief-only verdict seam, the runtime-equivalent replay [vaos-jji16-observational-runtime-replay-1775982675.json](/tmp/vaos-jji16-observational-runtime-replay-1775982675.json) proves the exact bad observational trace now downgrades to `runtime_failure`, and the fallback live artifact [vaos-jji16-content-check-fallback-1775981910.json](/tmp/vaos-jji16-content-check-fallback-1775981910.json) shows representative lanes now end grounded or explicit partial/runtime-honest under provider noise.
 - `vas-swarm-jji.17` is complete: transient verifier timeout / provider-error / empty / unexpected outcomes no longer persist in the ETS citation cache, and runtime artifact [vaos-jji17-verifier-cache-recovery-1776006215.json](/tmp/vaos-jji17-verifier-cache-recovery-1776006215.json) proves representative caffeine verification now recovers after provider stabilization.
-- the next slice is `vas-swarm-jji.18`: harden malformed non-empty verifier replies without reopening a first-order integrity bug.
+- `vas-swarm-jji.18` is complete: malformed non-classification verifier replies now degrade to `unexpected_response` runtime failures instead of poisoning the stable ETS cache, and runtime artifact [vaos-jji18-verifier-malformed-recovery-1776007114.json](/tmp/vaos-jji18-verifier-malformed-recovery-1776007114.json) proves clean rerun recovery while legitimate negative reasoning still caches.
+- the next slice is `vas-swarm-jji.19`: rerun the representative content check now that the full verifier-cache hardening stack is in place.
 - Repo-history audit shows the remaining full-suite failures live in pre-takeover Roberto/PAMF2-era surfaces outside the `investigate` tool path.
 - Those inherited repo-wide failures are tracked as background debt in `vas-swarm-dy1` and are non-blocking unless they intersect `investigate`, `evidence_planner`, or directly coupled verification/retrieval code touched by this milestone.
 
@@ -176,7 +177,7 @@ Strategic correction:
 **Status note**
 - `vas-swarm-jji.8` completed the content check and exposed the final first-order follow-ups.
 - `vas-swarm-9m7` is now resolved: replaying the exact blocker trace no longer returns `multiple_refs` for the recurring earth-shape core, and the fallback live measurement trace [vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-9m7-live-curvature-1775949543170.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-9m7-live-curvature-1775949543170.json) grounded both sides with no timeout.
-- `vas-swarm-jji.9` and `vas-swarm-jji.10` are now resolved, `vas-swarm-jji.11` completed the representative recheck, `vas-swarm-jji.12` closed the grounding follow-up, `vas-swarm-jji.13` closed the runtime-honesty follow-up, `vas-swarm-jji.14` closed the randomized support-balance audit, `vas-swarm-jji.15` closed the co-formulated contradiction seam, `vas-swarm-jji.16` closed the final belief-only verdict seam exposed by verifier runtime failure, and `vas-swarm-jji.17` closed the explicit timeout / provider-error cache-poisoning seam. Milestone 5's first-order acceptance criteria remain met; the remaining open work is the narrower malformed-reply cache seam in `vas-swarm-jji.18`.
+- `vas-swarm-jji.9` and `vas-swarm-jji.10` are now resolved, `vas-swarm-jji.11` completed the representative recheck, `vas-swarm-jji.12` closed the grounding follow-up, `vas-swarm-jji.13` closed the runtime-honesty follow-up, `vas-swarm-jji.14` closed the randomized support-balance audit, `vas-swarm-jji.15` closed the co-formulated contradiction seam, `vas-swarm-jji.16` closed the final belief-only verdict seam exposed by verifier runtime failure, `vas-swarm-jji.17` closed the explicit timeout / provider-error cache-poisoning seam, and `vas-swarm-jji.18` closed the malformed-reply cache seam. Milestone 5's first-order acceptance criteria remain met; the remaining open work is the representative post-hardening recheck in `vas-swarm-jji.19`.
 
 ### Acceptance Criteria
 

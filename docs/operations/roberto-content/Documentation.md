@@ -2,7 +2,7 @@
 
 **Last updated**: 2026-04-12
 **Epic**: `vas-swarm-jji`
-**Current active issue**: `vas-swarm-jji.18`
+**Current active issue**: `vas-swarm-jji.19`
 **Latest functional checkpoint before this doc stack**: `c8ce3b6`
 
 ## Objective
@@ -19,7 +19,7 @@ The program is back on the right route:
 - runtime traces now preserve explicit non-paper provenance for local artifact evidence
 - administration-style intervention phrasing now routes into `randomized_intervention`
 - live traces fail more honestly than before
-- the durable epistemic engine route is now explicit in Beads as `vas-swarm-jji.1` through `vas-swarm-jji.17`
+- the durable epistemic engine route is now explicit in Beads as `vas-swarm-jji.1` through `vas-swarm-jji.18`
 - the `profile`-conditioned grounding branch has been removed from the live investigate path
 - production investigate no longer depends on `ClaimFamily.normalize_topic/1`
 - `ClaimFamily.normalize_verification_claim/1` appears to be superseded in the production investigate path by generic `verification_claim_text/1`
@@ -42,9 +42,11 @@ The fresh representative content check in `vas-swarm-jji.16` closed the last kno
 - there is no open P1/P2 first-order integrity bug across the representative `measurement`, `observational`, and `randomized_intervention` lanes
 - `vas-swarm-jji.17` is now closed: transient verifier timeout / provider-error / empty / unexpected citation outcomes no longer persist in the ETS verifier cache, so later representative reruns can retry once the provider stabilizes
 - runtime artifact [vaos-jji17-verifier-cache-recovery-1776006215.json](/tmp/vaos-jji17-verifier-cache-recovery-1776006215.json) proves the same representative caffeine citation now moves from `timeout` on run 1 to `verified/trial` on run 2 after provider recovery with no cached failure reuse
-- the next active question is `vas-swarm-jji.18`: can malformed non-empty verifier replies be kept out of the stable cache without regressing legitimate negative reasoning?
+- `vas-swarm-jji.18` is now closed: malformed non-classification verifier replies now degrade to `unexpected_response` runtime failures instead of being cached as stable `unverified` evidence, while legitimate negative reasoning remains cacheable
+- runtime artifact [vaos-jji18-verifier-malformed-recovery-1776007114.json](/tmp/vaos-jji18-verifier-malformed-recovery-1776007114.json) proves the same representative caffeine citation now moves from `unexpected_response` on run 1 to `verified/trial` on run 2 after provider recovery, and a negative-reasoning control still hits cache on rerun
+- the next active question is `vas-swarm-jji.19`: does the representative measurement / observational / randomized_intervention content check still hold after the full verifier-cache hardening stack?
 
-That means the next step is `vas-swarm-jji.18`: close the remaining non-empty verifier-reply cache seam now that the explicit runtime-failure poisoning path is shut.
+That means the next step is `vas-swarm-jji.19`: rerun the representative Roberto content check now that both explicit runtime failures and malformed verifier replies are excluded from the stable citation cache.
 
 Strategic correction:
 - `ClaimFamily` is no longer treated as the intended architecture
@@ -55,37 +57,40 @@ Repo-wide full-suite debt is no longer the gating concern for this program when 
 ## Latest Completed Slice
 
 ### Closed issue
-- `vas-swarm-jji.17`
+- `vas-swarm-jji.18`
 
 ### What landed
-- `cached_verify/3` now writes ETS citation-verification cache entries only for stable `VERIFIED` / `PARTIAL` / `UNVERIFIED` results with no explicit `runtime_failure`
-- transient verifier timeout / provider-error / empty-response / unexpected-response outcomes no longer poison later reruns in the same runtime
-- focused regressions now cover the recovery boundary directly:
-  - a verifier timeout remains visible as a runtime failure on the first pass
-  - the same representative citation re-verifies cleanly after provider recovery instead of reusing the earlier timeout result
-- the bottleneck moved from provider-timeout cache poisoning to malformed non-empty verifier replies, now filed as `vas-swarm-jji.18`
+- verifier parsing now trusts only prompt-shaped first-line / explicit classification signals plus vetted reasoning salvage instead of sweeping arbitrary classification keywords out of malformed text
+- non-empty malformed verifier replies now surface as `unexpected_response` runtime failures and stay out of the stable ETS citation cache
+- legitimate negative verification reasoning still parses as stable `unverified` evidence and remains cacheable across reruns
+- focused regressions now cover both sides of the boundary directly:
+  - a malformed verifier reply remains visible as a runtime failure on the first pass and does not poison reruns
+  - the same representative citation re-verifies cleanly after provider recovery
+  - a legitimate negative reasoning reply still hits cache on the second pass
+- the bottleneck moved from malformed-reply cache poisoning to the representative post-hardening content recheck, now filed as `vas-swarm-jji.19`
 
 ### Validation
 - Tests:
-  - `mix test test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs` -> `155 tests, 0 failures`
+  - `mix test test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs` -> `158 tests, 0 failures`
   - inherited repo-wide warnings and unrelated suite failures remain background debt unless they intersect `investigate`, `evidence_planner`, or directly coupled verification/retrieval code
 ### What the slice proved
-- runtime artifact [vaos-jji17-verifier-cache-recovery-1776006215.json](/tmp/vaos-jji17-verifier-cache-recovery-1776006215.json) exercises the real `Investigate.verify_citations/3` path twice in one runtime against representative randomized-intervention evidence:
-  - run 1 used a timeouting verifier and returned `verification = timeout`, `runtime_failure_count = 1`, `cache_hits = 0`, `cache_misses = 1`
+- runtime artifact [vaos-jji18-verifier-malformed-recovery-1776007114.json](/tmp/vaos-jji18-verifier-malformed-recovery-1776007114.json) exercises the real `Investigate.verify_citations/3` path across the malformed-reply boundary against representative randomized-intervention evidence:
+  - run 1 used a malformed non-empty verifier reply and returned `verification = unexpected_response`, `runtime_failure_count = 1`, `cache_hits = 0`, `cache_misses = 1`
   - run 2 switched to a healthy verifier and returned `verification = verified`, `paper_type = trial`, `runtime_failure_count = 0`, `cache_hits = 0`, `cache_misses = 1`, `success_provider_calls = 1`
-- representative reruns are no longer forced to stay partial just because an earlier verifier call timed out
-- the remaining open work is the adjacent malformed-reply seam in `vas-swarm-jji.18`, not the explicit timeout / rate-limit poisoning path from `.17`
+  - the negative-reasoning control returned `verification = unverified`, `paper_type = trial`, then hit cache on run 2 with `cache_hits = 1`, `provider_calls = 1`
+- representative reruns are no longer poisoned by either explicit verifier runtime failures or malformed non-classification replies
+- the remaining open work is the representative content recheck in `vas-swarm-jji.19`, not another known citation-cache seam
 
 ## Recorded Blocker Context
 
 ### Active issue
-- `vas-swarm-jji.18`
+- `vas-swarm-jji.19`
 
 ### Problem
-The explicit verifier runtime-failure poisoning path is closed, but one adjacent cache seam remains in the investigate core:
-- a non-empty malformed verifier reply can still be parsed as ordinary `unverified` evidence
-- that malformed reply can then persist in the stable ETS cache across reruns
-- the next question is whether investigate can treat malformed non-classification replies as runtime-failure-shaped outcomes without regressing legitimate negative reasoning
+The verifier cache seam is now closed, so the next question moves back to representative end-to-end trust:
+- rerun the representative `measurement`, `observational`, and `randomized_intervention` validations with the hardened verifier/cache boundary in place
+- confirm the tightened parser does not regress grounded routing, legitimate negative verification reasoning, or runtime-honest degradation
+- isolate any newly exposed first-order bottleneck if the representative recheck finds one
 
 ## Long-Horizon Queue
 
@@ -106,7 +111,8 @@ The explicit verifier runtime-failure poisoning path is closed, but one adjacent
 - `vas-swarm-jji.15` — completed: demote co-formulated randomized contradictions from direct grounding
 - `vas-swarm-jji.16` — completed: rerun the final Roberto content check and close the belief-only verdict seam exposed by verifier runtime failure
 - `vas-swarm-jji.17` — completed: transient verifier runtime failures no longer poison investigate citation-verification cache across reruns
-- `vas-swarm-jji.18` — active: harden investigate against malformed non-empty verifier replies poisoning the citation cache
+- `vas-swarm-jji.18` — completed: harden investigate against malformed non-empty verifier replies poisoning the citation cache
+- `vas-swarm-jji.19` — active: rerun the representative Roberto content check after verifier malformed-reply cache hardening
 
 Why this order:
 - planner agnosticism first, so mode choice is no longer boxed by hidden topic priors
@@ -122,11 +128,11 @@ Continue from evidence, not inherited full-suite debt:
 - only let repo-wide failures block advancement when they intersect `investigate` or its directly coupled planning/verification path
 - when three live attempts fail to prove the same milestone because of provider instability or wrapper drift, write down the blocker and pause instead of advancing
 - do not reopen `vas-swarm-9m7` unless a new live measurement trace regresses
-- spend the next slice on `vas-swarm-jji.18`: harden malformed non-empty verifier replies so transient provider garbage cannot persist as stable cached `unverified` evidence
+- spend the next slice on `vas-swarm-jji.19`: rerun the representative content check now that both timeout noise and malformed verifier replies are kept out of the stable citation cache
 
 Shortest version:
 
-Planner-family, retrieval-family, profile-conditioned grounding, wrapper-normalization, external-search bleed, the measurement-side multi-ref verifier collapse, the observational support-side history/debate leak, the observational paraphrase/provider-noise contradiction leak, the cited-claim / topic-alignment grounding seam from `vas-swarm-jji.12`, the hidden runtime-collapse seam from `vas-swarm-jji.13`, the representative randomized support-balance audit from `vas-swarm-jji.14`, the co-formulated randomized contradiction seam from `vas-swarm-jji.15`, the belief-only verdict seam from `vas-swarm-jji.16`, and the explicit verifier-timeout cache-poisoning seam from `vas-swarm-jji.17` are no longer the known core bottlenecks. The remaining active question is narrower: can malformed non-empty verifier replies be kept out of the stable cache without sacrificing legitimate negative verification reasoning?
+Planner-family, retrieval-family, profile-conditioned grounding, wrapper-normalization, external-search bleed, the measurement-side multi-ref verifier collapse, the observational support-side history/debate leak, the observational paraphrase/provider-noise contradiction leak, the cited-claim / topic-alignment grounding seam from `vas-swarm-jji.12`, the hidden runtime-collapse seam from `vas-swarm-jji.13`, the representative randomized support-balance audit from `vas-swarm-jji.14`, the co-formulated randomized contradiction seam from `vas-swarm-jji.15`, the belief-only verdict seam from `vas-swarm-jji.16`, the explicit verifier-timeout cache-poisoning seam from `vas-swarm-jji.17`, and the malformed non-empty verifier-reply cache seam from `vas-swarm-jji.18` are no longer the known core bottlenecks. The remaining active question is the representative post-hardening recheck in `vas-swarm-jji.19`.
 
 ## Known Stable Wins
 
@@ -146,9 +152,9 @@ On the next session:
 
 1. Read this file.
 2. Run `scripts/roberto-loop`.
-3. Open `vas-swarm-jji.18`, the runtime artifact [vaos-jji17-verifier-cache-recovery-1776006215.json](/tmp/vaos-jji17-verifier-cache-recovery-1776006215.json), the exact representative content-check artifact [vaos-jji16-content-check-1775980701.json](/tmp/vaos-jji16-content-check-1775980701.json), the runtime-equivalent replay artifact [vaos-jji16-observational-runtime-replay-1775982675.json](/tmp/vaos-jji16-observational-runtime-replay-1775982675.json), and the fallback live artifact [vaos-jji16-content-check-fallback-1775981910.json](/tmp/vaos-jji16-content-check-fallback-1775981910.json).
-4. Resume from `vas-swarm-jji.18`.
-5. Harden malformed non-empty verifier replies without reopening the runtime-failure honesty boundary from `vas-swarm-jji.16` or the timeout-recovery improvement from `vas-swarm-jji.17`.
+3. Open `vas-swarm-jji.19`, the runtime artifact [vaos-jji18-verifier-malformed-recovery-1776007114.json](/tmp/vaos-jji18-verifier-malformed-recovery-1776007114.json), the runtime artifact [vaos-jji17-verifier-cache-recovery-1776006215.json](/tmp/vaos-jji17-verifier-cache-recovery-1776006215.json), the exact representative content-check artifact [vaos-jji16-content-check-1775980701.json](/tmp/vaos-jji16-content-check-1775980701.json), the runtime-equivalent replay artifact [vaos-jji16-observational-runtime-replay-1775982675.json](/tmp/vaos-jji16-observational-runtime-replay-1775982675.json), and the fallback live artifact [vaos-jji16-content-check-fallback-1775981910.json](/tmp/vaos-jji16-content-check-fallback-1775981910.json).
+4. Resume from `vas-swarm-jji.19`.
+5. Rerun the representative content check and confirm the malformed-reply hardening does not reopen the runtime-failure honesty boundary from `vas-swarm-jji.16` or the timeout-recovery improvement from `vas-swarm-jji.17`.
 6. Record unrelated suite failures under `vas-swarm-dy1` without blocking `investigate` milestone advancement.
 7. Update this file, close/open issues, and push.
 

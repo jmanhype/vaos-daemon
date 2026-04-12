@@ -2,12 +2,24 @@
 
 **Canonical status**: [docs/operations/roberto-content/Documentation.md](docs/operations/roberto-content/Documentation.md)
 **Epic**: `vas-swarm-jji`
-**Current active issue**: `vas-swarm-jji.18`
-**Latest trace / artifact**: [vaos-jji17-verifier-cache-recovery-1776006215.json](/tmp/vaos-jji17-verifier-cache-recovery-1776006215.json)
-**Next Roberto step**: Harden investigate against malformed non-empty verifier replies poisoning the citation cache in `vas-swarm-jji.18`. `vas-swarm-jji.17` closed the explicit timeout / provider-error cache-poisoning seam by keeping transient verifier runtime failures out of the stable citation cache.
+**Current active issue**: `vas-swarm-jji.19`
+**Latest trace / artifact**: [vaos-jji18-verifier-malformed-recovery-1776007114.json](/tmp/vaos-jji18-verifier-malformed-recovery-1776007114.json)
+**Next Roberto step**: Re-run the representative measurement / observational / randomized_intervention Roberto content checks in `vas-swarm-jji.19` now that verifier timeout noise and malformed non-classification replies are both kept out of the stable citation cache.
 
 ## Verification Status
 
+- `vas-swarm-jji.18` closed:
+  - verifier parsing now accepts only first-line / explicit classification signals plus vetted reasoning salvage instead of sweeping arbitrary classification keywords out of malformed text
+  - non-empty malformed verifier replies now surface as `unexpected_response` runtime failures and stay out of the stable ETS citation cache
+  - legitimate negative verification reasoning still parses as stable `unverified` evidence and remains cacheable across reruns
+  - targeted investigate-path verification passed:
+    - `mix test test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs` -> `158 tests, 0 failures`
+  - runtime artifact [vaos-jji18-verifier-malformed-recovery-1776007114.json](/tmp/vaos-jji18-verifier-malformed-recovery-1776007114.json) proves the narrowed seam moved on representative randomized-intervention evidence:
+    - malformed run returned `verification = unexpected_response`, `runtime_failure_count = 1`, `cache_hits = 0`, `cache_misses = 1`
+    - rerun with a healthy verifier returned `verification = verified`, `paper_type = trial`, `runtime_failure_count = 0`, `cache_hits = 0`, `cache_misses = 1`, `success_provider_calls = 1`
+    - negative-reasoning control remained cacheable, with run 2 returning `verification = unverified`, `paper_type = trial`, `cache_hits = 1`, `provider_calls = 1`
+  - malformed provider garbage no longer poisons later reruns by persisting as stable cached `unverified` evidence
+  - new follow-up issue filed: `vas-swarm-jji.19`
 - `vas-swarm-jji.17` closed:
   - `cached_verify/3` now writes ETS citation-verification cache entries only for stable `VERIFIED` / `PARTIAL` / `UNVERIFIED` results with no explicit `runtime_failure`
   - transient verifier timeout / provider-error / empty-response / unexpected-response outcomes no longer poison later reruns in the same runtime
@@ -319,7 +331,8 @@
 - `vas-swarm-jji.15` — completed: demote co-formulated randomized contradictions from direct grounding
 - `vas-swarm-jji.16` — completed: rerun the final Roberto content check and close the belief-only verdict seam exposed by verifier runtime failure
 - `vas-swarm-jji.17` — completed: transient verifier runtime failures no longer poison investigate citation-verification cache across reruns
-- `vas-swarm-jji.18` — active: harden investigate against malformed non-empty verifier replies poisoning the citation cache
+- `vas-swarm-jji.18` — completed: harden investigate against malformed non-empty verifier replies poisoning the citation cache
+- `vas-swarm-jji.19` — active: rerun the representative Roberto content check after verifier malformed-reply cache hardening
 
 The queue order is intentional:
 - planner agnosticism first
@@ -330,9 +343,9 @@ The queue order is intentional:
 
 1. Read `STATUS.md`.
 2. Run `scripts/roberto-loop`.
-3. Open [vaos-jji16-content-check-1775980701.json](/tmp/vaos-jji16-content-check-1775980701.json), [vaos-investigate-trace-6288e6adc2dfd5a5-jji16-content-check-2-1775981014919.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-6288e6adc2dfd5a5-jji16-content-check-2-1775981014919.json), [vaos-jji16-observational-runtime-replay-1775982675.json](/tmp/vaos-jji16-observational-runtime-replay-1775982675.json), and [vaos-jji16-content-check-fallback-1775981910.json](/tmp/vaos-jji16-content-check-fallback-1775981910.json).
-4. Resume implementation from `vas-swarm-jji.18`.
-5. Reduce representative partial-result frequency under provider instability without weakening the `runtime_failure` honesty boundary from `vas-swarm-jji.16`.
+3. Open [vaos-jji18-verifier-malformed-recovery-1776007114.json](/tmp/vaos-jji18-verifier-malformed-recovery-1776007114.json), [vaos-jji17-verifier-cache-recovery-1776006215.json](/tmp/vaos-jji17-verifier-cache-recovery-1776006215.json), [vaos-jji16-content-check-1775980701.json](/tmp/vaos-jji16-content-check-1775980701.json), [vaos-jji16-observational-runtime-replay-1775982675.json](/tmp/vaos-jji16-observational-runtime-replay-1775982675.json), and [vaos-jji16-content-check-fallback-1775981910.json](/tmp/vaos-jji16-content-check-fallback-1775981910.json).
+4. Resume implementation from `vas-swarm-jji.19`.
+5. Rerun the representative content check and confirm the malformed-reply hardening does not reopen the `runtime_failure` honesty boundary from `vas-swarm-jji.16` or the timeout-recovery improvement from `vas-swarm-jji.17`.
 6. Record any unrelated inherited suite failures under `vas-swarm-dy1` without blocking `investigate` work.
 7. Update status docs, Beads, commit, and push.
 

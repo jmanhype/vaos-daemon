@@ -2469,24 +2469,46 @@ defmodule Daemon.Tools.Builtins.Investigate do
     verify_opts = verification_request_opts(model)
 
     case Providers.chat(messages, verify_opts) do
-      {:ok, %{content: response}} when is_binary(response) and response != "" ->
-        {parse_verification_response(response), nil}
+      {:ok, %{content: response}} when is_binary(response) ->
+        case String.trim(response) do
+          "" ->
+            Logger.warning(
+              "[investigate] verify_citation: empty content (reasoning model token exhaustion)"
+            )
 
-      {:ok, %{content: ""}} ->
-        Logger.warning(
-          "[investigate] verify_citation: empty content (reasoning model token exhaustion)"
-        )
+            kind = "empty_response"
 
-        kind = "empty_response"
+            {{verification_failure_status(kind), :other},
+             verification_runtime_failure(
+               evidence,
+               title,
+               claim,
+               kind,
+               "Verifier returned empty content"
+             )}
 
-        {{verification_failure_status(kind), :other},
-         verification_runtime_failure(
-           evidence,
-           title,
-           claim,
-           kind,
-           "Verifier returned empty content"
-         )}
+          response_clean ->
+            case parse_verification_response(response_clean) do
+              {:unexpected_response, _paper_type} ->
+                Logger.warning(
+                  "[investigate] verify_citation malformed classifier reply: #{String.slice(response_clean, 0, 200)}"
+                )
+
+                kind = "unexpected_response"
+
+                {{verification_failure_status(kind), :other},
+                 verification_runtime_failure(
+                   evidence,
+                   title,
+                   claim,
+                   kind,
+                   String.slice(response_clean, 0, 240)
+                 )}
+
+              parsed ->
+                {parsed, nil}
+            end
+        end
 
       {:error, reason} ->
         Logger.warning("[investigate] verify_citation failed: #{inspect(reason)}")
@@ -7105,33 +7127,30 @@ defmodule Daemon.Tools.Builtins.Investigate do
   def parse_verification_response(response) when is_binary(response) do
     response_clean = String.trim(response) |> String.upcase()
 
+    {first_line_verification, first_line_paper_type} =
+      extract_first_line_classification(response_clean)
+
     verification =
-      response_clean
-      |> extract_keyword(
-        [
-          ~r/ANSWER\s+SHOULD\s+BE\s+["“]?(UNVERIFIED|PARTIAL|VERIFIED)\b/u,
-          ~r/CLASSIF(?:Y|IES|IED)(?:\s+IT)?\s+AS\s+["“]?(UNVERIFIED|PARTIAL|VERIFIED)\b/u
-        ],
-        ~w(UNVERIFIED PARTIAL VERIFIED)
-      )
+      (first_line_verification ||
+         extract_explicit_keyword(response_clean, [
+           ~r/ANSWER\s+SHOULD\s+BE\s+["“]?(UNVERIFIED|PARTIAL|VERIFIED)\b/u,
+           ~r/CLASSIF(?:Y|IES|IED)(?:\s+IT)?\s+AS\s+["“]?(UNVERIFIED|PARTIAL|VERIFIED)\b/u
+         ]))
       |> normalize_verification_keyword(response_clean)
 
     paper_type =
-      response_clean
-      |> extract_keyword(
-        [
-          ~r/FALLS\s+UNDER\s+["“]?(REVIEW|TRIAL|STUDY|OTHER)\b/u,
-          ~r/TYPE(?:\s+SHOULD\s+BE|\s+IS)?\s+["“]?(REVIEW|TRIAL|STUDY|OTHER)\b/u,
-          ~r/CLASSIF(?:Y|IES|IED)(?:\s+IT)?\s+AS\s+["“]?(REVIEW|TRIAL|STUDY|OTHER)\b/u
-        ],
-        ~w(REVIEW TRIAL STUDY OTHER)
-      )
+      (first_line_paper_type ||
+         extract_explicit_keyword(response_clean, [
+           ~r/FALLS\s+UNDER\s+["“]?(REVIEW|TRIAL|STUDY|OTHER)\b/u,
+           ~r/TYPE(?:\s+SHOULD\s+BE|\s+IS)?\s+["“]?(REVIEW|TRIAL|STUDY|OTHER)\b/u,
+           ~r/CLASSIF(?:Y|IES|IED)(?:\s+IT)?\s+AS\s+["“]?(REVIEW|TRIAL|STUDY|OTHER)\b/u
+         ]))
       |> normalize_paper_type_keyword(response_clean)
 
-    {verification, paper_type}
+    {verification || :unexpected_response, paper_type}
   end
 
-  def parse_verification_response(_), do: {:unverified, :other}
+  def parse_verification_response(_), do: {:unexpected_response, :other}
 
   defp utility_tier_model(provider) when is_atom(provider) do
     try do
@@ -7211,7 +7230,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
         :verified
 
       true ->
-        :unverified
+        nil
     end
   end
 
@@ -7236,7 +7255,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
   defp infer_paper_type_from_reasoning(response_clean) when is_binary(response_clean) do
     cond do
       Regex.match?(
-        ~r/\bSYSTEMATIC\s+REVIEW\b|\bMETA[\s-]?ANALYSIS\b|\bREVIEW\s+ARTICLE\b/u,
+        ~r/\bSYSTEMATIC\s+REVIEW\b|\bMETA[\s-]?ANALYSIS\b|\bREVIEW\s+ARTICLE\b|\bREVIEW\s+OF\s+EXISTING\s+LITERATURE\b|\b(?:SUGGESTS|INDICATES)\s+IT'?S\s+A\s+REVIEW\b|\bIT'?S\s+A\s+REVIEW\b/u,
         response_clean
       ) ->
         :review
@@ -7252,39 +7271,32 @@ defmodule Daemon.Tools.Builtins.Investigate do
     end
   end
 
-  defp last_keyword(text, keywords) when is_binary(text) and is_list(keywords) do
-    pattern =
-      keywords
-      |> Enum.map(&Regex.escape/1)
-      |> Enum.join("|")
-      |> then(&~r/\b(?:#{&1})\b/u)
+  defp extract_first_line_classification(response_clean) when is_binary(response_clean) do
+    response_clean
+    |> String.split(~r/\R/u, trim: true)
+    |> Enum.find(&(String.trim(&1) != ""))
+    |> case do
+      nil ->
+        {nil, nil}
 
-    case Regex.scan(pattern, text) do
-      [] -> nil
-      matches -> matches |> List.last() |> List.first()
+      first_line ->
+        case Regex.run(
+               ~r/^\s*(?:(?:CLASSIFICATION|ANSWER)\s*:\s*)?(?:[-*]\s*|\d+[.)]\s*)?(VERIFIED|PARTIAL|UNVERIFIED)\W+(REVIEW|TRIAL|STUDY|OTHER)\b/u,
+               first_line
+             ) do
+          [_, verification, paper_type] -> {verification, paper_type}
+          _ -> {nil, nil}
+        end
     end
   end
 
-  defp last_quoted_keyword(text, keywords) when is_binary(text) and is_list(keywords) do
-    pattern =
-      keywords
-      |> Enum.map(&Regex.escape/1)
-      |> Enum.join("|")
-      |> then(&~r/["“](#{&1})["”]?/u)
-
-    case Regex.scan(pattern, text) do
-      [] -> nil
-      matches -> matches |> List.last() |> List.last()
-    end
-  end
-
-  defp extract_keyword(text, patterns, keywords) when is_binary(text) do
+  defp extract_explicit_keyword(text, patterns) when is_binary(text) do
     Enum.find_value(patterns, fn pattern ->
       case Regex.run(pattern, text) do
         [_, keyword] -> keyword
         _ -> nil
       end
-    end) || last_quoted_keyword(text, keywords) || last_keyword(text, keywords)
+    end)
   end
 
   defp parse_adversarial_response(response, side) do
