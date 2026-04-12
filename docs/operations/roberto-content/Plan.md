@@ -2,7 +2,7 @@
 
 **Created**: 2026-04-10
 **Epic**: `vas-swarm-jji`
-**Current Active Issue**: `vas-swarm-jji.11` (open)
+**Current Active Issue**: `vas-swarm-jji.12` (open)
 **Recently closed measurement issue**: `vas-swarm-9m7`
 
 ## Overview
@@ -51,7 +51,7 @@ Strategic correction:
 **Goal**: Eliminate known trust-breaking failures in the current literature-centered pipeline.
 
 **Current focus**
-- `vas-swarm-jji.11`: rerun the representative Roberto content check after the observational paraphrase hardening
+- `vas-swarm-jji.12`: harden empirical grounding when extracted cited claims lose topic anchors
 
 **Status note**
 - Probe-paper carryover now lands in the merged retrieval set and the live rerun no longer ends `belief_consensus_for`.
@@ -68,6 +68,7 @@ Strategic correction:
 - `vas-swarm-jji.6` is complete: retrieval-ops-only `artifact_reference` runs stay local by suppressing external paper-search bleed exposed by the wrapped docs/code trace.
 - `vas-swarm-jji.7` is complete: retrieval-ops-only local artifact preparations no longer trigger alphaXiv auth/startup noise during preflight.
 - `vas-swarm-jji.8` is complete: the content check reran the representative empirical lanes and exposed the remaining first-order follow-ups that are now closed.
+- `vas-swarm-jji.11` is complete: the representative content-check artifact [vaos-jji11-content-check-1775955446.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-jji11-content-check-1775955446.json) confirms measurement now grounds, but observational and randomized_intervention still reopen a shared cited-claim / grounding boundary now tracked in `vas-swarm-jji.12`.
 - Repo-history audit shows the remaining full-suite failures live in pre-takeover Roberto/PAMF2-era surfaces outside the `investigate` tool path.
 - Those inherited repo-wide failures are tracked as background debt in `vas-swarm-dy1` and are non-blocking unless they intersect `investigate`, `evidence_planner`, or directly coupled verification/retrieval code touched by this milestone.
 
@@ -168,7 +169,7 @@ Strategic correction:
 **Status note**
 - `vas-swarm-jji.8` completed the content check and exposed the final first-order follow-ups.
 - `vas-swarm-9m7` is now resolved: replaying the exact blocker trace no longer returns `multiple_refs` for the recurring earth-shape core, and the fallback live measurement trace [vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-9m7-live-curvature-1775949543170.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-9m7-live-curvature-1775949543170.json) grounded both sides with no timeout.
-- `vas-swarm-jji.9` and `vas-swarm-jji.10` are now resolved, so Milestone 5 now depends on the representative recheck in `vas-swarm-jji.11` rather than another known repair issue.
+- `vas-swarm-jji.9` and `vas-swarm-jji.10` are now resolved, and `vas-swarm-jji.11` has completed the representative recheck, so Milestone 5 now depends on the grounding follow-up in `vas-swarm-jji.12`.
 
 ### Acceptance Criteria
 
