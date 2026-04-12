@@ -4,6 +4,30 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
   alias Daemon.Investigation.Strategy
   alias Daemon.Tools.Builtins.Investigate
 
+  defmodule VerificationTimeoutProviderStub do
+    @behaviour Daemon.Providers.Behaviour
+
+    @impl true
+    def name, do: :verify_timeout
+
+    @impl true
+    def default_model, do: "verify-timeout-1"
+
+    @impl true
+    def available_models, do: ["verify-timeout-1"]
+
+    @impl true
+    def chat(_messages, _opts) do
+      {:error, "Connection failed: %Req.TransportError{reason: :timeout}"}
+    end
+
+    @impl true
+    def chat_stream(_messages, callback, _opts) do
+      callback.({:done, %{content: "", tool_calls: []}})
+      :ok
+    end
+  end
+
   defmodule AlphaXivClientStub do
     use Agent
 
@@ -484,7 +508,11 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
           llm_ms_total: 80,
           average_llm_ms: 80,
           slowest_llm_ms: 80,
-          model: "glm-4.5-flash"
+          model: "glm-4.5-flash",
+          runtime_failure_count: 1,
+          runtime_failure_examples: [
+            %{kind: "timeout", reason: "Connection failed: timeout", paper_ref: 1}
+          ]
         },
         %{
           total_items: 4,
@@ -498,7 +526,11 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
           llm_ms_total: 100,
           average_llm_ms: 50,
           slowest_llm_ms: 60,
-          model: "glm-4.5-flash"
+          model: "glm-4.5-flash",
+          runtime_failure_count: 1,
+          runtime_failure_examples: [
+            %{kind: "provider_error", reason: "Provider offline", paper_ref: 2}
+          ]
         }
       ])
 
@@ -514,6 +546,12 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert merged.average_llm_ms == 60
     assert merged.slowest_llm_ms == 80
     assert merged.model == "glm-4.5-flash"
+    assert merged.runtime_failure_count == 2
+
+    assert merged.runtime_failure_examples == [
+             %{kind: "timeout", reason: "Connection failed: timeout", paper_ref: 1},
+             %{kind: "provider_error", reason: "Provider offline", paper_ref: 2}
+           ]
   end
 
   test "cross_side_overlap_stats reports shared normalized claim and paper pairs" do
@@ -886,6 +924,73 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert stats.no_llm_items == 1
   end
 
+  test "verify_citations records verifier provider timeouts in stats and evidence" do
+    case Process.whereis(Daemon.Providers.Registry) do
+      nil -> start_supervised!(Daemon.Providers.Registry)
+      _pid -> :ok
+    end
+
+    assert :ok =
+             Daemon.Providers.Registry.register_provider(
+               :verify_timeout,
+               VerificationTimeoutProviderStub
+             )
+
+    Application.put_env(:daemon, :default_provider, :verify_timeout)
+    Application.put_env(:daemon, :investigate_verification_model, "verify-timeout-1")
+
+    if :ets.whereis(:scorer_cache) != :undefined do
+      :ets.delete_all_objects(:scorer_cache)
+    end
+
+    paper_title = "Runtime honesty timeout paper #{System.unique_integer([:positive])}"
+
+    evidence = [
+      %{
+        summary: "Acute caffeine improved performance in trained cyclists [Paper 1]",
+        score: 0.0,
+        verified: false,
+        verification: "pending",
+        paper_type: :other,
+        citation_count: 0,
+        strength: "moderate",
+        source_quality: 0.7,
+        source_type: :sourced,
+        evidence_store: :belief
+      }
+    ]
+
+    paper_map = %{
+      1 => %{
+        "title" => paper_title,
+        "abstract" => "The trial reported improved performance in trained cyclists."
+      }
+    }
+
+    {verified, stats} = Investigate.verify_citations(evidence, paper_map, %{})
+
+    assert [
+             %{
+               verification: "timeout",
+               verified: false,
+               paper_type: :other
+             }
+           ] = Enum.map(verified, &Map.take(&1, [:verification, :verified, :paper_type]))
+
+    assert stats.runtime_failure_count == 1
+
+    assert [
+             %{
+               kind: "timeout",
+               paper_ref: 1,
+               paper_title: ^paper_title,
+               reason: reason
+             }
+           ] = stats.runtime_failure_examples
+
+    assert reason =~ "timeout"
+  end
+
   test "evidence_store_for keeps reasoning items in belief even when verification is positive" do
     store =
       Investigate.evidence_store_for(
@@ -1193,7 +1298,8 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     }
 
     paper = %{
-      "title" => "The contribution of environmental exposure to the etiology of autism spectrum disorder",
+      "title" =>
+        "The contribution of environmental exposure to the etiology of autism spectrum disorder",
       "abstract" =>
         "Epidemiological studies demonstrate no evidence for vaccination posing an autism risk.",
       "publicationTypes" => []
@@ -1234,7 +1340,8 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     }
 
     paper = %{
-      "title" => "The contribution of environmental exposure to the etiology of autism spectrum disorder",
+      "title" =>
+        "The contribution of environmental exposure to the etiology of autism spectrum disorder",
       "abstract" =>
         "Epidemiological studies demonstrate no evidence for vaccination posing an autism risk.",
       "publicationTypes" => []
@@ -1941,6 +2048,65 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
              timeout_ms: 32_000,
              timed_out_sides: ["opposing"]
            }
+  end
+
+  test "runtime_failures_metadata surfaces advocate and verifier failures" do
+    runtime_failures =
+      Investigate.runtime_failures_metadata(
+        %{
+          for_result: {:error, :rate_limited},
+          against_result: {:ok, %{content: "Against output"}}
+        },
+        %{
+          model: "glm-4.5-flash",
+          runtime_failure_count: 2,
+          runtime_failure_examples: [
+            %{kind: "timeout", reason: "Connection failed: timeout", paper_ref: 1}
+          ]
+        }
+      )
+
+    assert Enum.any?(runtime_failures, fn failure ->
+             failure.phase == "for_llm" and failure.source == "provider" and
+               failure.kind == "rate_limited"
+           end)
+
+    assert Enum.any?(runtime_failures, fn failure ->
+             failure.phase == "citation_verification" and failure.source == "verifier" and
+               failure.kind == "timeout" and failure.count == 2 and
+               failure.model == "glm-4.5-flash"
+           end)
+  end
+
+  test "build_boundary_trace surfaces runtime failures in outcome metadata" do
+    trace =
+      Investigate.build_boundary_trace(
+        %{},
+        %{
+          final_metadata: %{
+            direction: "belief_contested",
+            runtime_failures: [
+              %{
+                phase: "citation_verification",
+                source: "verifier",
+                kind: "timeout",
+                count: 2
+              }
+            ]
+          }
+        }
+      )
+
+    assert trace.outcome.direction == "belief_contested"
+
+    assert trace.outcome.runtime_failures == [
+             %{
+               phase: "citation_verification",
+               source: "verifier",
+               kind: "timeout",
+               count: 2
+             }
+           ]
   end
 
   test "finalize_retrieval_papers carries selected probe papers into the final corpus" do

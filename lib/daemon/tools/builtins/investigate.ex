@@ -852,6 +852,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
             verification_stats
           )
           |> put_timeout_metadata(List.first(advocate_timeout_info))
+          |> put_runtime_failure_metadata(trace_context, verification_stats)
           |> put_evidence_plan_metadata(Map.get(trace_context, :search_plan, %{}))
 
         trace_payload =
@@ -915,6 +916,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
             verification_stats
           )
           |> put_timeout_metadata(List.first(advocate_timeout_info))
+          |> put_runtime_failure_metadata(trace_context, verification_stats)
           |> put_evidence_plan_metadata(Map.get(trace_context, :search_plan, %{}))
 
         trace_payload =
@@ -1514,6 +1516,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
           emergent_questions: emergent_questions,
           variant_id: variant_id
         }
+        |> put_runtime_failure_metadata(trace_context, verification_stats)
         |> put_evidence_plan_metadata(search_plan)
 
       trace_payload =
@@ -1607,6 +1610,14 @@ defmodule Daemon.Tools.Builtins.Investigate do
   end
 
   defp put_evidence_plan_metadata(metadata, _search_plan) when is_map(metadata), do: metadata
+
+  defp put_runtime_failure_metadata(metadata, trace_context, verification_stats)
+       when is_map(metadata) and is_map(trace_context) and is_map(verification_stats) do
+    case runtime_failures_metadata(trace_context, verification_stats) do
+      [] -> metadata
+      runtime_failures -> Map.put(metadata, :runtime_failures, runtime_failures)
+    end
+  end
 
   defp grounded_evidence?(ev) do
     case Map.get(ev, :evidence_store) do
@@ -1703,6 +1714,12 @@ defmodule Daemon.Tools.Builtins.Investigate do
     Map.put(metadata, :timeout, serialized_timeout)
   end
 
+  @doc false
+  def runtime_failures_metadata(trace_context, verification_stats \\ %{})
+      when is_map(trace_context) and is_map(verification_stats) do
+    advocate_runtime_failures(trace_context) ++ verifier_runtime_failures(verification_stats)
+  end
+
   defp return_timeout_completion(
          topic,
          all_papers,
@@ -1742,6 +1759,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
       )
       |> Map.put(:direction, "timeout")
       |> put_timeout_metadata(timeout_info)
+      |> put_runtime_failure_metadata(trace_context, verification_stats)
       |> put_evidence_plan_metadata(Map.get(trace_context, :search_plan, %{}))
 
     trace_payload =
@@ -1806,7 +1824,9 @@ defmodule Daemon.Tools.Builtins.Investigate do
       llm_ms_total: 0,
       average_llm_ms: 0,
       slowest_llm_ms: 0,
-      model: nil
+      model: nil,
+      runtime_failure_count: 0,
+      runtime_failure_examples: []
     }
 
     models =
@@ -1828,7 +1848,14 @@ defmodule Daemon.Tools.Builtins.Investigate do
             cache_misses: acc.cache_misses + Map.get(stats, :cache_misses, 0),
             cache_lookup_ms: acc.cache_lookup_ms + Map.get(stats, :cache_lookup_ms, 0),
             llm_ms_total: acc.llm_ms_total + Map.get(stats, :llm_ms_total, 0),
-            slowest_llm_ms: max(acc.slowest_llm_ms, Map.get(stats, :slowest_llm_ms, 0))
+            slowest_llm_ms: max(acc.slowest_llm_ms, Map.get(stats, :slowest_llm_ms, 0)),
+            runtime_failure_count:
+              acc.runtime_failure_count + Map.get(stats, :runtime_failure_count, 0),
+            runtime_failure_examples:
+              merge_runtime_failure_examples(
+                acc.runtime_failure_examples,
+                Map.get(stats, :runtime_failure_examples, [])
+              )
         }
       end)
 
@@ -2092,17 +2119,22 @@ defmodule Daemon.Tools.Builtins.Investigate do
       llm_ms_total: 0,
       average_llm_ms: 0,
       slowest_llm_ms: 0,
-      model: preferred_verification_model()
+      model: preferred_verification_model(),
+      runtime_failure_count: 0,
+      runtime_failure_examples: []
     }
 
     # Run LLM verification sequentially — even with a faster utility-tier model,
     # OpenAI-compatible providers can rate limit aggressively under concurrency.
     {llm_lookup, verification_stats} =
       Enum.reduce(unique_inputs, {%{}, verification_stats}, fn input, {lookup, stats} ->
-        {{cache_status, {verification, paper_type}}, duration_ms} =
+        {{cache_status, {verification, paper_type}, runtime_failure}, duration_ms} =
           timed(fn -> cached_verify(input.evidence, input.paper, prompts) end)
 
-        stats = update_verification_stats(stats, cache_status, duration_ms)
+        stats =
+          stats
+          |> update_verification_stats(cache_status, duration_ms)
+          |> record_verification_runtime_failure(runtime_failure)
 
         verified_evidence =
           build_verified_evidence(
@@ -2254,35 +2286,80 @@ defmodule Daemon.Tools.Builtins.Investigate do
 
     case Providers.chat(messages, verify_opts) do
       {:ok, %{content: response}} when is_binary(response) and response != "" ->
-        parse_verification_response(response)
+        {parse_verification_response(response), nil}
 
       {:ok, %{content: ""}} ->
         Logger.warning(
           "[investigate] verify_citation: empty content (reasoning model token exhaustion)"
         )
 
-        {:unverified, :other}
+        kind = "empty_response"
+
+        {{verification_failure_status(kind), :other},
+         verification_runtime_failure(
+           evidence,
+           title,
+           claim,
+           kind,
+           "Verifier returned empty content"
+         )}
 
       {:error, reason} ->
         Logger.warning("[investigate] verify_citation failed: #{inspect(reason)}")
-        {:unverified, :other}
+        kind = runtime_failure_kind(reason)
+
+        {{verification_failure_status(kind), :other},
+         verification_runtime_failure(
+           evidence,
+           title,
+           claim,
+           kind,
+           runtime_failure_reason(reason)
+         )}
 
       other ->
         Logger.warning(
           "[investigate] verify_citation unexpected: #{inspect(other) |> String.slice(0, 200)}"
         )
 
-        {:unverified, :other}
+        kind = "unexpected_response"
+
+        {{verification_failure_status(kind), :other},
+         verification_runtime_failure(
+           evidence,
+           title,
+           claim,
+           kind,
+           inspect(other) |> String.slice(0, 200)
+         )}
     end
   end
 
   defp build_verified_evidence(ev, verification, paper_type, citation_count) do
-    verification_atom =
+    display_verification =
       case verification do
+        value
+        when value in [
+               :verified,
+               :partial,
+               :unverified,
+               :timeout,
+               :provider_error,
+               :empty_response,
+               :unexpected_response,
+               :no_citation,
+               :invalid_ref,
+               :multiple_refs
+             ] ->
+          value
+
+        _ ->
+          :unverified
+      end
+
+    score_verification =
+      case display_verification do
         value when value in [:verified, :partial, :unverified] -> value
-        :no_citation -> :unverified
-        :invalid_ref -> :unverified
-        :multiple_refs -> :unverified
         _ -> :unverified
       end
 
@@ -2291,15 +2368,15 @@ defmodule Daemon.Tools.Builtins.Investigate do
         :no_citation -> 0.15
         :invalid_ref -> 0.0
         :multiple_refs -> 0.0
-        _ -> compute_evidence_score(verification_atom, paper_type, citation_count)
+        _ -> compute_evidence_score(score_verification, paper_type, citation_count)
       end
 
-    verified = verification_atom in [:verified, :partial]
+    verified = display_verification in [:verified, :partial]
 
     %{
       ev
       | verified: verified,
-        verification: Atom.to_string(verification),
+        verification: Atom.to_string(display_verification),
         paper_type: paper_type,
         citation_count: citation_count,
         score: score
@@ -2360,6 +2437,33 @@ defmodule Daemon.Tools.Builtins.Investigate do
         llm_ms_total: stats.llm_ms_total + duration_ms,
         slowest_llm_ms: max(stats.slowest_llm_ms, duration_ms)
     }
+  end
+
+  defp record_verification_runtime_failure(stats, nil), do: stats
+
+  defp record_verification_runtime_failure(stats, runtime_failure) when is_map(runtime_failure) do
+    %{
+      stats
+      | runtime_failure_count: Map.get(stats, :runtime_failure_count, 0) + 1,
+        runtime_failure_examples:
+          merge_runtime_failure_examples(
+            Map.get(stats, :runtime_failure_examples, []),
+            [runtime_failure]
+          )
+    }
+  end
+
+  defp merge_runtime_failure_examples(left, right)
+       when is_list(left) and is_list(right) do
+    (left ++ right)
+    |> Enum.uniq_by(fn failure ->
+      {
+        Map.get(failure, :kind),
+        Map.get(failure, :reason),
+        Map.get(failure, :paper_ref)
+      }
+    end)
+    |> Enum.take(3)
   end
 
   defp finalize_verification_stats(stats) do
@@ -2573,9 +2677,12 @@ defmodule Daemon.Tools.Builtins.Investigate do
       review_summary_topic_aligned?(claim_text, paper, classification_context)
   end
 
-  defp review_summary_groundable?(_design, _claim_text, _classification_context, _paper), do: false
+  defp review_summary_groundable?(_design, _claim_text, _classification_context, _paper),
+    do: false
 
-  defp direct_observational_review_claim?(claim_text, %{evidence_profile: %{kind: :observational} = profile})
+  defp direct_observational_review_claim?(claim_text, %{
+         evidence_profile: %{kind: :observational} = profile
+       })
        when is_binary(claim_text) do
     normalized_claim = normalize_search_text(claim_text)
 
@@ -2635,7 +2742,8 @@ defmodule Daemon.Tools.Builtins.Investigate do
     end
   end
 
-  defp review_summary_relaxed_anchor_match?(_claim_text, _paper, _classification_context), do: false
+  defp review_summary_relaxed_anchor_match?(_claim_text, _paper, _classification_context),
+    do: false
 
   defp synthesis_source?(title, paper_text, publication_types, context_text) do
     Enum.any?(List.wrap(publication_types), fn publication_type ->
@@ -2819,7 +2927,8 @@ defmodule Daemon.Tools.Builtins.Investigate do
             |> grounding_paper_text()
             |> normalize_search_text()
 
-          paper_context_match_count = grounding_anchor_match_count(paper_context_normalized, terms)
+          paper_context_match_count =
+            grounding_anchor_match_count(paper_context_normalized, terms)
 
           required_matches = grounding_required_anchor_matches(terms, classification_context)
 
@@ -2853,7 +2962,8 @@ defmodule Daemon.Tools.Builtins.Investigate do
             |> grounding_paper_text()
             |> normalize_search_text()
 
-          paper_context_match_count = grounding_anchor_match_count(paper_context_normalized, terms)
+          paper_context_match_count =
+            grounding_anchor_match_count(paper_context_normalized, terms)
 
           required_matches = grounding_required_anchor_matches(terms, classification_context)
 
@@ -3158,6 +3268,18 @@ defmodule Daemon.Tools.Builtins.Investigate do
 
               {"UNVERIFIED \u2717",
                "(#{paper_info}#{cite_str}, score: #{score_str}) -- FRAUDULENT CITATION"}
+
+            "timeout" ->
+              {"VERIFY TIMEOUT", "(score: #{score_str} -- verifier/provider timeout)"}
+
+            "provider_error" ->
+              {"VERIFY ERROR", "(score: #{score_str} -- verifier/provider failure)"}
+
+            "empty_response" ->
+              {"EMPTY VERIFY", "(score: #{score_str} -- verifier returned empty content)"}
+
+            "unexpected_response" ->
+              {"VERIFY ERROR", "(score: #{score_str} -- verifier returned unexpected response)"}
 
             "no_citation" ->
               {"NO CITATION", "(reasoning only, score: #{score_str})"}
@@ -5104,12 +5226,12 @@ defmodule Daemon.Tools.Builtins.Investigate do
     case :ets.lookup(:scorer_cache, {:verify, cache_key}) do
       [{{:verify, ^cache_key}, result}] ->
         Logger.debug("[investigate] Cache hit for citation verification")
-        {:hit, result}
+        {:hit, result, nil}
 
       [] ->
-        result = verify_single_citation(evidence, paper, prompts)
+        {result, runtime_failure} = verify_single_citation(evidence, paper, prompts)
         :ets.insert(:scorer_cache, {{:verify, cache_key}, result})
-        {:miss, result}
+        {:miss, result, runtime_failure}
     end
   end
 
@@ -5418,7 +5540,8 @@ defmodule Daemon.Tools.Builtins.Investigate do
         verified_for: map_value(final_metadata, :verified_for) || 0,
         verified_against: map_value(final_metadata, :verified_against) || 0,
         fraudulent_citations: map_value(final_metadata, :fraudulent_citations) || 0,
-        timeout: map_value(final_metadata, :timeout)
+        timeout: map_value(final_metadata, :timeout),
+        runtime_failures: map_value(final_metadata, :runtime_failures) || []
       },
       timings: Map.get(attrs, :timings, %{}),
       verification_stats: Map.get(attrs, :verification_stats, %{})
@@ -5622,6 +5745,120 @@ defmodule Daemon.Tools.Builtins.Investigate do
 
   defp normalize_chat_result(other) do
     %{status: "other", value: inspect(other)}
+  end
+
+  defp runtime_failure_reason(reason) when is_binary(reason), do: reason
+  defp runtime_failure_reason(reason), do: inspect(reason)
+
+  defp runtime_failure_kind(reason) do
+    normalized_reason =
+      reason
+      |> runtime_failure_reason()
+      |> String.downcase()
+
+    cond do
+      String.contains?(normalized_reason, "timeout") ->
+        "timeout"
+
+      String.contains?(normalized_reason, "429") or
+        String.contains?(normalized_reason, "rate limit") or
+          String.contains?(normalized_reason, "rate_limited") ->
+        "rate_limited"
+
+      true ->
+        "provider_error"
+    end
+  end
+
+  defp verification_failure_status("timeout"), do: :timeout
+  defp verification_failure_status("empty_response"), do: :empty_response
+  defp verification_failure_status("unexpected_response"), do: :unexpected_response
+  defp verification_failure_status(_), do: :provider_error
+
+  defp verification_runtime_failure(evidence, paper_title, claim, kind, reason) do
+    %{
+      kind: kind,
+      reason: reason,
+      paper_ref: extract_paper_ref(Map.get(evidence, :summary, "")),
+      paper_title: paper_title,
+      claim: String.slice(to_string(claim || ""), 0, 240)
+    }
+    |> Enum.reject(fn {_key, value} -> is_nil(value) or value == "" end)
+    |> Map.new()
+  end
+
+  defp advocate_runtime_failures(trace_context) do
+    [
+      advocate_runtime_failure_entry(Map.get(trace_context, :for_result), :for),
+      advocate_runtime_failure_entry(Map.get(trace_context, :against_result), :against)
+    ]
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp advocate_runtime_failure_entry({:error, {:timeout, phase, timeout_ms}}, side)
+       when is_atom(phase) and is_integer(timeout_ms) and is_atom(side) do
+    %{
+      phase: Atom.to_string(phase),
+      side: Atom.to_string(side),
+      source: "provider",
+      kind: "timeout",
+      timeout_ms: timeout_ms
+    }
+  end
+
+  defp advocate_runtime_failure_entry({:error, reason}, side) when is_atom(side) do
+    %{
+      phase: "#{Atom.to_string(side)}_llm",
+      side: Atom.to_string(side),
+      source: "provider",
+      kind: runtime_failure_kind(reason),
+      reason: runtime_failure_reason(reason)
+    }
+  end
+
+  defp advocate_runtime_failure_entry({:ok, %{content: ""}}, side) when is_atom(side) do
+    %{
+      phase: "#{Atom.to_string(side)}_llm",
+      side: Atom.to_string(side),
+      source: "provider",
+      kind: "empty_response"
+    }
+  end
+
+  defp advocate_runtime_failure_entry(_, _side), do: nil
+
+  defp verifier_runtime_failures(verification_stats) when is_map(verification_stats) do
+    runtime_failure_count = Map.get(verification_stats, :runtime_failure_count, 0)
+    runtime_failure_examples = Map.get(verification_stats, :runtime_failure_examples, [])
+
+    if runtime_failure_count > 0 or runtime_failure_examples != [] do
+      [
+        %{
+          phase: "citation_verification",
+          source: "verifier",
+          kind: verifier_runtime_failure_kind(runtime_failure_examples),
+          count: runtime_failure_count,
+          model: Map.get(verification_stats, :model),
+          examples: runtime_failure_examples
+        }
+        |> Enum.reject(fn {_key, value} -> is_nil(value) or value == [] end)
+        |> Map.new()
+      ]
+    else
+      []
+    end
+  end
+
+  defp verifier_runtime_failure_kind(runtime_failure_examples)
+       when is_list(runtime_failure_examples) do
+    runtime_failure_examples
+    |> Enum.map(&Map.get(&1, :kind))
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+    |> case do
+      [single_kind] -> single_kind
+      _ -> "provider_failure"
+    end
   end
 
   @doc false

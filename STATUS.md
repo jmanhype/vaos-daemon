@@ -2,12 +2,29 @@
 
 **Canonical status**: [docs/operations/roberto-content/Documentation.md](docs/operations/roberto-content/Documentation.md)
 **Epic**: `vas-swarm-jji`
-**Current active issue**: `vas-swarm-jji.13`
-**Latest trace**: [vaos-investigate-trace-671b4de7ec2f4f0d-jji12-live-randomized-cycling-postfix-port0-1775958299999.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-671b4de7ec2f4f0d-jji12-live-randomized-cycling-postfix-port0-1775958299999.json)
-**Next Roberto step**: Surface the runtime-honesty boundary now tracked in `vas-swarm-jji.13`, starting from the post-fix randomized_intervention trace above. `vas-swarm-jji.12` closed the cited-claim / topic-alignment grounding seam: observational fallback grounds null-association evidence again, and the old empty-claim / beetroot-caveat leak no longer grounds against the support claim.
+**Current active issue**: `vas-swarm-jji.14`
+**Latest trace**: [vaos-investigate-trace-671b4de7ec2f4f0d-jji13-live-randomized-caffeine-1775960549509.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-671b4de7ec2f4f0d-jji13-live-randomized-caffeine-1775960549509.json)
+**Next Roberto step**: Audit the randomized_intervention support balance now tracked in `vas-swarm-jji.14`. `vas-swarm-jji.13` closed the runtime-honesty seam: live randomized runs now surface verifier/provider timeout collapse explicitly in `runtime_failures` instead of masking it behind belief-only or plain unverified output.
 
 ## Verification Status
 
+- `vas-swarm-jji.13` closed:
+  - `investigate` now preserves live verifier/provider failures as structured runtime metadata instead of collapsing them into plain `unverified` evidence
+  - verification stats now record runtime-failure counts/examples, final JSON metadata carries `runtime_failures`, and the trace outcome projects the same failure summary
+  - verifier/provider runtime failures no longer inflate `fraudulent_citations` just because the verifier transport failed
+  - targeted investigate-path verification passed:
+    - `mix test test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs` -> `150 tests, 0 failures`
+  - live validation artifact [vaos-jji13-live-validation-summary-1775960549509.json](/tmp/vaos-jji13-live-validation-summary-1775960549509.json) proves the runtime-honesty boundary moved on the representative caffeine claim family:
+    - trace [vaos-investigate-trace-671b4de7ec2f4f0d-jji13-live-randomized-caffeine-1775960549509.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-671b4de7ec2f4f0d-jji13-live-randomized-caffeine-1775960549509.json)
+    - `direction = asymmetric_evidence_against`
+    - `grounded_for_count = 0`
+    - `grounded_against_count = 1`
+    - `verified_for = 1`
+    - `verified_against = 3`
+    - `timeout = nil`
+    - `runtime_failures = [%{phase: "citation_verification", source: "verifier", kind: "timeout", count: 2, model: "glm-4.5-flash", ...}]`
+  - terminal-visible verifier timeouts on paper refs `3` and `6` now surface in the trace outcome instead of disappearing into belief-only completion
+  - new follow-up issue filed: `vas-swarm-jji.14`
 - `vas-swarm-jji.12` closed:
   - generic grounding hardening landed in `investigate` without reopening planner routing or the closed measurement verifier boundary
   - empty extracted claims no longer ground through paper-only topic fallback, so review caveats with no usable cited claim stay belief-only
@@ -246,7 +263,8 @@
 - `vas-swarm-jji.10` — completed: restore grounded contradictory epidemiology on semantically equivalent observational paraphrases without reintroducing contextual support leakage
 - `vas-swarm-jji.11` — completed: rerun the representative content check and confirm measurement now grounds while observational and randomized_intervention reopen a shared grounding boundary
 - `vas-swarm-jji.12` — completed: harden empirical grounding when extracted cited claims lose topic anchors
-- `vas-swarm-jji.13` — active: surface live verifier/provider failures when randomized support stays belief-only
+- `vas-swarm-jji.13` — completed: surface live verifier/provider failures when randomized support stays belief-only
+- `vas-swarm-jji.14` — active: audit randomized_intervention support balance after runtime-honesty fix
 
 The queue order is intentional:
 - planner agnosticism first
@@ -257,9 +275,9 @@ The queue order is intentional:
 
 1. Read `STATUS.md`.
 2. Run `scripts/roberto-loop`.
-3. Open [vaos-jji11-content-check-1775955446.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-jji11-content-check-1775955446.json), [vaos-jji12-grounding-replay-1775956794.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-jji12-grounding-replay-1775956794.json), and [vaos-investigate-trace-671b4de7ec2f4f0d-jji12-live-randomized-cycling-postfix-port0-1775958299999.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-671b4de7ec2f4f0d-jji12-live-randomized-cycling-postfix-port0-1775958299999.json).
-4. Resume implementation from `vas-swarm-jji.13`.
-5. Fix the explicit-failure / runtime-honesty seam so the representative randomized_intervention validation either grounds direct evidence or records the verifier/provider timeout in trace or outcome metadata.
+3. Open [vaos-jji11-content-check-1775955446.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-jji11-content-check-1775955446.json), [vaos-jji12-grounding-replay-1775956794.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-jji12-grounding-replay-1775956794.json), [vaos-jji13-live-validation-summary-1775960549509.json](/tmp/vaos-jji13-live-validation-summary-1775960549509.json), and [vaos-investigate-trace-671b4de7ec2f4f0d-jji13-live-randomized-caffeine-1775960549509.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-671b4de7ec2f4f0d-jji13-live-randomized-caffeine-1775960549509.json).
+4. Resume implementation from `vas-swarm-jji.14`.
+5. Audit whether the representative randomized_intervention support asymmetry is genuinely grounded-against or still under-calibrated now that verifier/provider timeouts are explicit.
 6. Record any unrelated inherited suite failures under `vas-swarm-dy1` without blocking `investigate` work.
 7. Update status docs, Beads, commit, and push.
 
