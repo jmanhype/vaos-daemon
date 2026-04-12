@@ -5414,10 +5414,21 @@ defmodule Daemon.Tools.Builtins.Investigate do
 
       [] ->
         {result, runtime_failure} = verify_single_citation(evidence, paper, prompts)
-        :ets.insert(:scorer_cache, {{:verify, cache_key}, result})
+
+        if cacheable_verification_result?(result, runtime_failure) do
+          :ets.insert(:scorer_cache, {{:verify, cache_key}, result})
+        end
+
         {:miss, result, runtime_failure}
     end
   end
+
+  defp cacheable_verification_result?({verification, _paper_type}, runtime_failure)
+       when verification in [:verified, :partial, :unverified] do
+    is_nil(runtime_failure)
+  end
+
+  defp cacheable_verification_result?(_result, _runtime_failure), do: false
 
   defp ensure_scorer_cache do
     if :ets.whereis(:scorer_cache) == :undefined do

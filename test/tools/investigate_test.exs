@@ -28,6 +28,40 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     end
   end
 
+  defmodule VerificationSuccessProviderStub do
+    @behaviour Daemon.Providers.Behaviour
+
+    @impl true
+    def name, do: :verify_success
+
+    @impl true
+    def default_model, do: "verify-success-1"
+
+    @impl true
+    def available_models, do: ["verify-success-1"]
+
+    def reset do
+      Process.delete(:verify_success_calls)
+      :ok
+    end
+
+    def calls do
+      Process.get(:verify_success_calls, 0)
+    end
+
+    @impl true
+    def chat(_messages, _opts) do
+      Process.put(:verify_success_calls, calls() + 1)
+      {:ok, %{content: "VERIFIED TRIAL", tool_calls: []}}
+    end
+
+    @impl true
+    def chat_stream(_messages, callback, _opts) do
+      callback.({:done, %{content: "VERIFIED TRIAL", tool_calls: []}})
+      :ok
+    end
+  end
+
   defmodule AlphaXivClientStub do
     use Agent
 
@@ -115,6 +149,7 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
       :investigate_advocate_model,
       :investigate_zhipu_advocate_model,
       :investigate_verification_model,
+      :fallback_chain,
       :investigate_verify_max_tokens,
       :investigate_verify_timeout_ms,
       :investigate_advocate_timeout_ms,
@@ -1067,6 +1102,83 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
            ] = stats.runtime_failure_examples
 
     assert reason =~ "timeout"
+  end
+
+  test "verify_citations does not cache verifier runtime failures across reruns" do
+    case Process.whereis(Daemon.Providers.Registry) do
+      nil -> start_supervised!(Daemon.Providers.Registry)
+      _pid -> :ok
+    end
+
+    assert :ok =
+             Daemon.Providers.Registry.register_provider(
+               :verify_timeout,
+               VerificationTimeoutProviderStub
+             )
+
+    assert :ok =
+             Daemon.Providers.Registry.register_provider(
+               :verify_success,
+               VerificationSuccessProviderStub
+             )
+
+    VerificationSuccessProviderStub.reset()
+    Application.put_env(:daemon, :fallback_chain, [])
+    Application.put_env(:daemon, :default_provider, :verify_timeout)
+    Application.put_env(:daemon, :investigate_verification_model, "verify-timeout-1")
+
+    if :ets.whereis(:scorer_cache) != :undefined do
+      :ets.delete_all_objects(:scorer_cache)
+    end
+
+    paper_title = "Recovered verifier cache paper #{System.unique_integer([:positive])}"
+
+    evidence = [
+      %{
+        summary: "Acute caffeine improved performance in trained cyclists [Paper 1]",
+        score: 0.0,
+        verified: false,
+        verification: "pending",
+        paper_type: :other,
+        citation_count: 0,
+        strength: "moderate",
+        source_quality: 0.7,
+        source_type: :sourced,
+        evidence_store: :belief
+      }
+    ]
+
+    paper_map = %{
+      1 => %{
+        "title" => paper_title,
+        "abstract" => "The randomized trial reported improved performance in trained cyclists."
+      }
+    }
+
+    {first_verified, first_stats} = Investigate.verify_citations(evidence, paper_map, %{})
+
+    assert [%{verification: "timeout", verified: false}] =
+             Enum.map(first_verified, &Map.take(&1, [:verification, :verified]))
+
+    assert first_stats.runtime_failure_count == 1
+    assert first_stats.cache_hits == 0
+    assert first_stats.cache_misses == 1
+
+    Application.put_env(:daemon, :default_provider, :verify_success)
+    Application.put_env(:daemon, :investigate_verification_model, "verify-success-1")
+
+    {second_verified, second_stats} = Investigate.verify_citations(evidence, paper_map, %{})
+
+    assert [%{verification: "verified", verified: true, paper_type: :trial}] =
+             Enum.map(
+               second_verified,
+               &Map.take(&1, [:verification, :verified, :paper_type])
+             )
+
+    assert second_stats.runtime_failure_count == 0
+    assert second_stats.cache_hits == 0
+    assert second_stats.cache_misses == 1
+    assert VerificationSuccessProviderStub.calls() == 1
   end
 
   test "evidence_store_for keeps reasoning items in belief even when verification is positive" do
