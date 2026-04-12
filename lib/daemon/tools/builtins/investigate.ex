@@ -2521,7 +2521,9 @@ defmodule Daemon.Tools.Builtins.Investigate do
     design = cited_claim_design(ev, paper, summary, claim_text)
 
     topic_direct? =
-      grounding_topic_direct_claim?(claim_text, paper, classification_context)
+      grounding_topic_direct_claim?(claim_text, paper, classification_context) or
+        (design == :direct and combined_anchor_grounding_allowed?(classification_context) and
+           grounding_topic_combined_claim?(claim_text, paper, classification_context))
 
     cond do
       methodological_caveat_claim?(claim_text) -> :caveat
@@ -2548,6 +2550,9 @@ defmodule Daemon.Tools.Builtins.Investigate do
       contextual_source?(title, paper_text, publication_types, context_text) ->
         :contextual_review
 
+      combination_intervention_source?(paper_text, context_text) ->
+        :combination_intervention
+
       synthesis_source?(title, paper_text, publication_types, context_text) ->
         :synthesis
 
@@ -2556,9 +2561,6 @@ defmodule Daemon.Tools.Builtins.Investigate do
 
       paper_type == :review ->
         :review_summary
-
-      combination_intervention_source?(paper_text) ->
-        :combination_intervention
 
       true ->
         :direct
@@ -2706,14 +2708,17 @@ defmodule Daemon.Tools.Builtins.Investigate do
       )
   end
 
-  defp combination_intervention_source?(paper_text) when is_binary(paper_text) do
+  defp combination_intervention_source?(paper_text, context_text)
+       when is_binary(paper_text) and is_binary(context_text) do
+    combined_text = Enum.join([paper_text, context_text], " ")
+
     Regex.match?(
-      ~r/\b(multi-ingredient|multiingredient|pre-workout|preworkout|combination (?:supplement|therapy|treatment)|combined with|co-administered|coadministered|alongside [^.!?]{0,80}\b(?:supplement|extract|ingredient|betaine|caffeine|protein|dendrobium))\b/i,
-      paper_text
+      ~r/\b(multi-ingredient|multiingredient|pre-workout|preworkout|combination (?:supplement|therapy|treatment)|combined with|co-administered|coadministered|interaction with other supplements?|undermin(?:e|ed|ing) (?:the )?(?:effects|benefits?) of (?:other )?supplements?|effects of supplementation with [^.!?]{0,120}undermin(?:ed|e|ing)|alongside [^.!?]{0,80}\b(?:supplement|extract|ingredient|betaine|caffeine|protein|dendrobium))\b/i,
+      combined_text
     )
   end
 
-  defp combination_intervention_source?(_paper_text), do: false
+  defp combination_intervention_source?(_paper_text, _context_text), do: false
 
   defp methodological_caveat_claim?(claim_text) when is_binary(claim_text) do
     Regex.match?(
@@ -2794,33 +2799,78 @@ defmodule Daemon.Tools.Builtins.Investigate do
 
   defp grounding_topic_direct_claim?(claim_text, paper, classification_context)
        when is_binary(claim_text) and is_map(classification_context) do
-    anchors = grounding_topic_anchor_terms(classification_context)
+    if String.trim(claim_text) == "" do
+      false
+    else
+      anchors = grounding_topic_anchor_terms(classification_context)
 
-    case anchors do
-      [] ->
-        true
+      case anchors do
+        [] ->
+          true
 
-      terms ->
-        claim_text_normalized = normalize_search_text(claim_text)
+        terms ->
+          claim_text_normalized = normalize_search_text(claim_text)
 
-        claim_match_count =
-          grounding_anchor_match_count(claim_text_normalized, terms)
+          claim_match_count =
+            grounding_anchor_match_count(claim_text_normalized, terms)
 
-        paper_context_normalized =
-          paper
-          |> grounding_paper_text()
-          |> normalize_search_text()
+          paper_context_normalized =
+            paper
+            |> grounding_paper_text()
+            |> normalize_search_text()
 
-        paper_context_match_count = grounding_anchor_match_count(paper_context_normalized, terms)
+          paper_context_match_count = grounding_anchor_match_count(paper_context_normalized, terms)
 
-        required_matches = grounding_required_anchor_matches(terms, classification_context)
+          required_matches = grounding_required_anchor_matches(terms, classification_context)
 
-        claim_match_count >= required_matches or
-          (claim_match_count == 0 and paper_context_match_count >= required_matches)
+          claim_match_count >= required_matches or
+            (claim_match_count == 0 and paper_context_match_count >= required_matches)
+      end
     end
   end
 
   defp grounding_topic_direct_claim?(_claim_text, _paper, _classification_context), do: true
+
+  defp grounding_topic_combined_claim?(claim_text, paper, classification_context)
+       when is_binary(claim_text) and is_map(classification_context) do
+    if String.trim(claim_text) == "" do
+      false
+    else
+      anchors = grounding_topic_anchor_terms(classification_context)
+
+      case anchors do
+        [] ->
+          true
+
+        terms ->
+          claim_text_normalized = normalize_search_text(claim_text)
+
+          claim_match_count =
+            grounding_anchor_match_count(claim_text_normalized, terms)
+
+          paper_context_normalized =
+            paper
+            |> grounding_paper_text()
+            |> normalize_search_text()
+
+          paper_context_match_count = grounding_anchor_match_count(paper_context_normalized, terms)
+
+          required_matches = grounding_required_anchor_matches(terms, classification_context)
+
+          claim_match_count > 0 and claim_match_count < required_matches and
+            paper_context_match_count > 0 and
+            grounding_anchor_match_count(
+              [claim_text_normalized, paper_context_normalized],
+              terms
+            ) >= required_matches
+      end
+    end
+  end
+
+  defp grounding_topic_combined_claim?(_claim_text, _paper, _classification_context), do: false
+
+  defp combined_anchor_grounding_allowed?(%{evidence_profile: %{kind: :observational}}), do: true
+  defp combined_anchor_grounding_allowed?(_classification_context), do: false
 
   defp grounding_required_anchor_matches(
          terms,
@@ -2838,6 +2888,24 @@ defmodule Daemon.Tools.Builtins.Investigate do
     text_tokens =
       text
       |> topic_terms()
+      |> Enum.uniq()
+
+    terms
+    |> Enum.uniq()
+    |> Enum.count(&grounding_anchor_match?(text_tokens, &1))
+  end
+
+  defp grounding_anchor_match_count(texts, terms) when is_list(texts) and is_list(terms) do
+    text_tokens =
+      texts
+      |> Enum.flat_map(fn
+        text when is_binary(text) ->
+          text
+          |> topic_terms()
+
+        _ ->
+          []
+      end)
       |> Enum.uniq()
 
     terms

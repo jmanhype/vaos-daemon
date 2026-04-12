@@ -1251,6 +1251,44 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
            ) == :belief
   end
 
+  test "grounding_role_for keeps direct observational studies grounded when claim anchors split across claim text and paper context" do
+    context = %{
+      normalized_topic: "vaccines cause autism",
+      evidence_profile: %{
+        kind: :observational,
+        subject_terms: ["vaccines", "autism"]
+      }
+    }
+
+    evidence = %{
+      source_type: :sourced,
+      verification: "verified",
+      paper_type: :study,
+      verification_claim:
+        "adjusted odds ratios of 0.999 (95% CI: 0.994-1.003) for cumulative exposure to age 3 months, 0.999 (0.997-1.001) for cumulative exposure to age 7 months, and 0.999 (0.998-1.001) for cumulative exposure to age 2 years, with no increased risk found for autistic disorder or ASD with regression specifically.",
+      summary:
+        "The most direct evidence against a vaccine-autism link comes from a case-control study specifically designed to test whether increasing exposure to antibody-stimulating proteins and polysaccharides from vaccines during the first two years of life was associated with autism spectrum disorder. The study found adjusted odds ratios of 0.999 (95% CI: 0.994-1.003) for cumulative exposure to age 3 months, 0.999 (0.997-1.001) for cumulative exposure to age 7 months, and 0.999 (0.998-1.001) for cumulative exposure to age 2 years, with no increased risk found for autistic disorder or ASD with regression specifically [Paper 2]."
+    }
+
+    paper = %{
+      "title" =>
+        "Increasing Exposure to Antibody-Stimulating Proteins and Polysaccharides in Vaccines Is Not Associated with Risk of Autism",
+      "abstract" =>
+        "Increasing exposure to antibody-stimulating proteins and polysaccharides in vaccines was not associated with risk of autism spectrum disorder or ASD with regression in children.",
+      "publicationTypes" => []
+    }
+
+    assert Investigate.grounding_role_for(evidence, context, paper) == :direct
+
+    assert Investigate.evidence_store_for(
+             evidence,
+             0.9,
+             Strategy.default(),
+             context,
+             paper
+           ) == :grounded
+  end
+
   test "evidence_store_for keeps outcome-only prevalence explanations in belief for observational claims" do
     context = %{
       normalized_topic: "assess whether MMR vaccination is linked to autism",
@@ -1452,6 +1490,88 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
                "publicationTypes" => ["Review"]
              }
            ) == :indirect
+  end
+
+  test "grounding_role_for demotes live-shaped cross-supplement review caveats in clinical mode" do
+    assert Investigate.grounding_role_for(
+             %{
+               source_type: :sourced,
+               verification: "verified",
+               paper_type: :review,
+               verification_claim:
+                 "Caffeine may actively undermine the ergogenic effects of other supplements that athletes commonly use to enhance endurance performance, as evidence suggests \"the effects of supplementation with beetroot juice can be undermined by interaction with other supplements such as caffeine\"",
+               summary:
+                 "Caffeine may actively undermine the ergogenic effects of other supplements that athletes commonly use to enhance endurance performance, as evidence suggests \"the effects of supplementation with beetroot juice can be undermined by interaction with other supplements such as caffeine\" [Paper 4]."
+             },
+             %{
+               normalized_topic:
+                 "acute caffeine intake improves endurance time-trial performance in trained cyclists and triathletes",
+               evidence_profile: %{
+                 kind: :randomized_intervention,
+                 subject_terms: [
+                   "caffeine",
+                   "endurance",
+                   "time-trial",
+                   "cyclists",
+                   "triathletes"
+                 ]
+               }
+             },
+             %{
+               "title" =>
+                 "Effects of Beetroot Juice Supplementation on Cardiorespiratory Endurance in Athletes. A Systematic Review",
+               "abstract" =>
+                 "This systematic review notes that the effects of supplementation with beetroot juice can be undermined by interaction with other supplements such as caffeine during cardiorespiratory endurance exercise.",
+               "publicationTypes" => ["Review"]
+             }
+           ) == :indirect
+  end
+
+  test "grounding_role_for keeps empty-claim review caveats out of grounded clinical evidence" do
+    summary =
+      "Caffeine may actively undermine the ergogenic effects of other proven supplements, potentially resulting in no net performance gain or even a net loss when used in combination with other common endurance sports supplements. [Paper 4], while examining beetroot juice supplementation, notes that \"it is possible that the effects of supplementation with beetroot juice can be undermined by interaction with other supplements such as caffeine.\" Since many trained endurance athletes use beetroot juice or nitric oxide precursors to enhance performance, acute caffeine intake could sabotage these established ergogenic strategies rather than provide additive benefits."
+
+    assert Investigate.verification_claim_text(summary) == ""
+
+    context = %{
+      normalized_topic:
+        "acute caffeine intake enhances endurance time-trial performance in trained cyclists and triathletes",
+      evidence_profile: %{
+        kind: :randomized_intervention,
+        subject_terms: [
+          "caffeine",
+          "endurance",
+          "time-trial",
+          "cyclists",
+          "triathletes"
+        ]
+      }
+    }
+
+    evidence = %{
+      source_type: :sourced,
+      verification: "verified",
+      paper_type: :review,
+      summary: summary
+    }
+
+    paper = %{
+      "title" =>
+        "Effects of Beetroot Juice Supplementation on Cardiorespiratory Endurance in Athletes. A Systematic Review",
+      "abstract" =>
+        "This systematic review notes that the effects of supplementation with beetroot juice can be undermined by interaction with other supplements such as caffeine during cardiorespiratory endurance exercise.",
+      "publicationTypes" => ["Review"]
+    }
+
+    assert Investigate.grounding_role_for(evidence, context, paper) == :indirect
+
+    assert Investigate.evidence_store_for(
+             evidence,
+             0.9,
+             Strategy.default(),
+             context,
+             paper
+           ) == :belief
   end
 
   test "evidence_store_for keeps contextual narrative reviews in belief without profile" do
