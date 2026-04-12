@@ -111,6 +111,14 @@ defmodule Daemon.Investigation.EvidencePlannerTest do
 
     assert planner.selected.mode == :randomized_intervention
     assert planner.selected.profile == :clinical_intervention
+
+    query_labels = Enum.map(planner.selected.oa_queries, &elem(&1, 0))
+    queries = Enum.map(planner.selected.oa_queries ++ planner.selected.ss_queries, &elem(&1, 1))
+
+    assert :performance_crossover in query_labels
+    assert Enum.any?(queries, &String.contains?(&1, "caffeine supplementation"))
+    assert Enum.any?(queries, &String.contains?(&1, "trained cyclists"))
+    assert Enum.any?(queries, &String.contains?(&1, "placebo crossover"))
   end
 
   test "selects randomized-intervention route for administration-style outcome claims" do
@@ -162,15 +170,17 @@ defmodule Daemon.Investigation.EvidencePlannerTest do
 
     assert planner.selected.mode == :randomized_intervention
 
-    assert Enum.map(planner.selected.ss_queries, &elem(&1, 0)) == [
+    assert Enum.take(Enum.map(planner.selected.ss_queries, &elem(&1, 0)), 5) == [
              :topic,
+             :performance_crossover,
              :rct,
              :placebo,
              :reviews
            ]
 
-    assert Enum.take(Enum.map(planner.selected.oa_queries, &elem(&1, 0)), 4) == [
+    assert Enum.take(Enum.map(planner.selected.oa_queries, &elem(&1, 0)), 5) == [
              :topic,
+             :performance_crossover,
              :placebo,
              :rct,
              :reviews

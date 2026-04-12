@@ -65,6 +65,7 @@ defmodule Daemon.Investigation.EvidencePlanner do
   @intervention_terms ~w(intervention interventions treatment treatments therapy therapies supplement supplements supplementation placebo randomized randomised trial trials drug drugs dose dosing medication medications)
   @administration_terms ~w(intake ingestion ingest ingested consume consumes consumed consuming administration administered administering)
   @performance_context_terms ~w(endurance performance time-trial cycling cyclist cyclists triathlon triathlete triathletes sprint sprinting aerobic anaerobic race racing competition competitive athletic athletics sport sports exercise exercising pace pacing power output)
+  @performance_participant_terms ~w(cyclist cyclists triathlete triathletes runner runners swimmer swimmers rower rowers athlete athletes)
   @clinical_outcome_terms ~w(strength muscular endurance performance sleep insomnia recovery
     cognition cognitive memory pain fatigue mood anxiety depression function functional
     mobility balance symptoms symptom quality wellbeing well-being blood pressure glucose
@@ -334,19 +335,21 @@ defmodule Daemon.Investigation.EvidencePlanner do
       )
 
     performance_keyword_topic = performance_query_topic(topic, keyword_topic)
+    focused_performance_query = focused_performance_trial_query(topic, keyword_topic)
 
     performance_queries =
-      case performance_keyword_topic do
-        nil ->
-          []
+      focused_crossover_query(focused_performance_query) ++
+        case performance_keyword_topic do
+          nil ->
+            []
 
-        expanded_topic ->
-          [
-            {:performance_placebo, "#{expanded_topic} placebo controlled trial", []},
-            {:performance_rct, "randomized controlled trial #{expanded_topic}", []},
-            {:performance_reviews, "systematic review #{expanded_topic}", @review_opts}
-          ]
-      end
+          expanded_topic ->
+            [
+              {:performance_placebo, "#{expanded_topic} placebo controlled trial", []},
+              {:performance_rct, "randomized controlled trial #{expanded_topic}", []},
+              {:performance_reviews, "systematic review #{expanded_topic}", @review_opts}
+            ]
+        end
 
     %{
       mode: :randomized_intervention,
@@ -1016,6 +1019,67 @@ defmodule Daemon.Investigation.EvidencePlanner do
   end
 
   defp performance_query_topic(_topic, _keyword_topic), do: nil
+
+  defp focused_crossover_query(query) when is_binary(query) and query != "" do
+    [{:performance_crossover, "#{query} placebo crossover", []}]
+  end
+
+  defp focused_crossover_query(_query), do: []
+
+  defp focused_performance_trial_query(topic, keyword_topic)
+       when is_binary(topic) and is_binary(keyword_topic) do
+    source_text = "#{topic} #{keyword_topic}"
+
+    intervention_anchor =
+      keyword_topic
+      |> specific_anchor_terms()
+      |> Enum.reject(&performance_outcome_anchor?/1)
+      |> Enum.reject(&performance_participant_anchor?/1)
+      |> List.first()
+
+    participant_anchor =
+      source_text
+      |> String.downcase()
+      |> String.replace(~r/[^a-z0-9\s\-]/, " ")
+      |> String.split(~r/\s+/, trim: true)
+      |> Enum.find(&performance_participant_anchor?/1)
+
+    outcome_phrase =
+      cond do
+        String.match?(source_text, ~r/\btime[-\s]?trial\b/i) -> "time trial performance"
+        String.match?(source_text, ~r/\bperformance\b/i) -> "performance"
+        true -> nil
+      end
+
+    trained_phrase =
+      if String.match?(source_text, ~r/\btrained\b/i), do: "trained", else: nil
+
+    if is_binary(intervention_anchor) and is_binary(participant_anchor) and is_binary(outcome_phrase) do
+      [intervention_anchor, "supplementation", outcome_phrase, trained_phrase, participant_anchor]
+      |> Enum.reject(&is_nil/1)
+      |> Enum.join(" ")
+    end
+  end
+
+  defp focused_performance_trial_query(_topic, _keyword_topic), do: nil
+
+  defp performance_participant_anchor?(term) when is_binary(term),
+    do: term in @performance_participant_terms
+
+  defp performance_participant_anchor?(_term), do: false
+
+  defp performance_outcome_anchor?(term) when is_binary(term) do
+    term in [
+      "endurance",
+      "performance",
+      "time-trial",
+      "timetrial",
+      "cycling",
+      "triathlon"
+    ]
+  end
+
+  defp performance_outcome_anchor?(_term), do: false
 
   defp performance_context_topic?(text) when is_binary(text) do
     text
