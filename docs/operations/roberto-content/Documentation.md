@@ -3,7 +3,7 @@
 **Last updated**: 2026-04-12
 **Epic**: `vas-swarm-jji`
 **Current active issue**: `vas-swarm-jji.19`
-**Latest functional checkpoint before this doc stack**: `c8ce3b6`
+**Latest functional checkpoint before this doc stack**: `f995433`
 
 ## Objective
 
