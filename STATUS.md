@@ -2,12 +2,25 @@
 
 **Canonical status**: [docs/operations/roberto-content/Documentation.md](docs/operations/roberto-content/Documentation.md)
 **Epic**: `vas-swarm-jji`
-**Current active issue**: `vas-swarm-jji.12`
-**Latest trace**: [vaos-jji11-content-check-1775955446.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-jji11-content-check-1775955446.json)
-**Next Roberto step**: Fix the reopened cited-claim / topic-alignment grounding boundary in `vas-swarm-jji.12`, starting from the representative content-check artifact above plus the failing observational trace [vaos-investigate-trace-6288e6adc2dfd5a5-jji11-observational-1775955200821.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-6288e6adc2dfd5a5-jji11-observational-1775955200821.json) and randomized trace [vaos-investigate-trace-5c090736ecfc44a0-jji11-randomized-intervention-1775955446334.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-5c090736ecfc44a0-jji11-randomized-intervention-1775955446334.json).
+**Current active issue**: `vas-swarm-jji.13`
+**Latest trace**: [vaos-investigate-trace-671b4de7ec2f4f0d-jji12-live-randomized-cycling-postfix-port0-1775958299999.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-671b4de7ec2f4f0d-jji12-live-randomized-cycling-postfix-port0-1775958299999.json)
+**Next Roberto step**: Surface the runtime-honesty boundary now tracked in `vas-swarm-jji.13`, starting from the post-fix randomized_intervention trace above. `vas-swarm-jji.12` closed the cited-claim / topic-alignment grounding seam: observational fallback grounds null-association evidence again, and the old empty-claim / beetroot-caveat leak no longer grounds against the support claim.
 
 ## Verification Status
 
+- `vas-swarm-jji.12` closed:
+  - generic grounding hardening landed in `investigate` without reopening planner routing or the closed measurement verifier boundary
+  - empty extracted claims no longer ground through paper-only topic fallback, so review caveats with no usable cited claim stay belief-only
+  - direct observational studies can satisfy topic alignment from split claim-plus-paper anchors when the extracted claim still carries one topic anchor and the paper context supplies the other
+  - cross-supplement interaction reviews now classify as indirect combination evidence before synthesis, which blocks the live-shaped beetroot/caffeine caveat from grounding as contradictory direct evidence
+  - targeted investigate-path verification passed:
+    - `mix test test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs` -> `147 tests, 0 failures`
+  - replay artifact [vaos-jji12-grounding-replay-1775956794.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-jji12-grounding-replay-1775956794.json) proves the representative saved evidence now lands on the intended side of the boundary:
+    - observational blocker item now classifies `grounding_role = direct` and `evidence_store = grounded`
+    - randomized empty-claim beetroot review now classifies `grounding_role = indirect` and `evidence_store = belief`
+  - live observational fallback trace [vaos-investigate-trace-f503fd8c4bf2184c-jji12-live-observational-fallback-port0-1775957319684.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-f503fd8c4bf2184c-jji12-live-observational-fallback-port0-1775957319684.json) selected `observational` and completed with grounded direct/synthesis contradictory evidence again
+  - latest randomized fallback trace [vaos-investigate-trace-671b4de7ec2f4f0d-jji12-live-randomized-cycling-postfix-port0-1775958299999.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-671b4de7ec2f4f0d-jji12-live-randomized-cycling-postfix-port0-1775958299999.json) no longer grounds the old caveat leak, but still ends belief-only after verifier/provider timeouts
+  - new first-order issue filed: `vas-swarm-jji.13`
 - `vas-swarm-jji.11` closed:
   - reran the representative empirical content check on the same three baseline topics from `vas-swarm-jji.8`; no cooldown fallback was needed
   - targeted investigate-path verification passed:
@@ -232,7 +245,8 @@
 - `vas-swarm-jji.9` — completed: demote historical or debate-only support fragments in observational traces without reopening the now-closed measurement verifier boundary
 - `vas-swarm-jji.10` — completed: restore grounded contradictory epidemiology on semantically equivalent observational paraphrases without reintroducing contextual support leakage
 - `vas-swarm-jji.11` — completed: rerun the representative content check and confirm measurement now grounds while observational and randomized_intervention reopen a shared grounding boundary
-- `vas-swarm-jji.12` — active: harden empirical grounding when extracted cited claims lose topic anchors
+- `vas-swarm-jji.12` — completed: harden empirical grounding when extracted cited claims lose topic anchors
+- `vas-swarm-jji.13` — active: surface live verifier/provider failures when randomized support stays belief-only
 
 The queue order is intentional:
 - planner agnosticism first
@@ -243,9 +257,9 @@ The queue order is intentional:
 
 1. Read `STATUS.md`.
 2. Run `scripts/roberto-loop`.
-3. Open [vaos-jji11-content-check-1775955446.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-jji11-content-check-1775955446.json), [vaos-investigate-trace-6288e6adc2dfd5a5-jji11-observational-1775955200821.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-6288e6adc2dfd5a5-jji11-observational-1775955200821.json), and [vaos-investigate-trace-5c090736ecfc44a0-jji11-randomized-intervention-1775955446334.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-5c090736ecfc44a0-jji11-randomized-intervention-1775955446334.json).
-4. Resume implementation from `vas-swarm-jji.12`.
-5. Fix the cited-claim / topic-alignment grounding seam so the representative observational and randomized_intervention validations either ground direct evidence or fail explicitly.
+3. Open [vaos-jji11-content-check-1775955446.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-jji11-content-check-1775955446.json), [vaos-jji12-grounding-replay-1775956794.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-jji12-grounding-replay-1775956794.json), and [vaos-investigate-trace-671b4de7ec2f4f0d-jji12-live-randomized-cycling-postfix-port0-1775958299999.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-671b4de7ec2f4f0d-jji12-live-randomized-cycling-postfix-port0-1775958299999.json).
+4. Resume implementation from `vas-swarm-jji.13`.
+5. Fix the explicit-failure / runtime-honesty seam so the representative randomized_intervention validation either grounds direct evidence or records the verifier/provider timeout in trace or outcome metadata.
 6. Record any unrelated inherited suite failures under `vas-swarm-dy1` without blocking `investigate` work.
 7. Update status docs, Beads, commit, and push.
 

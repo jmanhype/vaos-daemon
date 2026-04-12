@@ -4,13 +4,13 @@
 
 ## Current Milestone
 
-Harden the reopened empirical grounding boundary now that the representative content check has confirmed measurement is stable but observational and randomized_intervention still fail the grounded-or-explicit-failure bar.
+Harden runtime honesty in the live randomized_intervention support path now that the cited-claim / topic-alignment grounding boundary has moved and the remaining failure is unsurfaced verifier/provider collapse.
 
 ## Active Issue
 
-`vas-swarm-jji.12` — Harden empirical grounding when extracted cited claims lose topic anchors.
+`vas-swarm-jji.13` — Surface live verifier/provider failures when randomized support stays belief-only.
 `vas-swarm-dy1` remains open as inherited repo debt. For this Roberto program, it is non-blocking unless a failing test touches `investigate` or its directly coupled planning/verification path.
-Current state: `vas-swarm-jji.1` through `vas-swarm-jji.11` are complete and closed. The fresh representative content-check artifact [vaos-jji11-content-check-1775955446.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-jji11-content-check-1775955446.json) shows planner routing still selects `measurement`, `observational`, and `randomized_intervention`, and the measurement trace now satisfies the grounded-evidence bar. The remaining first-order problem is now narrower: observational direct null-risk evidence can still stay belief-only when extracted claims lose topic anchors, and randomized review caveats can still ground against when extracted claims collapse empty. The next active issue is therefore a generic cited-claim / topic-alignment grounding repair, not another planner or measurement-verifier fix.
+Current state: `vas-swarm-jji.1` through `vas-swarm-jji.12` are complete and closed. The representative content-check artifact [vaos-jji11-content-check-1775955446.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-jji11-content-check-1775955446.json) still anchors the empirical audit, and the grounding follow-up is now closed enough that observational fallback grounds direct null-association evidence while the old empty-claim / cross-supplement review caveat no longer grounds against the randomized support claim. The remaining first-order problem is narrower still: the latest live randomized_intervention fallback [vaos-investigate-trace-671b4de7ec2f4f0d-jji12-live-randomized-cycling-postfix-port0-1775958299999.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-671b4de7ec2f4f0d-jji12-live-randomized-cycling-postfix-port0-1775958299999.json) ends belief-only even though terminal-visible verifier/provider timeouts occurred. The next active issue is therefore a runtime-honesty / explicit-failure-surfacing repair, not another grounding, planner, or measurement-verifier fix.
 
 ## Strategic Queue
 
@@ -26,14 +26,15 @@ The next long-horizon tasks for the durable epistemic engine are:
 - `vas-swarm-jji.9` — completed: demote historical or debate-only support fragments in observational traces
 - `vas-swarm-jji.10` — completed: harden observational contradiction grounding under paraphrase and provider-noise drift
 - `vas-swarm-jji.11` — completed: rerun the representative content check after the observational paraphrase hardening
-- `vas-swarm-jji.12` — active: harden empirical grounding when extracted cited claims lose topic anchors
+- `vas-swarm-jji.12` — completed: harden empirical grounding when extracted cited claims lose topic anchors
+- `vas-swarm-jji.13` — active: surface live verifier/provider failures when randomized support stays belief-only
 
 Sequence:
 - keep `vas-swarm-9m7` closed unless a new live measurement trace regresses
-- use `vas-swarm-jji.11` as the new representative audit baseline
-- focus on cited-claim extraction / topic-alignment / evidence-store classification, not planner routing or the closed measurement verifier boundary
+- use `vas-swarm-jji.11` as the representative audit baseline and the `jji.12` live fallback traces as the latest runtime evidence
+- focus on trace/outcome failure surfacing in the randomized verifier path, not planner routing, the closed measurement verifier boundary, or the grounding seam that just landed
 - do not add more family-specific `planetary_shape` salvage unless it is temporary debt
-- continue the durable-epistemic-engine path by deciding whether `vas-swarm-jji.12` is the last first-order grounding repair before Roberto is content
+- continue the durable-epistemic-engine path by deciding whether `vas-swarm-jji.13` is the last first-order runtime-honesty repair before Roberto is content
 
 ## Verification Status
 
@@ -97,8 +98,15 @@ Sequence:
   - `ClaimFamily.normalize_topic/1` no longer appears on the production investigate path
   - `ClaimFamily.normalize_verification_claim/1` does not appear on the production investigate path
   - the `profile`-conditioned grounding branch has been removed from the live investigate path, leaving the Roberto content check as the next concern
+- `vas-swarm-jji.12` is complete:
+  - empty extracted claims no longer ground through paper-only topic fallback
+  - direct observational studies can satisfy topic alignment from split claim-plus-paper anchors when the extracted claim still retains one topic anchor
+  - cross-supplement interaction reviews now classify as indirect combination evidence before synthesis, which blocks the live-shaped beetroot/caffeine caveat leak
+  - `mix test test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs` -> `147 tests, 0 failures`
+  - replay artifact [vaos-jji12-grounding-replay-1775956794.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-jji12-grounding-replay-1775956794.json) proves the representative grounding boundary moved
+  - live observational fallback [vaos-investigate-trace-f503fd8c4bf2184c-jji12-live-observational-fallback-port0-1775957319684.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-f503fd8c4bf2184c-jji12-live-observational-fallback-port0-1775957319684.json) grounded direct and synthesis contradictory evidence again
 - Next Roberto step:
-  - `vas-swarm-jji.12`: make the cited-claim / topic-alignment grounding layer robust enough that the representative observational and randomized_intervention traces either ground direct evidence or fail explicitly
+  - `vas-swarm-jji.13`: make the randomized_intervention live support lane record explicit verifier/provider failure in trace/outcome metadata whenever timeout collapse prevents grounded support
 - Repo-wide inherited full-suite failures remain background debt unless the failing test intersects `investigate`, `evidence_planner`, or directly coupled verification/retrieval code
 
 ## Operating Rule

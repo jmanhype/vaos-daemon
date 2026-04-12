@@ -8,7 +8,7 @@ Get Roberto content by hardening `investigate` into a trustworthy epistemic engi
 
 ## Current Focus
 
-The current implementation slice is `vas-swarm-jji.12`:
+The current implementation slice is `vas-swarm-jji.13`:
 - `vas-swarm-jji.1` is closed: planner mode selection no longer depends on `ClaimFamily`
 - `vas-swarm-jji.2` is closed: retrieval no longer depends on family-shaped evidence profiles or query templates in the investigate core
 - `vas-swarm-jji.3` is closed: sourced evidence grounding now runs through generic cited-claim extraction instead of a `profile` switch
@@ -20,8 +20,9 @@ The current implementation slice is `vas-swarm-jji.12`:
 - `vas-swarm-jji.9` is closed: historical/debate-only observational support fragments now stay belief/contextual
 - `vas-swarm-jji.10` is closed: a semantically equivalent observational fallback trace now reclassifies to grounded contradiction without grounded support leakage
 - `vas-swarm-9m7` is now closed: citation verification no longer drops separable multi-ref earth-shape summaries into `multiple_refs`, and the measurement lane no longer collapses to a belief-only corpus on the `2026-04-11` fallback live validation
-- `vas-swarm-jji.11` is closed: the representative content recheck confirms measurement now grounds, but observational and randomized_intervention still fail the grounded-or-explicit-failure bar
-- the next cut is to harden the reopened cited-claim / topic-alignment grounding boundary tracked in `vas-swarm-jji.12`
+- `vas-swarm-jji.11` is closed: the representative content recheck confirms measurement now grounds, but observational and randomized_intervention reopened a shared cited-claim / grounding boundary
+- `vas-swarm-jji.12` is closed: grounding now stays generic while restoring direct observational null-association grounding and preventing empty-claim / cross-supplement review caveats from grounding against the randomized support claim
+- the next cut is `vas-swarm-jji.13`: surface explicit verifier/provider failure when the live randomized_intervention support lane still ends belief-only under timeout collapse
 
 The strategic long-horizon queue for the durable epistemic engine is now:
 - `vas-swarm-jji.1` — completed: remove `ClaimFamily` from planner selection
@@ -35,6 +36,7 @@ The strategic long-horizon queue for the durable epistemic engine is now:
 - `vas-swarm-jji.9` — completed: demote historical or debate-only support fragments in observational traces
 - `vas-swarm-jji.10` — completed: harden observational contradiction grounding under paraphrase and provider-noise drift
 - `vas-swarm-jji.11` — completed: rerun the representative content check after the observational paraphrase hardening
-- `vas-swarm-jji.12` — active: harden empirical grounding when extracted cited claims lose topic anchors
+- `vas-swarm-jji.12` — completed: harden empirical grounding when extracted cited claims lose topic anchors
+- `vas-swarm-jji.13` — active: surface live verifier/provider failures when randomized support stays belief-only
 
 Read the canonical spec for scope, constraints, and done-when criteria.
