@@ -19,6 +19,9 @@ defmodule Mix.Tasks.Osa.Roberto.Codex do
   @shortdoc "Launch Codex against the current Roberto program state"
   @default_max_slices 10
   @default_pause_seconds 5
+  @default_idle_timeout_seconds 900
+  @default_max_idle_retries 2
+  @idle_timeout_exit_code 124
 
   @impl true
   def run(args) do
@@ -33,14 +36,21 @@ defmodule Mix.Tasks.Osa.Roberto.Codex do
 
     if invocation.continuous? do
       Mix.shell().info(
-        "Starting autonomous Roberto mode (max slices: #{format_max_slices(invocation.max_slices)}, pause: #{invocation.pause_seconds}s)"
+        "Starting autonomous Roberto mode (max slices: #{format_max_slices(invocation.max_slices)}, pause: #{invocation.pause_seconds}s, idle timeout: #{format_idle_timeout(invocation.idle_timeout_seconds)}, idle retries: #{format_idle_retries(invocation.max_idle_retries)})"
       )
 
-      run_continuous(invocation, 1)
+      run_continuous(invocation, 1, 0)
     else
       case run_slice(invocation) do
         {:ok, 0} ->
           System.halt(0)
+
+        {:idle_timeout, timeout_ms} ->
+          Mix.shell().error(
+            "Codex hit an idle timeout after #{format_idle_timeout_ms(timeout_ms)}"
+          )
+
+          System.halt(@idle_timeout_exit_code)
 
         {:ok, code} ->
           Mix.shell().error("Codex exited with code #{code}")
@@ -70,7 +80,7 @@ defmodule Mix.Tasks.Osa.Roberto.Codex do
     ])
   end
 
-  defp run_continuous(invocation, slice_number) do
+  defp run_continuous(invocation, slice_number, consecutive_idle_timeouts) do
     before = progress_snapshot(invocation.base)
 
     case run_slice(invocation, slice_number) do
@@ -108,7 +118,52 @@ defmodule Mix.Tasks.Osa.Roberto.Codex do
             maybe_pause(invocation.pause_seconds)
 
             next_invocation = build_invocation(invocation.argv, base: invocation.base)
-            run_continuous(next_invocation, slice_number + 1)
+            run_continuous(next_invocation, slice_number + 1, 0)
+        end
+
+      {:idle_timeout, timeout_ms} ->
+        after_snapshot = progress_snapshot(invocation.base)
+        made_progress? = progress_made?(before, after_snapshot)
+
+        idle_timeouts =
+          if made_progress? do
+            0
+          else
+            consecutive_idle_timeouts + 1
+          end
+
+        cond do
+          is_nil(after_snapshot.summary.current_issue) or
+              after_snapshot.summary.current_issue == "" ->
+            Mix.shell().info(
+              "Stopping Roberto autonomous loop after slice #{slice_number}: idle timeout fired, but no active Roberto issue remains."
+            )
+
+            System.halt(0)
+
+          reached_max_idle_retries?(idle_timeouts, invocation.max_idle_retries) ->
+            Mix.shell().error(
+              "Stopping Roberto autonomous loop after slice #{slice_number}: Codex stayed idle for #{format_idle_timeout_ms(timeout_ms)} and exhausted #{format_idle_retries(invocation.max_idle_retries)}."
+            )
+
+            System.halt(@idle_timeout_exit_code)
+
+          true ->
+            progress_note =
+              if made_progress? do
+                "progress was detected before the timeout"
+              else
+                "no forward progress was detected"
+              end
+
+            Mix.shell().error(
+              "Roberto slice #{slice_number} hit an idle timeout after #{format_idle_timeout_ms(timeout_ms)}; restarting #{after_snapshot.summary.current_issue} because #{progress_note}."
+            )
+
+            maybe_pause(invocation.pause_seconds)
+
+            next_invocation = build_invocation(invocation.argv, base: invocation.base)
+            run_continuous(next_invocation, slice_number + 1, idle_timeouts)
         end
 
       {:ok, code} ->
@@ -152,8 +207,27 @@ defmodule Mix.Tasks.Osa.Roberto.Codex do
   defp format_max_slices(0), do: "unlimited"
   defp format_max_slices(value), do: Integer.to_string(value)
 
+  defp format_idle_timeout(0), do: "disabled"
+
+  defp format_idle_timeout(value) when is_integer(value) and value > 0 do
+    "#{value}s"
+  end
+
+  defp format_idle_timeout_ms(value) when is_integer(value) and value > 0 do
+    "#{div(value, 1_000)}s"
+  end
+
+  defp format_idle_retries(value) when is_integer(value) and value >= 0 do
+    "#{value} idle retry(s)"
+  end
+
   defp reached_max_slices?(_slice_number, 0), do: false
   defp reached_max_slices?(slice_number, max_slices), do: slice_number >= max_slices
+
+  defp reached_max_idle_retries?(_idle_timeouts, 0), do: true
+
+  defp reached_max_idle_retries?(idle_timeouts, max_idle_retries),
+    do: idle_timeouts > max_idle_retries
 
   defp git_head(base) do
     case System.cmd("git", ["rev-parse", "HEAD"], cd: base, stderr_to_stdout: true) do
@@ -179,6 +253,8 @@ defmodule Mix.Tasks.Osa.Roberto.Codex do
           full_auto: :boolean,
           danger_full_access: :boolean,
           skip_git_repo_check: :boolean,
+          idle_timeout_seconds: :integer,
+          max_idle_retries: :integer,
           max_slices: :integer,
           pause_seconds: :integer
         ]
@@ -209,6 +285,8 @@ defmodule Mix.Tasks.Osa.Roberto.Codex do
       write_prompt: parsed_opts[:write_prompt],
       prompt_only?: Keyword.get(parsed_opts, :prompt_only, false),
       continuous?: Keyword.get(parsed_opts, :continuous, false),
+      idle_timeout_seconds: default_idle_timeout_seconds(parsed_opts),
+      max_idle_retries: default_max_idle_retries(parsed_opts),
       max_slices: default_max_slices(parsed_opts),
       pause_seconds: default_pause_seconds(parsed_opts),
       codex_opts: codex_opts(parsed_opts, base)
@@ -229,11 +307,19 @@ defmodule Mix.Tasks.Osa.Roberto.Codex do
       profile: opts[:profile],
       sandbox: opts[:sandbox],
       output_last_message: opts[:output_last_message],
+      idle_timeout_ms: idle_timeout_ms(opts),
       json: opts[:json] || false,
       skip_git_repo_check: opts[:skip_git_repo_check] || false,
       full_auto: default_full_auto?(opts),
       danger_full_access: opts[:danger_full_access] || false
     ]
+  end
+
+  defp idle_timeout_ms(opts) do
+    case default_idle_timeout_seconds(opts) do
+      value when is_integer(value) and value > 0 -> value * 1_000
+      _ -> 0
+    end
   end
 
   defp default_full_auto?(opts) do
@@ -255,6 +341,27 @@ defmodule Mix.Tasks.Osa.Roberto.Codex do
     case Keyword.get(opts, :pause_seconds, @default_pause_seconds) do
       value when is_integer(value) and value >= 0 -> value
       _ -> Mix.raise("--pause-seconds must be an integer >= 0")
+    end
+  end
+
+  defp default_idle_timeout_seconds(opts) do
+    if Keyword.get(opts, :continuous, false) do
+      case Keyword.get(opts, :idle_timeout_seconds, @default_idle_timeout_seconds) do
+        value when is_integer(value) and value >= 0 -> value
+        _ -> Mix.raise("--idle-timeout-seconds must be an integer >= 0")
+      end
+    else
+      case Keyword.get(opts, :idle_timeout_seconds, 0) do
+        value when is_integer(value) and value >= 0 -> value
+        _ -> Mix.raise("--idle-timeout-seconds must be an integer >= 0")
+      end
+    end
+  end
+
+  defp default_max_idle_retries(opts) do
+    case Keyword.get(opts, :max_idle_retries, @default_max_idle_retries) do
+      value when is_integer(value) and value >= 0 -> value
+      _ -> Mix.raise("--max-idle-retries must be an integer >= 0")
     end
   end
 end

@@ -39,6 +39,7 @@ defmodule Mix.Tasks.Osa.Roberto.CodexTest do
     assert invocation.prompt_only?
     assert invocation.summary.current_issue == "vas-swarm-1a6"
     assert invocation.codex_opts[:cd] == base
+    assert invocation.idle_timeout_seconds == 0
     assert invocation.prompt =~ "Current active issue: vas-swarm-1a6"
     assert invocation.prompt =~ "vas-swarm-1a6: add codex runner"
   end
@@ -79,9 +80,58 @@ defmodule Mix.Tasks.Osa.Roberto.CodexTest do
       )
 
     assert invocation.continuous?
+    assert invocation.idle_timeout_seconds == 900
+    assert invocation.max_idle_retries == 2
     assert invocation.max_slices == 3
     assert invocation.pause_seconds == 0
     assert invocation.summary.current_issue == "vas-swarm-zmw"
+  end
+
+  test "build_invocation accepts explicit idle timeout controls" do
+    base =
+      System.tmp_dir!()
+      |> Path.join("roberto-codex-idle-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(Path.join(base, "docs/operations/roberto-content"))
+
+    for file <- ~w(SPEC.md PLAN.md IMPLEMENT.md STATUS.md) do
+      File.write!(Path.join(base, file), "# #{file}\n")
+    end
+
+    File.write!(
+      Path.join(base, "STATUS.md"),
+      """
+      # STATUS
+
+      **Canonical status**: [docs/operations/roberto-content/Documentation.md](docs/operations/roberto-content/Documentation.md)
+      **Epic**: `vas-swarm-jji`
+      **Current active issue**: `vas-swarm-2el`
+      **Latest trace**: [trace](#{base}/trace.json)
+      **Next Roberto step**: Recover from stalled Codex slices.
+      """
+    )
+
+    for file <- ~w(Prompt.md Plan.md Implement.md Documentation.md) do
+      File.write!(Path.join(base, "docs/operations/roberto-content/#{file}"), "# #{file}\n")
+    end
+
+    invocation =
+      Codex.build_invocation(
+        [
+          "--continuous",
+          "--idle-timeout-seconds",
+          "120",
+          "--max-idle-retries",
+          "4"
+        ],
+        base: base,
+        issue_output: "vas-swarm-2el: add idle timeout recovery"
+      )
+
+    assert invocation.continuous?
+    assert invocation.idle_timeout_seconds == 120
+    assert invocation.max_idle_retries == 4
+    assert invocation.codex_opts[:idle_timeout_ms] == 120_000
   end
 
   test "progress_made? detects head and issue movement" do

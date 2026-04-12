@@ -36,6 +36,9 @@ Usage:
   scripts/roberto-loop prompt     # print the generated Codex prompt
 
 All other arguments are forwarded to the corresponding Mix task.
+Useful autonomous flags:
+  --idle-timeout-seconds N        # restart / stop if a Codex slice stops emitting for N seconds
+  --max-idle-retries N            # cap automatic restarts after idle timeouts
 EOF
     ;;
   *)

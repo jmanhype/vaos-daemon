@@ -9,6 +9,7 @@ defmodule Daemon.Codex.CLI do
           | {:profile, String.t()}
           | {:sandbox, String.t()}
           | {:output_last_message, String.t()}
+          | {:idle_timeout_ms, non_neg_integer()}
           | {:json, boolean()}
           | {:skip_git_repo_check, boolean()}
           | {:full_auto, boolean()}
@@ -38,7 +39,8 @@ defmodule Daemon.Codex.CLI do
     ["exec" | flags] ++ [prompt]
   end
 
-  @spec run_exec(String.t(), [exec_opt()]) :: {:ok, non_neg_integer()} | {:error, String.t()}
+  @spec run_exec(String.t(), [exec_opt()]) ::
+          {:ok, non_neg_integer()} | {:idle_timeout, pos_integer()} | {:error, String.t()}
   def run_exec(prompt, opts \\ []) when is_binary(prompt) do
     case executable() do
       nil ->
@@ -47,6 +49,7 @@ defmodule Daemon.Codex.CLI do
       executable ->
         args = exec_args(prompt, opts)
         cwd = Keyword.get(opts, :cd, File.cwd!())
+        idle_timeout_ms = Keyword.get(opts, :idle_timeout_ms, 0)
 
         try do
           port =
@@ -62,7 +65,10 @@ defmodule Daemon.Codex.CLI do
               ]
             )
 
-          {:ok, stream_port(port)}
+          case stream_port(port, idle_timeout_ms) do
+            {:idle_timeout, timeout_ms} -> {:idle_timeout, timeout_ms}
+            code -> {:ok, code}
+          end
         rescue
           e -> {:error, Exception.message(e)}
         end
@@ -89,14 +95,98 @@ defmodule Daemon.Codex.CLI do
     end
   end
 
-  defp stream_port(port) do
+  defp stream_port(port, idle_timeout_ms)
+       when is_integer(idle_timeout_ms) and idle_timeout_ms > 0 do
     receive do
       {^port, {:data, data}} ->
         IO.write(data)
-        stream_port(port)
+        stream_port(port, idle_timeout_ms)
+
+      {^port, {:exit_status, code}} ->
+        code
+    after
+      idle_timeout_ms ->
+        terminate_port(port)
+        {:idle_timeout, idle_timeout_ms}
+    end
+  end
+
+  defp stream_port(port, _idle_timeout_ms) do
+    receive do
+      {^port, {:data, data}} ->
+        IO.write(data)
+        stream_port(port, 0)
 
       {^port, {:exit_status, code}} ->
         code
     end
+  end
+
+  defp terminate_port(port) do
+    port
+    |> port_os_pid()
+    |> terminate_process_tree()
+
+    safe_port_close(port)
+  end
+
+  defp port_os_pid(port) do
+    case Port.info(port, :os_pid) do
+      [{:os_pid, os_pid}] when is_integer(os_pid) -> os_pid
+      _ -> nil
+    end
+  end
+
+  defp terminate_process_tree(nil), do: :ok
+
+  defp terminate_process_tree(os_pid) when is_integer(os_pid) do
+    Enum.each(child_pids(os_pid), &terminate_process_tree/1)
+    send_signal(os_pid, "-TERM")
+    Process.sleep(200)
+    send_signal(os_pid, "-KILL")
+  end
+
+  defp child_pids(os_pid) do
+    case System.find_executable("pgrep") do
+      nil ->
+        []
+
+      executable ->
+        case System.cmd(executable, ["-P", Integer.to_string(os_pid)], stderr_to_stdout: true) do
+          {output, 0} ->
+            output
+            |> String.split("\n", trim: true)
+            |> Enum.flat_map(fn line ->
+              case Integer.parse(String.trim(line)) do
+                {pid, ""} -> [pid]
+                _ -> []
+              end
+            end)
+
+          _ ->
+            []
+        end
+    end
+  rescue
+    _ -> []
+  end
+
+  defp send_signal(os_pid, signal) do
+    case System.find_executable("kill") do
+      nil ->
+        :ok
+
+      executable ->
+        _ = System.cmd(executable, [signal, Integer.to_string(os_pid)], stderr_to_stdout: true)
+        :ok
+    end
+  rescue
+    _ -> :ok
+  end
+
+  defp safe_port_close(port) do
+    Port.close(port)
+  rescue
+    _ -> :ok
   end
 end

@@ -46,4 +46,33 @@ defmodule Daemon.Codex.CLITest do
              "resume roberto"
            ]
   end
+
+  test "run_exec returns an idle timeout when codex stops emitting output" do
+    tmp_dir =
+      Path.join(System.tmp_dir!(), "codex-cli-timeout-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(tmp_dir)
+
+    codex_path = Path.join(tmp_dir, "codex")
+
+    File.write!(
+      codex_path,
+      """
+      #!/bin/sh
+      sleep 5
+      """
+    )
+
+    File.chmod!(codex_path, 0o755)
+
+    original_path = System.get_env("PATH", "")
+    System.put_env("PATH", "#{tmp_dir}:#{original_path}")
+
+    on_exit(fn ->
+      System.put_env("PATH", original_path)
+    end)
+
+    assert {:idle_timeout, 50} =
+             CLI.run_exec("resume roberto", cd: tmp_dir, idle_timeout_ms: 50)
+  end
 end
