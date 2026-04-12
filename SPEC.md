@@ -8,7 +8,7 @@ Get Roberto content by hardening `investigate` into a trustworthy epistemic engi
 
 ## Current Focus
 
-The current implementation slice is `vas-swarm-jji.14`:
+The current implementation slice is `vas-swarm-jji.16`:
 - `vas-swarm-jji.1` is closed: planner mode selection no longer depends on `ClaimFamily`
 - `vas-swarm-jji.2` is closed: retrieval no longer depends on family-shaped evidence profiles or query templates in the investigate core
 - `vas-swarm-jji.3` is closed: sourced evidence grounding now runs through generic cited-claim extraction instead of a `profile` switch
@@ -23,7 +23,9 @@ The current implementation slice is `vas-swarm-jji.14`:
 - `vas-swarm-jji.11` is closed: the representative content recheck confirms measurement now grounds, but observational and randomized_intervention reopened a shared cited-claim / grounding boundary
 - `vas-swarm-jji.12` is closed: grounding now stays generic while restoring direct observational null-association grounding and preventing empty-claim / cross-supplement review caveats from grounding against the randomized support claim
 - `vas-swarm-jji.13` is closed: live verifier/provider timeout collapse now surfaces explicitly in `runtime_failures` metadata instead of disappearing into belief-only or plain `unverified` output
-- the next cut is `vas-swarm-jji.14`: audit whether the representative randomized_intervention support asymmetry is genuinely evidence-driven or still under-calibrated under live verifier timeout noise
+- `vas-swarm-jji.14` is closed: the representative randomized_intervention support asymmetry audit restored direct standalone-caffeine support on the live trace
+- `vas-swarm-jji.15` is closed: co-formulated randomized contradictions no longer ground directly against standalone intervention topics when the cited study does not isolate the same intervention
+- the next cut is `vas-swarm-jji.16`: rerun the final Roberto content check after co-formulation hardening
 
 The strategic long-horizon queue for the durable epistemic engine is now:
 - `vas-swarm-jji.1` — completed: remove `ClaimFamily` from planner selection
@@ -39,6 +41,8 @@ The strategic long-horizon queue for the durable epistemic engine is now:
 - `vas-swarm-jji.11` — completed: rerun the representative content check after the observational paraphrase hardening
 - `vas-swarm-jji.12` — completed: harden empirical grounding when extracted cited claims lose topic anchors
 - `vas-swarm-jji.13` — completed: surface live verifier/provider failures when randomized support stays belief-only
-- `vas-swarm-jji.14` — active: audit randomized_intervention support balance after runtime-honesty fix
+- `vas-swarm-jji.14` — completed: audit randomized_intervention support balance after runtime-honesty fix
+- `vas-swarm-jji.15` — completed: demote co-formulated randomized contradictions from direct grounding
+- `vas-swarm-jji.16` — active: re-run the final Roberto content check after co-formulation hardening
 
 Read the canonical spec for scope, constraints, and done-when criteria.

@@ -4,13 +4,13 @@
 
 ## Current Milestone
 
-Audit the representative randomized_intervention support balance now that runtime honesty is restored and live verifier/provider collapse is surfaced explicitly.
+Re-run the final Roberto content check now that co-formulated randomized contradictions are demoted from direct grounding.
 
 ## Active Issue
 
-`vas-swarm-jji.14` — Audit randomized_intervention support balance after runtime-honesty fix.
+`vas-swarm-jji.16` — Re-run the final Roberto content check after co-formulation hardening.
 `vas-swarm-dy1` remains open as inherited repo debt. For this Roberto program, it is non-blocking unless a failing test touches `investigate` or its directly coupled planning/verification path.
-Current state: `vas-swarm-jji.1` through `vas-swarm-jji.13` are complete and closed. The representative content-check artifact [vaos-jji11-content-check-1775955446.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-jji11-content-check-1775955446.json) still anchors the empirical audit, and the grounding plus runtime-honesty follow-ups are now closed enough that observational fallback grounds direct null-association evidence, the old empty-claim / cross-supplement review caveat no longer grounds against the randomized support claim, and live verifier/provider timeout collapse now surfaces explicitly in final metadata and trace outcome. The latest post-fix randomized_intervention validation [vaos-investigate-trace-671b4de7ec2f4f0d-jji13-live-randomized-caffeine-1775960549509.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-671b4de7ec2f4f0d-jji13-live-randomized-caffeine-1775960549509.json) no longer hides verifier collapse, but it still lands `asymmetric_evidence_against` with `grounded_for_count = 0`, so the next active issue is a calibration audit rather than another trace-honesty repair.
+Current state: `vas-swarm-jji.1` through `vas-swarm-jji.15` are complete and closed. The representative content-check artifact [vaos-jji11-content-check-1775955446.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-jji11-content-check-1775955446.json) still anchors the empirical audit, and the grounding plus runtime-honesty follow-ups are now closed enough that observational fallback grounds direct null-association evidence, the old empty-claim / cross-supplement review caveat no longer grounds against the randomized support claim, direct standalone caffeine support grounds again on the representative live trace, and the saved nitric-oxide-plus-caffeine contradiction now replays as `indirect/belief` instead of grounded direct opposition via [vaos-jji15-grounding-replay-1775979139.json](/tmp/vaos-jji15-grounding-replay-1775979139.json). The next active issue is therefore the program-level Roberto content check rather than another narrow grounding repair.
 
 ## Strategic Queue
 
@@ -28,14 +28,16 @@ The next long-horizon tasks for the durable epistemic engine are:
 - `vas-swarm-jji.11` — completed: rerun the representative content check after the observational paraphrase hardening
 - `vas-swarm-jji.12` — completed: harden empirical grounding when extracted cited claims lose topic anchors
 - `vas-swarm-jji.13` — completed: surface live verifier/provider failures when randomized support stays belief-only
-- `vas-swarm-jji.14` — active: audit randomized_intervention support balance after runtime-honesty fix
+- `vas-swarm-jji.14` — completed: audit randomized_intervention support balance after runtime-honesty fix
+- `vas-swarm-jji.15` — completed: demote co-formulated randomized contradictions from direct grounding
+- `vas-swarm-jji.16` — active: re-run the final Roberto content check after co-formulation hardening
 
 Sequence:
 - keep `vas-swarm-9m7` closed unless a new live measurement trace regresses
-- use `vas-swarm-jji.11` as the representative audit baseline plus the `jji.12` and `jji.13` live randomized traces as the latest runtime evidence
-- focus on whether support-side grounding is under-calibrated in the randomized verifier path now that trace/outcome failure surfacing is already honest
+- use `vas-swarm-jji.11` as the representative audit baseline plus the `jji.14` live randomized trace and the `jji.15` replay artifact as the latest randomized evidence
+- focus on whether any first-order integrity bug remains across the representative empirical lanes now that the randomized co-formulation seam is closed
 - do not add more family-specific `planetary_shape` salvage unless it is temporary debt
-- continue the durable-epistemic-engine path by deciding whether `vas-swarm-jji.14` is the last first-order calibration audit before Roberto is content
+- continue the durable-epistemic-engine path by deciding whether `vas-swarm-jji.16` confirms Roberto content or exposes one final first-order issue
 
 ## Verification Status
 
@@ -106,8 +108,12 @@ Sequence:
   - `mix test test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs` -> `147 tests, 0 failures`
   - replay artifact [vaos-jji12-grounding-replay-1775956794.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-jji12-grounding-replay-1775956794.json) proves the representative grounding boundary moved
   - live observational fallback [vaos-investigate-trace-f503fd8c4bf2184c-jji12-live-observational-fallback-port0-1775957319684.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-f503fd8c4bf2184c-jji12-live-observational-fallback-port0-1775957319684.json) grounded direct and synthesis contradictory evidence again
+- `vas-swarm-jji.15` is complete:
+  - co-formulated randomized contradiction claims now classify as indirect / belief when the cited wording shows mixed-agent or attribution-confound intervention evidence
+  - `mix test test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs` -> `152 tests, 0 failures`
+  - replay artifact [vaos-jji15-grounding-replay-1775979139.json](/tmp/vaos-jji15-grounding-replay-1775979139.json) keeps standalone caffeine support `direct/grounded` while demoting the nitric-oxide-plus-caffeine contradiction to `indirect/belief`
 - Next Roberto step:
-  - `vas-swarm-jji.14`: determine whether the representative randomized_intervention support asymmetry remains after runtime-failure surfacing is honest, or whether support-side grounding still needs calibration
+  - `vas-swarm-jji.16`: rerun the representative empirical content check and decide whether any first-order integrity bug remains
 - Repo-wide inherited full-suite failures remain background debt unless the failing test intersects `investigate`, `evidence_planner`, or directly coupled verification/retrieval code
 
 ## Operating Rule

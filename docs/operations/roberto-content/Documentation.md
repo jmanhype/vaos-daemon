@@ -2,8 +2,8 @@
 
 **Last updated**: 2026-04-12
 **Epic**: `vas-swarm-jji`
-**Current active issue**: `vas-swarm-jji.15`
-**Latest functional checkpoint before this doc stack**: `0f65d52`
+**Current active issue**: `vas-swarm-jji.16`
+**Latest functional checkpoint before this doc stack**: `c8ce3b6`
 
 ## Objective
 
@@ -19,7 +19,7 @@ The program is back on the right route:
 - runtime traces now preserve explicit non-paper provenance for local artifact evidence
 - administration-style intervention phrasing now routes into `randomized_intervention`
 - live traces fail more honestly than before
-- the durable epistemic engine route is now explicit in Beads as `vas-swarm-jji.1` through `vas-swarm-jji.15`
+- the durable epistemic engine route is now explicit in Beads as `vas-swarm-jji.1` through `vas-swarm-jji.16`
 - the `profile`-conditioned grounding branch has been removed from the live investigate path
 - production investigate no longer depends on `ClaimFamily.normalize_topic/1`
 - `ClaimFamily.normalize_verification_claim/1` appears to be superseded in the production investigate path by generic `verification_claim_text/1`
@@ -37,9 +37,10 @@ The fresh representative content check in `vas-swarm-jji.11` and the grounding f
 - the observational lane now grounds direct null-association evidence again, and the randomized lane no longer grounds the old empty-claim / beetroot-caveat leak as grounded-against evidence
 - `vas-swarm-jji.13` is now closed: live randomized traces surface verifier/provider timeout collapse explicitly instead of hiding it behind belief-only or plain `unverified` evidence
 - `vas-swarm-jji.14` is now closed: a focused randomized-performance crossover query now carries direct caffeine trial papers into the representative live corpus, and direct support grounds again on the caffeine time-trial claim family
-- the next active question is `vas-swarm-jji.15`: when a randomized contradiction comes from a co-formulated intervention paper, should that claim stay direct against a standalone intervention topic or be demoted to indirect/contextual grounding?
+- `vas-swarm-jji.15` is now closed: co-formulated randomized contradictions now demote to `indirect/belief` when the cited wording shows mixed-agent or attribution-confound intervention evidence rather than an isolated standalone intervention
+- the next active question is `vas-swarm-jji.16`: after that randomized co-formulation fix, does the final representative content check expose any remaining first-order integrity bug at all?
 
-That means the next step is `vas-swarm-jji.15`: audit co-formulated randomized contradictions now that support-side grounding is restored on the representative caffeine trace.
+That means the next step is `vas-swarm-jji.16`: rerun the final representative content check now that the last known randomized grounding seam is closed.
 
 Strategic correction:
 - `ClaimFamily` is no longer treated as the intended architecture
@@ -50,35 +51,37 @@ Repo-wide full-suite debt is no longer the gating concern for this program when 
 ## Latest Completed Slice
 
 ### Closed issue
-- `vas-swarm-jji.14`
+- `vas-swarm-jji.15`
 
 ### What landed
-- `EvidencePlanner.build_candidate/3` now prepends a focused `:performance_crossover` query for performance-oriented `randomized_intervention` topics
-- the new focused query composes the intervention anchor, `supplementation`, outcome phrase, participant anchor, and `placebo crossover` suffix to retrieve direct crossover trials before the broader placebo / RCT / review lanes
-- the representative caffeine randomized plan now probes OpenAlex with `caffeine supplementation time trial performance trained cyclists placebo crossover`
-- the first-order bottleneck moved from support-balance ambiguity to a narrower directness question, now filed as `vas-swarm-jji.15`
+- `combination_intervention_source?/2` now recognizes co-formulated / attribution-confound randomized wording beyond the older multi-ingredient / review phrases
+- the generic mixed-agent detector now catches patterns such as `with added`, `combined ... with`, `co-ingestion`, `co-formulated`, and `cannot be isolated ... alone`
+- focused randomized-intervention regressions now cover both sides of the representative caffeine claim family:
+  - standalone caffeine support remains `direct/grounded`
+  - nitric-oxide-plus-caffeine contradiction claims demote to `indirect/belief`
+- the first-order bottleneck moved from a narrow randomized grounding repair to the program-level final content check, now filed as `vas-swarm-jji.16`
 
 ### Validation
 - Tests:
-  - `mix test test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs` -> `150 tests, 0 failures`
+  - `mix test test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs` -> `152 tests, 0 failures`
   - inherited repo-wide warnings and unrelated suite failures remain background debt unless they intersect `investigate`, `evidence_planner`, or directly coupled verification/retrieval code
 ### What the slice proved
-- live validation artifact [vaos-jji14-live-validation-summary-1775978200.json](/tmp/vaos-jji14-live-validation-summary-1775978200.json) proves the representative randomized support lane no longer resolves as grounded-against simply because the live verifier path is noisy
-- live randomized trace [vaos-investigate-trace-5c090736ecfc44a0-jji14-live-randomized-caffeine-1775978200832.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-5c090736ecfc44a0-jji14-live-randomized-caffeine-1775978200832.json) completed with `direction = supporting`, `grounded_for_count = 1`, `grounded_against_count = 1`, `verified_for = 2`, `verified_against = 1`, and `timeout = nil`
-- the selected probe query was `caffeine supplementation time trial performance trained cyclists placebo crossover` with `query_label = performance_crossover`, `carried_papers = 2`, and `avg_directness = 88.11`
-- one verifier timeout remains surfaced in `runtime_failures`, but a direct Paper 1 support claim still grounds, so the representative support lane is no longer hidden behind verifier collapse
-- the remaining grounded opposition comes from a nitric-oxide-plus-caffeine lozenge paper whose contradiction is about co-formulation / attribution, so the next step is the directness audit now tracked as `vas-swarm-jji.15`
+- runtime-equivalent replay artifact [vaos-jji15-grounding-replay-1775979139.json](/tmp/vaos-jji15-grounding-replay-1775979139.json) proves the representative randomized boundary moved on the saved live caffeine trace
+- saved live trace [vaos-investigate-trace-5c090736ecfc44a0-jji14-live-randomized-caffeine-1775978200832.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-5c090736ecfc44a0-jji14-live-randomized-caffeine-1775978200832.json) still anchors the representative claim family and its original `supporting` outcome
+- the replay keeps the standalone caffeine support item on `grounding_role = direct` and `evidence_store = grounded`
+- the replay demotes the nitric-oxide-plus-caffeine contradiction item to `grounding_role = indirect` and `evidence_store = belief`
+- the representative randomized lane no longer has a known first-order directness bug; the next step is the full Roberto content check now tracked as `vas-swarm-jji.16`
 
 ## Recorded Blocker Context
 
 ### Active issue
-- `vas-swarm-jji.15`
+- `vas-swarm-jji.16`
 
 ### Problem
-The latest post-fix randomized validation has moved the bottleneck again:
-- live verifier/provider timeout collapse is still surfaced honestly in `runtime_failures`
-- the representative caffeine randomized trace now resolves `supporting` with one grounded direct support item and one grounded direct opposing item
-- the remaining grounded opposition is sourced from a nitric-oxide-plus-caffeine co-formulation study whose contradiction is about intervention attribution, so the next question is whether mixed-agent confound claims should stay direct against standalone intervention topics
+No new first-order integrity bug is currently known in the empirical `investigate` loop, but Roberto is not content until that is proven across the representative lanes:
+- measurement, observational, and randomized_intervention all need one fresh checkpoint after `vas-swarm-jji.15`
+- if those checks stay grounded / honest, the program can declare Roberto-content criteria met
+- if any one of them reopens a trust-breaking boundary, that new issue becomes the next first-order bottleneck
 
 ## Long-Horizon Queue
 
@@ -96,7 +99,8 @@ The latest post-fix randomized validation has moved the bottleneck again:
 - `vas-swarm-jji.12` — completed: harden empirical grounding when extracted cited claims lose topic anchors
 - `vas-swarm-jji.13` — completed: surface live verifier/provider failures when randomized support stays belief-only
 - `vas-swarm-jji.14` — completed: audit randomized_intervention support balance after runtime-honesty fix
-- `vas-swarm-jji.15` — active: demote co-formulated randomized contradictions from direct grounding
+- `vas-swarm-jji.15` — completed: demote co-formulated randomized contradictions from direct grounding
+- `vas-swarm-jji.16` — active: re-run the final Roberto content check after co-formulation hardening
 
 Why this order:
 - planner agnosticism first, so mode choice is no longer boxed by hidden topic priors
@@ -112,11 +116,11 @@ Continue from evidence, not inherited full-suite debt:
 - only let repo-wide failures block advancement when they intersect `investigate` or its directly coupled planning/verification path
 - when three live attempts fail to prove the same milestone because of provider instability or wrapper drift, write down the blocker and pause instead of advancing
 - do not reopen `vas-swarm-9m7` unless a new live measurement trace regresses
-- spend the next slice on `vas-swarm-jji.15`: determine whether co-formulated randomized contradiction claims should be demoted from direct grounding when the target claim is about a standalone intervention
+- spend the next slice on `vas-swarm-jji.16`: rerun the representative empirical content check and decide whether Roberto is content or one more first-order issue remains
 
 Shortest version:
 
-Planner-family, retrieval-family, profile-conditioned grounding, wrapper-normalization, external-search bleed, the measurement-side multi-ref verifier collapse, the observational support-side history/debate leak, the observational paraphrase/provider-noise contradiction leak, the cited-claim / topic-alignment grounding seam from `vas-swarm-jji.12`, the hidden runtime-collapse seam from `vas-swarm-jji.13`, and the representative randomized support-balance audit from `vas-swarm-jji.14` are no longer the known core bottlenecks. The remaining active question is narrower still: when a contradiction comes from a co-formulated intervention paper, should it ground directly against a standalone intervention claim?
+Planner-family, retrieval-family, profile-conditioned grounding, wrapper-normalization, external-search bleed, the measurement-side multi-ref verifier collapse, the observational support-side history/debate leak, the observational paraphrase/provider-noise contradiction leak, the cited-claim / topic-alignment grounding seam from `vas-swarm-jji.12`, the hidden runtime-collapse seam from `vas-swarm-jji.13`, the representative randomized support-balance audit from `vas-swarm-jji.14`, and the co-formulated randomized contradiction seam from `vas-swarm-jji.15` are no longer the known core bottlenecks. The remaining active question is broader again: does the final representative content check expose any first-order integrity bug at all?
 
 ## Known Stable Wins
 
@@ -125,6 +129,7 @@ Planner-family, retrieval-family, profile-conditioned grounding, wrapper-normali
 - observational null-association studies now ground again even when extracted claims are mostly numeric and the paper uses ASD/vaccine variants
 - empty-claim cross-supplement review caveats no longer ground against the representative caffeine support claim
 - the representative caffeine randomized trace now grounds direct support again through a focused crossover query instead of resolving as grounded-against under verifier noise
+- the co-formulated nitric-oxide-plus-caffeine contradiction now replays as `indirect/belief` instead of grounded direct opposition
 - advocate runtime now completes honestly under real budgets
 - verification and timeout boundaries are much more explicit than they were earlier in the loop
 
@@ -134,9 +139,9 @@ On the next session:
 
 1. Read this file.
 2. Run `scripts/roberto-loop`.
-3. Open `vas-swarm-jji.15`, the representative content-check artifact [vaos-jji11-content-check-1775955446.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-jji11-content-check-1775955446.json), the grounding replay [vaos-jji12-grounding-replay-1775956794.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-jji12-grounding-replay-1775956794.json), the live validation summary [vaos-jji14-live-validation-summary-1775978200.json](/tmp/vaos-jji14-live-validation-summary-1775978200.json), and the new randomized trace [vaos-investigate-trace-5c090736ecfc44a0-jji14-live-randomized-caffeine-1775978200832.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-5c090736ecfc44a0-jji14-live-randomized-caffeine-1775978200832.json).
-4. Resume from `vas-swarm-jji.15`.
-5. Audit whether co-formulated randomized contradiction claims should be demoted from direct grounding when the target claim is about a standalone intervention.
+3. Open `vas-swarm-jji.16`, the representative content-check artifact [vaos-jji11-content-check-1775955446.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-jji11-content-check-1775955446.json), the grounding replay [vaos-jji12-grounding-replay-1775956794.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-jji12-grounding-replay-1775956794.json), the live validation summary [vaos-jji14-live-validation-summary-1775978200.json](/tmp/vaos-jji14-live-validation-summary-1775978200.json), the saved randomized trace [vaos-investigate-trace-5c090736ecfc44a0-jji14-live-randomized-caffeine-1775978200832.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-5c090736ecfc44a0-jji14-live-randomized-caffeine-1775978200832.json), and the new replay artifact [vaos-jji15-grounding-replay-1775979139.json](/tmp/vaos-jji15-grounding-replay-1775979139.json).
+4. Resume from `vas-swarm-jji.16`.
+5. Re-run the representative empirical content check and decide whether Roberto-content criteria are now met or whether a new first-order integrity issue appears.
 6. Record unrelated suite failures under `vas-swarm-dy1` without blocking `investigate` milestone advancement.
 7. Update this file, close/open issues, and push.
 

@@ -2821,7 +2821,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
     combined_text = Enum.join([paper_text, context_text], " ")
 
     Regex.match?(
-      ~r/\b(multi-ingredient|multiingredient|pre-workout|preworkout|combination (?:supplement|therapy|treatment)|combined with|co-administered|coadministered|interaction with other supplements?|undermin(?:e|ed|ing) (?:the )?(?:effects|benefits?) of (?:other )?supplements?|effects of supplementation with [^.!?]{0,120}undermin(?:ed|e|ing)|alongside [^.!?]{0,80}\b(?:supplement|extract|ingredient|betaine|caffeine|protein|dendrobium))\b/i,
+      ~r/\b(multi-ingredient|multiingredient|pre-workout|preworkout|combination (?:supplement|therapy|treatment|intervention)|combined with|combined [^.!?]{0,80} with|with added|co-administered|coadministered|co-?ingest(?:ion|ed|ing)|co-?formulat(?:ed|ion|ing)|co-?intervention|interaction with other supplements?|confound(?:ed|ing)? by [^.!?]{0,80}\b(?:co-?ingestion|other ergogenic compounds?)|cannot be isolated to [^.!?]{0,80}\balone\b|difficult to attribute [^.!?]{0,80}\balone\b|attribut(?:e|ed|ion) [^.!?]{0,80}\balone\b|undermin(?:e|ed|ing) (?:the )?(?:effects|benefits?) of (?:other )?supplements?|effects of supplementation with [^.!?]{0,120}undermin(?:ed|e|ing)|alongside [^.!?]{0,80}\b(?:supplement|extract|ingredient|betaine|caffeine|protein|dendrobium))\b/i,
       combined_text
     )
   end

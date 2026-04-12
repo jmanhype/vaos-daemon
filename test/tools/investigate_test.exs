@@ -1098,6 +1098,84 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
     assert role == :direct
   end
 
+  test "grounding_role_for keeps standalone caffeine time-trial trial claims direct" do
+    context = %{
+      normalized_topic:
+        "acute caffeine intake enhances endurance time-trial performance in trained cyclists and triathletes",
+      evidence_profile: %{
+        kind: :randomized_intervention,
+        subject_terms: ["caffeine", "endurance", "time-trial", "performance", "cyclists"]
+      }
+    }
+
+    evidence = %{
+      source_type: :sourced,
+      verification: "verified",
+      paper_type: :trial,
+      verification_claim:
+        "acute caffeine supplementation (6 mg/kg body mass) produced statistically significant improvements in time trial performance compared to both placebo and no-supplement conditions.",
+      summary:
+        "Acute caffeine supplementation (6 mg/kg body mass) produced statistically significant improvements in time trial performance compared to both placebo and no-supplement conditions [Paper 1]."
+    }
+
+    paper = %{
+      "title" =>
+        "Dispelling the myth that habitual caffeine consumption influences the performance response to acute caffeine supplementation",
+      "abstract" =>
+        "Caffeine supplementation improved cycling time trial performance compared with placebo and no supplementation, with no effect of habitual caffeine intake on the ergogenic response.",
+      "publicationTypes" => ["Clinical Trial"]
+    }
+
+    assert Investigate.grounding_role_for(evidence, context, paper) == :direct
+
+    assert Investigate.evidence_store_for(
+             evidence,
+             0.9,
+             Strategy.default(),
+             context,
+             paper
+           ) == :grounded
+  end
+
+  test "grounding_role_for demotes co-formulated nitric-oxide plus caffeine contradiction claims" do
+    context = %{
+      normalized_topic:
+        "acute caffeine intake enhances endurance time-trial performance in trained cyclists and triathletes",
+      evidence_profile: %{
+        kind: :randomized_intervention,
+        subject_terms: ["caffeine", "endurance", "time-trial", "performance", "cyclists"]
+      }
+    }
+
+    evidence = %{
+      source_type: :sourced,
+      verification: "verified",
+      paper_type: :study,
+      verification_claim:
+        "improved time-trial performance with a nitric oxide releasing lozenge with added caffeine (70 mg), but because the supplement combined caffeine with a nitric oxide donor, the improvement cannot be isolated to caffeine's effects alone.",
+      summary:
+        "Evidence for caffeine's ergogenic effects is confounded by co-ingestion with other ergogenic compounds, making it difficult to attribute performance gains to caffeine alone. [Paper 2] reported improved time-trial performance with a nitric oxide releasing lozenge with added caffeine (70 mg), but because the supplement combined caffeine with a nitric oxide donor, the improvement cannot be isolated to caffeine's effects alone."
+    }
+
+    paper = %{
+      "title" =>
+        "Caffeinated Nitric Oxide-releasing Lozenge Improves Cycling Time Trial Performance",
+      "abstract" =>
+        "A nitric oxide-releasing lozenge with added caffeine (70 mg) improved 20.15 km cycling time trial performance, but the co-formulated intervention does not isolate caffeine from the nitric oxide donor.",
+      "publicationTypes" => ["Clinical Trial"]
+    }
+
+    assert Investigate.grounding_role_for(evidence, context, paper) == :indirect
+
+    assert Investigate.evidence_store_for(
+             evidence,
+             0.9,
+             Strategy.default(),
+             context,
+             paper
+           ) == :belief
+  end
+
   test "evidence_store_for keeps observational public-debate fragments in belief" do
     context = %{
       normalized_topic: "vaccines cause autism",
