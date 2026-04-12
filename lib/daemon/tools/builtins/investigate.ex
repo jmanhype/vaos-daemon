@@ -2529,8 +2529,10 @@ defmodule Daemon.Tools.Builtins.Investigate do
       design == :combination_intervention -> :indirect
       design == :guidance -> :contextual
       design == :contextual_review -> :contextual
+      review_summary_groundable?(design, claim_text, classification_context, paper) -> :synthesis
       not topic_direct? -> :indirect
       design == :synthesis -> :synthesis
+      design == :review_summary -> :contextual
       true -> :direct
     end
   end
@@ -2553,7 +2555,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
         :guidance
 
       paper_type == :review ->
-        :contextual_review
+        :review_summary
 
       combination_intervention_source?(paper_text) ->
         :combination_intervention
@@ -2562,6 +2564,76 @@ defmodule Daemon.Tools.Builtins.Investigate do
         :direct
     end
   end
+
+  defp review_summary_groundable?(:review_summary, claim_text, classification_context, paper)
+       when is_binary(claim_text) and is_map(classification_context) do
+    direct_observational_review_claim?(claim_text, classification_context) and
+      review_summary_topic_aligned?(claim_text, paper, classification_context)
+  end
+
+  defp review_summary_groundable?(_design, _claim_text, _classification_context, _paper), do: false
+
+  defp direct_observational_review_claim?(claim_text, %{evidence_profile: %{kind: :observational} = profile})
+       when is_binary(claim_text) do
+    normalized_claim = normalize_search_text(claim_text)
+
+    required_hits =
+      profile
+      |> Map.get(:required_terms, [])
+      |> Enum.count(&String.contains?(normalized_claim, &1))
+
+    stable_hits =
+      profile
+      |> Map.get(:stable_terms, [])
+      |> Enum.count(&String.contains?(normalized_claim, &1))
+
+    direct_observational_result? =
+      Regex.match?(
+        ~r/\b(no evidence|no association|not associated|associated with|linked to|causal link|did not increase|did not raise|increase(?:d)? risk|decrease(?:d)? risk|no increased risk|higher risk|lower risk|incidence|prevalence)\b/i,
+        normalized_claim
+      )
+
+    direct_observational_result? and required_hits + stable_hits >= 2
+  end
+
+  defp direct_observational_review_claim?(_claim_text, _classification_context), do: false
+
+  defp review_summary_topic_aligned?(claim_text, paper, classification_context)
+       when is_binary(claim_text) and is_map(classification_context) do
+    if grounding_topic_direct_claim?(claim_text, paper, classification_context) do
+      true
+    else
+      review_summary_relaxed_anchor_match?(claim_text, paper, classification_context)
+    end
+  end
+
+  defp review_summary_topic_aligned?(_claim_text, _paper, _classification_context), do: false
+
+  defp review_summary_relaxed_anchor_match?(claim_text, paper, classification_context)
+       when is_binary(claim_text) and is_map(classification_context) do
+    anchors = grounding_topic_anchor_terms(classification_context)
+
+    case anchors do
+      [] ->
+        true
+
+      terms ->
+        claim_hits =
+          claim_text
+          |> normalize_search_text()
+          |> grounding_anchor_match_count(terms)
+
+        paper_hits =
+          paper
+          |> grounding_paper_text()
+          |> normalize_search_text()
+          |> grounding_anchor_match_count(terms)
+
+        max(claim_hits, paper_hits) >= 1
+    end
+  end
+
+  defp review_summary_relaxed_anchor_match?(_claim_text, _paper, _classification_context), do: false
 
   defp synthesis_source?(title, paper_text, publication_types, context_text) do
     Enum.any?(List.wrap(publication_types), fn publication_type ->

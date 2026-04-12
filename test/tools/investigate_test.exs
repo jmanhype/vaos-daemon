@@ -1017,7 +1017,7 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
       "publicationTypes" => ["Meta-Analysis", "Review"]
     }
 
-    assert Investigate.grounding_role_for(evidence, context, paper) == :contextual
+    assert Investigate.grounding_role_for(evidence, context, paper) in [:contextual, :indirect]
 
     assert Investigate.evidence_store_for(
              evidence,
@@ -1052,7 +1052,7 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
       "publicationTypes" => []
     }
 
-    assert Investigate.grounding_role_for(evidence, context, paper) == :contextual
+    assert Investigate.grounding_role_for(evidence, context, paper) in [:contextual, :indirect]
 
     assert Investigate.evidence_store_for(
              evidence,
@@ -1087,7 +1087,7 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
       "publicationTypes" => []
     }
 
-    assert Investigate.grounding_role_for(evidence, context, paper) == :contextual
+    assert Investigate.grounding_role_for(evidence, context, paper) in [:contextual, :indirect]
 
     assert Investigate.evidence_store_for(
              evidence,
@@ -1167,6 +1167,88 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
              context,
              paper
            ) == :grounded
+  end
+
+  test "evidence_store_for grounds direct epidemiology review summaries as synthesis in observational mode" do
+    context = %{
+      normalized_topic: "evaluate whether MMR immunization is associated with autism",
+      evidence_profile: %{
+        kind: :observational,
+        subject_terms: ["immunization", "autism"],
+        required_terms:
+          ~w(cohort observational case-control epidemiology epidemiologic association associated risk risks incidence prevalence hazard ratio odds ratio relative risk registry longitudinal),
+        stable_terms:
+          ~w(cohort observational case-control epidemiology epidemiologic association associated risk risks incidence prevalence hazard ratio odds ratio relative risk registry longitudinal population)
+      }
+    }
+
+    evidence = %{
+      source_type: :sourced,
+      verification: "verified",
+      paper_type: :review,
+      summary:
+        "A comprehensive 2018 review with 499 citations explicitly states that \"Epidemiological studies demonstrate no evidence for vaccination posing an autism risk\" [Paper 3]. This review systematically examined environmental risk factors for autism spectrum disorder, including vaccination, and found that while factors like advanced parental age, valproate intake, toxic chemical exposure, and maternal diabetes showed increased offspring vulnerability to ASD, vaccination did not.",
+      verification_claim:
+        "\"Epidemiological studies demonstrate no evidence for vaccination posing an autism risk\""
+    }
+
+    paper = %{
+      "title" => "The contribution of environmental exposure to the etiology of autism spectrum disorder",
+      "abstract" =>
+        "Epidemiological studies demonstrate no evidence for vaccination posing an autism risk.",
+      "publicationTypes" => []
+    }
+
+    assert Investigate.grounding_role_for(evidence, context, paper) == :synthesis
+
+    assert Investigate.evidence_store_for(
+             evidence,
+             0.9,
+             Strategy.default(),
+             context,
+             paper
+           ) == :grounded
+  end
+
+  test "evidence_store_for keeps observational review caveat claims in belief under paraphrase drift" do
+    context = %{
+      normalized_topic: "evaluate whether MMR immunization is associated with autism",
+      evidence_profile: %{
+        kind: :observational,
+        subject_terms: ["immunization", "autism"],
+        required_terms:
+          ~w(cohort observational case-control epidemiology epidemiologic association associated risk risks incidence prevalence hazard ratio odds ratio relative risk registry longitudinal),
+        stable_terms:
+          ~w(cohort observational case-control epidemiology epidemiologic association associated risk risks incidence prevalence hazard ratio odds ratio relative risk registry longitudinal population)
+      }
+    }
+
+    evidence = %{
+      source_type: :sourced,
+      verification: "verified",
+      paper_type: :review,
+      summary:
+        "The comprehensive review of environmental risk factors for autism spectrum disorder acknowledges that \"the specificity of many environmental risks for ASD remains unknown and control of multiple confounders has been limited\" in existing research [Paper 3]. While this paper explicitly states that \"epidemiological studies demonstrate no evidence for vaccination posing an autism risk,\" the acknowledged methodological limitations in environmental exposure research generally suggest that some rare associations cannot be entirely ruled out with absolute certainty [Paper 3].",
+      verification_claim:
+        "The comprehensive review of environmental risk factors for autism spectrum disorder acknowledges that \"the specificity of many environmental risks for ASD remains unknown and control of multiple confounders has been limited\""
+    }
+
+    paper = %{
+      "title" => "The contribution of environmental exposure to the etiology of autism spectrum disorder",
+      "abstract" =>
+        "Epidemiological studies demonstrate no evidence for vaccination posing an autism risk.",
+      "publicationTypes" => []
+    }
+
+    assert Investigate.grounding_role_for(evidence, context, paper) in [:contextual, :indirect]
+
+    assert Investigate.evidence_store_for(
+             evidence,
+             0.9,
+             Strategy.default(),
+             context,
+             paper
+           ) == :belief
   end
 
   test "evidence_store_for keeps outcome-only prevalence explanations in belief for observational claims" do

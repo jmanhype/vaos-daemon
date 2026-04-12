@@ -2,7 +2,7 @@
 
 **Created**: 2026-04-10
 **Epic**: `vas-swarm-jji`
-**Current Active Issue**: `vas-swarm-jji.9` (open)
+**Current Active Issue**: `vas-swarm-jji.11` (open)
 **Recently closed measurement issue**: `vas-swarm-9m7`
 
 ## Overview
@@ -51,14 +51,15 @@ Strategic correction:
 **Goal**: Eliminate known trust-breaking failures in the current literature-centered pipeline.
 
 **Current focus**
-- `vas-swarm-jji.9`: demote historical or debate-only support fragments in observational investigate traces
+- `vas-swarm-jji.11`: rerun the representative Roberto content check after the observational paraphrase hardening
 
 **Status note**
 - Probe-paper carryover now lands in the merged retrieval set and the live rerun no longer ends `belief_consensus_for`.
 - `vas-swarm-942` is complete and closed.
 - `vas-swarm-tgf` is complete: repeated traced runs no longer timeout in `:investigate_ledger`.
 - `vas-swarm-9m7` is now closed after the verifier stopped dead-ending separable multi-ref sourced summaries as `multiple_refs`.
-- The next investigate bottleneck is observational claim alignment: the `vaccines cause autism` trace still grounded history/debate fragments as support.
+- `vas-swarm-jji.9` is complete: observational history/debate/discourse support fragments now stay belief/contextual.
+- `vas-swarm-jji.10` is complete: the saved live observational fallback trace now reclassifies to `grounded_against_count = 1`, `grounded_for_count = 0`, and `direction = asymmetric_evidence_against` via [vaos-jji10-live-fallback-reclass-1775953735.json](/tmp/vaos-jji10-live-fallback-reclass-1775953735.json).
 - `vas-swarm-jji.1` is complete: planner mode selection no longer depends on `ClaimFamily`.
 - `vas-swarm-jji.2` is complete: retrieval no longer depends on family-shaped evidence profiles or query templates in the investigate core.
 - `vas-swarm-jji.3` is complete: the live `profile`-conditioned grounding branch is gone and cited-claim extraction is now generic on the production investigate path.
@@ -66,7 +67,7 @@ Strategic correction:
 - `vas-swarm-jji.5` is complete: production investigate no longer depends on `ClaimFamily.normalize_topic/1`.
 - `vas-swarm-jji.6` is complete: retrieval-ops-only `artifact_reference` runs stay local by suppressing external paper-search bleed exposed by the wrapped docs/code trace.
 - `vas-swarm-jji.7` is complete: retrieval-ops-only local artifact preparations no longer trigger alphaXiv auth/startup noise during preflight.
-- `vas-swarm-jji.8` is complete: the content check reran the representative empirical lanes and proved the remaining work is still first-order.
+- `vas-swarm-jji.8` is complete: the content check reran the representative empirical lanes and exposed the remaining first-order follow-ups that are now closed.
 - Repo-history audit shows the remaining full-suite failures live in pre-takeover Roberto/PAMF2-era surfaces outside the `investigate` tool path.
 - Those inherited repo-wide failures are tracked as background debt in `vas-swarm-dy1` and are non-blocking unless they intersect `investigate`, `evidence_planner`, or directly coupled verification/retrieval code touched by this milestone.
 
@@ -165,9 +166,9 @@ Strategic correction:
 **Goal**: Decide whether the remaining work is second-order.
 
 **Status note**
-- `vas-swarm-jji.8` completed the content check and exposed two first-order follow-ups.
+- `vas-swarm-jji.8` completed the content check and exposed the final first-order follow-ups.
 - `vas-swarm-9m7` is now resolved: replaying the exact blocker trace no longer returns `multiple_refs` for the recurring earth-shape core, and the fallback live measurement trace [vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-9m7-live-curvature-1775949543170.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-9m7-live-curvature-1775949543170.json) grounded both sides with no timeout.
-- `vas-swarm-jji.9` remains open, so Milestone 5 is still not accepted.
+- `vas-swarm-jji.9` and `vas-swarm-jji.10` are now resolved, so Milestone 5 now depends on the representative recheck in `vas-swarm-jji.11` rather than another known repair issue.
 
 ### Acceptance Criteria
 

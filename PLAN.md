@@ -4,13 +4,13 @@
 
 ## Current Milestone
 
-Demote historical or debate-only support fragments in the live `observational` grounding path now that the `vas-swarm-9m7` measurement verifier boundary is closed again.
+Re-run the representative Roberto content check now that the `vas-swarm-9m7`, `vas-swarm-jji.9`, and `vas-swarm-jji.10` first-order repairs are closed enough to test together again.
 
 ## Active Issue
 
-`vas-swarm-jji.9` — Demote historical or debate-only support fragments in observational investigate traces.
+`vas-swarm-jji.11` — Re-run Roberto content check after observational paraphrase hardening.
 `vas-swarm-dy1` remains open as inherited repo debt. For this Roberto program, it is non-blocking unless a failing test touches `investigate` or its directly coupled planning/verification path.
-Current state: `vas-swarm-jji.1` through `vas-swarm-jji.8` are complete and closed. The live investigate core no longer switches on family/profile-conditioned planner, retrieval, grounding, or wrapper normalization behavior, and retrieval-ops-only local artifact plans no longer bleed into external paper search or alphaXiv preflight auth/startup. On `2026-04-11`, `vas-swarm-9m7` closed after the verifier stopped treating every separable multi-ref sourced summary as `multiple_refs`: replaying the exact `jji8-measurement` blocker trace now resolves recurring refs `3`, `8`, `14`, `2`, and `7` back to primary verification targets, and the semantically equivalent fallback live trace [vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-9m7-live-curvature-1775949543170.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-9m7-live-curvature-1775949543170.json) again selected `measurement` and completed with grounded evidence on both sides (`3/1`) and no timeout. That removes the first-order measurement collapse. The next active bottleneck is therefore `vas-swarm-jji.9`, filed from the same `vas-swarm-jji.8` audit because the fresh observational trace still grounded historical / debate-only fragments as support for `vaccines cause autism`.
+Current state: `vas-swarm-jji.1` through `vas-swarm-jji.10` are complete and closed. The live investigate core no longer switches on family/profile-conditioned planner, retrieval, grounding, or wrapper normalization behavior, retrieval-ops-only local artifact plans no longer bleed into external paper search or alphaXiv preflight auth/startup, the measurement verifier no longer dead-ends separable multi-ref summaries as `multiple_refs`, observational history/debate support fragments stay belief-only, and the latest saved observational fallback trace now reclassifies to `grounded_against_count = 1`, `grounded_for_count = 0`, `direction = asymmetric_evidence_against` via [vaos-jji10-live-fallback-reclass-1775953735.json](/tmp/vaos-jji10-live-fallback-reclass-1775953735.json). The next active issue is therefore the representative content recheck, not another known first-order repair.
 
 ## Strategic Queue
 
@@ -22,14 +22,16 @@ The next long-horizon tasks for the durable epistemic engine are:
 - `vas-swarm-jji.5` — completed: retire the surviving `ClaimFamily.normalize_topic/1` wrapper-normalization seam from the production investigate path
 - `vas-swarm-jji.6` — completed: prevent retrieval-ops-only `artifact_reference` plans from launching external paper search
 - `vas-swarm-jji.7` — completed: prevent retrieval-ops-only local artifact preparations from triggering alphaXiv auth/startup during preflight
-- `vas-swarm-jji.8` — completed: the content check proved representative routing still works, reactivated the live earth-shape grounding boundary, and filed `vas-swarm-jji.9` for the observational follow-up
-- `vas-swarm-jji.9` — active: demote historical or debate-only support fragments in observational traces
+- `vas-swarm-jji.8` — completed: the content check proved representative routing still works, reactivated the live earth-shape grounding boundary, and filed the remaining observational follow-ups
+- `vas-swarm-jji.9` — completed: demote historical or debate-only support fragments in observational traces
+- `vas-swarm-jji.10` — completed: harden observational contradiction grounding under paraphrase and provider-noise drift
+- `vas-swarm-jji.11` — active: rerun the representative Roberto content check after the observational paraphrase hardening
 
 Sequence:
 - keep `vas-swarm-9m7` closed unless a new live measurement trace regresses
-- use `vas-swarm-jji.8` as the completed audit that now leaves `vas-swarm-jji.9` as the next first-order bottleneck
+- use `vas-swarm-jji.8` as the completed audit baseline and `vas-swarm-jji.9` / `vas-swarm-jji.10` as the closed observational hardening checkpoints
 - do not add more family-specific `planetary_shape` salvage unless it is temporary debt
-- continue the durable-epistemic-engine path through the observational claim-alignment boundary
+- continue the durable-epistemic-engine path by deciding whether any first-order bottleneck remains after the current fixes
 
 ## Verification Status
 
@@ -94,7 +96,7 @@ Sequence:
   - `ClaimFamily.normalize_verification_claim/1` does not appear on the production investigate path
   - the `profile`-conditioned grounding branch has been removed from the live investigate path, leaving the Roberto content check as the next concern
 - Next Roberto step:
-  - `vas-swarm-jji.9`: demote historical or debate-only support fragments in the observational lane without regressing the now-closed measurement verifier fix
+  - `vas-swarm-jji.11`: rerun the representative `measurement`, `observational`, and `randomized_intervention` validations and file a new first-order issue only if a fresh trace reopens a trust-breaking integrity boundary
 - Repo-wide inherited full-suite failures remain background debt unless the failing test intersects `investigate`, `evidence_planner`, or directly coupled verification/retrieval code
 
 ## Operating Rule

@@ -2,7 +2,7 @@
 
 **Last updated**: 2026-04-11
 **Epic**: `vas-swarm-jji`
-**Current active issue**: `vas-swarm-jji.10`
+**Current active issue**: `vas-swarm-jji.11`
 **Latest functional checkpoint before this doc stack**: `9c62110`
 
 ## Objective
@@ -19,7 +19,7 @@ The program is back on the right route:
 - runtime traces now preserve explicit non-paper provenance for local artifact evidence
 - administration-style intervention phrasing now routes into `randomized_intervention`
 - live traces fail more honestly than before
-- the durable epistemic engine route is now explicit in Beads as `vas-swarm-jji.1` through `vas-swarm-jji.9`
+- the durable epistemic engine route is now explicit in Beads as `vas-swarm-jji.1` through `vas-swarm-jji.11`
 - the `profile`-conditioned grounding branch has been removed from the live investigate path
 - production investigate no longer depends on `ClaimFamily.normalize_topic/1`
 - `ClaimFamily.normalize_verification_claim/1` appears to be superseded in the production investigate path by generic `verification_claim_text/1`
@@ -27,14 +27,14 @@ The program is back on the right route:
 - retrieval-ops-only `artifact_reference` plans now stay local unless mixed-source retrieval is explicit
 - the representative local-only runtime artifact now stays `local_repo`-only through preflight and retrieval without alphaXiv auth/startup warnings
 
-But Roberto is not content yet because one first-order empirical boundary remains:
+The first-order empirical boundaries that were blocking the content check are now closed enough that the next step is a representative recheck instead of another known repair:
 - representative planner lanes still route generically across `measurement`, `observational`, and `randomized_intervention`
 - the intervention lane still grounds direct support
 - `vas-swarm-9m7` is now closed: the measurement verifier no longer drops separable multi-ref earth-shape summaries into `multiple_refs`, and the fallback live measurement trace on `2026-04-11` grounded both sides instead of collapsing to belief-only
 - `vas-swarm-jji.9` is now closed: observational sourced support no longer grounds history / debate / discourse-only fragments for `vaccines cause autism`, and replay of the exact blocker trace preserves grounded contradictory epidemiology
-- the remaining first-order boundary is now `vas-swarm-jji.10`: observational contradiction grounding under paraphrase and provider-noise drift
+- `vas-swarm-jji.10` is now closed: review-typed observational summaries with direct epidemiology result clauses can now ground as synthesis when topic-aligned under paraphrase/provider drift, while caveat/history/debate fragments remain belief-only
 
-So the remaining work is still first-order, not second-order.
+That means the next step is `vas-swarm-jji.11`: rerun the representative Roberto content check and determine whether any first-order integrity bug still remains.
 
 Strategic correction:
 - `ClaimFamily` is no longer treated as the intended architecture
@@ -45,41 +45,40 @@ Repo-wide full-suite debt is no longer the gating concern for this program when 
 ## Latest Completed Slice
 
 ### Closed issue
-- `vas-swarm-jji.9`
+- `vas-swarm-jji.10`
 
 ### What landed
-- `cited_claim_grounding_role/5` now demotes discourse-only, historical-reporting, and contextual-example claims before observational sourced evidence can be grounded as direct support
-- direct observational grounding now requires stronger anchor overlap when the claim exposes multiple anchors, which keeps partial-topic prevalence/history fragments contextual while preserving direct epidemiology grounding through claim or paper-context alignment
-- the change stays in the generic cited-claim grounding layer rather than topic-family salvage
+- `cited_claim_grounding_role/5` now allows review-typed observational summaries to ground as `:synthesis` when the extracted claim states an explicit epidemiology result and remains topic-aligned under paraphrase drift
+- the new review-summary path still keeps observational caveat/history/debate fragments in belief, so the `vas-swarm-jji.9` support-side leak stays closed
+- the change stays in the generic cited-claim grounding layer rather than reopening planner/retrieval family salvage or the closed `vas-swarm-9m7` measurement verifier boundary
 
 ### Validation
 - Tests:
-  - `mix test test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs` -> `142 tests, 0 failures`
+  - `mix test test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs` -> `144 tests, 0 failures`
   - inherited repo-wide warnings and unrelated suite failures remain background debt unless they intersect `investigate`, `evidence_planner`, or directly coupled verification/retrieval code
 ### What the slice proved
-- the latest live observational fallback trace [vaos-investigate-trace-f503fd8c4bf2184c-vas-swarm-jji-9-live-autism-fallback-3-1775952052549.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-f503fd8c4bf2184c-vas-swarm-jji-9-live-autism-fallback-3-1775952052549.json) still selected `observational` and removed grounded support:
-  - `direction = belief_consensus_against`
+- replaying the latest live fallback trace [vaos-investigate-trace-f503fd8c4bf2184c-vas-swarm-jji-9-live-autism-fallback-3-1775952052549.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-f503fd8c4bf2184c-vas-swarm-jji-9-live-autism-fallback-3-1775952052549.json) through the landed classifier now produces artifact [vaos-jji10-live-fallback-reclass-1775953735.json](/tmp/vaos-jji10-live-fallback-reclass-1775953735.json):
+  - `selected_mode = observational`
   - `grounded_for_count = 0`
-  - `grounded_against_count = 0`
-  - provider instability included Semantic Scholar `HTTP 429` responses and alphaXiv startup failure, so that live paraphrase alone did not prove preserved grounded-against epidemiology
-- replaying the exact blocker trace [vaos-investigate-trace-6288e6adc2dfd5a5-jji8-observational-1775947776135.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-6288e6adc2dfd5a5-jji8-observational-1775947776135.json) through the landed grounding classifier produces artifact [vaos-jji9-observational-replay-1775952269.json](/tmp/vaos-jji9-observational-replay-1775952269.json), which proves the acceptance boundary on the original bad corpus:
+  - `grounded_against_count = 1`
+  - `direction = asymmetric_evidence_against`
+  - the grounded-against item is the direct epidemiology quote `"Epidemiological studies demonstrate no evidence for vaccination posing an autism risk"`
+- the old blocker trace replay artifact [vaos-jji9-observational-replay-1775952269.json](/tmp/vaos-jji9-observational-replay-1775952269.json) remains intact for the original bad corpus:
   - replayed supporting sourced items: `grounded = 0/3`
   - replayed opposing sourced items: `grounded = 3/5`
-  - `"public debate ... persists"` and `"A 1998 report suggested ..."` now stay belief/contextual
-  - three contradictory epidemiology items remain grounded against
-- the next first-order bottleneck is now `vas-swarm-jji.10`, not the old earth-shape measurement verifier boundary and not the already-closed support-side leak
+  - `"public debate ... persists"` and `"A 1998 report suggested ..."` still stay belief/contextual
+- the next step is no longer another known first-order repair; it is the representative content recheck in `vas-swarm-jji.11`
 
 ## Recorded Blocker Context
 
 ### Active issue
-- `vas-swarm-jji.10`
+- `vas-swarm-jji.11`
 
 ### Problem
-
-The next first-order boundary is observational contradiction robustness under paraphrase/provider noise, not measurement verification and not the already-fixed support-side leak:
-- after `vas-swarm-jji.9`, the original `vas-swarm-jji.8` observational blocker trace now demotes the historical/debate support fragments correctly when replayed through the landed classifier
-- a fresh semantically equivalent live observational paraphrase still selected `observational`, but under retrieval/provider instability it degraded to belief-only contradiction instead of grounding at least one direct contradictory epidemiology item
-- the measurement-side blocker remains closed enough that reopening `vas-swarm-9m7` would be drift unless a new live measurement trace regresses
+There is no confirmed first-order integrity bug at handoff. The next step is to rerun the representative Roberto content check and decide whether:
+- the closed fixes on `vas-swarm-9m7`, `vas-swarm-jji.9`, and `vas-swarm-jji.10` hold across representative fresh runs
+- `investigate` now meets the “grounded evidence or explicit provider failure” bar across the three main empirical lanes
+- a new first-order issue needs to be filed from the content-check evidence, or Roberto is finally content enough to move to second-order work
 
 ## Long-Horizon Queue
 
@@ -92,7 +91,8 @@ The next first-order boundary is observational contradiction robustness under pa
 - `vas-swarm-jji.7` — completed: skip alphaXiv auth/startup preflight for retrieval-ops-only local artifact preparations
 - `vas-swarm-jji.8` — completed: the content check reran the representative modes, reactivated `vas-swarm-9m7`, and filed `vas-swarm-jji.9` for the observational claim-alignment follow-up
 - `vas-swarm-jji.9` — completed: demote historical or debate-only support fragments in observational traces
-- `vas-swarm-jji.10` — active: harden observational contradiction grounding under paraphrase and provider-noise drift
+- `vas-swarm-jji.10` — completed: harden observational contradiction grounding under paraphrase and provider-noise drift
+- `vas-swarm-jji.11` — active: rerun the representative Roberto content check after the observational paraphrase hardening
 
 Why this order:
 - planner agnosticism first, so mode choice is no longer boxed by hidden topic priors
@@ -102,17 +102,17 @@ Why this order:
 
 ## What Roberto Would Do Next
 
-Continue from the next empirical bottleneck, not the inherited full-suite debt:
+Continue from evidence, not inherited full-suite debt:
 - use targeted `investigate`-path tests plus live validation as the milestone gate
 - keep `vas-swarm-dy1` open only as background suite debt
 - only let repo-wide failures block advancement when they intersect `investigate` or its directly coupled planning/verification path
 - when three live attempts fail to prove the same milestone because of provider instability or wrapper drift, write down the blocker and pause instead of advancing
 - do not reopen `vas-swarm-9m7` unless a new live measurement trace regresses
-- spend the next slice on `vas-swarm-jji.10`: preserve the `vas-swarm-jji.9` contextual-demotion fix while restoring grounded contradictory epidemiology on semantically equivalent observational paraphrases under provider-noise drift
+- spend the next slice on `vas-swarm-jji.11`: rerun the representative `measurement`, `observational`, and `randomized_intervention` checks and decide whether a new first-order issue exists at all
 
 Shortest version:
 
-Planner-family, retrieval-family, profile-conditioned grounding, wrapper-normalization, external-search bleed, the measurement-side multi-ref verifier collapse, and the observational support-side history/debate leak are no longer the core bottlenecks. The next architectural work is observational contradiction grounding robustness in `vas-swarm-jji.10`, not reopening the now-closed earth-shape measurement boundary.
+Planner-family, retrieval-family, profile-conditioned grounding, wrapper-normalization, external-search bleed, the measurement-side multi-ref verifier collapse, the observational support-side history/debate leak, and the observational paraphrase/provider-noise contradiction leak are no longer the known core bottlenecks. The next architectural move is the fresh content recheck in `vas-swarm-jji.11`, not reopening a closed repair boundary preemptively.
 
 ## Known Stable Wins
 
@@ -127,9 +127,9 @@ On the next session:
 
 1. Read this file.
 2. Run `scripts/roberto-loop`.
-3. Open `vas-swarm-jji.10`, the observational trace [vaos-investigate-trace-6288e6adc2dfd5a5-jji8-observational-1775947776135.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-6288e6adc2dfd5a5-jji8-observational-1775947776135.json), replay artifact [vaos-jji9-observational-replay-1775952269.json](/tmp/vaos-jji9-observational-replay-1775952269.json), and latest live fallback trace [vaos-investigate-trace-f503fd8c4bf2184c-vas-swarm-jji-9-live-autism-fallback-3-1775952052549.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-f503fd8c4bf2184c-vas-swarm-jji-9-live-autism-fallback-3-1775952052549.json).
-4. Resume from `vas-swarm-jji.10`.
-5. Use the `vas-swarm-jji.8` content-check artifact [vaos-jji8-content-check-1775947922.json](/tmp/vaos-jji8-content-check-1775947922.json) plus the `vas-swarm-jji.9` replay artifact as the fixed grounding boundary; use the latest live fallback trace as the paraphrase/provider-noise boundary; keep [vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-9m7-live-curvature-1775949543170.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-9m7-live-curvature-1775949543170.json) as the closed measurement checkpoint.
+3. Open `vas-swarm-jji.11`, the representative content-check artifact [vaos-jji8-content-check-1775947922.json](/tmp/vaos-jji8-content-check-1775947922.json), the observational replay artifacts [vaos-jji9-observational-replay-1775952269.json](/tmp/vaos-jji9-observational-replay-1775952269.json) and [vaos-jji10-live-fallback-reclass-1775953735.json](/tmp/vaos-jji10-live-fallback-reclass-1775953735.json), and the closed measurement checkpoint [vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-9m7-live-curvature-1775949543170.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-9m7-live-curvature-1775949543170.json).
+4. Resume from `vas-swarm-jji.11`.
+5. Re-run the representative `measurement`, `observational`, and `randomized_intervention` validations; file a new first-order issue only if one of those traces reveals a fresh trust-breaking regression.
 6. Record unrelated suite failures under `vas-swarm-dy1` without blocking `investigate` milestone advancement.
 7. Update this file, close/open issues, and push.
 
