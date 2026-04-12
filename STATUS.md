@@ -2,12 +2,30 @@
 
 **Canonical status**: [docs/operations/roberto-content/Documentation.md](docs/operations/roberto-content/Documentation.md)
 **Epic**: `vas-swarm-jji`
-**Current active issue**: `vas-swarm-jji.9`
-**Latest trace**: [vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-9m7-live-curvature-1775949543170.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-9m7-live-curvature-1775949543170.json)
-**Next Roberto step**: Demote historical or debate-only support fragments in the live `observational` path for `vaccines cause autism`, starting from the `vas-swarm-jji.8` observational trace and keeping the now-closed `vas-swarm-9m7` measurement fix as resolved history.
+**Current active issue**: `vas-swarm-jji.10`
+**Latest trace**: [vaos-investigate-trace-f503fd8c4bf2184c-vas-swarm-jji-9-live-autism-fallback-3-1775952052549.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-f503fd8c4bf2184c-vas-swarm-jji-9-live-autism-fallback-3-1775952052549.json)
+**Next Roberto step**: Harden observational contradiction grounding under paraphrase and provider-noise drift, starting from the `vas-swarm-jji.8` observational trace replay artifact [vaos-jji9-observational-replay-1775952269.json](/tmp/vaos-jji9-observational-replay-1775952269.json), the latest live fallback trace above, and the still-closed `vas-swarm-9m7` measurement checkpoint.
 
 ## Verification Status
 
+- `vas-swarm-jji.9` closed:
+  - `cited_claim_grounding_role/5` now demotes discourse-only, historical-reporting, and contextual-example claims before observational sourced evidence can be grounded as direct support
+  - direct observational grounding now requires stronger anchor overlap when the claim exposes multiple anchors, so partial-topic prevalence/history fragments stay contextual while direct epidemiology can still ground through claim or paper-context alignment
+  - focused investigate regressions now cover debate-only support, historical support, retraction-history summaries, discourse-only misinformation framing, preserved direct epidemiology grounding, and outcome-only prevalence explanations that should remain belief/contextual
+  - targeted investigate-path verification passed:
+    - `mix test test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs` -> `142 tests, 0 failures`
+  - live validation on `2026-04-11` removed grounded support in the observational lane:
+    - trace [vaos-investigate-trace-f503fd8c4bf2184c-vas-swarm-jji-9-live-autism-fallback-3-1775952052549.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-f503fd8c4bf2184c-vas-swarm-jji-9-live-autism-fallback-3-1775952052549.json) selected `observational`
+    - `direction = belief_consensus_against`
+    - `grounded_for_count = 0`
+    - `grounded_against_count = 0`
+    - provider noise included Semantic Scholar `HTTP 429` responses and alphaXiv startup failure, so that live paraphrase did not prove direct contradiction grounding by itself
+  - runtime-equivalent replay of the exact blocker trace proves the landed boundary under the same observational corpus:
+    - blocker trace [vaos-investigate-trace-6288e6adc2dfd5a5-jji8-observational-1775947776135.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-6288e6adc2dfd5a5-jji8-observational-1775947776135.json)
+    - replay artifact [vaos-jji9-observational-replay-1775952269.json](/tmp/vaos-jji9-observational-replay-1775952269.json)
+    - replayed supporting sourced items: `grounded = 0/3`
+    - replayed opposing sourced items: `grounded = 3/5`
+    - the historical/debate support fragments now land as `grounding_role = contextual`, while three contradictory epidemiology items remain grounded against
 - `vas-swarm-9m7` closed:
   - `verification_ref_status/2` no longer hard-rejects every multi-paper sourced summary as `multiple_refs`; when the existing claim-shaping pipeline already isolates one substantive primary cited claim, verification now focuses that primary paper while inseparable multi-ref claims still stay rejected
   - focused regressions cover both separable follow-up refs and same-sentence corroborating refs on the earth-shape measurement corpus
@@ -152,7 +170,7 @@
   - fresh live results:
     - measurement trace [vaos-investigate-trace-9cee767146dfb20d-jji8-measurement-1775947626820.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-9cee767146dfb20d-jji8-measurement-1775947626820.json) selected `measurement` with probe score `19.21`, but ended `direction = insufficient_evidence` with `grounded_for_count = 0` and `grounded_against_count = 0`
     - that same measurement trace kept the earth-shape opposing corpus on sourced geodesy papers (`paper_ref = 3, 8, 14, 2`), yet all five opposing sourced items stayed belief-only and the run did not record an explicit timeout/provider-failure completion status, so `vas-swarm-9m7` is reactivated as the next active bottleneck
-    - observational trace [vaos-investigate-trace-6288e6adc2dfd5a5-jji8-observational-1775947776135.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-6288e6adc2dfd5a5-jji8-observational-1775947776135.json) selected `observational` and grounded both sides (`2/4`), but it also grounded historical/debate fragments such as `"public debate ... persists"` and `"a 1998 report suggested ..."` as support for `vaccines cause autism`; that is now tracked in `vas-swarm-jji.9`
+    - observational trace [vaos-investigate-trace-6288e6adc2dfd5a5-jji8-observational-1775947776135.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-6288e6adc2dfd5a5-jji8-observational-1775947776135.json) selected `observational` and grounded both sides (`2/4`); `vas-swarm-jji.9` later closed the historical/debate-support leak exposed here, and `vas-swarm-jji.10` now tracks the remaining paraphrase/provider-noise robustness follow-up
     - randomized-intervention trace [vaos-investigate-trace-5c090736ecfc44a0-jji8-randomized-intervention-1775947922324.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-5c090736ecfc44a0-jji8-randomized-intervention-1775947922324.json) selected `randomized_intervention` and completed with `direction = asymmetric_evidence_for`, `grounded_for_count = 2`, and `grounded_against_count = 0`
 - Recorded blocker context:
   - `vas-swarm-9m7` is reactivated after the `vas-swarm-jji.8` content check
@@ -189,7 +207,8 @@
 - `vas-swarm-jji.6` — completed: keep `retrieval_ops`-only `artifact_reference` investigate runs local by suppressing external paper search bleed
 - `vas-swarm-jji.7` — completed: skip alphaXiv auth/startup preflight for retrieval-ops-only local artifact preparations
 - `vas-swarm-jji.8` — completed: the content check kept representative routing intact, reactivated `vas-swarm-9m7`, and filed `vas-swarm-jji.9` for the observational claim-alignment follow-up
-- `vas-swarm-jji.9` — active: demote historical or debate-only support fragments in observational traces without reopening the now-closed measurement verifier boundary
+- `vas-swarm-jji.9` — completed: demote historical or debate-only support fragments in observational traces without reopening the now-closed measurement verifier boundary
+- `vas-swarm-jji.10` — active: restore grounded contradictory epidemiology on semantically equivalent observational paraphrases without reintroducing contextual support leakage
 
 The queue order is intentional:
 - planner agnosticism first
@@ -200,9 +219,9 @@ The queue order is intentional:
 
 1. Read `STATUS.md`.
 2. Run `scripts/roberto-loop`.
-3. Open [vaos-investigate-trace-6288e6adc2dfd5a5-jji8-observational-1775947776135.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-6288e6adc2dfd5a5-jji8-observational-1775947776135.json) and [vaos-jji8-content-check-1775947922.json](/tmp/vaos-jji8-content-check-1775947922.json).
-4. Resume implementation from `vas-swarm-jji.9`.
-5. Use the `vas-swarm-jji.8` observational trace as the starting evidence boundary; keep [vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-9m7-live-curvature-1775949543170.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-9m7-live-curvature-1775949543170.json) as the closed measurement validation checkpoint.
+3. Open [vaos-investigate-trace-6288e6adc2dfd5a5-jji8-observational-1775947776135.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-6288e6adc2dfd5a5-jji8-observational-1775947776135.json), [vaos-jji9-observational-replay-1775952269.json](/tmp/vaos-jji9-observational-replay-1775952269.json), and [vaos-investigate-trace-f503fd8c4bf2184c-vas-swarm-jji-9-live-autism-fallback-3-1775952052549.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-f503fd8c4bf2184c-vas-swarm-jji-9-live-autism-fallback-3-1775952052549.json).
+4. Resume implementation from `vas-swarm-jji.10`.
+5. Use the `vas-swarm-jji.8` observational trace plus the `vas-swarm-jji.9` replay artifact as the fixed grounding boundary; use the latest live fallback trace as the provider-noise/paraphrase boundary; keep [vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-9m7-live-curvature-1775949543170.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-a7be5c1d943e2844-vas-swarm-9m7-live-curvature-1775949543170.json) as the closed measurement validation checkpoint.
 6. Record any unrelated inherited suite failures under `vas-swarm-dy1` without blocking `investigate` work.
 7. Update status docs, Beads, commit, and push.
 

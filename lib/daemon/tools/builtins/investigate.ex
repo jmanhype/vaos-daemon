@@ -81,6 +81,43 @@ defmodule Daemon.Tools.Builtins.Investigate do
   @retrieval_discourse_terms ~w(misinformation disinformation journalism media communication
     discourse ideology belief beliefs denial denialism history historical philosophy
     perception attitudes social conference public commentary review survey overview)
+  @grounding_discourse_context_terms [
+    "public debate",
+    "controversy",
+    "controversies",
+    "hesitancy",
+    "hesitant",
+    "sentiment",
+    "sentiments",
+    "misinformation",
+    "disinformation",
+    "fake news",
+    "social media",
+    "media ecosystem",
+    "media ecosystems",
+    "confidence",
+    "trust",
+    "rejection",
+    "refusal",
+    "rumor",
+    "rumours"
+  ]
+  @grounding_context_topic_terms [
+    "history",
+    "historical",
+    "debate",
+    "controversy",
+    "controversies",
+    "hesitancy",
+    "hesitant",
+    "sentiment",
+    "sentiments",
+    "misinformation",
+    "disinformation",
+    "retracted",
+    "retraction",
+    "discourse"
+  ]
   @artifact_doc_globs ["*.md", "*.txt", "docs/**/*.md", "docs/**/*.txt"]
   @artifact_code_globs ["lib/**/*.ex", "lib/**/*.exs", "test/**/*.ex", "test/**/*.exs"]
   @artifact_excerpt_max_bytes 2_000
@@ -2488,6 +2525,7 @@ defmodule Daemon.Tools.Builtins.Investigate do
 
     cond do
       methodological_caveat_claim?(claim_text) -> :caveat
+      contextual_claim_by_content?(claim_text, summary, classification_context) -> :contextual
       design == :combination_intervention -> :indirect
       design == :guidance -> :contextual
       design == :contextual_review -> :contextual
@@ -2614,6 +2652,74 @@ defmodule Daemon.Tools.Builtins.Investigate do
 
   defp methodological_caveat_claim?(_claim_text), do: false
 
+  defp contextual_claim_by_content?(claim_text, summary, classification_context)
+       when is_binary(claim_text) and is_binary(summary) and is_map(classification_context) do
+    not topic_requests_contextual_frame?(classification_context) and
+      (discourse_context_claim?(claim_text, summary) or
+         historical_reporting_claim?(claim_text, summary))
+  end
+
+  defp contextual_claim_by_content?(_claim_text, _summary, _classification_context), do: false
+
+  defp discourse_context_claim?(claim_text, summary)
+       when is_binary(claim_text) and is_binary(summary) do
+    normalized_claim = normalize_search_text(claim_text)
+    normalized_summary = normalize_search_text(summary)
+
+    contextual_discourse_text?(normalized_claim) or
+      (contextual_discourse_text?(normalized_summary) and
+         discourse_example_claim?(normalized_claim)) or
+      Regex.match?(
+        ~r/\b(public concern|concerns have been raised|raised by some members of the public|perceiv(?:e|ed|es|ing|ption|ptions)|headline(?:s)? like|vaccine rejection|public discourse)\b/iu,
+        normalized_claim
+      )
+  end
+
+  defp discourse_context_claim?(_claim_text, _summary), do: false
+
+  defp contextual_discourse_text?(text) when is_binary(text) do
+    Enum.any?(@grounding_discourse_context_terms, &String.contains?(text, &1))
+  end
+
+  defp contextual_discourse_text?(_text), do: false
+
+  defp discourse_example_claim?(claim_text) when is_binary(claim_text) do
+    Regex.match?(~r/\b(claims? like|headline(?:s)?|article(?:s)?|story|stories)\b/iu, claim_text)
+  end
+
+  defp discourse_example_claim?(_claim_text), do: false
+
+  defp historical_reporting_claim?(claim_text, summary)
+       when is_binary(claim_text) and is_binary(summary) do
+    claim_text = normalize_search_text(claim_text)
+    context_text = normalize_search_text(Enum.join([claim_text, summary], " "))
+
+    Regex.match?(~r/\b(?:19|20)\d{2}\b/u, claim_text) and
+      Regex.match?(~r/\b(report|paper|study|article|case series)\b/iu, claim_text) and
+      Regex.match?(
+        ~r/\b(suggested|claimed|alleged|purported|retracted|retraction|fraud|misrepresentation)\b/iu,
+        context_text
+      ) and
+      Regex.match?(
+        ~r/\b(historical|history|original|retracted|retraction|debate|controvers(?:y|ies)|initiated|scare|ethical violations?)\b/iu,
+        context_text
+      )
+  end
+
+  defp historical_reporting_claim?(_claim_text, _summary), do: false
+
+  defp topic_requests_contextual_frame?(classification_context)
+       when is_map(classification_context) do
+    classification_context
+    |> Map.get(:normalized_topic, "")
+    |> normalize_search_text()
+    |> then(fn normalized_topic ->
+      Enum.any?(@grounding_context_topic_terms, &String.contains?(normalized_topic, &1))
+    end)
+  end
+
+  defp topic_requests_contextual_frame?(_classification_context), do: false
+
   defp grounding_topic_direct_claim?(claim_text, paper, classification_context)
        when is_binary(claim_text) and is_map(classification_context) do
     anchors = grounding_topic_anchor_terms(classification_context)
@@ -2626,21 +2732,16 @@ defmodule Daemon.Tools.Builtins.Investigate do
         claim_text_normalized = normalize_search_text(claim_text)
 
         claim_match_count =
-          terms
-          |> Enum.uniq()
-          |> Enum.count(&String.contains?(claim_text_normalized, &1))
+          grounding_anchor_match_count(claim_text_normalized, terms)
 
         paper_context_normalized =
           paper
           |> grounding_paper_text()
           |> normalize_search_text()
 
-        paper_context_match_count =
-          terms
-          |> Enum.uniq()
-          |> Enum.count(&String.contains?(paper_context_normalized, &1))
+        paper_context_match_count = grounding_anchor_match_count(paper_context_normalized, terms)
 
-        required_matches = if length(terms) >= 3, do: 2, else: 1
+        required_matches = grounding_required_anchor_matches(terms, classification_context)
 
         claim_match_count >= required_matches or
           (claim_match_count == 0 and paper_context_match_count >= required_matches)
@@ -2648,6 +2749,52 @@ defmodule Daemon.Tools.Builtins.Investigate do
   end
 
   defp grounding_topic_direct_claim?(_claim_text, _paper, _classification_context), do: true
+
+  defp grounding_required_anchor_matches(
+         terms,
+         %{evidence_profile: %{kind: kind}}
+       )
+       when is_list(terms) and kind in [:observational, :randomized_intervention] do
+    if length(terms) >= 2, do: 2, else: 1
+  end
+
+  defp grounding_required_anchor_matches(terms, _classification_context) when is_list(terms) do
+    if length(terms) >= 3, do: 2, else: 1
+  end
+
+  defp grounding_anchor_match_count(text, terms) when is_binary(text) and is_list(terms) do
+    text_tokens =
+      text
+      |> topic_terms()
+      |> Enum.uniq()
+
+    terms
+    |> Enum.uniq()
+    |> Enum.count(&grounding_anchor_match?(text_tokens, &1))
+  end
+
+  defp grounding_anchor_match_count(_text, _terms), do: 0
+
+  defp grounding_anchor_match?(text_tokens, term) when is_list(text_tokens) and is_binary(term) do
+    normalized_term = normalize_search_text(term)
+
+    Enum.any?(text_tokens, fn token ->
+      token == normalized_term or grounding_anchor_prefix_match?(token, normalized_term)
+    end)
+  end
+
+  defp grounding_anchor_match?(_text_tokens, _term), do: false
+
+  defp grounding_anchor_prefix_match?(left, right)
+       when is_binary(left) and is_binary(right) do
+    min_size = min(byte_size(left), byte_size(right))
+    prefix_size = min(min_size, 5)
+
+    prefix_size >= 5 and
+      binary_part(left, 0, prefix_size) == binary_part(right, 0, prefix_size)
+  end
+
+  defp grounding_anchor_prefix_match?(_left, _right), do: false
 
   defp grounding_topic_anchor_terms(%{evidence_profile: %{subject_terms: subject_terms}})
        when is_list(subject_terms) do
