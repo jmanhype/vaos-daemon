@@ -4,13 +4,13 @@
 
 ## Current Milestone
 
-Re-run the final Roberto content check now that co-formulated randomized contradictions are demoted from direct grounding.
+Reduce partial-result frequency in representative content checks now that the final first-order integrity seam is closed.
 
 ## Active Issue
 
-`vas-swarm-jji.16` — Re-run the final Roberto content check after co-formulation hardening.
+`vas-swarm-jji.17` — Reduce partial-result frequency in representative investigate content checks under provider instability.
 `vas-swarm-dy1` remains open as inherited repo debt. For this Roberto program, it is non-blocking unless a failing test touches `investigate` or its directly coupled planning/verification path.
-Current state: `vas-swarm-jji.1` through `vas-swarm-jji.15` are complete and closed. The representative content-check artifact [vaos-jji11-content-check-1775955446.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-jji11-content-check-1775955446.json) still anchors the empirical audit, and the grounding plus runtime-honesty follow-ups are now closed enough that observational fallback grounds direct null-association evidence, the old empty-claim / cross-supplement review caveat no longer grounds against the randomized support claim, direct standalone caffeine support grounds again on the representative live trace, and the saved nitric-oxide-plus-caffeine contradiction now replays as `indirect/belief` instead of grounded direct opposition via [vaos-jji15-grounding-replay-1775979139.json](/tmp/vaos-jji15-grounding-replay-1775979139.json). The next active issue is therefore the program-level Roberto content check rather than another narrow grounding repair.
+Current state: `vas-swarm-jji.1` through `vas-swarm-jji.16` are complete and closed. The exact representative content-check artifact [vaos-jji16-content-check-1775980701.json](/tmp/vaos-jji16-content-check-1775980701.json) exposed the last first-order integrity bug when the observational lane returned `belief_consensus_for` despite `grounded_for_count = 0`, `grounded_against_count = 0`, and `runtime_failures.count = 5`. That seam is now closed: the runtime-equivalent replay artifact [vaos-jji16-observational-runtime-replay-1775982675.json](/tmp/vaos-jji16-observational-runtime-replay-1775982675.json) downgrades the exact bad trace to `runtime_failure`, and the cooldown-safe fallback live artifact [vaos-jji16-content-check-fallback-1775981910.json](/tmp/vaos-jji16-content-check-fallback-1775981910.json) shows the representative lanes now end either grounded or explicit partial/runtime-honest under provider noise. The next active issue is therefore second-order provider resilience rather than another trust-breaking investigate integrity defect.
 
 ## Strategic Queue
 
@@ -30,14 +30,15 @@ The next long-horizon tasks for the durable epistemic engine are:
 - `vas-swarm-jji.13` — completed: surface live verifier/provider failures when randomized support stays belief-only
 - `vas-swarm-jji.14` — completed: audit randomized_intervention support balance after runtime-honesty fix
 - `vas-swarm-jji.15` — completed: demote co-formulated randomized contradictions from direct grounding
-- `vas-swarm-jji.16` — active: re-run the final Roberto content check after co-formulation hardening
+- `vas-swarm-jji.16` — completed: rerun the final Roberto content check and close the belief-only verdict seam exposed by verifier runtime failure
+- `vas-swarm-jji.17` — active: reduce partial-result frequency in representative content checks under provider instability
 
 Sequence:
 - keep `vas-swarm-9m7` closed unless a new live measurement trace regresses
-- use `vas-swarm-jji.11` as the representative audit baseline plus the `jji.14` live randomized trace and the `jji.15` replay artifact as the latest randomized evidence
-- focus on whether any first-order integrity bug remains across the representative empirical lanes now that the randomized co-formulation seam is closed
+- use the `jji.16` exact content-check artifact, the exact observational replay artifact, and the fallback live artifact as the new representative audit baseline
+- treat first-order integrity as closed unless a new live representative trace regresses into directional belief-only output without grounded evidence
 - do not add more family-specific `planetary_shape` salvage unless it is temporary debt
-- continue the durable-epistemic-engine path by deciding whether `vas-swarm-jji.16` confirms Roberto content or exposes one final first-order issue
+- continue the durable-epistemic-engine path by reducing provider-instability partial frequency without weakening runtime honesty
 
 ## Verification Status
 
@@ -112,8 +113,12 @@ Sequence:
   - co-formulated randomized contradiction claims now classify as indirect / belief when the cited wording shows mixed-agent or attribution-confound intervention evidence
   - `mix test test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs` -> `152 tests, 0 failures`
   - replay artifact [vaos-jji15-grounding-replay-1775979139.json](/tmp/vaos-jji15-grounding-replay-1775979139.json) keeps standalone caffeine support `direct/grounded` while demoting the nitric-oxide-plus-caffeine contradiction to `indirect/belief`
+- `vas-swarm-jji.16` is complete:
+  - `direction_summary/4` now downgrades belief-only directional verdicts to `runtime_failure` when citation verification/runtime failures occur and no grounded evidence survives
+  - `mix test test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs` -> `154 tests, 0 failures`
+  - exact representative content-check artifact [vaos-jji16-content-check-1775980701.json](/tmp/vaos-jji16-content-check-1775980701.json) exposed the seam, runtime-equivalent replay [vaos-jji16-observational-runtime-replay-1775982675.json](/tmp/vaos-jji16-observational-runtime-replay-1775982675.json) proves the exact bad observational trace now returns `runtime_failure`, and fallback live validation [vaos-jji16-content-check-fallback-1775981910.json](/tmp/vaos-jji16-content-check-fallback-1775981910.json) shows representative lanes are now grounded or explicit partial/runtime-honest under provider instability
 - Next Roberto step:
-  - `vas-swarm-jji.16`: rerun the representative empirical content check and decide whether any first-order integrity bug remains
+  - `vas-swarm-jji.17`: reduce partial-result frequency in representative empirical content checks without reopening the first-order runtime-honesty boundary
 - Repo-wide inherited full-suite failures remain background debt unless the failing test intersects `investigate`, `evidence_planner`, or directly coupled verification/retrieval code
 
 ## Operating Rule

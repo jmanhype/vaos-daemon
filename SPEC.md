@@ -8,7 +8,7 @@ Get Roberto content by hardening `investigate` into a trustworthy epistemic engi
 
 ## Current Focus
 
-The current implementation slice is `vas-swarm-jji.16`:
+The current implementation slice is `vas-swarm-jji.17`:
 - `vas-swarm-jji.1` is closed: planner mode selection no longer depends on `ClaimFamily`
 - `vas-swarm-jji.2` is closed: retrieval no longer depends on family-shaped evidence profiles or query templates in the investigate core
 - `vas-swarm-jji.3` is closed: sourced evidence grounding now runs through generic cited-claim extraction instead of a `profile` switch
@@ -25,7 +25,8 @@ The current implementation slice is `vas-swarm-jji.16`:
 - `vas-swarm-jji.13` is closed: live verifier/provider timeout collapse now surfaces explicitly in `runtime_failures` metadata instead of disappearing into belief-only or plain `unverified` output
 - `vas-swarm-jji.14` is closed: the representative randomized_intervention support asymmetry audit restored direct standalone-caffeine support on the live trace
 - `vas-swarm-jji.15` is closed: co-formulated randomized contradictions no longer ground directly against standalone intervention topics when the cited study does not isolate the same intervention
-- the next cut is `vas-swarm-jji.16`: rerun the final Roberto content check after co-formulation hardening
+- `vas-swarm-jji.16` is closed: belief-only directional verdicts no longer silently resolve under citation-verifier runtime failure; the representative content check now returns grounded outcomes or explicit partial/runtime-honest degradation
+- the next cut is `vas-swarm-jji.17`: reduce partial-result frequency in representative content checks under provider instability without reopening first-order integrity seams
 
 The strategic long-horizon queue for the durable epistemic engine is now:
 - `vas-swarm-jji.1` — completed: remove `ClaimFamily` from planner selection
@@ -43,6 +44,7 @@ The strategic long-horizon queue for the durable epistemic engine is now:
 - `vas-swarm-jji.13` — completed: surface live verifier/provider failures when randomized support stays belief-only
 - `vas-swarm-jji.14` — completed: audit randomized_intervention support balance after runtime-honesty fix
 - `vas-swarm-jji.15` — completed: demote co-formulated randomized contradictions from direct grounding
-- `vas-swarm-jji.16` — active: re-run the final Roberto content check after co-formulation hardening
+- `vas-swarm-jji.16` — completed: rerun the final Roberto content check and close the belief-only verdict seam exposed by verifier runtime failure
+- `vas-swarm-jji.17` — active: reduce partial-result frequency in representative content checks under provider instability
 
 Read the canonical spec for scope, constraints, and done-when criteria.

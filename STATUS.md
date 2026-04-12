@@ -2,12 +2,26 @@
 
 **Canonical status**: [docs/operations/roberto-content/Documentation.md](docs/operations/roberto-content/Documentation.md)
 **Epic**: `vas-swarm-jji`
-**Current active issue**: `vas-swarm-jji.16`
-**Latest trace**: [vaos-investigate-trace-5c090736ecfc44a0-jji14-live-randomized-caffeine-1775978200832.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-5c090736ecfc44a0-jji14-live-randomized-caffeine-1775978200832.json)
-**Next Roberto step**: Re-run the final Roberto content check in `vas-swarm-jji.16`. `vas-swarm-jji.15` closed the co-formulated randomized-grounding seam: standalone caffeine support still grounds on the representative claim family, while nitric-oxide-plus-caffeine contradiction claims now demote to indirect / belief evidence instead of grounding directly against standalone caffeine.
+**Current active issue**: `vas-swarm-jji.17`
+**Latest trace**: [vaos-investigate-trace-671b4de7ec2f4f0d-jji16-content-check-fallback-3-1775982502646.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-671b4de7ec2f4f0d-jji16-content-check-fallback-3-1775982502646.json)
+**Next Roberto step**: Reduce partial-result frequency in representative content checks under provider instability in `vas-swarm-jji.17`. `vas-swarm-jji.16` closed the last known first-order integrity seam by downgrading belief-only directional verdicts with citation-verifier runtime failures to explicit partial `runtime_failure` outcomes instead of silently returning `belief_consensus_for`.
 
 ## Verification Status
 
+- `vas-swarm-jji.16` closed:
+  - belief-only directional verdicts now degrade to partial `runtime_failure` when citation verification/runtime failures occur and no grounded evidence survives, instead of resolving to directional belief consensus
+  - targeted investigate-path verification passed:
+    - `mix test test/tools/investigate_test.exs test/investigation/evidence_planner_test.exs test/investigation/claim_family_test.exs` -> `154 tests, 0 failures`
+  - exact representative content-check artifact [vaos-jji16-content-check-1775980701.json](/tmp/vaos-jji16-content-check-1775980701.json) exposed the remaining trust-breaking seam:
+    - measurement trace [vaos-investigate-trace-9cee767146dfb20d-jji16-content-check-1-1775980817034.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-9cee767146dfb20d-jji16-content-check-1-1775980817034.json) stayed grounded with `direction = asymmetric_evidence_against`
+    - observational trace [vaos-investigate-trace-6288e6adc2dfd5a5-jji16-content-check-2-1775981014919.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-6288e6adc2dfd5a5-jji16-content-check-2-1775981014919.json) incorrectly returned `belief_consensus_for` with `grounded_for_count = 0`, `grounded_against_count = 0`, and `runtime_failures.count = 5`
+    - randomized trace [vaos-investigate-trace-5c090736ecfc44a0-jji16-content-check-3-1775981237441.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-5c090736ecfc44a0-jji16-content-check-3-1775981237441.json) was already explicit `partial/timeout`
+  - runtime-equivalent replay artifact [vaos-jji16-observational-runtime-replay-1775982675.json](/tmp/vaos-jji16-observational-runtime-replay-1775982675.json) proves the exact bad observational trace now resolves to `replay_direction = runtime_failure`, `replay_partial = true`
+  - cooldown-safe fallback live validation artifact [vaos-jji16-content-check-fallback-1775981910.json](/tmp/vaos-jji16-content-check-fallback-1775981910.json) shows the representative lanes are now either grounded or explicit partial/runtime-honest under provider noise:
+    - fallback measurement trace [vaos-investigate-trace-a7be5c1d943e2844-jji16-content-check-fallback-1-1775982111972.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-a7be5c1d943e2844-jji16-content-check-fallback-1-1775982111972.json) returned `partial_supporting_only`
+    - fallback observational trace [vaos-investigate-trace-f503fd8c4bf2184c-jji16-content-check-fallback-2-1775982335765.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-f503fd8c4bf2184c-jji16-content-check-fallback-2-1775982335765.json) grounded contradiction with `direction = asymmetric_evidence_against`, `grounded_against_count = 2`, `grounded_for_count = 0`
+    - fallback randomized trace [vaos-investigate-trace-671b4de7ec2f4f0d-jji16-content-check-fallback-3-1775982502646.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-671b4de7ec2f4f0d-jji16-content-check-fallback-3-1775982502646.json) returned `partial_opposing_only`
+  - Roberto-content criteria are now satisfied for first-order integrity; the next open issue is second-order provider-instability reduction in `vas-swarm-jji.17`
 - `vas-swarm-jji.15` closed:
   - `combination_intervention_source?/2` now recognizes co-formulated / attribution-confound randomized wording such as `with added`, `combined ... with`, `co-ingestion`, and `cannot be isolated ... alone`
   - focused caffeine-family regressions now keep standalone randomized support `direct/grounded` while demoting the nitric-oxide-plus-caffeine contradiction to `indirect/belief`
@@ -293,7 +307,8 @@
 - `vas-swarm-jji.13` — completed: surface live verifier/provider failures when randomized support stays belief-only
 - `vas-swarm-jji.14` — completed: audit randomized_intervention support balance after runtime-honesty fix
 - `vas-swarm-jji.15` — completed: demote co-formulated randomized contradictions from direct grounding
-- `vas-swarm-jji.16` — active: re-run the final Roberto content check after co-formulation hardening
+- `vas-swarm-jji.16` — completed: rerun the final Roberto content check and close the belief-only verdict seam exposed by verifier runtime failure
+- `vas-swarm-jji.17` — active: reduce partial-result frequency in representative content checks under provider instability
 
 The queue order is intentional:
 - planner agnosticism first
@@ -304,9 +319,9 @@ The queue order is intentional:
 
 1. Read `STATUS.md`.
 2. Run `scripts/roberto-loop`.
-3. Open [vaos-jji11-content-check-1775955446.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-jji11-content-check-1775955446.json), [vaos-jji12-grounding-replay-1775956794.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-jji12-grounding-replay-1775956794.json), [vaos-jji14-live-validation-summary-1775978200.json](/tmp/vaos-jji14-live-validation-summary-1775978200.json), [vaos-investigate-trace-5c090736ecfc44a0-jji14-live-randomized-caffeine-1775978200832.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-5c090736ecfc44a0-jji14-live-randomized-caffeine-1775978200832.json), and [vaos-jji15-grounding-replay-1775979139.json](/tmp/vaos-jji15-grounding-replay-1775979139.json).
-4. Resume implementation from `vas-swarm-jji.16`.
-5. Re-run the representative empirical content check and decide whether Roberto-content criteria are now met or whether a new first-order integrity issue appears.
+3. Open [vaos-jji16-content-check-1775980701.json](/tmp/vaos-jji16-content-check-1775980701.json), [vaos-investigate-trace-6288e6adc2dfd5a5-jji16-content-check-2-1775981014919.json](/var/folders/7q/tx7m0tg12m5cgq7k8z8q2dzw0000gn/T/vaos-investigate-trace-6288e6adc2dfd5a5-jji16-content-check-2-1775981014919.json), [vaos-jji16-observational-runtime-replay-1775982675.json](/tmp/vaos-jji16-observational-runtime-replay-1775982675.json), and [vaos-jji16-content-check-fallback-1775981910.json](/tmp/vaos-jji16-content-check-fallback-1775981910.json).
+4. Resume implementation from `vas-swarm-jji.17`.
+5. Reduce representative partial-result frequency under provider instability without weakening the `runtime_failure` honesty boundary from `vas-swarm-jji.16`.
 6. Record any unrelated inherited suite failures under `vas-swarm-dy1` without blocking `investigate` work.
 7. Update status docs, Beads, commit, and push.
 

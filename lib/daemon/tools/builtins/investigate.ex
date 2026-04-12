@@ -1048,67 +1048,32 @@ defmodule Daemon.Tools.Builtins.Investigate do
       classified_opposing =
         classify_evidence_store(verified_opposing, paper_map, strategy, classification_context)
 
-      grounded_for = Enum.filter(classified_supporting, &(&1.evidence_store == :grounded))
-      grounded_against = Enum.filter(classified_opposing, &(&1.evidence_store == :grounded))
+      direction_summary =
+        direction_summary(
+          classified_supporting,
+          classified_opposing,
+          strategy,
+          verification_stats
+        )
 
-      grounded_for_count = length(grounded_for)
-      grounded_against_count = length(grounded_against)
-      belief_for_count = length(classified_supporting) - grounded_for_count
-      belief_against_count = length(classified_opposing) - grounded_against_count
+      grounded_for_count = direction_summary.grounded_for_count
+      grounded_against_count = direction_summary.grounded_against_count
+      belief_for_count = direction_summary.belief_for_count
+      belief_against_count = direction_summary.belief_against_count
 
       # 10. Compute direction from GROUNDED evidence only (AEC commitment gating)
       # Uses strategy's direction_ratio and belief_fallback_ratio
       verified_for = Enum.count(classified_supporting, & &1.verified)
       verified_against = Enum.count(classified_opposing, & &1.verified)
 
-      grounded_for_score = Enum.sum(Enum.map(grounded_for, & &1.score))
-      grounded_against_score = Enum.sum(Enum.map(grounded_against, & &1.score))
-      total_for_score = Enum.sum(Enum.map(classified_supporting, & &1.score))
-      total_against_score = Enum.sum(Enum.map(classified_opposing, & &1.score))
+      grounded_for_score = direction_summary.grounded_for_score
+      grounded_against_score = direction_summary.grounded_against_score
+      total_for_score = direction_summary.total_for_score
+      total_against_score = direction_summary.total_against_score
 
       for_total = total_for_score
       against_total = total_against_score
-
-      # Direction uses grounded scores first (AEC commitment gating).
-      # When grounded store is empty, falls back to belief-store consensus
-      # (prefixed with "belief_") to avoid always returning "insufficient".
-      direction =
-        cond do
-          # Both stores have grounded evidence — use grounded scores
-          grounded_for_score > 0 and grounded_against_score > 0 ->
-            cond do
-              grounded_for_score > grounded_against_score * strategy.direction_ratio ->
-                "supporting"
-
-              grounded_against_score > grounded_for_score * strategy.direction_ratio ->
-                "opposing"
-
-              true ->
-                "genuinely_contested"
-            end
-
-          # Asymmetric grounded evidence
-          grounded_against_score == 0 and grounded_for_score > 0 ->
-            "asymmetric_evidence_for"
-
-          grounded_for_score == 0 and grounded_against_score > 0 ->
-            "asymmetric_evidence_against"
-
-          # No grounded evidence at all — fall back to belief store
-          # This prevents the system from being permanently stuck on "insufficient"
-          # when source quality thresholds filter out all papers
-          for_total == 0 and against_total == 0 ->
-            "insufficient_evidence"
-
-          against_total > for_total * strategy.belief_fallback_ratio ->
-            "belief_consensus_against"
-
-          for_total > against_total * strategy.belief_fallback_ratio ->
-            "belief_consensus_for"
-
-          true ->
-            "belief_contested"
-        end
+      direction = direction_summary.direction
 
       # Rebind for downstream compatibility (classified versions are supersets)
       verified_supporting = classified_supporting
@@ -1121,424 +1086,446 @@ defmodule Daemon.Tools.Builtins.Investigate do
           fn ev -> ev.verification == "unverified" end
         )
 
-      reasoning_for =
-        Enum.count(
+      if direction == "runtime_failure" do
+        return_runtime_failure_completion(
+          topic,
+          all_papers,
+          source_counts,
+          strategy,
+          variant_id,
+          complete_phase_timings(timings, investigation_started_ms, post_processing_started_ms),
+          trace_context,
+          caller_metadata,
           verified_supporting,
-          fn ev -> ev.verification == "no_citation" end
-        )
-
-      reasoning_against =
-        Enum.count(
           verified_opposing,
-          fn ev -> ev.verification == "no_citation" end
+          verification_stats,
+          supporting_raw,
+          opposing_raw
         )
+      else
+        reasoning_for =
+          Enum.count(
+            verified_supporting,
+            fn ev -> ev.verification == "no_citation" end
+          )
 
-      # Record prompt feedback for the GEPA flywheel
-      sourced_evidence =
-        Enum.filter(
-          verified_supporting ++ verified_opposing,
-          fn ev -> ev.source_type == :sourced end
-        )
+        reasoning_against =
+          Enum.count(
+            verified_opposing,
+            fn ev -> ev.verification == "no_citation" end
+          )
 
-      total_sourced = length(sourced_evidence)
-      count_verified = Enum.count(sourced_evidence, fn ev -> ev.verification == "verified" end)
-      count_partial = Enum.count(sourced_evidence, fn ev -> ev.verification == "partial" end)
+        # Record prompt feedback for the GEPA flywheel
+        sourced_evidence =
+          Enum.filter(
+            verified_supporting ++ verified_opposing,
+            fn ev -> ev.source_type == :sourced end
+          )
 
-      count_unverified_sourced =
-        Enum.count(sourced_evidence, fn ev -> ev.verification == "unverified" end)
+        total_sourced = length(sourced_evidence)
+        count_verified = Enum.count(sourced_evidence, fn ev -> ev.verification == "verified" end)
+        count_partial = Enum.count(sourced_evidence, fn ev -> ev.verification == "partial" end)
 
-      {_prompt_feedback_result, timings} =
-        capture_timed(timings, :prompt_feedback_ms, fn ->
-          try do
-            prompt_hash = PromptConfig.prompt_hash(prompts)
+        count_unverified_sourced =
+          Enum.count(sourced_evidence, fn ev -> ev.verification == "unverified" end)
 
-            PromptFeedback.record(prompt_hash, topic, %{
-              total_sourced: total_sourced,
-              verified: count_verified,
-              partial: count_partial,
-              unverified: count_unverified_sourced,
-              verification_rate:
-                if(total_sourced > 0, do: count_verified / total_sourced, else: 0.0)
-            })
+        {_prompt_feedback_result, timings} =
+          capture_timed(timings, :prompt_feedback_ms, fn ->
+            try do
+              prompt_hash = PromptConfig.prompt_hash(prompts)
 
-            # Update Thompson Sampling posterior for the selected prompt variant
-            PromptSelector.update(variant_id, count_verified, count_unverified_sourced)
-          rescue
-            e ->
-              Logger.warning(
-                "[investigate] Failed to record prompt feedback: #{Exception.message(e)}"
+              PromptFeedback.record(prompt_hash, topic, %{
+                total_sourced: total_sourced,
+                verified: count_verified,
+                partial: count_partial,
+                unverified: count_unverified_sourced,
+                verification_rate:
+                  if(total_sourced > 0, do: count_verified / total_sourced, else: 0.0)
+              })
+
+              # Update Thompson Sampling posterior for the selected prompt variant
+              PromptSelector.update(variant_id, count_verified, count_unverified_sourced)
+            rescue
+              e ->
+                Logger.warning(
+                  "[investigate] Failed to record prompt feedback: #{Exception.message(e)}"
+                )
+            end
+          end)
+
+        # Count paper types across all evidence
+        all_evidence = verified_supporting ++ verified_opposing
+        review_count = Enum.count(all_evidence, fn ev -> ev.paper_type == :review end)
+        trial_count = Enum.count(all_evidence, fn ev -> ev.paper_type == :trial end)
+        study_count = Enum.count(all_evidence, fn ev -> ev.paper_type == :study end)
+
+        # 11. Create claim and add evidence to ledger
+        {{claim, supporting_records, opposing_records, belief, uncertainty}, timings} =
+          capture_timed(timings, :ledger_persistence_ms, fn ->
+            claim =
+              EpistemicLedger.add_claim(
+                [
+                  title: String.slice(topic, 0, 100),
+                  statement: topic,
+                  tags: ["investigate", "auto", "adversarial"]
+                ],
+                @ledger_name
               )
-          end
-        end)
 
-      # Count paper types across all evidence
-      all_evidence = verified_supporting ++ verified_opposing
-      review_count = Enum.count(all_evidence, fn ev -> ev.paper_type == :review end)
-      trial_count = Enum.count(all_evidence, fn ev -> ev.paper_type == :trial end)
-      study_count = Enum.count(all_evidence, fn ev -> ev.paper_type == :study end)
+            # Add FOR arguments as supporting evidence (using hierarchy-weighted score)
+            supporting_records = add_evidence_to_ledger(verified_supporting, claim, :support)
 
-      # 11. Create claim and add evidence to ledger
-      {{claim, supporting_records, opposing_records, belief, uncertainty}, timings} =
-        capture_timed(timings, :ledger_persistence_ms, fn ->
-          claim =
-            EpistemicLedger.add_claim(
-              [
-                title: String.slice(topic, 0, 100),
-                statement: topic,
-                tags: ["investigate", "auto", "adversarial"]
-              ],
-              @ledger_name
+            # Add AGAINST arguments as BOTH attacks AND contradicting evidence
+            _contra_records = add_evidence_to_ledger(verified_opposing, claim, :contradict)
+            opposing_records = add_attacks_to_ledger(verified_opposing, claim)
+
+            # Refresh claim to recompute metrics
+            EpistemicLedger.refresh_claim(claim.id, @ledger_name)
+
+            # Get ledger metrics for supplementary display
+            metrics = EpistemicLedger.claim_metrics(claim.id, @ledger_name)
+            belief = metrics["belief"]
+            uncertainty = metrics["uncertainty"]
+
+            # 12. Persist ledger to disk
+            EpistemicLedger.save(@ledger_name)
+
+            {claim, supporting_records, opposing_records, belief, uncertainty}
+          end)
+
+        # 12b. Emergent question synthesis — extract novel research questions from evidence tension
+        {emergent_questions, timings} =
+          capture_timed(timings, :emergent_questions_ms, fn ->
+            extract_emergent_questions(
+              topic,
+              direction,
+              verified_supporting,
+              verified_opposing,
+              uncertainty
+            )
+          end)
+
+        # 13. Store in knowledge graph
+        topic_id = "investigate:" <> short_hash(topic)
+        claim_id = claim.id
+
+        {conflicts, timings} =
+          capture_timed(timings, :knowledge_graph_ms, fn ->
+            triples = [
+              {topic_id, "rdf:type", "vaos:Investigation"},
+              {topic_id, "vaos:topic", topic},
+              {topic_id, "vaos:direction", direction},
+              {topic_id, "vaos:verified_for", Integer.to_string(verified_for)},
+              {topic_id, "vaos:verified_against", Integer.to_string(verified_against)},
+              {topic_id, "vaos:fraudulent_citations", Integer.to_string(fraudulent_count)},
+              {topic_id, "vaos:claim_id", claim_id},
+              {topic_id, "vaos:timestamp", DateTime.utc_now() |> DateTime.to_iso8601()}
+            ]
+
+            keyword_triples =
+              Enum.map(keywords, fn kw ->
+                {topic_id, "vaos:keyword", kw}
+              end)
+
+            for triple <- triples ++ keyword_triples do
+              MiosaKnowledge.assert(store, triple)
+            end
+
+            # Store helpful/harmful counters for supporting evidence
+            Enum.each(supporting_records, fn ev ->
+              ev_id = "evidence:" <> ev.id
+              MiosaKnowledge.assert(store, {topic_id, "vaos:has_evidence", ev_id})
+              MiosaKnowledge.assert(store, {ev_id, "vaos:helpful_count", "0"})
+              MiosaKnowledge.assert(store, {ev_id, "vaos:harmful_count", "0"})
+              MiosaKnowledge.assert(store, {ev_id, "vaos:summary", ev.summary})
+            end)
+
+            # Store attack records in knowledge graph
+            Enum.each(opposing_records, fn atk ->
+              atk_id = "attack:" <> atk.id
+              MiosaKnowledge.assert(store, {topic_id, "vaos:has_attack", atk_id})
+              MiosaKnowledge.assert(store, {atk_id, "vaos:helpful_count", "0"})
+              MiosaKnowledge.assert(store, {atk_id, "vaos:harmful_count", "0"})
+              MiosaKnowledge.assert(store, {atk_id, "vaos:summary", atk.description})
+            end)
+
+            # Increment helpful counters for prior evidence that was independently regenerated
+            increment_helpful_for_reused_evidence(
+              store,
+              prior_evidence,
+              verified_supporting ++ verified_opposing
             )
 
-          # Add FOR arguments as supporting evidence (using hierarchy-weighted score)
-          supporting_records = add_evidence_to_ledger(verified_supporting, claim, :support)
+            # 13a. OWL Reasoner bridge — materialize inferred triples and check for contradictions
+            try do
+              case MiosaKnowledge.Reasoner.materialize(store) do
+                {:ok, rounds} when rounds > 0 ->
+                  Logger.info(
+                    "[investigate] OWL reasoner ran #{rounds} fixpoint round(s), inferred new triples"
+                  )
 
-          # Add AGAINST arguments as BOTH attacks AND contradicting evidence
-          _contra_records = add_evidence_to_ledger(verified_opposing, claim, :contradict)
-          opposing_records = add_attacks_to_ledger(verified_opposing, claim)
+                  # Check if any inferred contradictions relate to our investigation
+                  case MiosaKnowledge.sparql(
+                         store,
+                         "SELECT ?s ?p ?o WHERE { ?s vaos:contradicts ?o }"
+                       ) do
+                    {:ok, results} when is_list(results) and results != [] ->
+                      for r <- results do
+                        Logger.info(
+                          "[investigate] OWL-visible contradiction: #{r["s"]} contradicts #{r["o"]}"
+                        )
+                      end
 
-          # Refresh claim to recompute metrics
-          EpistemicLedger.refresh_claim(claim.id, @ledger_name)
+                    _ ->
+                      :ok
+                  end
 
-          # Get ledger metrics for supplementary display
-          metrics = EpistemicLedger.claim_metrics(claim.id, @ledger_name)
-          belief = metrics["belief"]
-          uncertainty = metrics["uncertainty"]
+                {:ok, 0} ->
+                  Logger.debug("[investigate] OWL reasoner: no new inferences")
 
-          # 12. Persist ledger to disk
-          EpistemicLedger.save(@ledger_name)
-
-          {claim, supporting_records, opposing_records, belief, uncertainty}
-        end)
-
-      # 12b. Emergent question synthesis — extract novel research questions from evidence tension
-      {emergent_questions, timings} =
-        capture_timed(timings, :emergent_questions_ms, fn ->
-          extract_emergent_questions(
-            topic,
-            direction,
-            verified_supporting,
-            verified_opposing,
-            uncertainty
-          )
-        end)
-
-      # 13. Store in knowledge graph
-      topic_id = "investigate:" <> short_hash(topic)
-      claim_id = claim.id
-
-      {conflicts, timings} =
-        capture_timed(timings, :knowledge_graph_ms, fn ->
-          triples = [
-            {topic_id, "rdf:type", "vaos:Investigation"},
-            {topic_id, "vaos:topic", topic},
-            {topic_id, "vaos:direction", direction},
-            {topic_id, "vaos:verified_for", Integer.to_string(verified_for)},
-            {topic_id, "vaos:verified_against", Integer.to_string(verified_against)},
-            {topic_id, "vaos:fraudulent_citations", Integer.to_string(fraudulent_count)},
-            {topic_id, "vaos:claim_id", claim_id},
-            {topic_id, "vaos:timestamp", DateTime.utc_now() |> DateTime.to_iso8601()}
-          ]
-
-          keyword_triples =
-            Enum.map(keywords, fn kw ->
-              {topic_id, "vaos:keyword", kw}
-            end)
-
-          for triple <- triples ++ keyword_triples do
-            MiosaKnowledge.assert(store, triple)
-          end
-
-          # Store helpful/harmful counters for supporting evidence
-          Enum.each(supporting_records, fn ev ->
-            ev_id = "evidence:" <> ev.id
-            MiosaKnowledge.assert(store, {topic_id, "vaos:has_evidence", ev_id})
-            MiosaKnowledge.assert(store, {ev_id, "vaos:helpful_count", "0"})
-            MiosaKnowledge.assert(store, {ev_id, "vaos:harmful_count", "0"})
-            MiosaKnowledge.assert(store, {ev_id, "vaos:summary", ev.summary})
-          end)
-
-          # Store attack records in knowledge graph
-          Enum.each(opposing_records, fn atk ->
-            atk_id = "attack:" <> atk.id
-            MiosaKnowledge.assert(store, {topic_id, "vaos:has_attack", atk_id})
-            MiosaKnowledge.assert(store, {atk_id, "vaos:helpful_count", "0"})
-            MiosaKnowledge.assert(store, {atk_id, "vaos:harmful_count", "0"})
-            MiosaKnowledge.assert(store, {atk_id, "vaos:summary", atk.description})
-          end)
-
-          # Increment helpful counters for prior evidence that was independently regenerated
-          increment_helpful_for_reused_evidence(
-            store,
-            prior_evidence,
-            verified_supporting ++ verified_opposing
-          )
-
-          # 13a. OWL Reasoner bridge — materialize inferred triples and check for contradictions
-          try do
-            case MiosaKnowledge.Reasoner.materialize(store) do
-              {:ok, rounds} when rounds > 0 ->
-                Logger.info(
-                  "[investigate] OWL reasoner ran #{rounds} fixpoint round(s), inferred new triples"
-                )
-
-                # Check if any inferred contradictions relate to our investigation
-                case MiosaKnowledge.sparql(
-                       store,
-                       "SELECT ?s ?p ?o WHERE { ?s vaos:contradicts ?o }"
-                     ) do
-                  {:ok, results} when is_list(results) and results != [] ->
-                    for r <- results do
-                      Logger.info(
-                        "[investigate] OWL-visible contradiction: #{r["s"]} contradicts #{r["o"]}"
-                      )
-                    end
-
-                  _ ->
-                    :ok
-                end
-
-              {:ok, 0} ->
-                Logger.debug("[investigate] OWL reasoner: no new inferences")
-
-              _ ->
-                :ok
+                _ ->
+                  :ok
+              end
+            rescue
+              e -> Logger.warning("[investigate] OWL reasoner failed: #{Exception.message(e)}")
             end
-          rescue
-            e -> Logger.warning("[investigate] OWL reasoner failed: #{Exception.message(e)}")
-          end
 
-          # 14. Cross-investigation contradiction detection
-          detect_contradictions(store, topic_id, direction, keywords)
-        end)
+            # 14. Cross-investigation contradiction detection
+            detect_contradictions(store, topic_id, direction, keywords)
+          end)
 
-      conflict_note =
-        if conflicts == [] do
-          ""
-        else
-          conflict_lines =
-            Enum.map(conflicts, fn c ->
-              "  - #{c.prior_topic} (#{c.prior_id}): #{c.prior_direction} vs current #{direction}"
-            end)
-
-          "\n### Cross-Investigation Conflicts\n" <> Enum.join(conflict_lines, "\n") <> "\n"
-        end
-
-      # 15. Assess advocacy quality (flag unreliable advocates)
-      quality_note = assess_advocacy_quality(verified_supporting, verified_opposing)
-
-      # 15a. Check uncertainty and suggest iteration
-      iteration_note = maybe_suggest_iteration(claim, @ledger_name)
-
-      # 15b. Deep mode: run research pipeline if requested
-      {deep_note, timings} =
-        capture_timed(timings, :deep_research_ms, fn ->
-          if depth == "deep" do
-            deep_research_note(topic, claim, all_papers, store)
-          else
+        conflict_note =
+          if conflicts == [] do
             ""
+          else
+            conflict_lines =
+              Enum.map(conflicts, fn c ->
+                "  - #{c.prior_topic} (#{c.prior_id}): #{c.prior_direction} vs current #{direction}"
+              end)
+
+            "\n### Cross-Investigation Conflicts\n" <> Enum.join(conflict_lines, "\n") <> "\n"
           end
-        end)
 
-      # 16. Format result with verification status and evidence quality
-      for_arguments =
-        format_verified_evidence(
-          verified_supporting,
-          "Case For (grounded: #{Float.round(grounded_for_score * 1.0, 2)}, total: #{Float.round(for_total * 1.0, 2)})"
-        )
+        # 15. Assess advocacy quality (flag unreliable advocates)
+        quality_note = assess_advocacy_quality(verified_supporting, verified_opposing)
 
-      against_arguments =
-        format_verified_evidence(
-          verified_opposing,
-          "Case Against (grounded: #{Float.round(grounded_against_score * 1.0, 2)}, total: #{Float.round(against_total * 1.0, 2)})"
-        )
+        # 15a. Check uncertainty and suggest iteration
+        iteration_note = maybe_suggest_iteration(claim, @ledger_name)
 
-      paper_list = format_paper_list(all_papers)
-
-      result =
-        "## Investigation: #{topic}\n\n" <>
-          "**Direction: #{direction}** (AEC grounded-only verdict)\n" <>
-          "**Grounded score: #{Float.round(grounded_for_score * 1.0, 2)} for vs #{Float.round(grounded_against_score * 1.0, 2)} against**\n" <>
-          "**Total score (incl. belief): #{Float.round(for_total * 1.0, 2)} for vs #{Float.round(against_total * 1.0, 2)} against**\n" <>
-          "**Evidence stores: #{grounded_for_count + grounded_against_count} grounded, #{belief_for_count + belief_against_count} belief**\n" <>
-          "**Verified citations for: #{verified_for} | Verified citations against: #{verified_against}**\n" <>
-          "**Fraudulent citations detected: #{fraudulent_count}**\n" <>
-          "**Evidence quality: #{review_count} reviews, #{trial_count} trials, #{study_count} studies**\n" <>
-          "**Ledger belief: #{Float.round(belief * 1.0, 3)}, uncertainty: #{Float.round(uncertainty * 1.0, 3)}**\n" <>
-          "**Papers found:** #{length(all_papers)} (#{format_source_counts(source_counts)})\n\n" <>
-          if(quality_note != "", do: quality_note <> "\n\n", else: "") <>
-          "### #{for_arguments}\n\n" <>
-          "### #{against_arguments}\n\n" <>
-          "### Papers Consulted\n#{paper_list}\n" <>
-          conflict_note <>
-          if(prior_evidence != [],
-            do:
-              "\n### Prior Evidence (related topics)\n" <> Enum.join(prior_evidence, "\n") <> "\n",
-            else: ""
-          ) <>
-          deep_note <>
-          iteration_note <>
-          "\n### Keywords\n  " <>
-          Enum.join(keywords, ", ") <>
-          "\n\n" <>
-          "*Claim ID: #{claim_id} -- stored in knowledge graph as #{topic_id}*"
-
-      # 16. Policy — suggest next investigations based on information gain
-      {next_actions_text, timings} =
-        capture_timed(timings, :policy_ranking_ms, fn ->
-          try do
-            next_actions = Policy.rank_actions(Process.whereis(@ledger_name), limit: 5)
-
-            if next_actions != [] do
-              suggestions =
-                next_actions
-                |> Enum.with_index(1)
-                |> Enum.map(fn {action, i} ->
-                  gain_str = Float.round(action.expected_information_gain, 2) |> to_string()
-
-                  "  #{i}. #{action.action_type}: \"#{action.claim_title}\" (gain: #{gain_str}) — #{action.reason}"
-                end)
-                |> Enum.join("
-")
-
-              "
-
-### Suggested Next Investigations
-" <>
-                "Based on where uncertainty is highest in the knowledge graph:
-" <> suggestions
+        # 15b. Deep mode: run research pipeline if requested
+        {deep_note, timings} =
+          capture_timed(timings, :deep_research_ms, fn ->
+            if depth == "deep" do
+              deep_research_note(topic, claim, all_papers, store)
             else
               ""
             end
-          rescue
-            e ->
-              Logger.warning("[investigate] Policy.rank_actions failed: #{Exception.message(e)}")
-              ""
-          end
-        end)
+          end)
 
-      timings =
-        complete_phase_timings(timings, investigation_started_ms, post_processing_started_ms)
+        # 16. Format result with verification status and evidence quality
+        for_arguments =
+          format_verified_evidence(
+            verified_supporting,
+            "Case For (grounded: #{Float.round(grounded_for_score * 1.0, 2)}, total: #{Float.round(for_total * 1.0, 2)})"
+          )
 
-      metadata_timings = timing_metadata(timings)
+        against_arguments =
+          format_verified_evidence(
+            verified_opposing,
+            "Case Against (grounded: #{Float.round(grounded_against_score * 1.0, 2)}, total: #{Float.round(against_total * 1.0, 2)})"
+          )
 
-      json_metadata =
-        %{
-          topic: topic,
-          claim_id: claim_id,
-          direction: direction,
-          strategy_hash: Strategy.param_hash(strategy),
-          verified_for: verified_for,
-          verified_against: verified_against,
-          reasoning_for: reasoning_for,
-          reasoning_against: reasoning_against,
-          for_score: Float.round(for_total * 1.0, 3),
-          against_score: Float.round(against_total * 1.0, 3),
-          grounded_for_score: Float.round(grounded_for_score * 1.0, 3),
-          grounded_against_score: Float.round(grounded_against_score * 1.0, 3),
-          grounded_for_count: grounded_for_count,
-          grounded_against_count: grounded_against_count,
-          belief_for_count: belief_for_count,
-          belief_against_count: belief_against_count,
-          aec_methodology: "arxiv.org/abs/2602.03974",
-          fraudulent_citations: fraudulent_count,
-          belief: Float.round(belief * 1.0, 3),
-          uncertainty: Float.round(uncertainty * 1.0, 3),
-          duration_ms: metadata_timings.duration_ms,
-          phase_timings_ms: metadata_timings.phase_timings_ms,
-          verification_stats: verification_stats,
-          evidence_quality: %{
-            reviews: review_count,
-            trials: trial_count,
-            studies: study_count
-          },
-          supporting:
-            Enum.map(verified_supporting, fn ev ->
-              %{
-                summary: ev.summary,
-                score: ev.score,
-                verified: ev.verified,
-                verification: ev.verification,
-                paper_type: Atom.to_string(ev.paper_type),
-                citation_count: ev.citation_count,
-                strength_display: ev.strength,
-                source_quality: Map.get(ev, :source_quality, 0),
-                source_type: ev.source_type,
-                evidence_store: Atom.to_string(Map.get(ev, :evidence_store, :unknown)),
-                grounding_role: stringify_term(Map.get(ev, :grounding_role))
-              }
-            end),
-          opposing:
-            Enum.map(verified_opposing, fn ev ->
-              %{
-                summary: ev.summary,
-                score: ev.score,
-                verified: ev.verified,
-                verification: ev.verification,
-                paper_type: Atom.to_string(ev.paper_type),
-                citation_count: ev.citation_count,
-                strength_display: ev.strength,
-                source_quality: Map.get(ev, :source_quality, 0),
-                source_type: ev.source_type,
-                evidence_store: Atom.to_string(Map.get(ev, :evidence_store, :unknown)),
-                grounding_role: stringify_term(Map.get(ev, :grounding_role))
-              }
-            end),
-          papers_found: length(all_papers),
-          source_counts: source_counts,
-          papers_detail:
-            Enum.map(all_papers, fn p ->
-              %{
-                title: p["title"],
-                year: p["year"],
-                citations: p["citation_count"] || p["citationCount"] || 0,
-                source: p["source"] || "unknown",
-                abstract: String.slice(to_string(p["abstract"] || ""), 0, 500)
-              }
-            end),
-          investigation_id: topic_id,
-          optimization: nil,
-          suggested_next:
+        paper_list = format_paper_list(all_papers)
+
+        result =
+          "## Investigation: #{topic}\n\n" <>
+            "**Direction: #{direction}** (AEC grounded-only verdict)\n" <>
+            "**Grounded score: #{Float.round(grounded_for_score * 1.0, 2)} for vs #{Float.round(grounded_against_score * 1.0, 2)} against**\n" <>
+            "**Total score (incl. belief): #{Float.round(for_total * 1.0, 2)} for vs #{Float.round(against_total * 1.0, 2)} against**\n" <>
+            "**Evidence stores: #{grounded_for_count + grounded_against_count} grounded, #{belief_for_count + belief_against_count} belief**\n" <>
+            "**Verified citations for: #{verified_for} | Verified citations against: #{verified_against}**\n" <>
+            "**Fraudulent citations detected: #{fraudulent_count}**\n" <>
+            "**Evidence quality: #{review_count} reviews, #{trial_count} trials, #{study_count} studies**\n" <>
+            "**Ledger belief: #{Float.round(belief * 1.0, 3)}, uncertainty: #{Float.round(uncertainty * 1.0, 3)}**\n" <>
+            "**Papers found:** #{length(all_papers)} (#{format_source_counts(source_counts)})\n\n" <>
+            if(quality_note != "", do: quality_note <> "\n\n", else: "") <>
+            "### #{for_arguments}\n\n" <>
+            "### #{against_arguments}\n\n" <>
+            "### Papers Consulted\n#{paper_list}\n" <>
+            conflict_note <>
+            if(prior_evidence != [],
+              do:
+                "\n### Prior Evidence (related topics)\n" <>
+                  Enum.join(prior_evidence, "\n") <> "\n",
+              else: ""
+            ) <>
+            deep_note <>
+            iteration_note <>
+            "\n### Keywords\n  " <>
+            Enum.join(keywords, ", ") <>
+            "\n\n" <>
+            "*Claim ID: #{claim_id} -- stored in knowledge graph as #{topic_id}*"
+
+        # 16. Policy — suggest next investigations based on information gain
+        {next_actions_text, timings} =
+          capture_timed(timings, :policy_ranking_ms, fn ->
             try do
-              Policy.rank_actions(@ledger_name, limit: 3)
-              |> Enum.map(fn a ->
-                %{
-                  action_type: a.action_type,
-                  claim_title: a.claim_title,
-                  information_gain: a.expected_information_gain,
-                  claim_id: a.claim_id,
-                  reason: a.reason
-                }
-              end)
+              next_actions = Policy.rank_actions(Process.whereis(@ledger_name), limit: 5)
+
+              if next_actions != [] do
+                suggestions =
+                  next_actions
+                  |> Enum.with_index(1)
+                  |> Enum.map(fn {action, i} ->
+                    gain_str = Float.round(action.expected_information_gain, 2) |> to_string()
+
+                    "  #{i}. #{action.action_type}: \"#{action.claim_title}\" (gain: #{gain_str}) — #{action.reason}"
+                  end)
+                  |> Enum.join("
+")
+
+                "
+
+### Suggested Next Investigations
+" <>
+                  "Based on where uncertainty is highest in the knowledge graph:
+" <> suggestions
+              else
+                ""
+              end
             rescue
-              _ -> []
-            end,
-          emergent_questions: emergent_questions,
-          variant_id: variant_id
-        }
-        |> put_runtime_failure_metadata(trace_context, verification_stats)
-        |> put_evidence_plan_metadata(search_plan)
+              e ->
+                Logger.warning(
+                  "[investigate] Policy.rank_actions failed: #{Exception.message(e)}"
+                )
 
-      trace_payload =
-        build_boundary_trace(trace_context, %{
-          parsed_supporting: supporting_raw,
-          parsed_opposing: opposing_raw,
-          verified_supporting: verified_supporting,
-          verified_opposing: verified_opposing,
-          timings: timings,
-          verification_stats: verification_stats,
-          final_metadata: json_metadata
-        })
+                ""
+            end
+          end)
 
-      json_metadata = maybe_capture_trace(json_metadata, caller_metadata, trace_payload)
+        timings =
+          complete_phase_timings(timings, investigation_started_ms, post_processing_started_ms)
 
-      json_result = emit_successful_investigation(json_metadata, caller_metadata, store: store)
+        metadata_timings = timing_metadata(timings)
 
-      result = result <> next_actions_text <> "\n\n<!-- VAOS_JSON:#{json_result} -->"
-      log_phase_timings(topic, timings)
-      log_verification_stats(topic, verification_stats)
+        json_metadata =
+          %{
+            topic: topic,
+            claim_id: claim_id,
+            direction: direction,
+            strategy_hash: Strategy.param_hash(strategy),
+            verified_for: verified_for,
+            verified_against: verified_against,
+            reasoning_for: reasoning_for,
+            reasoning_against: reasoning_against,
+            for_score: Float.round(for_total * 1.0, 3),
+            against_score: Float.round(against_total * 1.0, 3),
+            grounded_for_score: Float.round(grounded_for_score * 1.0, 3),
+            grounded_against_score: Float.round(grounded_against_score * 1.0, 3),
+            grounded_for_count: grounded_for_count,
+            grounded_against_count: grounded_against_count,
+            belief_for_count: belief_for_count,
+            belief_against_count: belief_against_count,
+            aec_methodology: "arxiv.org/abs/2602.03974",
+            fraudulent_citations: fraudulent_count,
+            belief: Float.round(belief * 1.0, 3),
+            uncertainty: Float.round(uncertainty * 1.0, 3),
+            duration_ms: metadata_timings.duration_ms,
+            phase_timings_ms: metadata_timings.phase_timings_ms,
+            verification_stats: verification_stats,
+            evidence_quality: %{
+              reviews: review_count,
+              trials: trial_count,
+              studies: study_count
+            },
+            supporting:
+              Enum.map(verified_supporting, fn ev ->
+                %{
+                  summary: ev.summary,
+                  score: ev.score,
+                  verified: ev.verified,
+                  verification: ev.verification,
+                  paper_type: Atom.to_string(ev.paper_type),
+                  citation_count: ev.citation_count,
+                  strength_display: ev.strength,
+                  source_quality: Map.get(ev, :source_quality, 0),
+                  source_type: ev.source_type,
+                  evidence_store: Atom.to_string(Map.get(ev, :evidence_store, :unknown)),
+                  grounding_role: stringify_term(Map.get(ev, :grounding_role))
+                }
+              end),
+            opposing:
+              Enum.map(verified_opposing, fn ev ->
+                %{
+                  summary: ev.summary,
+                  score: ev.score,
+                  verified: ev.verified,
+                  verification: ev.verification,
+                  paper_type: Atom.to_string(ev.paper_type),
+                  citation_count: ev.citation_count,
+                  strength_display: ev.strength,
+                  source_quality: Map.get(ev, :source_quality, 0),
+                  source_type: ev.source_type,
+                  evidence_store: Atom.to_string(Map.get(ev, :evidence_store, :unknown)),
+                  grounding_role: stringify_term(Map.get(ev, :grounding_role))
+                }
+              end),
+            papers_found: length(all_papers),
+            source_counts: source_counts,
+            papers_detail:
+              Enum.map(all_papers, fn p ->
+                %{
+                  title: p["title"],
+                  year: p["year"],
+                  citations: p["citation_count"] || p["citationCount"] || 0,
+                  source: p["source"] || "unknown",
+                  abstract: String.slice(to_string(p["abstract"] || ""), 0, 500)
+                }
+              end),
+            investigation_id: topic_id,
+            optimization: nil,
+            suggested_next:
+              try do
+                Policy.rank_actions(@ledger_name, limit: 3)
+                |> Enum.map(fn a ->
+                  %{
+                    action_type: a.action_type,
+                    claim_title: a.claim_title,
+                    information_gain: a.expected_information_gain,
+                    claim_id: a.claim_id,
+                    reason: a.reason
+                  }
+                end)
+              rescue
+                _ -> []
+              end,
+            emergent_questions: emergent_questions,
+            variant_id: variant_id
+          }
+          |> put_runtime_failure_metadata(trace_context, verification_stats)
+          |> put_evidence_plan_metadata(search_plan)
 
-      {:ok, result}
+        trace_payload =
+          build_boundary_trace(trace_context, %{
+            parsed_supporting: supporting_raw,
+            parsed_opposing: opposing_raw,
+            verified_supporting: verified_supporting,
+            verified_opposing: verified_opposing,
+            timings: timings,
+            verification_stats: verification_stats,
+            final_metadata: json_metadata
+          })
+
+        json_metadata = maybe_capture_trace(json_metadata, caller_metadata, trace_payload)
+
+        json_result = emit_successful_investigation(json_metadata, caller_metadata, store: store)
+
+        result = result <> next_actions_text <> "\n\n<!-- VAOS_JSON:#{json_result} -->"
+        log_phase_timings(topic, timings)
+        log_verification_stats(topic, verification_stats)
+
+        {:ok, result}
+      end
     else
       timeout_info when is_map(timeout_info) ->
         Logger.warning(
@@ -1625,6 +1612,117 @@ defmodule Daemon.Tools.Builtins.Investigate do
       "grounded" -> true
       _ -> false
     end
+  end
+
+  defp verification_runtime_failure?(ev) when is_map(ev) do
+    case Map.get(ev, :verification) do
+      value when value in [:timeout, :provider_error, :empty_response, :unexpected_response] ->
+        true
+
+      value
+      when value in ["timeout", "provider_error", "empty_response", "unexpected_response"] ->
+        true
+
+      _ ->
+        false
+    end
+  end
+
+  defp verification_runtime_failure?(_), do: false
+
+  defp belief_direction_runtime_failure?(
+         classified_supporting,
+         classified_opposing,
+         verification_stats
+       )
+       when is_list(classified_supporting) and is_list(classified_opposing) and
+              is_map(verification_stats) do
+    no_grounded_evidence? =
+      Enum.all?(classified_supporting ++ classified_opposing, &(not grounded_evidence?(&1)))
+
+    runtime_failures_present? =
+      Map.get(verification_stats, :runtime_failure_count, 0) > 0 or
+        Enum.any?(classified_supporting ++ classified_opposing, &verification_runtime_failure?/1)
+
+    no_grounded_evidence? and runtime_failures_present?
+  end
+
+  @doc false
+  def direction_summary(
+        classified_supporting,
+        classified_opposing,
+        %Strategy{} = strategy,
+        verification_stats \\ %{}
+      )
+      when is_list(classified_supporting) and is_list(classified_opposing) and
+             is_map(verification_stats) do
+    grounded_for = Enum.filter(classified_supporting, &grounded_evidence?/1)
+    grounded_against = Enum.filter(classified_opposing, &grounded_evidence?/1)
+
+    grounded_for_count = length(grounded_for)
+    grounded_against_count = length(grounded_against)
+    belief_for_count = length(classified_supporting) - grounded_for_count
+    belief_against_count = length(classified_opposing) - grounded_against_count
+
+    grounded_for_score = Enum.sum(Enum.map(grounded_for, &Map.get(&1, :score, 0.0)))
+    grounded_against_score = Enum.sum(Enum.map(grounded_against, &Map.get(&1, :score, 0.0)))
+    total_for_score = Enum.sum(Enum.map(classified_supporting, &Map.get(&1, :score, 0.0)))
+    total_against_score = Enum.sum(Enum.map(classified_opposing, &Map.get(&1, :score, 0.0)))
+
+    direction =
+      cond do
+        grounded_for_score > 0 and grounded_against_score > 0 ->
+          cond do
+            grounded_for_score > grounded_against_score * strategy.direction_ratio ->
+              "supporting"
+
+            grounded_against_score > grounded_for_score * strategy.direction_ratio ->
+              "opposing"
+
+            true ->
+              "genuinely_contested"
+          end
+
+        grounded_against_score == 0 and grounded_for_score > 0 ->
+          "asymmetric_evidence_for"
+
+        grounded_for_score == 0 and grounded_against_score > 0 ->
+          "asymmetric_evidence_against"
+
+        belief_direction_runtime_failure?(
+          classified_supporting,
+          classified_opposing,
+          verification_stats
+        ) ->
+          "runtime_failure"
+
+        total_for_score == 0 and total_against_score == 0 ->
+          "insufficient_evidence"
+
+        total_against_score > total_for_score * strategy.belief_fallback_ratio ->
+          "belief_consensus_against"
+
+        total_for_score > total_against_score * strategy.belief_fallback_ratio ->
+          "belief_consensus_for"
+
+        true ->
+          "belief_contested"
+      end
+
+    %{
+      direction: direction,
+      partial: direction == "runtime_failure",
+      grounded_for: grounded_for,
+      grounded_against: grounded_against,
+      grounded_for_count: grounded_for_count,
+      grounded_against_count: grounded_against_count,
+      belief_for_count: belief_for_count,
+      belief_against_count: belief_against_count,
+      grounded_for_score: grounded_for_score,
+      grounded_against_score: grounded_against_score,
+      total_for_score: total_for_score,
+      total_against_score: total_against_score
+    }
   end
 
   @doc false
@@ -1776,6 +1874,92 @@ defmodule Daemon.Tools.Builtins.Investigate do
     result =
       "## Investigation: #{topic}\n\n" <>
         timeout_result_text(timeout_info) <>
+        "\n\n### Papers Consulted\n" <> format_paper_list(all_papers)
+
+    result =
+      result_with_completion_artifacts(
+        result,
+        maybe_capture_trace(json_metadata, caller_metadata, trace_payload),
+        caller_metadata
+      )
+
+    log_phase_timings(topic, timings)
+    if verification_stats != %{}, do: log_verification_stats(topic, verification_stats)
+    {:ok, result}
+  end
+
+  defp runtime_failure_result_text(runtime_failures) when is_list(runtime_failures) do
+    summary =
+      runtime_failures
+      |> Enum.map(fn failure ->
+        phase = Map.get(failure, :phase, "unknown")
+        source = Map.get(failure, :source, "provider")
+        kind = Map.get(failure, :kind, "provider_failure")
+        count = Map.get(failure, :count)
+
+        count_text =
+          if is_integer(count) and count > 0 do
+            " (#{count} items)"
+          else
+            ""
+          end
+
+        "#{phase} via #{source}: #{kind}#{count_text}"
+      end)
+      |> Enum.join("; ")
+
+    "**Status: RUNTIME FAILURE** -- citation verification/provider failures blocked a trustworthy " <>
+      "belief-only verdict, so this run is reported as partial." <>
+      if(summary == "", do: "", else: " Failures: #{summary}.")
+  end
+
+  defp return_runtime_failure_completion(
+         topic,
+         all_papers,
+         source_counts,
+         %Strategy{} = strategy,
+         variant_id,
+         timings,
+         trace_context,
+         caller_metadata,
+         verified_supporting,
+         verified_opposing,
+         verification_stats,
+         parsed_supporting,
+         parsed_opposing
+       ) do
+    json_metadata =
+      partial_completion_metadata(
+        topic,
+        verified_supporting,
+        verified_opposing,
+        all_papers,
+        source_counts,
+        strategy,
+        variant_id,
+        timings,
+        verification_stats
+      )
+      |> Map.put(:direction, "runtime_failure")
+      |> put_runtime_failure_metadata(trace_context, verification_stats)
+      |> put_evidence_plan_metadata(Map.get(trace_context, :search_plan, %{}))
+
+    trace_payload =
+      build_boundary_trace(trace_context, %{
+        parsed_supporting: parsed_supporting,
+        parsed_opposing: parsed_opposing,
+        verified_supporting: verified_supporting,
+        verified_opposing: verified_opposing,
+        timings: timings,
+        verification_stats: verification_stats,
+        final_metadata: json_metadata
+      })
+
+    runtime_failures = Map.get(json_metadata, :runtime_failures, [])
+
+    result =
+      "## Investigation: #{topic}\n\n" <>
+        runtime_failure_result_text(runtime_failures) <>
         "\n\n### Papers Consulted\n" <> format_paper_list(all_papers)
 
     result =

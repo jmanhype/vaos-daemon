@@ -554,6 +554,84 @@ defmodule Daemon.Tools.Builtins.InvestigateTest do
            ]
   end
 
+  test "direction_summary downgrades belief-only verdicts under verifier runtime failure" do
+    summary =
+      Investigate.direction_summary(
+        [
+          %{
+            summary: "A retracted paper once suggested an autism link [Paper 3].",
+            score: 6.1,
+            verified: true,
+            verification: "verified",
+            paper_type: :review,
+            citation_count: 109,
+            source_type: :sourced,
+            evidence_store: :belief
+          }
+        ],
+        [
+          %{
+            summary:
+              "A case-control study found no increased autism risk from vaccines [Paper 2].",
+            score: 0.0,
+            verified: false,
+            verification: "timeout",
+            paper_type: :study,
+            citation_count: 31,
+            source_type: :sourced,
+            evidence_store: :belief
+          }
+        ],
+        Strategy.default(),
+        %{runtime_failure_count: 1}
+      )
+
+    assert summary.direction == "runtime_failure"
+    assert summary.partial == true
+    assert summary.grounded_for_count == 0
+    assert summary.grounded_against_count == 0
+    assert summary.belief_for_count == 1
+    assert summary.belief_against_count == 1
+  end
+
+  test "direction_summary preserves grounded verdicts despite unrelated verifier runtime failure" do
+    summary =
+      Investigate.direction_summary(
+        [
+          %{
+            summary:
+              "A case-control study found no increased autism risk from vaccines [Paper 2].",
+            score: 2.2,
+            verified: true,
+            verification: "verified",
+            paper_type: :study,
+            citation_count: 31,
+            source_type: :sourced,
+            evidence_store: :grounded
+          }
+        ],
+        [
+          %{
+            summary: "A contextual caveat survived as a belief-only timeout [Paper 5].",
+            score: 0.0,
+            verified: false,
+            verification: "timeout",
+            paper_type: :other,
+            citation_count: 0,
+            source_type: :sourced,
+            evidence_store: :belief
+          }
+        ],
+        Strategy.default(),
+        %{runtime_failure_count: 1}
+      )
+
+    assert summary.direction == "asymmetric_evidence_for"
+    assert summary.partial == false
+    assert summary.grounded_for_count == 1
+    assert summary.grounded_against_count == 0
+  end
+
   test "cross_side_overlap_stats reports shared normalized claim and paper pairs" do
     paper_map = %{
       1 => %{"title" => "Creatine Review"},
