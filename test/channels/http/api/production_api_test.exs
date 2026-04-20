@@ -3,13 +3,15 @@ defmodule Daemon.Channels.HTTP.API.ProductionAPITest do
   use Plug.Test
 
   alias Daemon.Production.API
-  alias Daemon.Production.ComfyUISceneRunner
+  alias Daemon.Production.{ComfyUISceneRunner, KlingPipeline}
 
   @opts API.init([])
 
   setup do
     pid = Process.whereis(ComfyUISceneRunner) || start_supervised!(ComfyUISceneRunner)
-    %{runner: pid}
+    kling = Process.whereis(KlingPipeline) || start_supervised!(KlingPipeline)
+    KlingPipeline.abort()
+    %{runner: pid, kling: kling}
   end
 
   defp call(conn), do: API.call(conn, @opts)
@@ -60,6 +62,47 @@ defmodule Daemon.Channels.HTTP.API.ProductionAPITest do
   describe "POST /comfyui/abort" do
     test "returns aborted response even when idle" do
       conn = json_post("/comfyui/abort", %{})
+
+      assert conn.status == 200
+      assert decode(conn)["status"] == "aborted"
+    end
+  end
+
+  describe "POST /kling/run" do
+    test "returns 400 for empty scenes list" do
+      conn = json_post("/kling/run", %{})
+
+      assert conn.status == 400
+      assert decode(conn)["error"] =~ "non-empty scenes list"
+    end
+
+    test "returns 400 for motion control runs without motion_video" do
+      conn =
+        json_post("/kling/run", %{
+          "mode" => "motion_control",
+          "scenes" => [%{"title" => "Hook", "prompt" => "A scene"}]
+        })
+
+      assert conn.status == 400
+      assert decode(conn)["error"] =~ "motion_video"
+    end
+  end
+
+  describe "GET /kling/status" do
+    test "returns idle status when nothing is running" do
+      conn = json_get("/kling/status")
+
+      assert conn.status == 200
+      body = decode(conn)
+      assert body["state"] == "idle"
+      assert body["current_scene"] == 0
+      assert body["total_scenes"] == 0
+    end
+  end
+
+  describe "POST /kling/abort" do
+    test "returns aborted response even when idle" do
+      conn = json_post("/kling/abort", %{})
 
       assert conn.status == 200
       assert decode(conn)["status"] == "aborted"

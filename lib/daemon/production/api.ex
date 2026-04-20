@@ -1,32 +1,15 @@
 defmodule Daemon.Production.API do
-  @moduledoc "HTTP routes for Film Production pipeline."
+  @moduledoc "HTTP routes for production pipelines."
   use Plug.Router
 
-  alias Daemon.Production.CharacterBenchmark
+  alias Daemon.Production.{CharacterBenchmark, KlingPipeline}
 
   plug(Plug.Parsers, parsers: [:json], json_decoder: Jason)
   plug(:match)
   plug(:dispatch)
 
   post "/" do
-    params = conn.body_params
-
-    brief = %{
-      title: params["title"] || "Untitled",
-      character_bible: params["character_bible"] || "",
-      preset: params["preset"] || "",
-      reference_image: params["reference_image"],
-      ingredients: params["ingredients"] || %{},
-      scenes:
-        Enum.map(params["scenes"] || [], fn s ->
-          %{
-            title: s["title"] || "",
-            prompt: s["prompt"] || "",
-            mode: s["mode"] || "new",
-            ingredients: s["ingredients"] || []
-          }
-        end)
-    }
+    brief = build_brief(conn.body_params)
 
     case Daemon.Production.FilmPipeline.produce(brief) do
       :ok ->
@@ -53,6 +36,43 @@ defmodule Daemon.Production.API do
 
   post "/abort" do
     Daemon.Production.FilmPipeline.abort()
+    send_resp(conn, 200, Jason.encode!(%{status: "aborted"}))
+  end
+
+  # ── Kling Pipeline ────────────────────────────────────────────────────
+
+  post "/kling/run" do
+    brief = build_brief(conn.body_params, :kling)
+
+    with :ok <- validate_kling_brief(brief),
+         :ok <- KlingPipeline.produce(brief) do
+      send_resp(
+        conn,
+        202,
+        Jason.encode!(%{
+          status: "started",
+          title: brief.title,
+          mode: brief.mode,
+          ingredients: Map.keys(brief.ingredients),
+          scenes: length(brief.scenes)
+        })
+      )
+    else
+      {:error, :already_producing} ->
+        send_resp(conn, 409, Jason.encode!(%{error: "already_producing"}))
+
+      {:error, reason} ->
+        send_resp(conn, 400, Jason.encode!(%{error: inspect(reason)}))
+    end
+  end
+
+  get "/kling/status" do
+    status = KlingPipeline.status()
+    send_resp(conn, 200, Jason.encode!(status))
+  end
+
+  post "/kling/abort" do
+    KlingPipeline.abort()
     send_resp(conn, 200, Jason.encode!(%{status: "aborted"}))
   end
 
@@ -233,4 +253,58 @@ defmodule Daemon.Production.API do
   match _ do
     send_resp(conn, 404, Jason.encode!(%{error: "not_found"}))
   end
+
+  defp build_brief(params, pipeline \\ :film) do
+    %{
+      title: params["title"] || "Untitled",
+      character_bible: params["character_bible"] || "",
+      preset: params["preset"] || "",
+      reference_image: params["reference_image"],
+      motion_video: params["motion_video"],
+      mode: parse_kling_mode(params["mode"], pipeline),
+      aspect_ratio: params["aspect_ratio"] || "16:9",
+      duration: params["duration"] || "5s",
+      quality: params["quality"] || "pro",
+      motion_intensity: parse_integer(params["motion_intensity"], 3),
+      ingredients: params["ingredients"] || %{},
+      scenes:
+        Enum.map(params["scenes"] || [], fn s ->
+          %{
+            title: s["title"] || "",
+            prompt: s["prompt"] || "",
+            mode: s["mode"] || "new",
+            ingredient: s["ingredient"],
+            ingredients: s["ingredients"] || []
+          }
+        end)
+    }
+  end
+
+  defp validate_kling_brief(%{scenes: []}),
+    do: {:error, "Kling brief requires a non-empty scenes list"}
+
+  defp validate_kling_brief(%{mode: :motion_control, motion_video: motion_video})
+       when motion_video in [nil, ""] do
+    {:error, "Kling motion_control mode requires motion_video"}
+  end
+
+  defp validate_kling_brief(_brief), do: :ok
+
+  defp parse_kling_mode(mode, :kling) when mode in [:motion_control, "motion_control"],
+    do: :motion_control
+
+  defp parse_kling_mode(_mode, :kling), do: :image_to_video
+  defp parse_kling_mode(mode, _pipeline), do: mode
+
+  defp parse_integer(nil, default), do: default
+  defp parse_integer(value, _default) when is_integer(value), do: value
+
+  defp parse_integer(value, default) when is_binary(value) do
+    case Integer.parse(value) do
+      {parsed, _} -> parsed
+      :error -> default
+    end
+  end
+
+  defp parse_integer(_value, default), do: default
 end

@@ -1,10 +1,11 @@
 defmodule Daemon.Production.KlingPipeline do
   @moduledoc """
-  Production engine that autonomously produces films through Kling AI (app.klingai.com).
+  Production engine that autonomously produces films through Kling AI.
 
   Receives the same production brief as FilmPipeline and SoraPipeline and drives
-  the full pipeline: window setup, Image-to-Video for scene 1 (with reference
-  image upload), render polling, and Extend chains for scenes 2-N.
+  the full pipeline: window setup, prompt submission on Kling's current
+  `kling.ai/app` workspace, optional reference image upload for scene 1, render
+  polling, and Extend chains for scenes 2-N.
 
   Requires an active Kling AI session in Chrome (user must be logged in).
 
@@ -44,7 +45,7 @@ defmodule Daemon.Production.KlingPipeline do
   alias Daemon.Production.BrowserPipeline
 
   @window_name "Kling"
-  @kling_url "https://app.klingai.com/global/"
+  @kling_url "https://kling.ai/app/video/new?ac=1"
   @kling_motion_url "https://kling.ai/app/video-motion-control/new"
 
   @render_wait_ms 120_000
@@ -56,27 +57,38 @@ defmodule Daemon.Production.KlingPipeline do
   @poll_interval_ms 5_000
 
   # ── Kling DOM selector JS fragments ──────────────────────────────────
-  # These target Kling AI's React SPA DOM patterns. Selectors may need
-  # tuning as the UI evolves.
+  # These target Kling AI's current React SPA DOM patterns.
 
-  # Click the "AI Video" tab in the sidebar
-  @click_ai_video_tab_js ~S"""
-  var tabs=document.querySelectorAll('span,div,a,li');var found=false;for(var i=0;i<tabs.length;i++){var text=tabs[i].textContent.trim().toLowerCase();if(text==='ai video'){tabs[i].click();found=true;break;}}found?'ai_video_clicked':'ai_video_not_found'
+  @standard_ready_js ~S"""
+  (function(){
+    var prompt=document.querySelector('.tiptap.ProseMirror[contenteditable="true"]') || document.querySelector('div[role="textbox"]') || document.querySelector('textarea');
+    return prompt ? 'ready' : '';
+  })()
   """
 
-  # Click Image-to-Video mode tab
-  @click_image_to_video_js ~S"""
-  var tabs=document.querySelectorAll('div[role="tab"],button,span,a');var found=false;for(var i=0;i<tabs.length;i++){var text=tabs[i].textContent.trim().toLowerCase();if(text.indexOf('image to video')>-1||text.indexOf('image-to-video')>-1||text.indexOf('img2video')>-1){tabs[i].click();found=true;break;}}found?'image_to_video_selected':'image_to_video_not_found'
+  @upload_input_ready_js ~S"""
+  (function(){
+    return document.querySelector('input.el-upload__input[type="file"]') || document.querySelector('input[type="file"]') ? 'ready' : '';
+  })()
   """
 
-  # Click Text-to-Video mode tab
-  @click_text_to_video_js ~S"""
-  var tabs=document.querySelectorAll('div[role="tab"],button,span,a');var found=false;for(var i=0;i<tabs.length;i++){var text=tabs[i].textContent.trim().toLowerCase();if(text.indexOf('text to video')>-1||text.indexOf('text-to-video')>-1||text.indexOf('txt2video')>-1){tabs[i].click();found=true;break;}}found?'text_to_video_selected':'text_to_video_not_found'
+  @dismiss_modal_js ~S"""
+  (function(){
+    var buttons=Array.from(document.querySelectorAll('[role="dialog"] button, .el-dialog__wrapper button, .el-overlay-dialog button, .el-message-box button, button'));
+    for (var i=0;i<buttons.length;i++) {
+      var text=(buttons[i].innerText||buttons[i].textContent||'').trim().toLowerCase();
+      if (text==='got it' || text==='ok' || text==='i know') {
+        buttons[i].click();
+        return 'dismissed:' + text;
+      }
+    }
+    return 'no_modal';
+  })()
   """
 
   # Find the prompt textarea
   @prompt_selector_js ~S"""
-  document.querySelector('textarea[placeholder*="prompt"]') || document.querySelector('textarea[placeholder*="Prompt"]') || document.querySelector('textarea[placeholder*="describe"]') || document.querySelector('textarea[placeholder*="Describe"]') || document.querySelector('textarea') || document.querySelector('[contenteditable="true"]') || document.querySelector('div[role="textbox"]')
+  document.querySelector('.tiptap.ProseMirror[contenteditable="true"]') || document.querySelector('div[role="textbox"]') || document.querySelector('textarea[placeholder*="prompt"]') || document.querySelector('textarea[placeholder*="Prompt"]') || document.querySelector('textarea[placeholder*="describe"]') || document.querySelector('textarea[placeholder*="Describe"]') || document.querySelector('textarea') || document.querySelector('[contenteditable="true"]')
   """
 
   # Click the Generate button
@@ -119,11 +131,6 @@ defmodule Daemon.Production.KlingPipeline do
   var sliders=document.querySelectorAll('input[type="range"]');var found=false;for(var i=0;i<sliders.length;i++){var label=(sliders[i].getAttribute('aria-label')||'').toLowerCase();var parent=sliders[i].closest('[class*="motion"]')||sliders[i].closest('[class*="intensity"]');if(label.indexOf('motion')>-1||label.indexOf('intensity')>-1||parent){var nativeInputValueSetter=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;nativeInputValueSetter.call(sliders[i],'INTENSITY_VAL');sliders[i].dispatchEvent(new Event('input',{bubbles:true}));sliders[i].dispatchEvent(new Event('change',{bubbles:true}));found=true;break;}}found?'intensity_set':'intensity_not_found'
   """
 
-  # Click image upload area in Image-to-Video mode
-  @image_upload_area_js ~S"""
-  var areas=document.querySelectorAll('[class*="upload"],div[role="button"],button');var found=false;for(var i=0;i<areas.length;i++){var text=areas[i].textContent.trim().toLowerCase();var ariaLabel=(areas[i].getAttribute('aria-label')||'').toLowerCase();if(text.indexOf('upload')>-1||text.indexOf('drag')>-1||text.indexOf('click to upload')>-1||ariaLabel.indexOf('upload')>-1){areas[i].click();found=true;break;}}found?'upload_area_clicked':'upload_area_not_found'
-  """
-
   # Check if a video is still rendering (look for progress indicators)
   @check_rendering_js ~S"""
   var indicators=document.querySelectorAll('[class*="progress"],[class*="loading"],[class*="generating"],[class*="pending"],.ant-spin,.loading-spinner');var text=document.body.innerText.toLowerCase();var isRendering=(indicators.length>0)||(text.indexOf('generating')>-1&&text.indexOf('in queue')>-1)||(text.indexOf('processing')>-1);isRendering?'rendering':'done'
@@ -133,19 +140,6 @@ defmodule Daemon.Production.KlingPipeline do
   # The motion control page at kling.ai/app/video-motion-control/new
   # has: upload[0] for .mp4/.mov (motion video), upload[1] for .jpg/.png
   # (character image), a tiptap ProseMirror prompt editor, and a Generate button.
-
-  # Upload a file to a specific input[type=file] by index (0=motion video, 1=character image)
-  @motion_upload_js_template ~S"""
-  (function(){
-    var inputs = document.querySelectorAll('input.el-upload__input[type="file"]');
-    if (inputs.length > UPLOAD_INDEX) {
-      inputs[UPLOAD_INDEX].value = '';
-      'upload_input_found_' + UPLOAD_INDEX;
-    } else {
-      'upload_input_not_found_' + UPLOAD_INDEX + '_of_' + inputs.length;
-    }
-  })()
-  """
 
   # Focus the tiptap ProseMirror prompt editor (Kling motion control uses contenteditable)
   @motion_prompt_js ~S"""
@@ -280,6 +274,7 @@ defmodule Daemon.Production.KlingPipeline do
       video_count_before: 0,
       errors: [],
       timer_ref: nil,
+      scene_started_at: nil,
       started_at: DateTime.utc_now()
     }
 
@@ -331,6 +326,7 @@ defmodule Daemon.Production.KlingPipeline do
         # Navigate directly to motion control page
         BrowserPipeline.navigate(@window_name, @kling_motion_url)
         Process.sleep(@post_navigate_ms)
+        BrowserPipeline.execute_js(@window_name, @dismiss_modal_js)
 
         url = BrowserPipeline.get_url(@window_name)
         Logger.info("[KlingPipeline] Navigated to Motion Control (URL: #{url})")
@@ -338,26 +334,19 @@ defmodule Daemon.Production.KlingPipeline do
         {:noreply, %{state | state: :submitting}, {:continue, :submit_motion_scene}}
 
       _ ->
-        # Standard I2V/T2V flow
+        # Standard prompt workspace
         BrowserPipeline.navigate(@window_name, @kling_url)
         Process.sleep(@post_navigate_ms)
+        BrowserPipeline.wait_for(@window_name, @standard_ready_js, 30_000, 1_000)
+        dismiss_result = BrowserPipeline.execute_js(@window_name, @dismiss_modal_js)
 
         url = BrowserPipeline.get_url(@window_name)
-        Logger.info("[KlingPipeline] Navigated to Kling AI (URL: #{url})")
-
-        tab_result = BrowserPipeline.execute_js(@window_name, @click_ai_video_tab_js)
-        Logger.info("[KlingPipeline] AI Video tab click: #{tab_result}")
-        Process.sleep(@post_click_ms)
+        Logger.info("[KlingPipeline] Navigated to Kling generate workspace (URL: #{url})")
+        Logger.info("[KlingPipeline] Modal dismiss result: #{dismiss_result}")
 
         if state.reference_image && File.exists?(state.reference_image) do
-          mode_result = BrowserPipeline.execute_js(@window_name, @click_image_to_video_js)
-          Logger.info("[KlingPipeline] Image-to-Video mode: #{mode_result}")
-          Process.sleep(@post_click_ms)
           {:noreply, %{state | state: :uploading_reference}, {:continue, :upload_reference}}
         else
-          mode_result = BrowserPipeline.execute_js(@window_name, @click_text_to_video_js)
-          Logger.info("[KlingPipeline] Text-to-Video mode: #{mode_result}")
-          Process.sleep(@post_click_ms)
           {:noreply, %{state | state: :submitting_first}, {:continue, :configure_settings}}
         end
     end
@@ -365,11 +354,8 @@ defmodule Daemon.Production.KlingPipeline do
 
   def handle_continue(:upload_reference, state) do
     Logger.info("[KlingPipeline] Uploading reference image: #{state.reference_image}")
-
-    # Click the upload area to trigger file input
-    area_result = BrowserPipeline.execute_js(@window_name, @image_upload_area_js)
-    Logger.info("[KlingPipeline] Upload area click: #{area_result}")
-    Process.sleep(2_000)
+    BrowserPipeline.execute_js(@window_name, @dismiss_modal_js)
+    BrowserPipeline.wait_for(@window_name, @upload_input_ready_js, 15_000, 500)
 
     # Inject the file via DataTransfer
     upload_result = BrowserPipeline.upload_file(@window_name, state.reference_image)
@@ -410,7 +396,11 @@ defmodule Daemon.Production.KlingPipeline do
       )
 
     intensity_result = BrowserPipeline.execute_js(@window_name, intensity_js)
-    Logger.debug("[KlingPipeline] Set motion intensity #{state.motion_intensity}: #{intensity_result}")
+
+    Logger.debug(
+      "[KlingPipeline] Set motion intensity #{state.motion_intensity}: #{intensity_result}"
+    )
+
     Process.sleep(500)
 
     {:noreply, state, {:continue, :submit_first_scene}}
@@ -453,7 +443,14 @@ defmodule Daemon.Production.KlingPipeline do
     broadcast(:scene_submitted, %{scene: 1, title: scene.title})
     Logger.info("[KlingPipeline] Scene 1 submitted (awaiting render)")
 
-    new_state = %{state | state: :rendering, current_scene: 1, video_count_before: count_before}
+    new_state = %{
+      state
+      | state: :rendering,
+        current_scene: 1,
+        video_count_before: count_before,
+        scene_started_at: DateTime.utc_now()
+    }
+
     new_state = schedule_render_poll(new_state)
     {:noreply, new_state}
   end
@@ -505,6 +502,7 @@ defmodule Daemon.Production.KlingPipeline do
 
     # Step 3: Paste prompt into tiptap ProseMirror editor
     prompt = build_motion_prompt(state, scene)
+    count_before = get_video_count()
     coords = BrowserPipeline.execute_js(@window_name, @motion_prompt_js)
 
     case String.split(String.trim(coords), ",") do
@@ -545,8 +543,14 @@ defmodule Daemon.Production.KlingPipeline do
     broadcast(:scene_submitted, %{scene: scene_num, title: scene[:title], mode: :motion_control})
     Logger.info("[KlingPipeline] Motion scene #{scene_num} submitted (awaiting render)")
 
-    count_before = get_video_count()
-    new_state = %{state | state: :rendering, current_scene: scene_num, video_count_before: count_before}
+    new_state = %{
+      state
+      | state: :rendering,
+        current_scene: scene_num,
+        video_count_before: count_before,
+        scene_started_at: DateTime.utc_now()
+    }
+
     new_state = schedule_render_poll(new_state)
     {:noreply, new_state}
   end
@@ -588,25 +592,25 @@ defmodule Daemon.Production.KlingPipeline do
       Process.sleep(@post_click_ms)
 
       # Click the Extend button to append 5 seconds
-      extend_result = BrowserPipeline.execute_js(@window_name, @extend_button_js)
-      Logger.info("[KlingPipeline] Extend button result: #{extend_result}")
+      count_before = get_video_count()
 
-      if extend_result == "extend_not_found" do
-        # Fallback: navigate to creatives, click the video, try again
-        Logger.info("[KlingPipeline] Extend not found — trying via My Creatives")
-        BrowserPipeline.execute_js(@window_name, @navigate_creatives_js)
-        Process.sleep(@post_click_ms)
-        BrowserPipeline.execute_js(@window_name, @click_first_video_js)
-        Process.sleep(@post_click_ms)
-        retry_result = BrowserPipeline.execute_js(@window_name, @extend_button_js)
-        Logger.info("[KlingPipeline] Extend retry result: #{retry_result}")
+      extend_result =
+        case BrowserPipeline.execute_js(@window_name, @extend_button_js) do
+          "extend_not_found" = initial ->
+            Logger.info("[KlingPipeline] Extend button result: #{initial}")
+            Logger.info("[KlingPipeline] Extend not found — trying via My Creatives")
+            BrowserPipeline.execute_js(@window_name, @navigate_creatives_js)
+            Process.sleep(@post_click_ms)
+            BrowserPipeline.execute_js(@window_name, @click_first_video_js)
+            Process.sleep(@post_click_ms)
+            retry_result = BrowserPipeline.execute_js(@window_name, @extend_button_js)
+            Logger.info("[KlingPipeline] Extend retry result: #{retry_result}")
+            retry_result
 
-        if retry_result == "extend_not_found" do
-          # Final fallback: generate as independent scene
-          Logger.warning("[KlingPipeline] No extend button — generating scene #{scene_num} independently")
-          generate_independent_scene(state, scene, scene_num)
+          result ->
+            Logger.info("[KlingPipeline] Extend button result: #{result}")
+            result
         end
-      end
 
       # If extend was found, paste the new prompt for the extension
       if extend_result != "extend_not_found" do
@@ -618,12 +622,24 @@ defmodule Daemon.Production.KlingPipeline do
         gen_result = BrowserPipeline.execute_js(@window_name, @generate_js)
         Logger.info("[KlingPipeline] Extend generate: #{gen_result}")
         Process.sleep(@post_submit_ms)
+      else
+        Logger.warning(
+          "[KlingPipeline] No extend button — generating scene #{scene_num} independently"
+        )
+
+        generate_independent_scene(state, scene, scene_num)
       end
 
       broadcast(:scene_submitted, %{scene: scene_num, title: scene.title})
 
-      count_before = get_video_count()
-      new_state = %{state | state: :rendering, current_scene: scene_num, video_count_before: count_before}
+      new_state = %{
+        state
+        | state: :rendering,
+          current_scene: scene_num,
+          video_count_before: count_before,
+          scene_started_at: DateTime.utc_now()
+      }
+
       new_state = schedule_render_poll(new_state)
       {:noreply, new_state}
     end
@@ -666,7 +682,7 @@ defmodule Daemon.Production.KlingPipeline do
         Logger.info("[KlingPipeline] Render indicators cleared — treating as complete")
         {:noreply, state, {:continue, :post_render}}
 
-      elapsed_ms(state) >= @render_wait_ms ->
+      scene_elapsed_ms(state) >= @render_wait_ms ->
         Logger.warning(
           "[KlingPipeline] Render timeout for scene #{state.current_scene} — continuing anyway"
         )
@@ -696,24 +712,14 @@ defmodule Daemon.Production.KlingPipeline do
     # Navigate back to Kling main page and start a fresh generation
     BrowserPipeline.navigate(@window_name, @kling_url)
     Process.sleep(@post_navigate_ms)
-
-    # Click AI Video tab
-    BrowserPipeline.execute_js(@window_name, @click_ai_video_tab_js)
-    Process.sleep(@post_click_ms)
+    BrowserPipeline.wait_for(@window_name, @standard_ready_js, 30_000, 1_000)
+    BrowserPipeline.execute_js(@window_name, @dismiss_modal_js)
 
     # Re-upload reference image if available
     if state.reference_image && File.exists?(state.reference_image) do
-      BrowserPipeline.execute_js(@window_name, @click_image_to_video_js)
-      Process.sleep(@post_click_ms)
-
-      area_result = BrowserPipeline.execute_js(@window_name, @image_upload_area_js)
-      Logger.info("[KlingPipeline] Re-upload for scene #{scene_num}: #{area_result}")
-      Process.sleep(2_000)
+      BrowserPipeline.wait_for(@window_name, @upload_input_ready_js, 15_000, 500)
       BrowserPipeline.upload_file(@window_name, state.reference_image)
       Process.sleep(@post_upload_ms)
-    else
-      BrowserPipeline.execute_js(@window_name, @click_text_to_video_js)
-      Process.sleep(@post_click_ms)
     end
 
     # Paste and submit
@@ -806,7 +812,10 @@ defmodule Daemon.Production.KlingPipeline do
 
     # Kling has a 2500 char limit
     if String.length(prompt) > 2500 do
-      Logger.warning("[KlingPipeline] Prompt truncated from #{String.length(prompt)} to 2500 chars")
+      Logger.warning(
+        "[KlingPipeline] Prompt truncated from #{String.length(prompt)} to 2500 chars"
+      )
+
       String.slice(prompt, 0, 2500)
     else
       prompt
@@ -826,14 +835,14 @@ defmodule Daemon.Production.KlingPipeline do
     end
   end
 
-  defp fail(state, error) do
-    new_state = %{state | state: :failed, errors: [error | state.errors]}
-    broadcast(:failed, %{title: state.title, error: error})
-    Logger.error("[KlingPipeline] Production failed: #{error}")
-    new_state
+  defp scene_elapsed_ms(state) do
+    case state.scene_started_at do
+      nil -> elapsed_ms(state)
+      started -> DateTime.diff(DateTime.utc_now(), started, :millisecond)
+    end
   end
 
-  defp broadcast(event, data \\ %{}) do
+  defp broadcast(event, data) do
     Phoenix.PubSub.broadcast(
       Daemon.PubSub,
       "osa:production",
@@ -872,6 +881,7 @@ defmodule Daemon.Production.KlingPipeline do
       video_count_before: 0,
       errors: [],
       timer_ref: nil,
+      scene_started_at: nil,
       started_at: nil
     }
   end
