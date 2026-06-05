@@ -49,11 +49,11 @@ defmodule Daemon.Channels.HTTP.API.ProjectRoutes do
         {:ok, project} ->
           json(conn, 201, %{project: serialize_project(project)})
 
-        {:error, %Ecto.Changeset{} = cs} ->
-          json_error(conn, 422, "validation_error", inspect(changeset_errors(cs)))
+        {:error, %Ecto.Changeset{} = _cs} ->
+          json_error(conn, 422, "validation_error", "Validation failed")
 
         {:error, reason} ->
-          Logger.error("[ProjectRoutes] create_project failed: #{inspect(reason)}")
+          Logger.error("[ProjectRoutes] create_project failed: #{safe_inspect(reason)}")
           json_error(conn, 500, "internal_error", "Failed to create project")
       end
     else
@@ -76,7 +76,7 @@ defmodule Daemon.Channels.HTTP.API.ProjectRoutes do
         json_error(conn, 404, "not_found", "Project not found")
 
       {:error, reason} ->
-        Logger.error("[ProjectRoutes] get_project_with_stats failed: #{inspect(reason)}")
+        Logger.error("[ProjectRoutes] get_project_with_stats failed: #{safe_inspect(reason)}")
         json_error(conn, 500, "internal_error", "Failed to fetch project")
     end
   end
@@ -90,11 +90,11 @@ defmodule Daemon.Channels.HTTP.API.ProjectRoutes do
         {:ok, updated} ->
           json(conn, 200, %{project: serialize_project(updated)})
 
-        {:error, %Ecto.Changeset{} = cs} ->
-          json_error(conn, 422, "validation_error", inspect(changeset_errors(cs)))
+        {:error, %Ecto.Changeset{} = _cs} ->
+          json_error(conn, 422, "validation_error", "Validation failed")
 
         {:error, reason} ->
-          Logger.error("[ProjectRoutes] update_project failed: #{inspect(reason)}")
+          Logger.error("[ProjectRoutes] update_project failed: #{safe_inspect(reason)}")
           json_error(conn, 500, "internal_error", "Failed to update project")
       end
     else
@@ -105,7 +105,7 @@ defmodule Daemon.Channels.HTTP.API.ProjectRoutes do
         json_error(conn, 404, "not_found", "Project not found")
 
       {:error, reason} ->
-        Logger.error("[ProjectRoutes] get_project failed: #{inspect(reason)}")
+        Logger.error("[ProjectRoutes] get_project failed: #{safe_inspect(reason)}")
         json_error(conn, 500, "internal_error", "Failed to fetch project")
     end
   end
@@ -120,7 +120,7 @@ defmodule Daemon.Channels.HTTP.API.ProjectRoutes do
           json(conn, 200, %{project: serialize_project(archived), archived: true})
 
         {:error, reason} ->
-          Logger.error("[ProjectRoutes] archive_project failed: #{inspect(reason)}")
+          Logger.error("[ProjectRoutes] archive_project failed: #{safe_inspect(reason)}")
           json_error(conn, 500, "internal_error", "Failed to archive project")
       end
     else
@@ -131,7 +131,7 @@ defmodule Daemon.Channels.HTTP.API.ProjectRoutes do
         json_error(conn, 404, "not_found", "Project not found")
 
       {:error, reason} ->
-        Logger.error("[ProjectRoutes] get_project failed: #{inspect(reason)}")
+        Logger.error("[ProjectRoutes] get_project failed: #{safe_inspect(reason)}")
         json_error(conn, 500, "internal_error", "Failed to fetch project")
     end
   end
@@ -151,7 +151,7 @@ defmodule Daemon.Channels.HTTP.API.ProjectRoutes do
         json_error(conn, 404, "not_found", "Project not found")
 
       {:error, reason} ->
-        Logger.error("[ProjectRoutes] list_project_tasks failed: #{inspect(reason)}")
+        Logger.error("[ProjectRoutes] list_project_tasks failed: #{safe_inspect(reason)}")
         json_error(conn, 500, "internal_error", "Failed to fetch tasks")
     end
   end
@@ -172,7 +172,7 @@ defmodule Daemon.Channels.HTTP.API.ProjectRoutes do
           json_error(conn, 404, "not_found", "Task not found")
 
         {:error, reason} ->
-          Logger.error("[ProjectRoutes] link_task failed: #{inspect(reason)}")
+          Logger.error("[ProjectRoutes] link_task failed: #{safe_inspect(reason)}")
           json_error(conn, 500, "internal_error", "Failed to link task")
       end
     else
@@ -183,7 +183,7 @@ defmodule Daemon.Channels.HTTP.API.ProjectRoutes do
         json_error(conn, 404, "not_found", "Project not found")
 
       {:error, reason} ->
-        Logger.error("[ProjectRoutes] get_project failed: #{inspect(reason)}")
+        Logger.error("[ProjectRoutes] get_project failed: #{safe_inspect(reason)}")
         json_error(conn, 500, "internal_error", "Failed to fetch project")
     end
   end
@@ -203,7 +203,7 @@ defmodule Daemon.Channels.HTTP.API.ProjectRoutes do
         json_error(conn, 404, "not_found", "Project not found")
 
       {:error, reason} ->
-        Logger.error("[ProjectRoutes] goal_tree failed: #{inspect(reason)}")
+        Logger.error("[ProjectRoutes] goal_tree failed: #{safe_inspect(reason)}")
         json_error(conn, 500, "internal_error", "Failed to fetch goal tree")
     end
   end
@@ -226,11 +226,11 @@ defmodule Daemon.Channels.HTTP.API.ProjectRoutes do
         {:ok, goal} ->
           json(conn, 201, %{goal: serialize_goal(goal)})
 
-        {:error, %Ecto.Changeset{} = cs} ->
-          json_error(conn, 422, "validation_error", inspect(changeset_errors(cs)))
+        {:error, %Ecto.Changeset{} = _cs} ->
+          json_error(conn, 422, "validation_error", "Validation failed")
 
         {:error, reason} ->
-          Logger.error("[ProjectRoutes] create_goal failed: #{inspect(reason)}")
+          Logger.error("[ProjectRoutes] create_goal failed: #{safe_inspect(reason)}")
           json_error(conn, 500, "internal_error", "Failed to create goal")
       end
     else
@@ -244,7 +244,7 @@ defmodule Daemon.Channels.HTTP.API.ProjectRoutes do
         json_error(conn, 400, "invalid_request", "Missing required field: title")
 
       {:error, reason} ->
-        Logger.error("[ProjectRoutes] get_project failed: #{inspect(reason)}")
+        Logger.error("[ProjectRoutes] get_project failed: #{safe_inspect(reason)}")
         json_error(conn, 500, "internal_error", "Failed to fetch project")
     end
   end
