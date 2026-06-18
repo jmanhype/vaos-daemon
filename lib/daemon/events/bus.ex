@@ -56,6 +56,7 @@ defmodule Daemon.Events.Bus do
     * `:signal_genre` - Signal Theory genre
     * `:signal_sn` - signal-to-noise ratio (0.0-1.0)
   """
+  @spec emit(atom(), map(), keyword()) :: {:ok, nil}
   def emit(event_type, payload \\ %{}, opts \\ []) when event_type in @event_types do
     # Run entire emit body in a supervised task to never block the caller.
     # The old goldrush + auto_classify pipeline can deadlock or timeout.
